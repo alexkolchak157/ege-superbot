@@ -1,65 +1,16 @@
-# core/states.py
-"""Общие состояния для всех плагинов бота."""
+"""Состояния FSM для PTB ConversationHandler."""
 
-# Базовые состояния для навигации
-MAIN_MENU = -1
-PLUGIN_ENTRY = 0
+# Общие состояния
+CHOOSING_SECTION = 1      # Выбор test_part или task24
+CHOOSING_MODE = 2         # Выбор режима работы
+CHOOSING_BLOCK = 3        # Выбор блока
+CHOOSING_TOPIC = 4        # Выбор темы
+CHOOSING_EXAM_NUMBER = 5  # Выбор номера ЕГЭ
+ANSWERING = 6            # Ответ на вопрос
+CHOOSING_NEXT_ACTION = 7  # После ответа
+REVIEWING_MISTAKES = 8    # Работа над ошибками
 
-# Общие состояния для квизов/тестов
-CHOOSING_MODE = 10
-CHOOSING_BLOCK = 11 
-CHOOSING_TOPIC = 12
-CHOOSING_EXAM_NUMBER = 13
-ANSWERING = 14
-CHOOSING_NEXT_ACTION = 15
-REVIEWING_MISTAKES = 16
-
-# Состояния для task24 (планы)
-PLAN_CHOOSING_BLOCK = 20
-PLAN_SELECTING_TOPIC = 21
-PLAN_RECEIVING_TEXT = 22
-PLAN_SHOWING_FEEDBACK = 23
-
-# Состояния для task18 (будущее)
-TASK18_CHOOSING_TYPE = 30
-TASK18_ANSWERING = 31
-
-# Состояния для task23 (будущее)  
-TASK23_CHOOSING_VARIANT = 40
-TASK23_ANSWERING = 41
-
-# Состояния для GPT-grader (будущее)
-GPT_CHOOSING_TASK = 50
-GPT_RECEIVING_ANSWER = 51
-GPT_SHOWING_GRADE = 52
-
-class States:
-    """Класс-обёртка для удобного доступа к состояниям."""
-    
-    # Базовые
-    MAIN_MENU = MAIN_MENU
-    PLUGIN_ENTRY = PLUGIN_ENTRY
-    
-    # Квизы
-    CHOOSING_MODE = CHOOSING_MODE
-    CHOOSING_BLOCK = CHOOSING_BLOCK
-    CHOOSING_TOPIC = CHOOSING_TOPIC  
-    CHOOSING_EXAM_NUMBER = CHOOSING_EXAM_NUMBER
-    ANSWERING = ANSWERING
-    CHOOSING_NEXT_ACTION = CHOOSING_NEXT_ACTION
-    REVIEWING_MISTAKES = REVIEWING_MISTAKES
-    
-    # Планы
-    PLAN_CHOOSING_BLOCK = PLAN_CHOOSING_BLOCK
-    PLAN_SELECTING_TOPIC = PLAN_SELECTING_TOPIC
-    PLAN_RECEIVING_TEXT = PLAN_RECEIVING_TEXT
-    PLAN_SHOWING_FEEDBACK = PLAN_SHOWING_FEEDBACK
-    
-    # Будущие расширения
-    TASK18_CHOOSING_TYPE = TASK18_CHOOSING_TYPE
-    TASK18_ANSWERING = TASK18_ANSWERING
-    TASK23_CHOOSING_VARIANT = TASK23_CHOOSING_VARIANT
-    TASK23_ANSWERING = TASK23_ANSWERING
-    GPT_CHOOSING_TASK = GPT_CHOOSING_TASK
-    GPT_RECEIVING_ANSWER = GPT_RECEIVING_ANSWER
-    GPT_SHOWING_GRADE = GPT_SHOWING_GRADE
+# Состояния для task24
+AWAITING_PLAN = 20       # Ожидание плана от пользователя
+SHOWING_PLAN = 21        # Показ эталонного плана
+AWAITING_SEARCH = 22  # Ожидание поискового запроса

@@ -2,71 +2,166 @@ import json
 import logging
 import os
 from typing import Dict, List, Optional, Any, Tuple
-
+# Импортируем кеш из того же пакета
 try:
-    from .config import QUESTIONS_FILE
+    from .cache import questions_cache
 except ImportError:
-    QUESTIONS_FILE = "questions.json"
+    logging.warning("Модуль cache не найден, работаем без кеширования")
+    questions_cache = None
 
 # --- Логирование ---
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
 
+# --- Константы ---
+QUESTIONS_FILE = os.path.join(
+    os.path.dirname(os.path.dirname(__file__)), 
+    "data", 
+    "questions.json"
+)
 # --- Глобальные переменные ---
 QUESTIONS_DATA: Optional[Dict[str, Dict[str, List[Dict[str, Any]]]]] = None
 QUESTIONS_LIST_FLAT: Optional[List[Dict[str, Any]]] = None
 QUESTIONS_DICT_FLAT: Optional[Dict[str, Dict[str, Any]]] = None
 AVAILABLE_BLOCKS: Optional[List[str]] = None
 
-# --- Загрузка и обработка вопросов ---
-def load_questions() -> Tuple[Optional[Dict[str, Dict[str, List[Dict[str, Any]]]]], Optional[List[Dict[str, Any]]]]:
-    global QUESTIONS_DATA, QUESTIONS_LIST_FLAT, QUESTIONS_DICT_FLAT, AVAILABLE_BLOCKS
-    if not os.path.exists(QUESTIONS_FILE):
-        logging.error(f"Файл с вопросами '{QUESTIONS_FILE}' не найден.")
-        return None, None
+def validate_question(question: dict) -> Tuple[bool, str]:
+    """
+    Валидация структуры вопроса.
+    
+    Returns:
+        Tuple[bool, str]: (is_valid, error_message)
+    """
+    if not isinstance(question, dict):
+        return False, "Question is not a dictionary"
+    
+    # Проверяем базовые поля
+    required_fields = ['id', 'block', 'topic', 'answer', 'type']
+    missing_fields = [field for field in required_fields if not question.get(field)]
+    
+    if missing_fields:
+        return False, f"Missing required fields: {missing_fields}"
+    
+    # Проверяем ID на уникальность (будет проверено в load_questions)
+    question_id = question.get('id')
+    if not isinstance(question_id, str) or not question_id.strip():
+        return False, "ID must be a non-empty string"
+    
+    # Проверяем тип вопроса
+    question_type = question.get('type')
+    valid_types = ['single_choice', 'multiple_choice', 'matching', 'sequence', 'text_input']
+    
+    if question_type not in valid_types:
+        return False, f"Invalid question type: {question_type}. Must be one of {valid_types}"
+    
+    # Валидация по типу вопроса
+    if question_type == 'matching':
+        required_matching_fields = ['instruction', 'column1_options', 'column2_options']
+        missing_matching = [field for field in required_matching_fields if not question.get(field)]
+        
+        if missing_matching:
+            return False, f"Matching question missing fields: {missing_matching}"
+        
+        # Проверяем, что опции - это словари
+        col1_options = question.get('column1_options')
+        col2_options = question.get('column2_options')
+        
+        if not isinstance(col1_options, dict) or not isinstance(col2_options, dict):
+            return False, "Column options must be dictionaries"
+        
+        if not col1_options or not col2_options:
+            return False, "Column options cannot be empty"
+        
+        # Проверяем согласованность ответа с опциями
+        answer = str(question.get('answer', ''))
+        if len(answer) != len(col1_options):
+            return False, f"Answer length ({len(answer)}) doesn't match column1 options count ({len(col1_options)})"
+    
+    elif question_type in ['single_choice', 'multiple_choice', 'sequence']:
+        if not question.get('question'):
+            return False, f"{question_type} question missing 'question' field"
+        
+        # Для single_choice проверяем, что ответ - одна цифра
+        if question_type == 'single_choice':
+            answer = str(question.get('answer', ''))
+            if not answer.isdigit() or len(answer) != 1:
+                return False, "Single choice answer must be a single digit"
+    
+    elif question_type == 'text_input':
+        if not question.get('question'):
+            return False, "Text input question missing 'question' field"
+    
+    # Проверяем номер ЕГЭ (если есть)
+    exam_number = question.get('exam_number')
+    if exam_number is not None:
+        if not isinstance(exam_number, int) or not (1 <= exam_number <= 27):
+            return False, f"Invalid exam_number: {exam_number}. Must be integer between 1 and 27"
+    
+    # Проверяем пояснение (если есть)
+    explanation = question.get('explanation')
+    if explanation is not None and not isinstance(explanation, str):
+        return False, "Explanation must be a string"
+    
+    return True, ""
 
+def load_questions() -> Tuple[Optional[Dict[str, Dict[str, List[Dict[str, Any]]]]], Optional[List[Dict[str, Any]]]]:
+    """
+    Загрузка и валидация вопросов с улучшенной обработкой ошибок.
+    
+    Returns:
+        Tuple: (questions_data, questions_list_flat)
+    """
+    global QUESTIONS_DATA, QUESTIONS_LIST_FLAT, QUESTIONS_DICT_FLAT, AVAILABLE_BLOCKS
+    
+    # Проверяем существование файла
+    if not os.path.exists(QUESTIONS_FILE):
+        logger.error(f"Файл с вопросами '{QUESTIONS_FILE}' не найден.")
+        return _init_empty_data()
+
+    # Загружаем JSON
     try:
         with open(QUESTIONS_FILE, "r", encoding="utf-8") as f:
-            QUESTIONS_LIST_RAW = json.load(f)
+            questions_list_raw = json.load(f)
     except json.JSONDecodeError as e:
-        logging.critical(f"Ошибка декодирования JSON в файле '{QUESTIONS_FILE}': {e}")
-        return None, None
+        logger.critical(f"Ошибка декодирования JSON в файле '{QUESTIONS_FILE}': {e}")
+        return _init_empty_data()
     except Exception as e:
-        logging.critical(f"Не удалось прочитать файл '{QUESTIONS_FILE}': {e}")
-        return None, None
+        logger.critical(f"Не удалось прочитать файл '{QUESTIONS_FILE}': {e}")
+        return _init_empty_data()
 
+    # Проверяем структуру данных
+    if not isinstance(questions_list_raw, list):
+        logger.critical(f"Ошибка структуры JSON: Ожидался список вопросов, получен {type(questions_list_raw)}")
+        return _init_empty_data()
+
+    # Обрабатываем вопросы
     processed_questions: Dict[str, Dict[str, List[Dict[str, Any]]]] = {}
     processed_list_flat: List[Dict[str, Any]] = []
-    question_count = 0
-
-    if not isinstance(QUESTIONS_LIST_RAW, list):
-        logging.critical(f"Ошибка структуры JSON: Ожидался список вопросов, получен {type(QUESTIONS_LIST_RAW)}")
-        return None, None
-
-    for question in QUESTIONS_LIST_RAW:
-        if not isinstance(question, dict):
-            logging.warning(f"Элемент в списке вопросов не является словарем: {str(question)[:100]}... Пропуск.")
+    question_ids: set = set()
+    
+    valid_count = 0
+    invalid_count = 0
+    duplicate_count = 0
+    
+    for i, question in enumerate(questions_list_raw):
+        # Валидация вопроса
+        is_valid, error_msg = validate_question(question)
+        
+        if not is_valid:
+            logger.warning(f"Question {i+1} invalid: {error_msg}. Question: {str(question)[:100]}...")
+            invalid_count += 1
             continue
-        base_keys = ["block", "topic", "id", "answer", "type"]
-        if not all(k in question for k in base_keys):
-            logging.warning(f"Вопрос пропущен (нет базовых полей block/topic/id/answer/type): {str(question)[:100]}...")
+        
+        # Проверка на дублирование ID
+        question_id = question['id']
+        if question_id in question_ids:
+            logger.warning(f"Duplicate question ID '{question_id}' found, skipping...")
+            duplicate_count += 1
             continue
-        question_type = question.get("type")
-        if question_type == "matching":
-            matching_keys = ["instruction", "column1_options", "column2_options"]
-            if not all(k in question for k in matching_keys):
-                logging.warning(f"Вопрос matching пропущен (нет instruction/column1_options/column2_options): ID={question.get('id')}")
-                continue
-            if not isinstance(question.get("column1_options"), dict) or not isinstance(question.get("column2_options"), dict):
-                logging.warning(f"Вопрос matching пропущен (опции не являются словарями): ID={question.get('id')}")
-                continue
-        elif question_type in ["single_choice", "multiple_choice", "sequence", "text_input"]:
-            if "question" not in question:
-                logging.warning(f"Вопрос {question_type} пропущен (нет поля 'question'): ID={question.get('id')}")
-                continue
-        else:
-            logging.warning(f"Неизвестный тип вопроса '{question_type}' для ID={question.get('id')}. Пропуск.")
-            continue
-
+        
+        question_ids.add(question_id)
+        
+        # Добавляем вопрос в структуры данных
         block = question["block"]
         topic = question["topic"]
 
@@ -77,35 +172,178 @@ def load_questions() -> Tuple[Optional[Dict[str, Dict[str, List[Dict[str, Any]]]
 
         processed_questions[block][topic].append(question)
         processed_list_flat.append(question)
-        question_count += 1
+        valid_count += 1
 
-    logging.info(f"Загружено и обработано вопросов: {question_count}")
+    # Логируем результаты
+    logger.info(f"Загрузка завершена: {valid_count} валидных, {invalid_count} невалидных, {duplicate_count} дублированных")
+    
+    if valid_count == 0:
+        logger.error("Не найдено ни одного валидного вопроса!")
+        return _init_empty_data()
 
-    # --- Глобальные переменные ---
+    # Обновляем глобальные переменные
     QUESTIONS_DATA = processed_questions
     QUESTIONS_LIST_FLAT = processed_list_flat
-    QUESTIONS_DICT_FLAT = {q["id"]: q for q in processed_list_flat if isinstance(q, dict) and "id" in q}
-    AVAILABLE_BLOCKS = sorted(list(QUESTIONS_DATA.keys())) if QUESTIONS_DATA else []
+    QUESTIONS_DICT_FLAT = {q["id"]: q for q in processed_list_flat}
+    AVAILABLE_BLOCKS = sorted(list(processed_questions.keys()))
 
-    return QUESTIONS_DATA, QUESTIONS_LIST_FLAT
+    # Строим кеш после загрузки вопросов если модуль доступен
+    if questions_cache:
+        try:
+            questions_cache.build_from_data(processed_questions)
+            logger.info("Questions cache built successfully")
+        except Exception as e:
+            logger.error(f"Failed to build questions cache: {e}")
+    else:
+        logger.info("Cache module not available, working without cache")
+    
+    # Выводим статистику по блокам
+    logger.info("Статистика по блокам:")
+    for block, topics in processed_questions.items():
+        topic_count = len(topics)
+        total_questions = sum(len(questions) for questions in topics.values())
+        logger.info(f"  {block}: {topic_count} тем, {total_questions} вопросов")
+    
+    return processed_questions, processed_list_flat
+
+def _init_empty_data() -> Tuple[Dict, List]:
+    """Инициализирует пустые структуры данных."""
+    global QUESTIONS_DATA, QUESTIONS_LIST_FLAT, QUESTIONS_DICT_FLAT, AVAILABLE_BLOCKS
+    
+    QUESTIONS_DATA = {}
+    QUESTIONS_LIST_FLAT = []
+    QUESTIONS_DICT_FLAT = {}
+    AVAILABLE_BLOCKS = []
+    
+    return {}, []
+
+# Добавить новую функцию статистики:
+def get_stats() -> Dict[str, Any]:
+    """Возвращает статистику загруженных данных."""
+    stats = {
+        "total_questions": len(QUESTIONS_LIST_FLAT) if QUESTIONS_LIST_FLAT else 0,
+        "total_blocks": len(QUESTIONS_DATA) if QUESTIONS_DATA else 0,
+        "total_topics": 0,
+        "cache_built": False,
+        "blocks": {}
+    }
+    
+    if QUESTIONS_DATA:
+        # Подсчитываем темы и статистику по блокам
+        for block, topics in QUESTIONS_DATA.items():
+            topic_count = len(topics)
+            question_count = sum(len(questions) for questions in topics.values())
+            
+            stats["total_topics"] += topic_count
+            stats["blocks"][block] = {
+                "topics": topic_count,
+                "questions": question_count
+            }
+    
+    # Проверяем статус кеша
+    if questions_cache:
+        stats["cache_built"] = questions_cache._is_built
+    
+    return stats
+
+# Добавить функцию перезагрузки:
+def reload_questions() -> bool:
+    """
+    Перезагружает вопросы из файла.
+    
+    Returns:
+        bool: True если перезагрузка прошла успешно
+    """
+    try:
+        logger.info("Перезагрузка вопросов...")
+        
+        # Очищаем кеш
+        if questions_cache:
+            questions_cache.clear()
+        
+        # Загружаем заново
+        data, flat_list = load_questions()
+        
+        if data and flat_list:
+            logger.info("Перезагрузка вопросов завершена успешно")
+            return True
+        else:
+            logger.error("Перезагрузка вопросов не удалась")
+            return False
+            
+    except Exception as e:
+        logger.error(f"Ошибка при перезагрузке вопросов: {e}")
+        return False
+
+# Добавить функцию проверки целостности:
+def validate_data_integrity() -> Dict[str, Any]:
+    """
+    Проверяет целостность загруженных данных.
+    
+    Returns:
+        Dict с результатами проверки
+    """
+    result = {
+        "valid": True,
+        "errors": [],
+        "warnings": [],
+        "stats": {}
+    }
+    
+    if not QUESTIONS_DATA or not QUESTIONS_LIST_FLAT:
+        result["valid"] = False
+        result["errors"].append("No data loaded")
+        return result
+    
+    # Проверяем согласованность структур
+    flat_count = len(QUESTIONS_LIST_FLAT)
+    structured_count = sum(
+        len(questions) 
+        for topics in QUESTIONS_DATA.values() 
+        for questions in topics.values()
+    )
+    
+    if flat_count != structured_count:
+        result["valid"] = False
+        result["errors"].append(
+            f"Data inconsistency: flat list has {flat_count} questions, "
+            f"structured data has {structured_count}"
+        )
+    
+    # Проверяем уникальность ID
+    if QUESTIONS_DICT_FLAT:
+        dict_count = len(QUESTIONS_DICT_FLAT)
+        if dict_count != flat_count:
+            result["warnings"].append(
+                f"ID dictionary has {dict_count} entries, "
+                f"but flat list has {flat_count} questions"
+            )
+    
+    # Статистика
+    result["stats"] = get_stats()
+    
+    return result
+
+# Добавить новую функцию для получения доступных блоков:
+def get_available_blocks() -> List[str]:
+    """Возвращает список доступных блоков."""
+    global AVAILABLE_BLOCKS
+    return AVAILABLE_BLOCKS or []
 
 def get_questions_data() -> Optional[Dict[str, Dict[str, List[Dict[str, Any]]]]]:
     global QUESTIONS_DATA
     if QUESTIONS_DATA is None:
-        logging.warning("Попытка доступа к QUESTIONS_DATA до загрузки.")
+        logger.warning("Попытка доступа к QUESTIONS_DATA до загрузки.")
     return QUESTIONS_DATA
 
 def get_questions_list_flat() -> Optional[List[Dict[str, Any]]]:
     global QUESTIONS_LIST_FLAT
     if QUESTIONS_LIST_FLAT is None:
-        logging.warning("Попытка доступа к QUESTIONS_LIST_FLAT до загрузки.")
+        logger.warning("Попытка доступа к QUESTIONS_LIST_FLAT до загрузки.")
     return QUESTIONS_LIST_FLAT
 
 def get_questions_dict_flat() -> Optional[Dict[str, Dict[str, Any]]]:
     global QUESTIONS_DICT_FLAT
     if QUESTIONS_DICT_FLAT is None:
-        logging.warning("Попытка доступа к QUESTIONS_DICT_FLAT до загрузки.")
+        logger.warning("Попытка доступа к QUESTIONS_DICT_FLAT до загрузки.")
     return QUESTIONS_DICT_FLAT
-
-# --- Загрузи вопросы при импорте (или вызови вручную в app.py при старте) ---
-load_questions()

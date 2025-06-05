@@ -1,34 +1,37 @@
-# core/app.py (исправленный)
 import sys
 import os
-
-# Добавляем корневую папку проекта в sys.path
-project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-if project_root not in sys.path:
-    sys.path.insert(0, project_root)
-
+import logging
 from telegram.ext import Application, CommandHandler
 from core.plugin_loader import discover_plugins, build_main_menu, PLUGINS
 from core.menu_handlers import register_global_handlers
+from core.config import BOT_TOKEN
+from core import db
 
-# Попробуем импортировать токен из test_part или task24
-try:
-    from test_part.config import BOT_TOKEN
-except ImportError:
-    try:
-        from task24.config import BOT_TOKEN
-    except ImportError:
-        import os
-        BOT_TOKEN = os.getenv("TG_TOKEN") or os.getenv("TELEGRAM_BOT_TOKEN")
-        if not BOT_TOKEN:
-            raise ValueError("Не найден BOT_TOKEN! Проверьте файлы config.py или переменные окружения.")
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
+
+async def post_init(application: Application) -> None:
+    """Инициализация после запуска приложения."""
+    logger.info("Инициализация БД...")
+    await db.init_db()
+    
+    # Загрузка данных для плагинов
+    for plugin in PLUGINS:
+        if hasattr(plugin, 'post_init'):
+            await plugin.post_init(application)
+    
+    logger.info("Инициализация завершена")
 
 async def start(update, context):
-    """Главная команда /start - показывает меню плагинов."""
+    """Главная команда /start."""
     await update.message.reply_text(
-        "👋 Что хотите потренировать?",
+        "👋 Добро пожаловать! Что хотите потренировать?",
         reply_markup=build_main_menu(),
     )
+    context.user_data.clear()
 
 def main():
     """Основная функция запуска бота."""
@@ -40,7 +43,7 @@ def main():
     app = (
         Application.builder()
         .token(BOT_TOKEN)
-        .post_init(lambda a: a.bot.delete_webhook(drop_pending_updates=True))
+        .post_init(post_init)
         .build()
     )
 
@@ -52,11 +55,10 @@ def main():
 
     print("🔌 Регистрируем плагины...")
     for plugin in PLUGINS:
-        app.add_handler(plugin.entry_handler())
         plugin.register(app)
 
     print("🚀 Бот запущен! Нажмите Ctrl+C для остановки.")
-    app.run_polling()
+    app.run_polling(drop_pending_updates=True)
 
 if __name__ == "__main__":
     main()
