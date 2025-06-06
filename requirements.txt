@@ -1,7 +1,65 @@
-python-telegram-bot>=20.0
-aiosqlite>=0.19
-python-dotenv>=1.0
-pandas>=2.0
-requests>=2.31
-aiohttp>=3.8
-pydantic>=2.6
+# Development dependencies
+# Install with: pip install -r requirements-dev.txt
+
+# Include main requirements
+-r requirements.txt
+
+# Additional development tools
+ipython==8.19.0
+jupyterlab==4.0.9
+
+# Documentation
+sphinx==7.2.6
+sphinx-rtd-theme==2.0.0
+myst-parser==2.0.0
+
+# Code quality
+flake8==7.0.0
+isort==5.13.2
+bandit==1.7.6
+safety==3.0.1
+
+# Performance profiling
+memory-profiler==0.61.0
+line-profiler==4.1.2
+
+# Debugging
+ipdb==0.13.13
+pdbpp==0.10.3
+
+# Pre-commit hooks
+pre-commit==3.6.0
+
+# Type stubs
+types-requests==2.31.0.10
+types-aiofiles==23.2.0.0
+
+# Core dependencies
+python-telegram-bot==20.7
+aiosqlite==0.19.0
+python-dotenv==1.0.0
+
+# YandexGPT integration
+aiohttp==3.9.1
+pydantic==2.5.3
+
+# Data processing
+pandas==2.1.4
+requests==2.31.0
+
+# Optional dependencies
+pymorphy2==0.9.1  # Для лемматизации в task24
+pymorphy2-dicts-ru==2.4.417127.4579844  # Словари для pymorphy2
+
+# Development tools
+black==23.12.1
+pylint==3.0.3
+mypy==1.8.0
+
+# Testing
+pytest==7.4.4
+pytest-asyncio==0.23.3
+pytest-cov==4.1.0
+
+# Monitoring and logging
+colorlog==6.8.0
