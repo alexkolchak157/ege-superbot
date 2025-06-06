@@ -10,7 +10,7 @@ def discover_plugins() -> None:
     """Ищем модули *.plugin.py в корне проекта."""
     for mod in pkgutil.iter_modules():
         # расширяйте условие по мере появления новых пакетов
-        if mod.name in ("test_part", "task24"):
+        if mod.name in ("test_part", "task24", "task19"):
             plugin_module = importlib.import_module(f"{mod.name}.plugin")
             PLUGINS.append(plugin_module.plugin)
     PLUGINS.sort(key=lambda p: p.menu_priority)
