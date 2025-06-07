@@ -30,18 +30,13 @@ pre-commit==3.6.0
 types-requests==2.31.0.10
 types-aiofiles==23.2.0.0
 
-# Core dependencies
-python-telegram-bot==20.7
-aiosqlite==0.19.0
-python-dotenv==1.0.0
-
-# YandexGPT integration
-aiohttp==3.9.1
-pydantic==2.5.3
-
-# Data processing
-pandas==2.1.4
-requests==2.31.0
+python-telegram-bot>=20.0
+aiosqlite>=0.19
+python-dotenv>=1.0
+pandas>=2.0
+requests>=2.31
+aiohttp>=3.8
+pydantic>=2.6
 
 # Optional dependencies
 pymorphy2==0.9.1  # Для лемматизации в task24
