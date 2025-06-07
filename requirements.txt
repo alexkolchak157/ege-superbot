@@ -36,7 +36,7 @@ python-dotenv>=1.0
 pandas>=2.0
 requests>=2.31
 aiohttp>=3.8
-pydantic>=2.6
+pydantic>=1.10.12
 
 # Optional dependencies
 pymorphy2==0.9.1  # Для лемматизации в task24
