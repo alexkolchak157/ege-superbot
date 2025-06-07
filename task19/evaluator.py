@@ -1,5 +1,5 @@
 import logging
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
 from dataclasses import dataclass
 
 # Исправленный импорт базовых классов оценщика
