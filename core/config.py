@@ -12,7 +12,7 @@ if not BOT_TOKEN:
 # ID канала для проверки подписки
 # Для публичных каналов используйте @username
 # Для приватных каналов используйте числовой ID (например, -1001234567890)
-REQUIRED_CHANNEL = "@obshestvonapalcah"  # Убедитесь, что канал существует
+REQUIRED_CHANNEL = os.getenv("REQUIRED_CHANNEL", "@obshestvonapalcah")  # Убедитесь, что канал существует
 
 # Пути к файлам
 QUESTIONS_FILE = os.getenv("QUESTIONS_FILE", "data/questions.json")
