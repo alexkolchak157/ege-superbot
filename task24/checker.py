@@ -25,19 +25,21 @@ class PlanBotData:
         self._load_data(data)
         logger.info("<<< Выход из PlanBotData.__init__")
     
+# Исправленная часть task24/checker.py (строки 27-40)
+# Замените эти методы в классе PlanBotData:
+
     def get_topic_by_index(self, index: int) -> Optional[str]:
-    """Получает название темы по индексу."""
-    return self.topic_index_map.get(index)
+        """Получает название темы по индексу."""
+        return self.topic_index_map.get(index)
 
     def get_available_blocks(self) -> List[str]:
-    """Возвращает список доступных блоков."""
-    return sorted([block for block, topics in self.topics_by_block.items() if topics])
+        """Возвращает список доступных блоков."""
+        return sorted([block for block, topics in self.topics_by_block.items() if topics])
 
     def get_topics_for_pagination(self, block_name: Optional[str] = None) -> List[Tuple[int, str]]:
-    """Получает темы для пагинации (все или по блоку)."""
-    if block_name:
-        return self.topics_by_block.get(block_name, [])
-    else:
+        """Получает темы для пагинации (все или по блоку)."""
+        if block_name:
+            return self.topics_by_block.get(block_name, [])
         return self.topic_list_for_pagination
     
     def _load_data(self, data: Dict[str, Any]):
