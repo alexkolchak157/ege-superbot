@@ -1,6 +1,4 @@
-# Development dependencies
-# Install with: pip install -r requirements-dev.txt
-# Additional development tools
+
 ipython==8.19.0
 jupyterlab==4.0.9
 
