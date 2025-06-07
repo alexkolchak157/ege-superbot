@@ -1,7 +1,8 @@
 import logging
-from typing import Dict, Any, List, Optional
-from core.ai_evaluator import BaseAIEvaluator, TaskRequirements, EvaluationResult
+from typing import List, Optional
+from dataclasses import dataclass
 
+from core.base_ai import BaseAIEvaluator, EvaluationResult, TaskRequirements
 logger = logging.getLogger(__name__)
 
 
