@@ -11,7 +11,6 @@ from core import states
 from core import utils as core_utils
 from .checker import PlanBotData, evaluate_plan, FEEDBACK_KB
 from . import keyboards
-import os
 
 logger = logging.getLogger(__name__)
 
