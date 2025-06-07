@@ -147,41 +147,39 @@ class PlanBotData:
         return result
     
     def _do_lemmatize(self, text: str) -> List[str]:
-        """Выполняет лемматизацию текста с fallback на простую токенизацию."""
-        try:
-            if not self._morph:
+    """Выполняет лемматизацию текста с fallback на простую токенизацию."""
+    try:
+        if not self._morph:
+            try:
+                import pymorphy2
+                self._morph = pymorphy2.MorphAnalyzer()
+                logger.info("pymorphy2 успешно загружен")
+            except ImportError:
+                logger.warning("pymorphy2 не установлен, используется простая токенизация")
+                self._morph = "simple"  # Флаг для простой токенизации
+        
+        if self._morph == "simple":
+            # Простая токенизация без лемматизации
+            words = re.findall(r'\b\w+\b', text.lower())
+            # Убираем слишком короткие слова
+            return [w for w in words if len(w) > 2]
+        else:
+            # Полная лемматизация с pymorphy2
+            words = re.findall(r'\b\w+\b', text.lower())
+            lemmas = []
+            for word in words:
                 try:
-                    import pymorphy2
-                    self._morph = pymorphy2.MorphAnalyzer()
-                    logger.info("pymorphy2 успешно загружен")
-                except ImportError:
-                    logger.warning(
-                        "pymorphy2 не установлен, используется простая токенизация"
-                    )
-                    self._morph = "simple"  # Флаг для простой токенизации
-
-            if self._morph == "simple":
-                # Простая токенизация без лемматизации
-                words = re.findall(r'\b\w+\b', text.lower())
-                # Убираем слишком короткие слова
-                return [w for w in words if len(w) > 2]
-            else:
-                # Полная лемматизация с pymorphy2
-                words = re.findall(r'\b\w+\b', text.lower())
-                lemmas = []
-                for word in words:
-                    try:
-                        parsed = self._morph.parse(word)[0]
-                        lemmas.append(parsed.normal_form)
-                    except Exception as e:
-                        logger.debug(f"Ошибка лемматизации слова '{word}': {e}")
-                        lemmas.append(word)  # Используем исходное слово
-                return lemmas
-
-        except Exception as e:
-            logger.error(f"Критическая ошибка в лемматизации: {e}")
-            # Fallback на простую токенизацию
-            return [w for w in re.findall(r'\b\w+\b', text.lower()) if len(w) > 2]
+                    parsed = self._morph.parse(word)[0]
+                    lemmas.append(parsed.normal_form)
+                except Exception as e:
+                    logger.debug(f"Ошибка лемматизации слова '{word}': {e}")
+                    lemmas.append(word)  # Используем исходное слово
+            return lemmas
+            
+    except Exception as e:
+        logger.error(f"Критическая ошибка в лемматизации: {e}")
+        # Fallback на простую токенизацию
+        return [w for w in re.findall(r'\b\w+\b', text.lower()) if len(w) > 2]
 
 
 # 2) Парсинг и оценка плана:
@@ -1007,6 +1005,42 @@ def _format_evaluation_feedback(k1: int, k2: int, score_explanation: List[str],
         logger.error(f"Критическая ошибка форматирования отзыва: {e}", exc_info=True)
         # Возвращаем минимальный безопасный отзыв
         return f"<b>Оценка:</b> К1={k1}/3, К2={k2}/1\n\n<i>Произошла ошибка при формировании детального отзыва.</i>"
+
+
+def evaluate_plan(
+    user_plan_text: str,
+    ideal_plan_data: dict,
+    bot_data: PlanBotData,
+    topic_name: str
+) -> str:
+    """Базовая проверка плана без использования AI."""
+    parsing_error_message = (
+        "<b>Ошибка разбора плана!</b>\n\n"
+        "Не удалось распознать структуру вашего плана.\n"
+        "Пожалуйста, используйте нумерацию вида '1.', '2)', 'а)', 'б.', '-', '*' для пунктов и подпунктов.\n"
+        "Убедитесь, что каждый пункт и подпункт начинается с новой строки."
+    )
+
+    parsed_user_plan = parse_user_plan(user_plan_text)
+    if not parsed_user_plan and user_plan_text.strip():
+        return parsing_error_message
+    elif not parsed_user_plan:
+        return "Вы прислали пустой план. Пожалуйста, пришлите ваш вариант плана."
+
+    structure_check = _check_plan_structure(parsed_user_plan, ideal_plan_data)
+    content_check = _check_obligatory_points(
+        user_plan_text, parsed_user_plan, ideal_plan_data, bot_data
+    )
+
+    k1, k2, explanation = _calculate_score_ege2025(
+        structure_check, content_check, ideal_plan_data, parsed_user_plan, bot_data
+    )
+
+    feedback_message = _format_evaluation_feedback(
+        k1, k2, explanation, structure_check, content_check, topic_name
+    )
+
+    return feedback_message
 
 
 async def evaluate_plan_with_ai(
