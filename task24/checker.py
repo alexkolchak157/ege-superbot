@@ -147,39 +147,41 @@ class PlanBotData:
         return result
     
     def _do_lemmatize(self, text: str) -> List[str]:
-    """Выполняет лемматизацию текста с fallback на простую токенизацию."""
-    try:
-        if not self._morph:
-            try:
-                import pymorphy2
-                self._morph = pymorphy2.MorphAnalyzer()
-                logger.info("pymorphy2 успешно загружен")
-            except ImportError:
-                logger.warning("pymorphy2 не установлен, используется простая токенизация")
-                self._morph = "simple"  # Флаг для простой токенизации
-        
-        if self._morph == "simple":
-            # Простая токенизация без лемматизации
-            words = re.findall(r'\b\w+\b', text.lower())
-            # Убираем слишком короткие слова
-            return [w for w in words if len(w) > 2]
-        else:
-            # Полная лемматизация с pymorphy2
-            words = re.findall(r'\b\w+\b', text.lower())
-            lemmas = []
-            for word in words:
+        """Выполняет лемматизацию текста с fallback на простую токенизацию."""
+        try:
+            if not self._morph:
                 try:
-                    parsed = self._morph.parse(word)[0]
-                    lemmas.append(parsed.normal_form)
-                except Exception as e:
-                    logger.debug(f"Ошибка лемматизации слова '{word}': {e}")
-                    lemmas.append(word)  # Используем исходное слово
-            return lemmas
-            
-    except Exception as e:
-        logger.error(f"Критическая ошибка в лемматизации: {e}")
-        # Fallback на простую токенизацию
-        return [w for w in re.findall(r'\b\w+\b', text.lower()) if len(w) > 2]
+                    import pymorphy2
+                    self._morph = pymorphy2.MorphAnalyzer()
+                    logger.info("pymorphy2 успешно загружен")
+                except ImportError:
+                    logger.warning(
+                        "pymorphy2 не установлен, используется простая токенизация"
+                    )
+                    self._morph = "simple"  # Флаг для простой токенизации
+
+            if self._morph == "simple":
+                # Простая токенизация без лемматизации
+                words = re.findall(r'\b\w+\b', text.lower())
+                # Убираем слишком короткие слова
+                return [w for w in words if len(w) > 2]
+            else:
+                # Полная лемматизация с pymorphy2
+                words = re.findall(r'\b\w+\b', text.lower())
+                lemmas = []
+                for word in words:
+                    try:
+                        parsed = self._morph.parse(word)[0]
+                        lemmas.append(parsed.normal_form)
+                    except Exception as e:
+                        logger.debug(f"Ошибка лемматизации слова '{word}': {e}")
+                        lemmas.append(word)  # Используем исходное слово
+                return lemmas
+
+        except Exception as e:
+            logger.error(f"Критическая ошибка в лемматизации: {e}")
+            # Fallback на простую токенизацию
+            return [w for w in re.findall(r'\b\w+\b', text.lower()) if len(w) > 2]
 
 
 # 2) Парсинг и оценка плана:

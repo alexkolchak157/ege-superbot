@@ -2,7 +2,12 @@ import logging
 from typing import List, Optional
 from dataclasses import dataclass
 
-from core.base_ai import BaseAIEvaluator, EvaluationResult, TaskRequirements
+# Исправленный импорт базовых классов оценщика
+from core.ai_evaluator import (
+    BaseAIEvaluator,
+    EvaluationResult,
+    TaskRequirements,
+)
 logger = logging.getLogger(__name__)
 
 
