@@ -11,7 +11,7 @@ from telegram.constants import ParseMode
 from telegram.ext import ContextTypes
 
 from core import states
-from .evaluator import Task19AIEvaluator
+from core.ai_evaluator import Task19Evaluator
 
 logger = logging.getLogger(__name__)
 
@@ -20,10 +20,10 @@ task19_data = {}
 
 # Создаем evaluator заранее
 try:
-    evaluator = Task19AIEvaluator()
-    logger.info("Task19 AI evaluator created successfully")
+    evaluator = Task19Evaluator()
+    logger.info("Task19 evaluator created successfully")
 except Exception as e:
-    logger.warning(f"Failed to create AI evaluator: {e}. Will work without AI.")
+    logger.warning(f"Failed to create evaluator: {e}. Will work without AI.")
     evaluator = None
 
 
@@ -136,7 +136,7 @@ async def practice_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode=ParseMode.HTML
     )
     
-    return states.SELECTING_TOPIC
+    return states.CHOOSING_TOPIC
 
 
 async def select_topic(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -181,7 +181,7 @@ async def select_topic(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode=ParseMode.HTML
     )
     
-    return states.WAITING_ANSWER
+    return states.ANSWERING
 
 
 async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):

@@ -1,14 +1,45 @@
+"""AI-оценщик для задания 19."""
+
 import logging
 from typing import List, Optional, Dict, Any
 from dataclasses import dataclass
 
-# Исправленный импорт базовых классов оценщика
-from core.ai_evaluator import (
-    BaseAIEvaluator,
-    EvaluationResult,
-    TaskRequirements,
-)
 logger = logging.getLogger(__name__)
+
+# Безопасный импорт базовых классов
+try:
+    from core.ai_evaluator import (
+        BaseAIEvaluator,
+        EvaluationResult,
+        TaskRequirements,
+    )
+    AI_EVALUATOR_AVAILABLE = True
+except ImportError:
+    logger.warning("AI evaluator base classes not available")
+    AI_EVALUATOR_AVAILABLE = False
+    
+    # Заглушки для работы без AI
+    @dataclass
+    class TaskRequirements:
+        task_number: int
+        task_name: str
+        max_score: int
+        criteria: List[Dict]
+        description: str
+    
+    @dataclass
+    class EvaluationResult:
+        scores: Dict[str, int]
+        total_score: int
+        max_score: int
+        feedback: str
+        detailed_analysis: Optional[Dict] = None
+        suggestions: Optional[List[str]] = None
+        factual_errors: Optional[List[str]] = None
+    
+    class BaseAIEvaluator:
+        def __init__(self, requirements: TaskRequirements):
+            self.requirements = requirements
 
 
 class Task19AIEvaluator(BaseAIEvaluator):
@@ -29,6 +60,16 @@ class Task19AIEvaluator(BaseAIEvaluator):
             description="Приведите три примера, иллюстрирующих..."
         )
         super().__init__(requirements)
+        
+        # Проверяем доступность AI сервиса
+        self.ai_available = False
+        if AI_EVALUATOR_AVAILABLE:
+            try:
+                # Проверяем, что AI сервис инициализирован
+                if hasattr(self, 'ai_service') and self.ai_service:
+                    self.ai_available = True
+            except:
+                pass
     
     def get_system_prompt(self) -> str:
         return """Ты - эксперт ЕГЭ по обществознанию, специализирующийся на проверке задания 19.
@@ -213,20 +254,33 @@ class Task19AIEvaluator(BaseAIEvaluator):
         return result["text"] if result["success"] else ""
     
     def _get_fallback_result(self, answer: str, topic: str) -> EvaluationResult:
-        """Резервный результат при сбое AI"""
+        """Простая оценка без AI"""
+        # Подсчитываем примеры (строки длиннее 20 символов)
+        lines = [line.strip() for line in answer.split('\n') if line.strip()]
+        examples = [line for line in lines if len(line) > 20]
+        examples_count = len(examples)
+        
+        # Простая оценка
+        score = min(examples_count, 3) if examples_count <= 3 else 0
+        
+        feedback = f"Найдено примеров: {examples_count}\n"
+        if examples_count < 3:
+            feedback += "❌ Необходимо привести три примера.\n"
+        elif examples_count == 3:
+            feedback += "✅ Количество примеров соответствует требованиям.\n"
+        else:
+            feedback += "⚠️ Приведено больше трех примеров. Если хотя бы один содержит ошибку, все примеры не засчитываются.\n"
+        
+        suggestions = []
+        if examples_count < 3:
+            suggestions.append("Добавьте больше конкретных примеров")
+        if any(len(ex) < 50 for ex in examples):
+            suggestions.append("Сделайте примеры более развернутыми и конкретными")
+        
         return EvaluationResult(
-            scores={"Правильность примеров": 1},
-            total_score=1,
+            scores={"Правильность примеров": score},
+            total_score=score,
             max_score=3,
-            feedback="Не удалось полностью проверить ответ. Рекомендуется дополнительная проверка преподавателем.",
-            detailed_analysis={
-                "error": "AI evaluation failed",
-                "answer_length": len(answer)
-            },
-            suggestions=[
-                "Убедитесь, что каждый пример развёрнут и конкретен",
-                "Проверьте соответствие примеров заданию",
-                "Избегайте общих фраз - приводите конкретные ситуации"
-            ],
-            factual_errors=[]
+            feedback=feedback,
+            suggestions=suggestions
         )

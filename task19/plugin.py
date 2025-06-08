@@ -98,12 +98,12 @@ class Task19Plugin(BotPlugin):
                         CallbackQueryHandler(handlers.bank_navigation, pattern=r"^t19_bank_next:"),
                         CallbackQueryHandler(handlers.noop, pattern="^noop$"),
                     ],
-                    states.SELECTING_TOPIC: [
+                    states.CHOOSING_TOPIC: [  # Изменено с SELECTING_TOPIC
                         CallbackQueryHandler(handlers.select_topic, pattern=r"^t19_topic:"),
                         CallbackQueryHandler(handlers.select_topic, pattern="^t19_random$"),
                         CallbackQueryHandler(handlers.return_to_menu, pattern="^t19_menu$"),
                     ],
-                    states.WAITING_ANSWER: [
+                    states.ANSWERING: [  # Изменено с WAITING_ANSWER
                         MessageHandler(filters.TEXT & ~filters.COMMAND, handlers.handle_answer),
                         CallbackQueryHandler(handlers.practice_mode, pattern="^t19_practice$"),
                     ],
