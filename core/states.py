@@ -10,7 +10,11 @@ ANSWERING = 6            # Ответ на вопрос
 CHOOSING_NEXT_ACTION = 7  # После ответа
 REVIEWING_MISTAKES = 8    # Работа над ошибками
 
+# Состояния для task19
+SELECTING_TOPIC = 10     # Выбор темы для task19
+WAITING_ANSWER = 11      # Ожидание ответа для task19
+
 # Состояния для task24
 AWAITING_PLAN = 20       # Ожидание плана от пользователя
 SHOWING_PLAN = 21        # Показ эталонного плана
-AWAITING_SEARCH = 22  # Ожидание поискового запроса
+AWAITING_SEARCH = 22     # Ожидание поискового запроса
