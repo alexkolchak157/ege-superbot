@@ -63,6 +63,8 @@ class Task19Plugin(BotPlugin):
                 ],
                 states.CHOOSING_BLOCK: [
                     CallbackQueryHandler(handlers.block_menu, pattern=r"^t19_block:"),
+                    CallbackQueryHandler(handlers.random_topic_block, pattern="^t19_random_block$"),
+                    CallbackQueryHandler(handlers.list_topics, pattern="^t19_list_topics$"),
                     CallbackQueryHandler(handlers.practice_mode, pattern="^t19_practice$"),
                     CallbackQueryHandler(handlers.return_to_menu, pattern="^t19_menu$"),
                     CallbackQueryHandler(handlers.select_block, pattern="^t19_select_block$"),

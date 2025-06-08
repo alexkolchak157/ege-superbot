@@ -4,7 +4,7 @@ import logging
 import os
 import json
 import random
-from typing import Optional, Dict
+from typing import Optional, Dict, List
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.constants import ParseMode
@@ -24,22 +24,36 @@ try:
     logger.info("Task19 evaluator created successfully")
 except Exception as e:
     logger.warning(f"Failed to create evaluator: {e}. Will work without AI.")
-    evaluator = None
+evaluator = None
 
 
 async def init_task19_data():
     """Инициализация данных для задания 19."""
     global task19_data
-    
+
     data_file = os.path.join(os.path.dirname(__file__), "task19_topics.json")
-    
+
     try:
-        with open(data_file, 'r', encoding='utf-8') as f:
-            task19_data = json.load(f)
-        logger.info(f"Loaded {len(task19_data.get('topics', []))} topics for task19")
+        with open(data_file, "r", encoding="utf-8") as f:
+            raw = json.load(f)
+
+        # Преобразуем данные: собираем все темы в единый список
+        all_topics = []
+        topic_by_id: Dict[int, Dict] = {}
+        for block_name, block in raw.get("blocks", {}).items():
+            for topic in block.get("topics", []):
+                topic["block"] = block_name
+                all_topics.append(topic)
+                topic_by_id[topic["id"]] = topic
+
+        raw["topics"] = all_topics
+        raw["topic_by_id"] = topic_by_id
+
+        task19_data = raw
+        logger.info(f"Loaded {len(all_topics)} topics for task19")
     except Exception as e:
         logger.error(f"Failed to load task19 data: {e}")
-        task19_data = {"topics": []}
+        task19_data = {"topics": [], "blocks": {}}
 
 
 async def entry_from_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -67,8 +81,23 @@ async def entry_from_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=kb,
         parse_mode=ParseMode.HTML
     )
-    
+
     return states.CHOOSING_MODE
+
+
+def _build_topic_message(topic: Dict) -> str:
+    """Формирует текст сообщения с заданием по теме."""
+    return (
+        "📝 <b>Задание 19</b>\n\n"
+        f"<b>Тема:</b> {topic['title']}\n\n"
+        f"<b>Задание:</b> {topic['task_text']}\n\n"
+        "<b>Требования:</b>\n"
+        "• Приведите три примера\n"
+        "• Каждый пример должен быть конкретным\n"
+        "• Избегайте абстрактных формулировок\n"
+        "• Указывайте детали (имена, даты, места)\n\n"
+        "💡 <i>Отправьте ваш ответ одним сообщением</i>"
+    )
 
 
 async def cmd_task19(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -102,40 +131,201 @@ async def practice_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     
-    if not task19_data.get('topics'):
+    if not task19_data.get("topics"):
         await query.edit_message_text(
             "❌ Данные заданий не загружены. Попробуйте позже.",
-            reply_markup=InlineKeyboardMarkup([[
-                InlineKeyboardButton("⬅️ Назад", callback_data="t19_menu")
-            ]])
+            reply_markup=InlineKeyboardMarkup(
+                [[InlineKeyboardButton("⬅️ Назад", callback_data="t19_menu")]]
+            ),
         )
         return states.CHOOSING_MODE
-    
-    # Показываем список тем
-    text = "📚 <b>Выберите тему для практики:</b>\n\n"
-    
-    kb_buttons = []
-    for i, topic in enumerate(task19_data['topics']):
-        kb_buttons.append([InlineKeyboardButton(
-            f"{i+1}. {topic['title']}",
-            callback_data=f"t19_topic:{topic['id']}"
-        )])
-    
-    kb_buttons.append([InlineKeyboardButton(
-        "🎲 Случайная тема",
-        callback_data="t19_random"
-    )])
-    kb_buttons.append([InlineKeyboardButton(
-        "⬅️ Назад",
-        callback_data="t19_menu"
-    )])
-    
+
+    text = (
+        "🎯 <b>Режим практики</b>\n\n"
+        "Как вы хотите выбрать тему?"
+    )
+
+    kb_buttons = [
+        [InlineKeyboardButton("📚 По блокам", callback_data="t19_select_block")],
+        [InlineKeyboardButton("🗂️ Все темы списком", callback_data="t19_list_topics")],
+        [InlineKeyboardButton("🎲 Случайная тема", callback_data="t19_random_all")],
+        [InlineKeyboardButton("⬅️ Назад", callback_data="t19_menu")],
+    ]
+
     await query.edit_message_text(
         text,
         reply_markup=InlineKeyboardMarkup(kb_buttons),
-        parse_mode=ParseMode.HTML
+        parse_mode=ParseMode.HTML,
     )
-    
+
+    return states.CHOOSING_MODE
+
+
+async def select_block(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Выбор блока тем."""
+    query = update.callback_query
+    await query.answer()
+
+    blocks = task19_data.get("blocks", {})
+    if not blocks:
+        await query.edit_message_text("❌ Блоки не найдены")
+        return states.CHOOSING_MODE
+
+    kb = [
+        [InlineKeyboardButton(f"📁 {name}", callback_data=f"t19_block:{name}")]
+        for name in blocks.keys()
+    ]
+    kb.append([InlineKeyboardButton("⬅️ Назад", callback_data="t19_practice")])
+
+    await query.edit_message_text(
+        "📚 <b>Выберите блок тем:</b>",
+        reply_markup=InlineKeyboardMarkup(kb),
+        parse_mode=ParseMode.HTML,
+    )
+    return states.CHOOSING_BLOCK
+
+
+async def block_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Меню внутри выбранного блока."""
+    query = update.callback_query
+    await query.answer()
+
+    block_name = query.data.split(":", 1)[1]
+    context.user_data["selected_block"] = block_name
+
+    kb = [
+        [InlineKeyboardButton("📋 Список тем", callback_data="t19_list_topics")],
+        [InlineKeyboardButton("🎲 Случайная тема", callback_data="t19_random_block")],
+        [InlineKeyboardButton("⬅️ Другой блок", callback_data="t19_select_block")],
+        [InlineKeyboardButton("🔙 Назад", callback_data="t19_practice")],
+    ]
+
+    await query.edit_message_text(
+        f"📁 <b>{block_name}</b>\nВыберите действие:",
+        reply_markup=InlineKeyboardMarkup(kb),
+        parse_mode=ParseMode.HTML,
+    )
+    return states.CHOOSING_BLOCK
+
+
+async def random_topic_all(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Случайная тема из всех блоков."""
+    query = update.callback_query
+    await query.answer()
+
+    topics: List[Dict] = task19_data.get("topics", [])
+    if not topics:
+        await query.answer("Темы не найдены", show_alert=True)
+        return states.CHOOSING_MODE
+
+    topic = random.choice(topics)
+
+    text = _build_topic_message(topic)
+    kb = InlineKeyboardMarkup(
+        [[InlineKeyboardButton("⬅️ Другая тема", callback_data="t19_practice")]]
+    )
+    context.user_data["current_topic"] = topic
+    await query.edit_message_text(text, reply_markup=kb, parse_mode=ParseMode.HTML)
+
+    return states.ANSWERING
+
+
+async def random_topic_block(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Случайная тема из выбранного блока."""
+    query = update.callback_query
+    await query.answer()
+
+    block_name = context.user_data.get("selected_block")
+    if not block_name:
+        await query.answer("Блок не выбран", show_alert=True)
+        return states.CHOOSING_MODE
+
+    topics = [t for t in task19_data.get("topics", []) if t.get("block") == block_name]
+    if not topics:
+        await query.answer("Темы в блоке не найдены", show_alert=True)
+        return states.CHOOSING_BLOCK
+
+    topic = random.choice(topics)
+    text = _build_topic_message(topic)
+    kb = InlineKeyboardMarkup(
+        [[InlineKeyboardButton("⬅️ Другая тема", callback_data=f"t19_block:{block_name}")]]
+    )
+    context.user_data["current_topic"] = topic
+    await query.edit_message_text(text, reply_markup=kb, parse_mode=ParseMode.HTML)
+
+    return states.ANSWERING
+
+
+async def list_topics(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Показывает список тем (с пагинацией)."""
+    query = update.callback_query
+    await query.answer()
+
+    page = 0
+    if query.data.startswith("t19_list_topics:page:"):
+        try:
+            page = int(query.data.split(":")[2])
+        except ValueError:
+            page = 0
+
+    block_name = context.user_data.get("selected_block")
+
+    topics = (
+        [t for t in task19_data.get("topics", []) if t.get("block") == block_name]
+        if block_name
+        else task19_data.get("topics", [])
+    )
+
+    if not topics:
+        await query.edit_message_text("❌ Темы не найдены")
+        return states.CHOOSING_MODE
+
+    ITEMS_PER_PAGE = 8
+    total_pages = (len(topics) + ITEMS_PER_PAGE - 1) // ITEMS_PER_PAGE
+    page = max(0, min(page, total_pages - 1))
+
+    start = page * ITEMS_PER_PAGE
+    end = start + ITEMS_PER_PAGE
+
+    kb_rows = [
+        [
+            InlineKeyboardButton(t["title"], callback_data=f"t19_topic:{t['id']}")
+        ]
+        for t in topics[start:end]
+    ]
+
+    nav = []
+    if page > 0:
+        nav.append(
+            InlineKeyboardButton(
+                "⬅️", callback_data=f"t19_list_topics:page:{page-1}"
+            )
+        )
+    nav.append(InlineKeyboardButton(f"{page+1}/{total_pages}", callback_data="noop"))
+    if page < total_pages - 1:
+        nav.append(
+            InlineKeyboardButton(
+                "➡️", callback_data=f"t19_list_topics:page:{page+1}"
+            )
+        )
+    if nav:
+        kb_rows.append(nav)
+
+    if block_name:
+        kb_rows.append([InlineKeyboardButton("⬅️ К блоку", callback_data=f"t19_block:{block_name}")])
+    else:
+        kb_rows.append([InlineKeyboardButton("⬅️ Назад", callback_data="t19_practice")])
+
+    text = "📚 <b>Выберите тему:</b>"
+    if block_name:
+        text += f"\n<b>Блок:</b> {block_name}"
+
+    await query.edit_message_text(
+        text,
+        reply_markup=InlineKeyboardMarkup(kb_rows),
+        parse_mode=ParseMode.HTML,
+    )
+
     return states.CHOOSING_TOPIC
 
 
