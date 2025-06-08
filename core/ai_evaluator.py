@@ -169,43 +169,43 @@ class Task19Evaluator(BaseAIEvaluator):
     "suggestions": ["список рекомендаций"]
 }}"""
 
-        result = await self.ai_service.get_json_completion(
-            evaluation_prompt,
-            system_prompt=self.get_system_prompt(),
-            temperature=0.2
-        )
-        
-        if not result:
-            # Fallback оценка
-            return EvaluationResult(
-                scores={"К1": 1},
-                total_score=1,
-                max_score=3,
-                feedback="Не удалось полностью проверить ответ. Требуется проверка преподавателем.",
-                detailed_analysis={},
-                suggestions=[],
-                factual_errors=[]
+        async with self.ai_service:
+            result = await self.ai_service.get_json_completion(
+                evaluation_prompt,
+                system_prompt=self.get_system_prompt(),
+                temperature=0.2
             )
-        
-        # Проверка фактических ошибок
-        factual_errors = await self.check_factual_accuracy(answer, topic)
-        
-        # Генерация обратной связи
-        feedback = await self.generate_feedback(
-            answer,
-            {"К1": result.get("score", 0)},
-            result.get("main_issues", [])
-        )
-        
-        return EvaluationResult(
-            scores={"К1": result.get("score", 0)},
-            total_score=result.get("score", 0),
-            max_score=3,
-            feedback=feedback,
-            detailed_analysis=result,
-            suggestions=result.get("suggestions", []),
-            factual_errors=factual_errors
-        )
+
+            if not result:
+                # Fallback оценка
+                return EvaluationResult(
+                    scores={"К1": 1},
+                    total_score=1,
+                    max_score=3,
+                    feedback="Не удалось полностью проверить ответ. Требуется проверка преподавателем.",
+                    detailed_analysis={},
+                    suggestions=[],
+                    factual_errors=[]
+                )
+
+            # Проверка фактических ошибок
+            factual_errors = await self.check_factual_accuracy(answer, topic)
+
+            # Генерация обратной связи
+            feedback = await self.generate_feedback(
+                answer,
+                {"К1": result.get("score", 0)},
+                result.get("main_issues", [])
+            )
+            return EvaluationResult(
+                scores={"К1": result.get("score", 0)},
+                total_score=result.get("score", 0),
+                max_score=3,
+                feedback=feedback,
+                detailed_analysis=result,
+                suggestions=result.get("suggestions", []),
+                factual_errors=factual_errors
+            )
 
 
 # Задание 20: Формулирование суждений
@@ -264,31 +264,32 @@ class Task20Evaluator(BaseAIEvaluator):
     "suggestions": ["рекомендации"]
 }}"""
 
-        result = await self.ai_service.get_json_completion(
-            evaluation_prompt,
-            system_prompt=self.get_system_prompt(),
-            temperature=0.2
-        )
-        
-        if not result:
-            return self._get_fallback_result()
-        
-        factual_errors = await self.check_factual_accuracy(answer, topic)
-        feedback = await self.generate_feedback(
-            answer,
-            {"К1": result.get("score", 0)},
-            result.get("main_issues", [])
-        )
-        
-        return EvaluationResult(
-            scores={"К1": result.get("score", 0)},
-            total_score=result.get("score", 0),
-            max_score=3,
-            feedback=feedback,
-            detailed_analysis=result,
-            suggestions=result.get("suggestions", []),
-            factual_errors=factual_errors
-        )
+        async with self.ai_service:
+            result = await self.ai_service.get_json_completion(
+                evaluation_prompt,
+                system_prompt=self.get_system_prompt(),
+                temperature=0.2
+            )
+
+            if not result:
+                return self._get_fallback_result()
+
+            factual_errors = await self.check_factual_accuracy(answer, topic)
+            feedback = await self.generate_feedback(
+                answer,
+                {"К1": result.get("score", 0)},
+                result.get("main_issues", [])
+            )
+
+            return EvaluationResult(
+                scores={"К1": result.get("score", 0)},
+                total_score=result.get("score", 0),
+                max_score=3,
+                feedback=feedback,
+                detailed_analysis=result,
+                suggestions=result.get("suggestions", []),
+                factual_errors=factual_errors
+            )
     
     def _get_fallback_result(self) -> EvaluationResult:
         return EvaluationResult(
@@ -382,32 +383,33 @@ class Task25Evaluator(BaseAIEvaluator):
     "suggestions": ["рекомендации"]
 }}"""
 
-        result = await self.ai_service.get_json_completion(
-            evaluation_prompt,
-            system_prompt=self.get_system_prompt(),
-            temperature=0.2
-        )
-        
-        if not result:
-            return self._get_fallback_result()
-        
-        scores = {
-            "К1": result.get("k1_score", 0),
-            "К2": result.get("k2_score", 0)
-        }
-        
-        factual_errors = await self.check_factual_accuracy(answer, topic)
-        feedback = await self.generate_feedback(answer, scores, result.get("main_issues", []))
-        
-        return EvaluationResult(
-            scores=scores,
-            total_score=result.get("total_score", 0),
-            max_score=6,
-            feedback=feedback,
-            detailed_analysis=result,
-            suggestions=result.get("suggestions", []),
-            factual_errors=factual_errors
-        )
+        async with self.ai_service:
+            result = await self.ai_service.get_json_completion(
+                evaluation_prompt,
+                system_prompt=self.get_system_prompt(),
+                temperature=0.2
+            )
+
+            if not result:
+                return self._get_fallback_result()
+
+            scores = {
+                "К1": result.get("k1_score", 0),
+                "К2": result.get("k2_score", 0)
+            }
+
+            factual_errors = await self.check_factual_accuracy(answer, topic)
+            feedback = await self.generate_feedback(answer, scores, result.get("main_issues", []))
+
+            return EvaluationResult(
+                scores=scores,
+                total_score=result.get("total_score", 0),
+                max_score=6,
+                feedback=feedback,
+                detailed_analysis=result,
+                suggestions=result.get("suggestions", []),
+                factual_errors=factual_errors
+            )
     
     def _get_fallback_result(self) -> EvaluationResult:
         return EvaluationResult(
