@@ -34,7 +34,51 @@ class Task19Plugin(BotPlugin):
             pattern=f"^choose_{self.code}$"
         )
     
+    def register(self, app):
+        """Регистрация обработчиков в приложении."""
+        conv_handler = ConversationHandler(
+            entry_points=[
+                CallbackQueryHandler(
+                    handlers.entry_from_menu,
+                    pattern=f"^choose_{self.code}$"
+                ),
+                CommandHandler("task19", handlers.cmd_task19),
+            ],
+            states={
+                states.CHOOSING_MODE: [
+                    CallbackQueryHandler(handlers.practice_mode, pattern="^t19_practice$"),
+                    CallbackQueryHandler(handlers.theory_mode, pattern="^t19_theory$"),
+                    CallbackQueryHandler(handlers.examples_bank, pattern="^t19_examples$"),
+                    CallbackQueryHandler(handlers.my_progress, pattern="^t19_progress$"),
+                    CallbackQueryHandler(handlers.back_to_main_menu, pattern="^to_main_menu$"),
+                    CallbackQueryHandler(handlers.bank_navigation, pattern=r"^t19_bank_next:"),
+                    CallbackQueryHandler(handlers.noop, pattern="^noop$"),
+                ],
+                states.SELECTING_TOPIC: [
+                    CallbackQueryHandler(handlers.select_topic, pattern=r"^t19_topic:"),
+                    CallbackQueryHandler(handlers.select_topic, pattern="^t19_random$"),
+                    CallbackQueryHandler(handlers.return_to_menu, pattern="^t19_menu$"),
+                ],
+                states.WAITING_ANSWER: [
+                    MessageHandler(filters.TEXT & ~filters.COMMAND, handlers.handle_answer),
+                    CallbackQueryHandler(handlers.practice_mode, pattern="^t19_practice$"),
+                ],
+            },
+            fallbacks=[
+                CommandHandler("cancel", handlers.cmd_cancel),
+                CallbackQueryHandler(handlers.return_to_menu, pattern="^t19_menu$"),
+                CallbackQueryHandler(handlers.back_to_main_menu, pattern="^to_main_menu$"),
+            ],
+            name="task19_conversation",
+            persistent=False,
+        )
+        
+        # Регистрируем обработчики в приложении
+        app.add_handler(conv_handler)
+        logger.info(f"Registered handlers for {self.title} plugin")
+    
     def get_handlers(self):
+        """Старый метод для совместимости."""
         return [
             ConversationHandler(
                 entry_points=[
