@@ -155,35 +155,36 @@ class Task19AIEvaluator(BaseAIEvaluator):
     "suggestions": ["конкретные рекомендации"]
 }}"""
 
-        result = await self.ai_service.get_json_completion(
-            evaluation_prompt,
-            system_prompt=self.get_system_prompt(),
-            temperature=0.2
-        )
-        
-        if not result:
-            return self._get_fallback_result(answer, topic)
-        
-        # Определение финального балла с учётом правил ЕГЭ 2025
-        score = self._calculate_final_score(result)
-        
-        # Проверка фактических ошибок
-        factual_errors = await self.check_factual_accuracy(answer, topic)
-        
-        # Генерация персонализированной обратной связи
-        feedback = await self._generate_task19_feedback(
-            answer, score, result, topic
-        )
-        
-        return EvaluationResult(
-            scores={"Правильность примеров": score},
-            total_score=score,
-            max_score=3,
-            feedback=feedback,
-            detailed_analysis=result,
-            suggestions=result.get("suggestions", []),
-            factual_errors=factual_errors
-        )
+        async with self.ai_service:
+            result = await self.ai_service.get_json_completion(
+                evaluation_prompt,
+                system_prompt=self.get_system_prompt(),
+                temperature=0.2
+            )
+
+            if not result:
+                return self._get_fallback_result(answer, topic)
+
+            # Определение финального балла с учётом правил ЕГЭ 2025
+            score = self._calculate_final_score(result)
+
+            # Проверка фактических ошибок
+            factual_errors = await self.check_factual_accuracy(answer, topic)
+
+            # Генерация персонализированной обратной связи
+            feedback = await self._generate_task19_feedback(
+                answer, score, result, topic
+            )
+
+            return EvaluationResult(
+                scores={"Правильность примеров": score},
+                total_score=score,
+                max_score=3,
+                feedback=feedback,
+                detailed_analysis=result,
+                suggestions=result.get("suggestions", []),
+                factual_errors=factual_errors
+            )
     
     def _calculate_final_score(self, analysis: Dict[str, Any]) -> int:
         """Расчёт финального балла с учётом правил ЕГЭ 2025"""
@@ -245,13 +246,14 @@ class Task19AIEvaluator(BaseAIEvaluator):
 
 НЕ повторяй баллы и оценки - они уже показаны."""
         
-        result = await self.ai_service.get_completion(
-            prompt,
-            system_prompt=system_prompt,
-            temperature=0.7
-        )
-        
-        return result["text"] if result["success"] else ""
+        async with self.ai_service:
+            result = await self.ai_service.get_completion(
+                prompt,
+                system_prompt=system_prompt,
+                temperature=0.7
+            )
+
+            return result["text"] if result["success"] else ""
     
     def _get_fallback_result(self, answer: str, topic: str) -> EvaluationResult:
         """Простая оценка без AI"""

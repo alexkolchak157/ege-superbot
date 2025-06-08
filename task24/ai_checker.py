@@ -55,22 +55,23 @@ class PlanAIChecker:
 - Корректность обществоведческих терминов
 - Наличие фактических ошибок"""
 
-        result = await self.ai_service.get_json_completion(
-            prompt,
-            system_prompt=system_prompt,
-            temperature=0.2
-        )
-        
-        if not result:
-            logger.error("Не удалось получить ответ от AI")
-            return {
-                "is_relevant": True,  # По умолчанию считаем релевантным
-                "confidence": 0.5,
-                "issues": [],
-                "suggestions": []
-            }
-        
-        return result
+        async with self.ai_service:
+            result = await self.ai_service.get_json_completion(
+                prompt,
+                system_prompt=system_prompt,
+                temperature=0.2
+            )
+
+            if not result:
+                logger.error("Не удалось получить ответ от AI")
+                return {
+                    "is_relevant": True,  # По умолчанию считаем релевантным
+                    "confidence": 0.5,
+                    "issues": [],
+                    "suggestions": []
+                }
+
+            return result
     
     async def check_subpoints_quality(
         self,
@@ -108,22 +109,23 @@ class PlanAIChecker:
 - Анализ каждого подпункта (subpoint_analysis: список)
 - Предложения по улучшению (improvement_suggestions: список строк)"""
 
-        result = await self.ai_service.get_json_completion(
-            prompt,
-            system_prompt=system_prompt,
-            temperature=0.2
-        )
-        
-        if not result:
-            # Возвращаем нейтральную оценку
-            return {
-                "relevant_count": len(subpoints),
-                "total_quality_score": 0.7,
-                "subpoint_analysis": [],
-                "improvement_suggestions": []
-            }
-        
-        return result
+        async with self.ai_service:
+            result = await self.ai_service.get_json_completion(
+                prompt,
+                system_prompt=system_prompt,
+                temperature=0.2
+            )
+
+            if not result:
+                # Возвращаем нейтральную оценку
+                return {
+                    "relevant_count": len(subpoints),
+                    "total_quality_score": 0.7,
+                    "subpoint_analysis": [],
+                    "improvement_suggestions": []
+                }
+
+            return result
     
     async def generate_personalized_feedback(
         self,
@@ -159,16 +161,17 @@ class PlanAIChecker:
 
 Не повторяй оценки и баллы - они уже показаны ученику."""
 
-        result = await self.ai_service.get_completion(
-            prompt,
-            system_prompt=system_prompt,
-            temperature=0.7  # Больше креативности для feedback
-        )
-        
-        if result["success"]:
-            return result["text"]
-        else:
-            return ""
+        async with self.ai_service:
+            result = await self.ai_service.get_completion(
+                prompt,
+                system_prompt=system_prompt,
+                temperature=0.7  # Больше креативности для feedback
+            )
+
+            if result["success"]:
+                return result["text"]
+            else:
+                return ""
     
     async def check_factual_errors(
         self,
@@ -201,16 +204,17 @@ class PlanAIChecker:
 - Фактические неточности
 - Логические противоречия"""
 
-        result = await self.ai_service.get_json_completion(
-            prompt,
-            system_prompt=system_prompt,
-            temperature=0.1  # Минимальная температура для точности
-        )
-        
-        if not result or not isinstance(result, list):
-            return []
-        
-        return result
+        async with self.ai_service:
+            result = await self.ai_service.get_json_completion(
+                prompt,
+                system_prompt=system_prompt,
+                temperature=0.1  # Минимальная температура для точности
+            )
+
+            if not result or not isinstance(result, list):
+                return []
+
+            return result
     
     def _format_etalon_points(self, points: List[Dict[str, Any]]) -> str:
         """Форматирование эталонных пунктов для промпта"""
