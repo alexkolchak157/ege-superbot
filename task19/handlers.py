@@ -11,7 +11,7 @@ from telegram.constants import ParseMode
 from telegram.ext import ContextTypes
 
 from core import states
-from core.ai_evaluator import Task19Evaluator
+from core.ai_evaluator import Task19Evaluator, EvaluationResult
 
 logger = logging.getLogger(__name__)
 
@@ -392,21 +392,33 @@ async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
     thinking_msg = await update.message.reply_text(
         "🤔 Анализирую ваш ответ..."
     )
-    
+
+    result: Optional[EvaluationResult] = None
+
     try:
         # Проверяем наличие evaluator
         if not evaluator:
             # Простая проверка без AI
             examples_count = len([line for line in user_answer.split('\n') if line.strip()])
+            score = min(examples_count, 3) if examples_count <= 3 else 0
+            result = EvaluationResult(
+                scores={"К1": score},
+                total_score=score,
+                max_score=3,
+                feedback="",
+                detailed_analysis={},
+                suggestions=[],
+                factual_errors=[],
+            )
             feedback = f"📊 <b>Результаты проверки</b>\n\n"
             feedback += f"<b>Тема:</b> {topic['title']}\n"
             feedback += f"<b>Примеров найдено:</b> {examples_count}\n\n"
-            
+
             if examples_count >= 3:
                 feedback += "✅ Вы привели достаточное количество примеров.\n"
             else:
                 feedback += "❌ Необходимо привести три примера.\n"
-            
+
             feedback += "\n⚠️ <i>AI-проверка недоступна. Обратитесь к преподавателю для детальной оценки.</i>"
         else:
             # AI-проверка
