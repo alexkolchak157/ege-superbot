@@ -55,6 +55,7 @@ class Task19Plugin(BotPlugin):
                     CallbackQueryHandler(handlers.noop, pattern="^noop$"),
                     # Обработчики для выбора тем
                     CallbackQueryHandler(handlers.select_block, pattern="^t19_select_block$"),
+                    CallbackQueryHandler(handlers.handle_result_action, pattern="^t19_(new_topic|retry)$"),
                     CallbackQueryHandler(handlers.random_topic_all, pattern="^t19_random_all$"),
                     CallbackQueryHandler(handlers.random_topic_block, pattern="^t19_random_block$"),
                     CallbackQueryHandler(handlers.list_topics, pattern="^t19_list_topics$"),
