@@ -93,36 +93,52 @@ async def apply_strictness(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def delete_previous_messages(context: ContextTypes.DEFAULT_TYPE, chat_id: int, keep_message_id: Optional[int] = None):
-    """Удаляет предыдущие сообщения диалога."""
+    """Удаляет предыдущие сообщения диалога (включая сообщения пользователя)."""
     if not hasattr(context, 'bot') or not context.bot:
         logger.warning("Bot instance not available for message deletion")
         return
     
     # Список ключей с ID сообщений для удаления
     message_keys = [
-        'task19_question_msg_id',
-        'task19_answer_msg_id', 
-        'task19_result_msg_id'
+        'task19_question_msg_id',   # Сообщение с заданием
+        'task19_answer_msg_id',     # Сообщение пользователя с ответом
+        'task19_result_msg_id',     # Сообщение с результатом проверки
+        'task19_thinking_msg_id'    # Сообщение "Анализирую..."
     ]
     
     messages_to_delete = []
+    deleted_count = 0
     
+    # Собираем ID сообщений для удаления
     for key in message_keys:
         msg_id = context.user_data.get(key)
         if msg_id and msg_id != keep_message_id:
-            messages_to_delete.append(msg_id)
+            messages_to_delete.append((key, msg_id))
+    
+    # Добавляем дополнительные сообщения (если есть)
+    extra_messages = context.user_data.get('task19_extra_messages', [])
+    for msg_id in extra_messages:
+        if msg_id and msg_id != keep_message_id:
+            messages_to_delete.append(('extra', msg_id))
     
     # Удаляем сообщения
-    for msg_id in messages_to_delete:
+    for key, msg_id in messages_to_delete:
         try:
             await context.bot.delete_message(chat_id=chat_id, message_id=msg_id)
-            logger.debug(f"Deleted message {msg_id}")
+            deleted_count += 1
+            logger.debug(f"Deleted {key}: {msg_id}")
         except Exception as e:
-            logger.debug(f"Failed to delete message {msg_id}: {e}")
+            logger.debug(f"Failed to delete {key} {msg_id}: {e}")
     
-    # Очищаем контекст
+    # Очищаем контекст (кроме keep_message_id если оно есть в контексте)
     for key in message_keys:
-        context.user_data.pop(key, None)
+        if context.user_data.get(key) != keep_message_id:
+            context.user_data.pop(key, None)
+    
+    # Очищаем список дополнительных сообщений
+    context.user_data['task19_extra_messages'] = []
+    
+    logger.info(f"Task19: Deleted {deleted_count}/{len(messages_to_delete)} messages")
 
 async def init_task19_data():
     """Инициализация данных для задания 19."""
@@ -221,6 +237,7 @@ async def cmd_task19(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     
     return states.CHOOSING_MODE
+
 
 
 async def practice_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -478,6 +495,9 @@ async def choose_topic(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     
+    # Удаляем все предыдущие сообщения перед показом нового задания
+    await delete_previous_messages(context, query.message.chat_id)
+    
     if query.data == "t19_random":
         topic = random.choice(task19_data['topics'])
     else:
@@ -485,7 +505,12 @@ async def choose_topic(update: Update, context: ContextTypes.DEFAULT_TYPE):
         topic = next((t for t in task19_data['topics'] if t['id'] == topic_id), None)
     
     if not topic:
-        await query.edit_message_text("❌ Тема не найдена")
+        await query.message.chat.send_message(
+            "❌ Тема не найдена",
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("⬅️ Назад", callback_data="t19_practice")
+            ]])
+        )
         return states.CHOOSING_MODE
     
     # Сохраняем текущую тему
@@ -509,16 +534,16 @@ async def choose_topic(update: Update, context: ContextTypes.DEFAULT_TYPE):
         InlineKeyboardButton("⬅️ Выбрать другую тему", callback_data="t19_practice")
     ]])
     
-    await query.edit_message_text(
+    # Отправляем новое сообщение
+    sent_msg = await query.message.chat.send_message(
         text,
         reply_markup=kb,
         parse_mode=ParseMode.HTML
     )
     
     # Сохраняем ID сообщения с заданием
-    context.user_data['task19_question_msg_id'] = query.message.message_id
+    context.user_data['task19_question_msg_id'] = sent_msg.message_id
     
-    return states.ANSWERING
     return states.ANSWERING
 
 async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -526,7 +551,7 @@ async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_answer = update.message.text
     topic = context.user_data.get('current_topic')
     
-    # Сохраняем ID сообщения с ответом
+    # Сохраняем ID сообщения с ответом пользователя
     context.user_data['task19_answer_msg_id'] = update.message.message_id
     
     if not topic:
@@ -543,9 +568,9 @@ async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "🤔 Анализирую ваш ответ..."
     )
     
-    # Удаляем предыдущие сообщения (кроме thinking_msg)
-    await delete_previous_messages(context, update.effective_chat.id, thinking_msg.message_id)
-
+    # Сохраняем ID сообщения "Анализирую..."
+    context.user_data['task19_thinking_msg_id'] = thinking_msg.message_id
+    
     result: Optional[EvaluationResult] = None
 
     try:
@@ -605,20 +630,34 @@ async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
             'max_score': result.max_score
         })
         
-        # Кнопки
+        # Кнопки для действий после проверки
         kb = InlineKeyboardMarkup([
             [
-                InlineKeyboardButton("🔄 Другая тема", callback_data="t19_practice"),
-                InlineKeyboardButton("📋 Меню", callback_data="t19_menu")
+                InlineKeyboardButton("🔄 Новое задание", callback_data="t19_new_topic"),
+                InlineKeyboardButton("🔁 Попробовать снова", callback_data="t19_retry")
+            ],
+            [
+                InlineKeyboardButton("📋 К заданиям", callback_data="t19_menu"),
+                InlineKeyboardButton("📊 Мой прогресс", callback_data="t19_progress")
             ],
             [InlineKeyboardButton("🏠 Главное меню", callback_data="to_main_menu")]
         ])
         
-        await thinking_msg.edit_text(
+        # Удаляем сообщение "Анализирую..."
+        try:
+            await thinking_msg.delete()
+        except Exception as e:
+            logger.debug(f"Failed to delete thinking message: {e}")
+        
+        # Отправляем результат
+        result_msg = await update.message.reply_text(
             feedback,
             reply_markup=kb,
             parse_mode=ParseMode.HTML
         )
+        
+        # Сохраняем ID сообщения с результатом
+        context.user_data['task19_result_msg_id'] = result_msg.message_id
         
     except Exception as e:
         logger.error(f"Ошибка при проверке ответа: {e}", exc_info=True)
@@ -635,25 +674,38 @@ async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             feedback += "❌ Необходимо привести три развернутых примера.\n"
         
-        feedback += "\n⚠️ <i>Произошла ошибка при AI-проверке. Используется упрощенная оценка.</i>"
+        feedback += "\n⚠️ <i>Произошла ошибка при AI-проверке. Обратитесь к преподавателю для детальной оценки.</i>"
         
-        # Простые кнопки без детального анализа
+        # Кнопки
         kb = InlineKeyboardMarkup([
             [
-                InlineKeyboardButton("🔄 Другая тема", callback_data="t19_practice"),
-                InlineKeyboardButton("📋 Меню", callback_data="t19_menu")
+                InlineKeyboardButton("🔄 Новое задание", callback_data="t19_new_topic"),
+                InlineKeyboardButton("🔁 Попробовать снова", callback_data="t19_retry")
+            ],
+            [
+                InlineKeyboardButton("📋 К заданиям", callback_data="t19_menu"),
+                InlineKeyboardButton("📊 Мой прогресс", callback_data="t19_progress")
             ],
             [InlineKeyboardButton("🏠 Главное меню", callback_data="to_main_menu")]
         ])
         
-        await thinking_msg.edit_text(
+        # Удаляем сообщение "Анализирую..."
+        try:
+            await thinking_msg.delete()
+        except Exception as e:
+            logger.debug(f"Failed to delete thinking message: {e}")
+        
+        # Отправляем результат
+        result_msg = await update.message.reply_text(
             feedback,
             reply_markup=kb,
             parse_mode=ParseMode.HTML
         )
+        
+        # Сохраняем ID сообщения с результатом
+        context.user_data['task19_result_msg_id'] = result_msg.message_id
     
     return states.CHOOSING_MODE
-
 
 async def theory_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Показ теории и советов."""
@@ -876,6 +928,56 @@ async def return_to_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     return states.CHOOSING_MODE
 
+async def handle_result_action(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработка действий после показа результата."""
+    query = update.callback_query
+    await query.answer()
+    
+    if query.data == "t19_new_topic":
+        # Удаляем все сообщения перед показом списка тем
+        await delete_previous_messages(context, query.message.chat_id)
+        
+        # Показываем меню выбора темы
+        return await practice_mode(update, context)
+    
+    elif query.data == "t19_retry":
+        # Удаляем все сообщения и показываем то же задание заново
+        await delete_previous_messages(context, query.message.chat_id)
+        
+        topic = context.user_data.get('current_topic')
+        if topic:
+            text = _build_topic_message(topic)
+            kb = InlineKeyboardMarkup([[
+                InlineKeyboardButton("⬅️ Выбрать другую тему", callback_data="t19_practice")
+            ]])
+            
+            msg = await query.message.chat.send_message(
+                text, 
+                reply_markup=kb, 
+                parse_mode=ParseMode.HTML
+            )
+            
+            # Сохраняем ID нового сообщения
+            context.user_data['task19_question_msg_id'] = msg.message_id
+            
+            return states.ANSWERING
+        else:
+            await query.message.chat.send_message(
+                "❌ Ошибка: тема не найдена",
+                reply_markup=InlineKeyboardMarkup([[
+                    InlineKeyboardButton("📝 К заданиям", callback_data="t19_menu")
+                ]])
+            )
+            return states.CHOOSING_MODE
+    
+    elif query.data == "t19_menu":
+        # Удаляем все сообщения и показываем главное меню задания
+        await delete_previous_messages(context, query.message.chat_id)
+        return await return_to_menu(update, context)
+    
+    elif query.data == "t19_progress":
+        # Показываем прогресс (не удаляем сообщения)
+        return await show_progress(update, context)
 
 async def cmd_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Отмена текущего действия."""
@@ -887,4 +989,3 @@ async def noop(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     # Ничего не делаем, просто отвечаем на callback
-    
