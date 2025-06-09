@@ -695,7 +695,7 @@ async def handle_plan(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработка плана пользователя."""
     user_plan_text = update.message.text.strip()
     
-    # Сохраняем ID сообщения с планом
+    # Сохраняем ID сообщения с планом пользователя
     context.user_data['task24_plan_msg_id'] = update.message.message_id
     
     if not user_plan_text:
@@ -733,8 +733,7 @@ async def handle_plan(update: Update, context: ContextTypes.DEFAULT_TYPE):
     thinking_msg = await update.message.reply_text("🧠 Анализирую ваш план...")
     context.user_data['task24_thinking_msg_id'] = thinking_msg.message_id
     
-    # Удаляем предыдущие сообщения (кроме thinking_msg)
-    await delete_previous_messages(context, update.effective_chat.id, thinking_msg.message_id)
+    # НЕ УДАЛЯЕМ сообщения здесь! Удаление будет происходить при выборе следующего действия
     
     try:
         # Проверяем, включена ли AI-проверка
@@ -761,65 +760,83 @@ async def handle_plan(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Извлекаем баллы из фидбека для статистики
         import re
         k1_match = re.search(r'К1.*?(\d+)/3', feedback)
-        k2_match = re.search(r'К2.*?(\d+)/1', feedback)
-        k1 = int(k1_match.group(1)) if k1_match else 0
-        k2 = int(k2_match.group(1)) if k2_match else 0
+        k2_match = re.search(r'К2.*?(\d+)/3', feedback)
+        
+        k1_score = int(k1_match.group(1)) if k1_match else 0
+        k2_score = int(k2_match.group(1)) if k2_match else 0
+        total_score = k1_score + k2_score
         
         # Сохраняем результат
-        if topic_index is not None:
-            practiced = context.user_data.setdefault('practiced_topics', set())
-            practiced.add(topic_index)
-            
-            # Сохраняем в историю оценок
-            save_score_to_history(context, topic_name, k1, k2)
-            
-            # Обновляем статистику времени
-            if 'session_start' in context.user_data:
-                session_time = (datetime.now() - context.user_data['session_start']).total_seconds() / 60
-                context.user_data['total_time_minutes'] = context.user_data.get('total_time_minutes', 0) + session_time
-                context.user_data['session_start'] = datetime.now()
+        context.user_data['last_plan_result'] = {
+            'topic': topic_name,
+            'k1': k1_score,
+            'k2': k2_score,
+            'total': total_score,
+            'timestamp': datetime.now()
+        }
         
-        # Добавляем информацию об эталоне в экзаменационном режиме
-        if context.user_data.get('exam_mode'):
-            feedback += "\n\n" + "━" * 30 + "\n"
-            feedback += "📋 <b>Посмотреть эталонный план?</b>"
-            kb = InlineKeyboardMarkup([
-                [InlineKeyboardButton("👀 Показать эталон", callback_data=f"topic:show:{topic_index}")],
-                [InlineKeyboardButton("🔄 Ещё тема", callback_data="next_topic")],
-                [InlineKeyboardButton("🏠 В меню", callback_data="start_button")]
-            ])
-            context.user_data['exam_mode'] = False
-        else:
-            kb = FEEDBACK_KB
+        # Добавляем тему в изученные
+        if 'practiced_topics' not in context.user_data:
+            context.user_data['practiced_topics'] = set()
+        context.user_data['practiced_topics'].add(topic_name)
         
-        await thinking_msg.edit_text(
+        # Удаляем сообщение "Анализирую..."
+        try:
+            await thinking_msg.delete()
+        except Exception as e:
+            logger.debug(f"Failed to delete thinking message: {e}")
+        
+        # Отправляем результат с клавиатурой действий
+        result_msg = await update.message.reply_text(
             feedback,
-            reply_markup=kb,
+            reply_markup=FEEDBACK_KB,
             parse_mode=ParseMode.HTML
         )
         
+        # Сохраняем ID сообщения с результатом
+        context.user_data['task24_result_msg_id'] = result_msg.message_id
+        
+        return states.AWAITING_FEEDBACK
+        
     except Exception as e:
-        logger.error(f"Ошибка при оценке плана: {e}", exc_info=True)
-        await thinking_msg.edit_text(
-            "❌ Произошла ошибка при анализе плана. Попробуйте еще раз."
+        logger.error(f"Ошибка при проверке плана: {e}", exc_info=True)
+        
+        # Удаляем сообщение "Анализирую..."
+        try:
+            await thinking_msg.delete()
+        except Exception as e2:
+            logger.debug(f"Failed to delete thinking message: {e2}")
+        
+        await update.message.reply_text(
+            "❌ Произошла ошибка при проверке плана. Попробуйте еще раз.",
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("🔄 Попробовать снова", callback_data="retry_plan"),
+                InlineKeyboardButton("📋 К темам", callback_data="back_to_choice")
+            ]])
         )
-    
-    return states.CHOOSING_TOPIC
+        
+        return states.AWAITING_FEEDBACK
 
 async def next_topic(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Переход к следующей теме."""
     query = update.callback_query
     await query.answer()
     
+    # Удаляем все предыдущие сообщения перед показом выбора новой темы
+    await delete_previous_messages(context, query.message.chat_id)
+    
     # Возвращаемся к выбору темы в режиме тренировки
     context.user_data['mode'] = 'train'
     kb = keyboards.build_initial_choice_keyboard('train')
-    await query.edit_message_text(
+    
+    # Отправляем новое сообщение с выбором темы
+    await query.message.chat.send_message(
         "🎯 <b>Режим тренировки</b>\n\n"
         "Выберите следующую тему:",
         reply_markup=kb,
         parse_mode=ParseMode.HTML
     )
+    
     return states.CHOOSING_TOPIC
 
 async def show_criteria(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1250,6 +1267,9 @@ async def back_to_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     
+    # Удаляем все предыдущие сообщения перед показом меню
+    await delete_previous_messages(context, query.message.chat_id)
+    
     user_id = query.from_user.id
     kb = keyboards.build_main_menu_keyboard() if not is_admin(user_id) else build_admin_menu_keyboard()
     
@@ -1258,35 +1278,18 @@ async def back_to_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "Выберите режим работы:"
     )
     
-    try:
-        # Пытаемся отредактировать сообщение
-        await query.edit_message_text(
-            menu_text,
-            reply_markup=kb,
-            parse_mode=ParseMode.HTML
-        )
-    except telegram.error.BadRequest as e:
-        # Если не удалось отредактировать (например, это было сообщение с документом)
-        if "There is no text in the message to edit" in str(e) or "Message can't be edited" in str(e):
-            # Удаляем старое сообщение и отправляем новое
-            try:
-                await query.message.delete()
-            except:
-                pass  # Игнорируем ошибки удаления
-            
-            await query.message.reply_text(
-                menu_text,
-                reply_markup=kb,
-                parse_mode=ParseMode.HTML
-            )
-        else:
-            # Если другая ошибка - пробрасываем её дальше
-            raise
+    # Отправляем новое сообщение с меню
+    await query.message.chat.send_message(
+        menu_text,
+        reply_markup=kb,
+        parse_mode=ParseMode.HTML
+    )
     
     # Очищаем временные данные
     context.user_data.pop('current_topic_index', None)
     context.user_data.pop('current_topic', None)
     context.user_data.pop('exam_mode', None)
+    
     return states.CHOOSING_MODE
 
 async def back_to_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1294,45 +1297,90 @@ async def back_to_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     
-    # Сохраняем время сессии
-    if 'session_start' in context.user_data:
-        session_time = (datetime.now() - context.user_data['session_start']).total_seconds() / 60
-        context.user_data['total_time_minutes'] = context.user_data.get('total_time_minutes', 0) + session_time
-    
-    # Импортируем функцию построения главного меню
-    from core.plugin_loader import build_main_menu
-    kb = build_main_menu()
-    
-    menu_text = "👋 Что хотите потренировать?"
-    
     try:
-        # Пытаемся отредактировать сообщение
-        await query.edit_message_text(
-            menu_text,
+        # Удаляем все сообщения task24 перед переходом в главное меню
+        await delete_previous_messages(context, query.message.chat_id)
+        
+        # Импортируем функцию главного меню
+        from core.plugin_loader import build_main_menu
+        
+        # Очищаем контекст пользователя от данных task24
+        keys_to_remove = [
+            'current_topic_index', 'current_topic', 'exam_mode',
+            'mode', 'practiced_topics', 'last_plan_result',
+            'task24_topic_msg_id', 'task24_plan_msg_id',
+            'task24_thinking_msg_id', 'task24_result_msg_id'
+        ]
+        for key in keys_to_remove:
+            context.user_data.pop(key, None)
+        
+        # Показываем главное меню
+        kb = build_main_menu()
+        
+        # Отправляем новое сообщение с главным меню
+        await query.message.chat.send_message(
+            "👋 Что хотите потренировать?",
             reply_markup=kb
         )
-    except telegram.error.BadRequest as e:
-        # Если не удалось отредактировать
-        if "There is no text in the message to edit" in str(e) or "Message can't be edited" in str(e):
-            # Удаляем старое сообщение и отправляем новое
-            try:
-                await query.message.delete()
-            except:
-                pass
-            
-            await query.message.reply_text(
-                menu_text,
-                reply_markup=kb
-            )
-        else:
-            raise
+        
+        return ConversationHandler.END
+        
+    except Exception as e:
+        logger.error(f"Ошибка при возврате в главное меню: {e}")
+        # В случае ошибки просто показываем текст
+        await query.message.reply_text(
+            "Произошла ошибка. Используйте /start для возврата в главное меню."
+        )
+        return ConversationHandler.END
+
+async def retry_plan(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Повторить попытку составления плана для той же темы."""
+    query = update.callback_query
+    await query.answer()
     
-    # Очищаем временные данные, но сохраняем прогресс
-    temp_keys = ['current_topic_index', 'current_topic', 'mode', 'exam_mode', 'session_start', 'confirm_reset']
-    for key in temp_keys:
-        context.user_data.pop(key, None)
+    # Удаляем все предыдущие сообщения
+    await delete_previous_messages(context, query.message.chat_id)
     
-    return ConversationHandler.END
+    topic_name = context.user_data.get('current_topic')
+    topic_index = context.user_data.get('current_topic_index')
+    
+    if not topic_name:
+        await query.message.chat.send_message(
+            "❌ Ошибка: тема не найдена. Выберите тему заново.",
+            reply_markup=keyboards.build_initial_choice_keyboard('train')
+        )
+        return states.CHOOSING_TOPIC
+    
+    # Отправляем задание заново
+    task_text = f"""📝 <b>Задание 24</b>
+
+<b>Тема:</b> {topic_name}
+
+Используя обществоведческие знания, составьте сложный план, позволяющий раскрыть по существу тему «{topic_name}».
+
+<b>Требования:</b>
+• Минимум 3 пункта (из них 2 детализированных)
+• В каждом детализированном пункте минимум 3 подпункта
+
+<b>Пример структуры:</b>
+<code>1. Понятие безработицы
+2. Виды безработицы:
+   а) фрикционная
+   б) структурная
+   в) циклическая
+3. Последствия безработицы:
+   а) для экономики
+   б) для общества
+   в) для личности</code>
+
+💡 <i>Отправьте ваш план одним сообщением</i>"""
+    
+    await query.message.chat.send_message(
+        task_text,
+        parse_mode=ParseMode.HTML
+    )
+    
+    return states.AWAITING_PLAN
 
 async def cmd_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Отмена текущего действия."""
