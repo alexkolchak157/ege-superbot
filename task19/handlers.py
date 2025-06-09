@@ -24,8 +24,40 @@ try:
     logger.info("Task19 evaluator created successfully")
 except Exception as e:
     logger.warning(f"Failed to create evaluator: {e}. Will work without AI.")
-evaluator = None
+    evaluator = None  # Устанавливаем None только в случае ошибки
 
+
+async def delete_previous_messages(context: ContextTypes.DEFAULT_TYPE, chat_id: int, keep_message_id: Optional[int] = None):
+    """Удаляет предыдущие сообщения диалога."""
+    if not hasattr(context, 'bot') or not context.bot:
+        logger.warning("Bot instance not available for message deletion")
+        return
+    
+    # Список ключей с ID сообщений для удаления
+    message_keys = [
+        'task19_question_msg_id',
+        'task19_answer_msg_id', 
+        'task19_result_msg_id'
+    ]
+    
+    messages_to_delete = []
+    
+    for key in message_keys:
+        msg_id = context.user_data.get(key)
+        if msg_id and msg_id != keep_message_id:
+            messages_to_delete.append(msg_id)
+    
+    # Удаляем сообщения
+    for msg_id in messages_to_delete:
+        try:
+            await context.bot.delete_message(chat_id=chat_id, message_id=msg_id)
+            logger.debug(f"Deleted message {msg_id}")
+        except Exception as e:
+            logger.debug(f"Failed to delete message {msg_id}: {e}")
+    
+    # Очищаем контекст
+    for key in message_keys:
+        context.user_data.pop(key, None)
 
 async def init_task19_data():
     """Инициализация данных для задания 19."""
@@ -127,9 +159,12 @@ async def cmd_task19(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def practice_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Режим практики."""
+    """Режим практики - выбор темы."""
     query = update.callback_query
     await query.answer()
+    
+    # Удаляем предыдущие сообщения диалога
+    await delete_previous_messages(context, query.message.chat_id)
     
     if not task19_data.get("topics"):
         await query.edit_message_text(
@@ -373,11 +408,61 @@ async def select_topic(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     return states.ANSWERING
 
+async def choose_topic(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработка выбора темы."""
+    query = update.callback_query
+    await query.answer()
+    
+    if query.data == "t19_random":
+        topic = random.choice(task19_data['topics'])
+    else:
+        topic_id = int(query.data.split(':')[1])
+        topic = next((t for t in task19_data['topics'] if t['id'] == topic_id), None)
+    
+    if not topic:
+        await query.edit_message_text("❌ Тема не найдена")
+        return states.CHOOSING_MODE
+    
+    # Сохраняем текущую тему
+    context.user_data['current_topic'] = topic
+    
+    text = f"""📝 <b>Задание 19</b>
+
+<b>Тема:</b> {topic['title']}
+
+<b>Задание:</b> {topic['task_text']}
+
+<b>Требования:</b>
+• Приведите три примера
+• Каждый пример должен быть конкретным
+• Избегайте абстрактных формулировок
+• Указывайте детали (имена, даты, места)
+
+💡 <i>Отправьте ваш ответ одним сообщением</i>"""
+    
+    kb = InlineKeyboardMarkup([[
+        InlineKeyboardButton("⬅️ Выбрать другую тему", callback_data="t19_practice")
+    ]])
+    
+    await query.edit_message_text(
+        text,
+        reply_markup=kb,
+        parse_mode=ParseMode.HTML
+    )
+    
+    # Сохраняем ID сообщения с заданием
+    context.user_data['task19_question_msg_id'] = query.message.message_id
+    
+    return states.ANSWERING
+    return states.ANSWERING
 
 async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработка ответа пользователя."""
     user_answer = update.message.text
     topic = context.user_data.get('current_topic')
+    
+    # Сохраняем ID сообщения с ответом
+    context.user_data['task19_answer_msg_id'] = update.message.message_id
     
     if not topic:
         await update.message.reply_text(
@@ -392,6 +477,9 @@ async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
     thinking_msg = await update.message.reply_text(
         "🤔 Анализирую ваш ответ..."
     )
+    
+    # Удаляем предыдущие сообщения (кроме thinking_msg)
+    await delete_previous_messages(context, update.effective_chat.id, thinking_msg.message_id)
 
     result: Optional[EvaluationResult] = None
 
@@ -734,3 +822,4 @@ async def noop(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     # Ничего не делаем, просто отвечаем на callback
+    
