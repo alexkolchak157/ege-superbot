@@ -12,19 +12,84 @@ from telegram.ext import ContextTypes
 
 from core import states
 from core.ai_evaluator import Task19Evaluator, EvaluationResult
+from .evaluator import Task19AIEvaluator, StrictnessLevel
+
+TASK19_STRICTNESS = os.getenv('TASK19_STRICTNESS', 'STRICT').upper()
+
 
 logger = logging.getLogger(__name__)
 
 # Глобальное хранилище для данных задания 19
 task19_data = {}
 
-# Создаем evaluator заранее
+# Создаем evaluator с нужным уровнем строгости
 try:
-    evaluator = Task19Evaluator()
-    logger.info("Task19 evaluator created successfully")
+    strictness_level = StrictnessLevel[TASK19_STRICTNESS]
+except KeyError:
+    logger.warning(f"Invalid strictness level: {TASK19_STRICTNESS}. Using STRICT.")
+    strictness_level = StrictnessLevel.STRICT
+
+try:
+    evaluator = Task19AIEvaluator(strictness=strictness_level)
+    logger.info(f"Task19 AI evaluator created with {strictness_level.value} strictness")
 except Exception as e:
-    logger.warning(f"Failed to create evaluator: {e}. Will work without AI.")
-    evaluator = None  # Устанавливаем None только в случае ошибки
+    logger.warning(f"Failed to create AI evaluator: {e}. Will work without AI.")
+    evaluator = None
+
+
+# Добавить команду для изменения уровня строгости (опционально)
+async def set_strictness(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Установка уровня строгости проверки (только для админов)."""
+    query = update.callback_query
+    await query.answer()
+    
+    # Проверка прав (добавьте свою логику проверки админов)
+    if not is_admin(query.from_user.id):
+        await query.answer("⛔ Только для администраторов", show_alert=True)
+        return
+    
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("🟢 Мягкий", callback_data="t19_strict:lenient")],
+        [InlineKeyboardButton("🟡 Стандартный", callback_data="t19_strict:standard")],
+        [InlineKeyboardButton("🔴 Строгий (ФИПИ)", callback_data="t19_strict:strict")],
+        [InlineKeyboardButton("⬅️ Назад", callback_data="t19_menu")]
+    ])
+    
+    current = evaluator.strictness.value if evaluator else "не установлен"
+    
+    await query.edit_message_text(
+        f"⚙️ <b>Настройка строгости проверки</b>\n\n"
+        f"Текущий уровень: <b>{current}</b>\n\n"
+        "🟢 <b>Мягкий</b> - для начальной тренировки\n"
+        "🟡 <b>Стандартный</b> - баланс строгости\n"
+        "🔴 <b>Строгий</b> - полное соответствие ФИПИ\n\n"
+        "Выберите уровень:",
+        reply_markup=kb,
+        parse_mode=ParseMode.HTML
+    )
+
+
+async def apply_strictness(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Применение выбранного уровня строгости."""
+    global evaluator
+    
+    query = update.callback_query
+    await query.answer()
+    
+    level_str = query.data.split(":")[1].upper()
+    
+    try:
+        new_level = StrictnessLevel[level_str]
+        evaluator = Task19AIEvaluator(strictness=new_level)
+        
+        await query.answer(f"✅ Установлен уровень: {new_level.value}", show_alert=True)
+        
+        # Возвращаемся в меню
+        return await return_to_menu(update, context)
+        
+    except Exception as e:
+        logger.error(f"Error setting strictness: {e}")
+        await query.answer("❌ Ошибка изменения настроек", show_alert=True)
 
 
 async def delete_previous_messages(context: ContextTypes.DEFAULT_TYPE, chat_id: int, keep_message_id: Optional[int] = None):
