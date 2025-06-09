@@ -18,3 +18,4 @@ WAITING_ANSWER = 11      # Ожидание ответа для task19
 AWAITING_PLAN = 20       # Ожидание плана от пользователя
 SHOWING_PLAN = 21        # Показ эталонного плана
 AWAITING_SEARCH = 22     # Ожидание поискового запроса
+AWAITING_FEEDBACK = 23     
