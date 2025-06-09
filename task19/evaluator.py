@@ -3,6 +3,9 @@
 import logging
 from typing import List, Optional, Dict, Any
 from dataclasses import dataclass
+from enum import Enum
+from dataclasses import dataclass
+from typing import Dict
 
 logger = logging.getLogger(__name__)
 
@@ -41,53 +44,119 @@ except ImportError:
         def __init__(self, requirements: TaskRequirements):
             self.requirements = requirements
 
+class StrictnessLevel(Enum):
+    """Уровни строгости проверки."""
+    LENIENT = "lenient"      # Мягкий (для тренировки)
+    STANDARD = "standard"    # Стандартный (по умолчанию)
+    STRICT = "strict"        # Строгий (полное соответствие ФИПИ)
 
-class Task19AIEvaluator(BaseAIEvaluator):
-    """AI-оценщик для задания 19 ЕГЭ по обществознанию"""
+@dataclass
+class StrictnessConfig:
+    """Конфигурация параметров строгости."""
+    level: StrictnessLevel
+    min_example_length: int          # Минимальная длина примера в символах
+    require_localization: bool       # Требовать локализацию в пространстве/времени
+    require_specific_details: bool   # Требовать конкретные детали
+    penalize_extra_errors: bool      # Применять правило вычета за доп. ошибки
+    temperature: float               # Температура для AI (ниже = строже)
     
-    def __init__(self):
+    @classmethod
+    def get_config(cls, level: StrictnessLevel) -> "StrictnessConfig":
+        """Получить конфигурацию для уровня строгости."""
+        configs = {
+            StrictnessLevel.LENIENT: cls(
+                level=StrictnessLevel.LENIENT,
+                min_example_length=30,
+                require_localization=False,
+                require_specific_details=False,
+                penalize_extra_errors=False,
+                temperature=0.5
+            ),
+            StrictnessLevel.STANDARD: cls(
+                level=StrictnessLevel.STANDARD,
+                min_example_length=50,
+                require_localization=True,
+                require_specific_details=True,
+                penalize_extra_errors=False,
+                temperature=0.3
+            ),
+            StrictnessLevel.STRICT: cls(
+                level=StrictnessLevel.STRICT,
+                min_example_length=70,
+                require_localization=True,
+                require_specific_details=True,
+                penalize_extra_errors=True,  # Полное соответствие ФИПИ
+                temperature=0.1
+            )
+        }
+        return configs[level]
+
+# Обновлённый класс evaluator с поддержкой уровней строгости
+class Task19AIEvaluator(BaseAIEvaluator):
+    """Проверка задания 19 с настраиваемой строгостью."""
+    
+    def __init__(self, strictness: StrictnessLevel = StrictnessLevel.STRICT):
+        self.strictness = strictness
+        self.config = StrictnessConfig.get_config(strictness)
+        
         requirements = TaskRequirements(
             task_number=19,
-            task_name="Примеры социальных объектов",
+            task_name="Примеры социальных объектов", 
             max_score=3,
-            criteria=[
-                {
-                    "name": "Правильность примеров",
-                    "max_score": 3,
-                    "description": "По 1 баллу за каждый корректный пример (максимум 3)"
-                }
-            ],
+            criteria=[{
+                "name": "К1",
+                "max_score": 3,
+                "description": "По 1 баллу за каждый корректный развёрнутый пример (максимум 3)"
+            }],
             description="Приведите три примера, иллюстрирующих..."
         )
         super().__init__(requirements)
         
-        # Проверяем доступность AI сервиса
-        self.ai_available = False
-        if AI_EVALUATOR_AVAILABLE:
-            try:
-                # Проверяем, что AI сервис инициализирован
-                if hasattr(self, 'ai_service') and self.ai_service:
-                    self.ai_available = True
-            except:
-                pass
+        logger.info(f"Task19 evaluator initialized with {strictness.value} strictness level")
     
     def get_system_prompt(self) -> str:
-        return """Ты - эксперт ЕГЭ по обществознанию, специализирующийся на проверке задания 19.
-
-КРИТЕРИИ ОЦЕНИВАНИЯ ЗАДАНИЯ 19 (ЕГЭ 2025):
-1. Требуется привести ТРИ примера, иллюстрирующих теоретическое положение
-2. Каждый пример = 1 балл (максимум 3 балла)
-3. Примеры должны быть:
-   - Развёрнутыми (НЕ отдельные слова или словосочетания)
-   - Конкретными (локализованы в пространстве/времени)
-   - Соответствующими заданию
-   - Фактически правильными
-
-ВАЖНЫЕ ПРАВИЛА:
-- Если приведено 4+ примера и хотя бы один содержит ошибку - НЕ ЗАСЧИТЫВАТЬ весь ответ (0 баллов)
-- Если приведено ровно 3 примера - засчитывать только корректные
-- Примеры из искусства, истории, личного опыта, СМИ - все допустимы
-- Степень конкретизации может быть разной, но пример должен быть узнаваемым"""
+        base_prompt = """Ты - эксперт ЕГЭ по обществознанию, проверяющий задание 19."""
+        
+        if self.config.level == StrictnessLevel.STRICT:
+            return base_prompt + """
+            
+СТРОГО следуй критериям ФИПИ:
+- Примеры ОБЯЗАТЕЛЬНО должны быть развёрнутыми (минимум 70 символов)
+- ОБЯЗАТЕЛЬНА локализация в пространстве и времени
+- ОБЯЗАТЕЛЬНЫ конкретные детали (имена, даты, цифры)
+- НЕ ЗАСЧИТЫВАЙ абстрактные формулировки
+- Применяй правило вычета баллов за дополнительные ошибки"""
+        
+        elif self.config.level == StrictnessLevel.STANDARD:
+            return base_prompt + """
+            
+Следуй стандартным критериям:
+- Примеры должны быть достаточно развёрнутыми (минимум 50 символов)
+- Желательна локализация в пространстве/времени
+- Нужны конкретные детали
+- Избегай слишком абстрактных формулировок"""
+        
+        else:  # LENIENT
+            return base_prompt + """
+            
+Применяй мягкие критерии для тренировки:
+- Примеры могут быть относительно краткими (минимум 30 символов)
+- Локализация желательна, но не обязательна
+- Детали приветствуются, но не критичны
+- Давай развёрнутую обратную связь для обучения"""
+    
+    def _apply_scoring_rules(self, valid_count: int, invalid_count: int) -> int:
+        """Применение правил подсчёта баллов в зависимости от строгости."""
+        final_score = valid_count
+        
+        if self.config.penalize_extra_errors:
+            # Строгое правило ФИПИ
+            if invalid_count >= 2:
+                final_score = 0
+            elif invalid_count == 1 and final_score > 0:
+                final_score -= 1
+        
+        return min(final_score, 3)  # Максимум 3 балла
     
     async def evaluate(
         self, 
