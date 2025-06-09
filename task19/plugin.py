@@ -80,6 +80,12 @@ class Task19Plugin(BotPlugin):
                     MessageHandler(filters.TEXT & ~filters.COMMAND, handlers.handle_answer),
                     CallbackQueryHandler(handlers.practice_mode, pattern="^t19_practice$"),
                 ],
+                states.AWAITING_FEEDBACK: [
+                    CallbackQueryHandler(handlers.next_topic, pattern="^next_topic$"),
+                    CallbackQueryHandler(handlers.back_to_menu, pattern="^back_main$"),
+                    CallbackQueryHandler(handlers.back_to_main_menu, pattern="^to_main_menu$"),
+                    CallbackQueryHandler(handlers.retry_plan, pattern="^retry_plan$"),
+                ],
             },
             fallbacks=[
                 CommandHandler("cancel", handlers.cmd_cancel),
