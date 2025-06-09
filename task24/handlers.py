@@ -38,30 +38,34 @@ async def delete_previous_messages(context: ContextTypes.DEFAULT_TYPE, chat_id: 
     
     # Список ключей с ID сообщений для удаления
     message_keys = [
-        'task24_topic_msg_id',
-        'task24_plan_msg_id', 
-        'task24_result_msg_id',
-        'task24_thinking_msg_id'
+        'task24_topic_msg_id',      # Сообщение с заданием/темой
+        'task24_plan_msg_id',       # Сообщение с планом пользователя
+        'task24_thinking_msg_id',   # Сообщение "Анализирую..."
+        'task24_result_msg_id'      # Сообщение с результатом (если есть)
     ]
     
     messages_to_delete = []
+    deleted_count = 0
     
     for key in message_keys:
         msg_id = context.user_data.get(key)
         if msg_id and msg_id != keep_message_id:
-            messages_to_delete.append(msg_id)
+            messages_to_delete.append((key, msg_id))
     
     # Удаляем сообщения
-    for msg_id in messages_to_delete:
+    for key, msg_id in messages_to_delete:
         try:
             await context.bot.delete_message(chat_id=chat_id, message_id=msg_id)
-            logger.debug(f"Deleted message {msg_id}")
+            deleted_count += 1
+            logger.debug(f"Deleted {key}: {msg_id}")
         except Exception as e:
-            logger.debug(f"Failed to delete message {msg_id}: {e}")
+            logger.debug(f"Failed to delete {key} {msg_id}: {e}")
     
     # Очищаем контекст
     for key in message_keys:
         context.user_data.pop(key, None)
+    
+    logger.info(f"Task24: Deleted {deleted_count}/{len(messages_to_delete)} messages")
 
 def admin_only(func):
     """Декоратор для функций, доступных только администраторам."""
@@ -497,7 +501,7 @@ async def select_topic(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     if mode == 'train':
         # Режим тренировки - просим прислать план
-        await query.message.edit_text(
+        await query.edit_message_text(
             f"📝 <b>Тема:</b> {topic_name}\n\n"
             "Составьте и отправьте сложный план по этой теме.\n\n"
             "<b>Требования ЕГЭ 2025:</b>\n"
@@ -512,7 +516,10 @@ async def select_topic(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "<i>Отправьте /cancel для отмены</i>",
             parse_mode=ParseMode.HTML
         )
+        
+        # ВАЖНО: Сохраняем ID сообщения с заданием
         context.user_data['task24_topic_msg_id'] = query.message.message_id
+        
         return states.AWAITING_PLAN
     
     elif mode == 'show':
@@ -1624,4 +1631,3 @@ async def noop(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
     # Не меняем состояние, просто отвечаем на callback
     return None
-    
