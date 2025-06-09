@@ -30,6 +30,39 @@ def is_admin(user_id: int) -> bool:
     """Проверка, является ли пользователь администратором."""
     return user_id in ADMIN_IDS
 
+async def delete_previous_messages(context: ContextTypes.DEFAULT_TYPE, chat_id: int, keep_message_id: Optional[int] = None):
+    """Удаляет предыдущие сообщения диалога."""
+    if not hasattr(context, 'bot') or not context.bot:
+        logger.warning("Bot instance not available for message deletion")
+        return
+    
+    # Список ключей с ID сообщений для удаления
+    message_keys = [
+        'task24_topic_msg_id',
+        'task24_plan_msg_id', 
+        'task24_result_msg_id',
+        'task24_thinking_msg_id'
+    ]
+    
+    messages_to_delete = []
+    
+    for key in message_keys:
+        msg_id = context.user_data.get(key)
+        if msg_id and msg_id != keep_message_id:
+            messages_to_delete.append(msg_id)
+    
+    # Удаляем сообщения
+    for msg_id in messages_to_delete:
+        try:
+            await context.bot.delete_message(chat_id=chat_id, message_id=msg_id)
+            logger.debug(f"Deleted message {msg_id}")
+        except Exception as e:
+            logger.debug(f"Failed to delete message {msg_id}: {e}")
+    
+    # Очищаем контекст
+    for key in message_keys:
+        context.user_data.pop(key, None)
+
 def admin_only(func):
     """Декоратор для функций, доступных только администраторам."""
     async def wrapper(update: Update, context: ContextTypes.DEFAULT_TYPE, *args, **kwargs):
@@ -479,6 +512,7 @@ async def select_topic(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "<i>Отправьте /cancel для отмены</i>",
             parse_mode=ParseMode.HTML
         )
+        context.user_data['task24_topic_msg_id'] = query.message.message_id
         return states.AWAITING_PLAN
     
     elif mode == 'show':
@@ -648,9 +682,14 @@ async def navigate_topics(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     return states.CHOOSING_TOPIC
 
-async def handle_plan_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обработка присланного плана."""
+
+
+async def handle_plan(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработка плана пользователя."""
     user_plan_text = update.message.text.strip()
+    
+    # Сохраняем ID сообщения с планом
+    context.user_data['task24_plan_msg_id'] = update.message.message_id
     
     if not user_plan_text:
         await update.message.reply_text(
@@ -684,8 +723,11 @@ async def handle_plan_message(update: Update, context: ContextTypes.DEFAULT_TYPE
         return ConversationHandler.END
     
     # Отправляем сообщение "Анализирую..."
-    # Отправляем сообщение "Анализирую..."
     thinking_msg = await update.message.reply_text("🧠 Анализирую ваш план...")
+    context.user_data['task24_thinking_msg_id'] = thinking_msg.message_id
+    
+    # Удаляем предыдущие сообщения (кроме thinking_msg)
+    await delete_previous_messages(context, update.effective_chat.id, thinking_msg.message_id)
     
     try:
         # Проверяем, включена ли AI-проверка
@@ -1582,3 +1624,4 @@ async def noop(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
     # Не меняем состояние, просто отвечаем на callback
     return None
+    
