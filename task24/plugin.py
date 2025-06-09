@@ -53,7 +53,7 @@ class Task24Plugin(BotPlugin):
                     CallbackQueryHandler(handlers.noop, pattern="^noop$"),  # ← Добавьте эту строку
                 ],
                 states.AWAITING_PLAN: [
-                    MessageHandler(filters.TEXT & ~filters.COMMAND, handlers.handle_plan_message),
+                    MessageHandler(filters.TEXT & ~filters.COMMAND, handlers.handle_plan),
                 ],
                 states.AWAITING_SEARCH: [
                     MessageHandler(filters.TEXT & ~filters.COMMAND, handlers.handle_search_query),
