@@ -51,31 +51,49 @@ class Task19Plugin(BotPlugin):
                     CallbackQueryHandler(handlers.theory_mode, pattern="^t19_theory$"),
                     CallbackQueryHandler(handlers.examples_bank, pattern="^t19_examples$"),
                     CallbackQueryHandler(handlers.my_progress, pattern="^t19_progress$"),
+                    CallbackQueryHandler(handlers.settings_mode, pattern="^t19_settings$"),
                     CallbackQueryHandler(handlers.back_to_main_menu, pattern="^to_main_menu$"),
                     CallbackQueryHandler(handlers.noop, pattern="^noop$"),
+                    
                     # Обработчики для выбора тем
                     CallbackQueryHandler(handlers.select_block, pattern="^t19_select_block$"),
                     CallbackQueryHandler(handlers.handle_result_action, pattern="^t19_(new_topic|retry)$"),
+                    CallbackQueryHandler(handlers.return_to_menu, pattern="^t19_menu$"),
+                    
+                    # Навигация по темам
+                    CallbackQueryHandler(handlers.block_menu, pattern="^t19_block:"),
+                    CallbackQueryHandler(handlers.list_topics, pattern="^t19_list_topics$"),
                     CallbackQueryHandler(handlers.random_topic_all, pattern="^t19_random_all$"),
                     CallbackQueryHandler(handlers.random_topic_block, pattern="^t19_random_block$"),
-                    CallbackQueryHandler(handlers.list_topics, pattern="^t19_list_topics$"),
-                    # Навигация по банку примеров
-                    CallbackQueryHandler(handlers.bank_navigation, pattern=r"^t19_bank_(next|prev)$"),
+                    
+                    # Банк примеров
+                    CallbackQueryHandler(handlers.bank_navigation, pattern="^t19_bank_nav:"),
+                    CallbackQueryHandler(handlers.bank_search, pattern="^t19_bank_search$"),
+                    
+                    # Настройки
+                    CallbackQueryHandler(handlers.set_strictness, pattern="^t19_set_strictness:"),
+                    
+                    # Статистика
+                    CallbackQueryHandler(handlers.detailed_progress, pattern="^t19_detailed_progress$"),
+                    CallbackQueryHandler(handlers.export_results, pattern="^t19_export$"),
                 ],
+                
                 states.CHOOSING_BLOCK: [
-                    CallbackQueryHandler(handlers.block_menu, pattern=r"^t19_block:"),
-                    CallbackQueryHandler(handlers.random_topic_block, pattern="^t19_random_block$"),
+                    CallbackQueryHandler(handlers.block_menu, pattern="^t19_block:"),
                     CallbackQueryHandler(handlers.list_topics, pattern="^t19_list_topics$"),
+                    CallbackQueryHandler(handlers.random_topic_block, pattern="^t19_random_block$"),
                     CallbackQueryHandler(handlers.practice_mode, pattern="^t19_practice$"),
-                    CallbackQueryHandler(handlers.return_to_menu, pattern="^t19_menu$"),
                     CallbackQueryHandler(handlers.select_block, pattern="^t19_select_block$"),
                 ],
+                
                 states.CHOOSING_TOPIC: [
-                    CallbackQueryHandler(handlers.select_topic, pattern=r"^t19_topic:"),
-                    CallbackQueryHandler(handlers.list_topics, pattern=r"^t19_list_topics:page:"),
-                    CallbackQueryHandler(handlers.block_menu, pattern=r"^t19_block:"),
-                    CallbackQueryHandler(handlers.return_to_menu, pattern="^t19_menu$"),
+                    CallbackQueryHandler(handlers.choose_topic, pattern="^t19_topic:"),
+                    CallbackQueryHandler(handlers.navigate_topics, pattern="^t19_page:"),
+                    CallbackQueryHandler(handlers.practice_mode, pattern="^t19_practice$"),
+                    CallbackQueryHandler(handlers.block_menu, pattern="^t19_block:"),
+                    CallbackQueryHandler(handlers.select_block, pattern="^t19_select_block$"),
                 ],
+                
                 states.ANSWERING: [
                     MessageHandler(filters.TEXT & ~filters.COMMAND, handlers.handle_answer),
                     CallbackQueryHandler(handlers.practice_mode, pattern="^t19_practice$"),
