@@ -12,10 +12,14 @@ from telegram.ext import ContextTypes
 
 from core import states
 from core.ai_evaluator import Task19Evaluator, EvaluationResult
-from .evaluator import Task19AIEvaluator, StrictnessLevel
+from datetime import datetime
+import io
+from .evaluator import StrictnessLevel, Task19AIEvaluator
 
 TASK19_STRICTNESS = os.getenv('TASK19_STRICTNESS', 'STRICT').upper()
 
+# Глобальный evaluator с настройками
+evaluator = None
 
 logger = logging.getLogger(__name__)
 
@@ -989,3 +993,662 @@ async def noop(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     # Ничего не делаем, просто отвечаем на callback
+
+async def reset_results(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Сброс результатов пользователя."""
+    query = update.callback_query
+    await query.answer()
+    
+    # Проверяем, есть ли подтверждение
+    if context.user_data.get('confirm_reset_task19'):
+        # Сбрасываем результаты
+        context.user_data['task19_results'] = []
+        context.user_data.pop('confirm_reset_task19', None)
+        
+        await query.answer("✅ Результаты сброшены", show_alert=True)
+        
+        # Возвращаемся в меню
+        return await return_to_menu(update, context)
+    else:
+        # Запрашиваем подтверждение
+        context.user_data['confirm_reset_task19'] = True
+        
+        text = """⚠️ <b>Подтверждение сброса</b>
+
+Вы действительно хотите сбросить все результаты по заданию 19?
+
+Это действие нельзя отменить!"""
+        
+        kb = InlineKeyboardMarkup([
+            [
+                InlineKeyboardButton("❌ Да, сбросить", callback_data="t19_reset_confirm"),
+                InlineKeyboardButton("✅ Отмена", callback_data="t19_menu")
+            ]
+        ])
+        
+        await query.edit_message_text(
+            text,
+            reply_markup=kb,
+            parse_mode=ParseMode.HTML
+        )
+        
+        return states.CHOOSING_MODE
+
+
+# Добавить в меню "Мой прогресс" кнопку сброса:
+async def my_progress(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Показ прогресса пользователя."""
+    query = update.callback_query
+    await query.answer()
+    
+    results = context.user_data.get('task19_results', [])
+    
+    if not results:
+        text = "📊 <b>Ваш прогресс</b>\n\nВы еще не решали задания."
+        kb = InlineKeyboardMarkup([[
+            InlineKeyboardButton("⬅️ Назад", callback_data="t19_menu")
+        ]])
+    else:
+        total_attempts = len(results)
+        total_score = sum(r['score'] for r in results)
+        max_possible = sum(r['max_score'] for r in results)
+        avg_score = total_score / total_attempts
+        
+        # Визуальный прогресс-бар
+        progress_percent = int(total_score / max_possible * 100) if max_possible > 0 else 0
+        filled = "█" * (progress_percent // 10)
+        empty = "░" * (10 - progress_percent // 10)
+        progress_bar = f"{filled}{empty}"
+        
+        text = f"""📊 <b>Ваш прогресс по заданию 19</b>
+
+📈 Прогресс: {progress_bar} {progress_percent}%
+📝 Решено заданий: {total_attempts}
+⭐ Средний балл: {avg_score:.1f}/3
+🏆 Общий результат: {total_score}/{max_possible}
+
+<b>Последние попытки:</b>"""
+        
+        for result in results[-5:]:
+            score_emoji = "🟢" if result['score'] == 3 else "🟡" if result['score'] >= 2 else "🔴"
+            text += f"\n{score_emoji} {result['topic']}: {result['score']}/3"
+        
+        # Рекомендации
+        if avg_score < 2:
+            text += "\n\n💡 <b>Совет:</b> Изучите теорию и примеры эталонных ответов."
+        elif avg_score < 2.5:
+            text += "\n\n💡 <b>Совет:</b> Обратите внимание на конкретизацию примеров."
+        else:
+            text += "\n\n🎉 <b>Отлично!</b> Вы хорошо справляетесь с заданием 19!"
+        
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("📊 Детальная статистика", callback_data="t19_detailed_progress")],
+            [InlineKeyboardButton("📤 Экспорт результатов", callback_data="t19_export")],
+            [InlineKeyboardButton("🔄 Сбросить результаты", callback_data="t19_reset_confirm")],
+            [InlineKeyboardButton("⬅️ Назад", callback_data="t19_menu")]
+        ])
+    
+    await query.edit_message_text(
+        text,
+        reply_markup=kb,
+        parse_mode=ParseMode.HTML
+    )
+    return states.CHOOSING_MODE
+
+async def cmd_task19_settings(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Команда /task19_settings для быстрого доступа к настройкам."""
+    current_level = evaluator.strictness if evaluator else StrictnessLevel.STRICT
+    
+    text = f"""⚙️ <b>Быстрые настройки задания 19</b>
+
+Текущий уровень проверки: <b>{current_level.value}</b>
+
+Используйте кнопки ниже для изменения:"""
+    
+    kb_buttons = []
+    for level in StrictnessLevel:
+        emoji = "✅" if level == current_level else ""
+        kb_buttons.append([
+            InlineKeyboardButton(
+                f"{emoji} {level.value}",
+                callback_data=f"t19_set_strictness:{level.name}"
+            )
+        ])
+    
+    await update.message.reply_text(
+        text,
+        reply_markup=InlineKeyboardMarkup(kb_buttons),
+        parse_mode=ParseMode.HTML
+    )
+    
+    return states.CHOOSING_MODE
+
+# Добавить в handlers.py:
+
+async def bank_search(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Поиск темы в банке примеров."""
+    query = update.callback_query
+    await query.answer()
+    
+    await query.edit_message_text(
+        "🔍 <b>Поиск в банке примеров</b>\n\n"
+        "Отправьте название темы или ключевые слова для поиска:",
+        reply_markup=InlineKeyboardMarkup([[
+            InlineKeyboardButton("❌ Отмена", callback_data="t19_examples")
+        ]]),
+        parse_mode=ParseMode.HTML
+    )
+    
+    context.user_data['waiting_for_bank_search'] = True
+    return states.SEARCHING
+
+
+async def handle_bank_search(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработка поискового запроса в банке примеров."""
+    if not context.user_data.get('waiting_for_bank_search'):
+        return
+    
+    search_query = update.message.text.lower()
+    context.user_data['waiting_for_bank_search'] = False
+    
+    # Ищем подходящие темы
+    matching_topics = []
+    for idx, topic in enumerate(task19_data.get('topics', [])):
+        if search_query in topic['title'].lower() or search_query in topic.get('task_text', '').lower():
+            matching_topics.append((idx, topic))
+    
+    if not matching_topics:
+        await update.message.reply_text(
+            "❌ Темы не найдены. Попробуйте другой запрос.",
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("🔍 Искать снова", callback_data="t19_bank_search"),
+                InlineKeyboardButton("⬅️ Назад", callback_data="t19_examples")
+            ]])
+        )
+        return states.CHOOSING_MODE
+    
+    # Показываем первую найденную тему
+    await update.message.reply_text("✅ Найдено тем: " + str(len(matching_topics)))
+    
+    # Создаем новое сообщение с результатом
+    msg = await update.message.reply_text("Загрузка...")
+    await show_examples_for_topic_message(msg, context, matching_topics[0][0])
+    
+    return states.CHOOSING_MODE
+
+
+async def show_examples_for_topic_message(message, context: ContextTypes.DEFAULT_TYPE, topic_idx: int):
+    """Показывает примеры для темы (для обычных сообщений, не callback)."""
+    topics = task19_data.get('topics', [])
+    
+    if not topics or topic_idx >= len(topics):
+        await message.edit_text("❌ Тема не найдена")
+        return
+    
+    topic = topics[topic_idx]
+    context.user_data['bank_current_idx'] = topic_idx
+    
+    text = f"""🏦 <b>Банк примеров</b>
+
+<b>Тема:</b> {topic['title']}
+
+<b>Эталонные примеры:</b>
+
+{generate_examples_for_topic(topic)}
+
+💡 <b>Обратите внимание:</b>
+• Каждый пример содержит конкретные детали
+• Примеры взяты из разных сфер жизни
+• Четко показана связь с темой задания"""
+    
+    # Навигация
+    kb_buttons = []
+    nav_row = []
+    
+    if topic_idx > 0:
+        nav_row.append(InlineKeyboardButton("⬅️", callback_data=f"t19_bank_nav:{topic_idx-1}"))
+    
+    nav_row.append(InlineKeyboardButton(f"{topic_idx+1}/{len(topics)}", callback_data="noop"))
+    
+    if topic_idx < len(topics) - 1:
+        nav_row.append(InlineKeyboardButton("➡️", callback_data=f"t19_bank_nav:{topic_idx+1}"))
+    
+    kb_buttons.append(nav_row)
+    kb_buttons.append([InlineKeyboardButton("🔍 Поиск темы", callback_data="t19_bank_search")])
+    kb_buttons.append([InlineKeyboardButton("⬅️ В меню", callback_data="t19_menu")])
+    
+    await message.edit_text(
+        text,
+        reply_markup=InlineKeyboardMarkup(kb_buttons),
+        parse_mode=ParseMode.HTML
+    )
+
+
+def generate_examples_for_topic(topic: Dict) -> str:
+    """Генерирует примеры для конкретной темы."""
+    # Здесь можно добавить логику генерации примеров на основе темы
+    # Пока используем универсальные примеры
+    
+    if "экономик" in topic['title'].lower():
+        return """1️⃣ <b>Пример из бизнеса:</b>
+Компания "Wildberries" в 2023 году открыла собственные пункты выдачи в регионах России, что позволило сократить сроки доставки с 5-7 до 1-2 дней и увеличить выручку на 40%.
+
+2️⃣ <b>Пример из госсектора:</b>
+ЦБ РФ в июле 2023 года повысил ключевую ставку до 12%, чтобы сдержать инфляцию. Это привело к росту ставок по депозитам до 15% годовых и снижению спроса на ипотеку на 30%.
+
+3️⃣ <b>Пример из повседневной жизни:</b>
+Семья Ивановых из Москвы перешла на покупки в дискаунтерах "Пятерочка" и "Магнит" вместо "Азбуки Вкуса", что позволило им экономить 15 тыс. рублей в месяц на продуктах."""
+    
+    elif "полити" in topic['title'].lower():
+        return """1️⃣ <b>Пример из федеральной политики:</b>
+В сентябре 2023 года в России прошли выборы губернаторов в 21 регионе. Явка составила в среднем 35%, что на 5% ниже предыдущих выборов.
+
+2️⃣ <b>Пример из международных отношений:</b>
+В мае 2023 года Президент РФ посетил Китай, где были подписаны соглашения о строительстве газопровода "Сила Сибири-2" мощностью 50 млрд м³ в год.
+
+3️⃣ <b>Пример из местной политики:</b>
+Депутаты Мосгордумы в 2023 году приняли закон о льготной аренде помещений для социальных предпринимателей - ставка снижена на 50% для 500 организаций."""
+    
+    else:
+        return """1️⃣ <b>Пример из образования:</b>
+Московский школьник Иван Петров в 2023 году набрал 310 баллов на ЕГЭ и поступил на бюджет в МГИМО. Он готовился 2 года с репетиторами, тратя 50 тыс. рублей в месяц.
+
+2️⃣ <b>Пример из социальной сферы:</b>
+В Санкт-Петербурге волонтеры фонда "Ночлежка" ежедневно кормят 300 бездомных. За 2023 год они раздали более 100 тысяч порций горячей еды.
+
+3️⃣ <b>Пример из культуры:</b>
+Фильм "Челюсти" режиссера А. Учителя собрал в российском прокате 1,2 млрд рублей за первый месяц, став самым кассовым российским фильмом 2023 года."""
+
+
+# Оптимизированная загрузка данных с кэшированием
+_topics_cache = None
+_topics_cache_time = None
+
+async def init_task19_data():
+    """Инициализация данных для задания 19 с кэшированием."""
+    global task19_data, _topics_cache, _topics_cache_time
+    
+    # Проверяем кэш (обновляем раз в час)
+    if _topics_cache and _topics_cache_time:
+        if (datetime.now() - _topics_cache_time).seconds < 3600:
+            task19_data = _topics_cache
+            logger.info("Loaded task19 data from cache")
+            return
+    
+    data_file = os.path.join(os.path.dirname(__file__), "task19_topics.json")
+    
+    try:
+        with open(data_file, "r", encoding="utf-8") as f:
+            raw = json.load(f)
+        
+        # Преобразуем данные: собираем все темы в единый список
+        all_topics = []
+        topic_by_id = {}
+        topics_by_block = {}
+        
+        for block_name, block in raw.get("blocks", {}).items():
+            topics_by_block[block_name] = []
+            for topic in block.get("topics", []):
+                topic["block"] = block_name
+                all_topics.append(topic)
+                topic_by_id[topic["id"]] = topic
+                topics_by_block[block_name].append(topic)
+        
+        raw["topics"] = all_topics
+        raw["topic_by_id"] = topic_by_id
+        raw["topics_by_block"] = topics_by_block
+        
+        task19_data = raw
+        _topics_cache = raw
+        _topics_cache_time = datetime.now()
+        
+        logger.info(f"Loaded {len(all_topics)} topics for task19")
+    except Exception as e:
+        logger.error(f"Failed to load task19 data: {e}")
+        task19_data = {"topics": [], "blocks": {}, "topics_by_block": {}}
+
+async def cmd_task19_settings(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Команда /task19_settings для быстрого доступа к настройкам."""
+    current_level = evaluator.strictness if evaluator else StrictnessLevel.STRICT
+    
+    text = f"""⚙️ <b>Быстрые настройки задания 19</b>
+
+Текущий уровень проверки: <b>{current_level.value}</b>
+
+Используйте кнопки ниже для изменения:"""
+    
+    kb_buttons = []
+    for level in StrictnessLevel:
+        emoji = "✅" if level == current_level else ""
+        kb_buttons.append([
+            InlineKeyboardButton(
+                f"{emoji} {level.value}",
+                callback_data=f"t19_set_strictness:{level.name}"
+            )
+        ])
+    
+    await update.message.reply_text(
+        text,
+        reply_markup=InlineKeyboardMarkup(kb_buttons),
+        parse_mode=ParseMode.HTML
+    )
+    
+    return states.CHOOSING_MODE
+
+async def return_to_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Возврат в меню задания 19."""
+    query = update.callback_query
+    await query.answer()
+    
+    # Получаем статистику для отображения
+    results = context.user_data.get('task19_results', [])
+    attempts = len(results)
+    avg_score = sum(r['score'] for r in results) / attempts if attempts > 0 else 0
+    
+    text = (
+        "📝 <b>Задание 19</b>\n\n"
+        "В этом задании нужно привести примеры, иллюстрирующие "
+        "различные обществоведческие понятия и явления.\n\n"
+    )
+    
+    # Добавляем краткую статистику если есть
+    if attempts > 0:
+        text += f"📊 Ваш прогресс: {attempts} попыток, средний балл {avg_score:.1f}/3\n\n"
+    
+    text += "Выберите режим работы:"
+    
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("💪 Практика", callback_data="t19_practice")],
+        [InlineKeyboardButton("📚 Теория и советы", callback_data="t19_theory")],
+        [InlineKeyboardButton("🏦 Банк примеров", callback_data="t19_examples")],
+        [InlineKeyboardButton("📊 Мой прогресс", callback_data="t19_progress")],
+        [InlineKeyboardButton("⚙️ Настройки", callback_data="t19_settings")],
+        [InlineKeyboardButton("🏠 Главное меню", callback_data="to_main_menu")]
+    ])
+    
+    await query.edit_message_text(
+        text,
+        reply_markup=kb,
+        parse_mode=ParseMode.HTML
+    )
+    
+    return states.CHOOSING_MODE
+
+
+async def cmd_task19(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Команда /task19."""
+    # Получаем статистику для отображения
+    results = context.user_data.get('task19_results', [])
+    attempts = len(results)
+    avg_score = sum(r['score'] for r in results) / attempts if attempts > 0 else 0
+    
+    text = (
+        "📝 <b>Задание 19</b>\n\n"
+        "В этом задании нужно привести примеры, иллюстрирующие "
+        "различные обществоведческие понятия и явления.\n\n"
+    )
+    
+    # Добавляем краткую статистику если есть
+    if attempts > 0:
+        text += f"📊 Ваш прогресс: {attempts} попыток, средний балл {avg_score:.1f}/3\n\n"
+    
+    text += "Выберите режим работы:"
+    
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("💪 Практика", callback_data="t19_practice")],
+        [InlineKeyboardButton("📚 Теория и советы", callback_data="t19_theory")],
+        [InlineKeyboardButton("🏦 Банк примеров", callback_data="t19_examples")],
+        [InlineKeyboardButton("📊 Мой прогресс", callback_data="t19_progress")],
+        [InlineKeyboardButton("⚙️ Настройки", callback_data="t19_settings")],
+        [InlineKeyboardButton("🏠 Главное меню", callback_data="to_main_menu")]
+    ])
+    
+    await update.message.reply_text(
+        text,
+        reply_markup=kb,
+        parse_mode=ParseMode.HTML
+    )
+    
+    return states.CHOOSING_MODE
+
+async def export_results(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Экспорт результатов в файл."""
+    query = update.callback_query
+    await query.answer()
+    
+    results = context.user_data.get('task19_results', [])
+    
+    if not results:
+        await query.answer("Нет результатов для экспорта", show_alert=True)
+        return states.CHOOSING_MODE
+    
+    # Создаем текст для экспорта
+    export_text = "РЕЗУЛЬТАТЫ ВЫПОЛНЕНИЯ ЗАДАНИЯ 19\n"
+    export_text += "=" * 50 + "\n\n"
+    export_text += f"Дата экспорта: {datetime.now().strftime('%d.%m.%Y %H:%M')}\n"
+    export_text += f"Пользователь: @{query.from_user.username or 'unknown'}\n\n"
+    
+    # Общая статистика
+    total_attempts = len(results)
+    total_score = sum(r['score'] for r in results)
+    max_possible = sum(r['max_score'] for r in results)
+    avg_score = total_score / total_attempts if total_attempts > 0 else 0
+    
+    export_text += "ОБЩАЯ СТАТИСТИКА\n"
+    export_text += "-" * 30 + "\n"
+    export_text += f"Выполнено заданий: {total_attempts}\n"
+    export_text += f"Средний балл: {avg_score:.1f}/3\n"
+    export_text += f"Общий результат: {total_score}/{max_possible}\n\n"
+    
+    # Детальные результаты
+    export_text += "ДЕТАЛЬНЫЕ РЕЗУЛЬТАТЫ\n"
+    export_text += "-" * 30 + "\n\n"
+    
+    for i, result in enumerate(results, 1):
+        export_text += f"{i}. Тема: {result['topic']}\n"
+        export_text += f"   Балл: {result['score']}/{result['max_score']}\n"
+        if 'timestamp' in result:
+            export_text += f"   Дата: {result['timestamp']}\n"
+        export_text += "\n"
+    
+    # Анализ по блокам
+    blocks_stats = {}
+    for result in results:
+        topic_name = result['topic']
+        for topic in task19_data.get('topics', []):
+            if topic['title'] == topic_name:
+                block = topic.get('block', 'Другое')
+                if block not in blocks_stats:
+                    blocks_stats[block] = []
+                blocks_stats[block].append(result['score'])
+                break
+    
+    if blocks_stats:
+        export_text += "\nАНАЛИЗ ПО БЛОКАМ\n"
+        export_text += "-" * 30 + "\n\n"
+        
+        for block, scores in blocks_stats.items():
+            avg = sum(scores) / len(scores)
+            export_text += f"{block}:\n"
+            export_text += f"  Попыток: {len(scores)}\n"
+            export_text += f"  Средний балл: {avg:.1f}/3\n\n"
+    
+    # Рекомендации
+    export_text += "\nРЕКОМЕНДАЦИИ\n"
+    export_text += "-" * 30 + "\n"
+    
+    if avg_score < 2:
+        export_text += "• Изучите теорию по заданию 19\n"
+        export_text += "• Обратите внимание на конкретизацию примеров\n"
+        export_text += "• Используйте банк примеров для изучения эталонов\n"
+    elif avg_score < 2.5:
+        export_text += "• Хороший результат! Продолжайте практиковаться\n"
+        export_text += "• Обратите внимание на детализацию примеров\n"
+    else:
+        export_text += "• Отличный результат!\n"
+        export_text += "• Вы готовы к выполнению задания 19 на экзамене\n"
+    
+    # Отправляем файл
+    import io
+    file_buffer = io.BytesIO(export_text.encode('utf-8'))
+    file_buffer.name = f'task19_results_{query.from_user.id}.txt'
+    
+    await query.message.reply_document(
+        document=file_buffer,
+        filename=file_buffer.name,
+        caption="📊 Ваши результаты по заданию 19"
+    )
+    
+    return states.CHOOSING_MODE
+
+async def detailed_progress(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Показ детального прогресса по блокам."""
+    query = update.callback_query
+    await query.answer()
+    
+    results = context.user_data.get('task19_results', [])
+    
+    # Группируем результаты по блокам
+    blocks_stats = {}
+    for result in results:
+        topic_name = result['topic']
+        # Находим блок для темы
+        for topic in task19_data.get('topics', []):
+            if topic['title'] == topic_name:
+                block = topic.get('block', 'Другое')
+                if block not in blocks_stats:
+                    blocks_stats[block] = {
+                        'attempts': 0,
+                        'total_score': 0,
+                        'topics': set()
+                    }
+                blocks_stats[block]['attempts'] += 1
+                blocks_stats[block]['total_score'] += result['score']
+                blocks_stats[block]['topics'].add(topic_name)
+                break
+    
+    text = "📊 <b>Детальная статистика по блокам</b>\n\n"
+    
+    if not blocks_stats:
+        text += "Вы еще не решали задания."
+    else:
+        # Сортируем блоки по количеству попыток
+        sorted_blocks = sorted(blocks_stats.items(), key=lambda x: x[1]['attempts'], reverse=True)
+        
+        for block_name, stats in sorted_blocks:
+            avg_score = stats['total_score'] / stats['attempts']
+            
+            # Визуальная оценка
+            if avg_score >= 2.5:
+                emoji = "🟢"
+                assessment = "отлично"
+            elif avg_score >= 2:
+                emoji = "🟡"
+                assessment = "хорошо"
+            else:
+                emoji = "🔴"
+                assessment = "требует внимания"
+            
+            text += f"{emoji} <b>{block_name}</b>\n"
+            text += f"📝 Попыток: {stats['attempts']}\n"
+            text += f"⭐ Средний балл: {avg_score:.1f}/3 ({assessment})\n"
+            text += f"📚 Изучено тем: {len(stats['topics'])}\n\n"
+    
+    # Рекомендации по блокам
+    if blocks_stats:
+        weak_blocks = [block for block, stats in blocks_stats.items() 
+                      if stats['total_score'] / stats['attempts'] < 2]
+        
+        if weak_blocks:
+            text += "💡 <b>Рекомендации:</b>\n"
+            text += f"Обратите внимание на блоки: {', '.join(weak_blocks)}\n"
+            text += "Изучите теорию и примеры по этим темам."
+    
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("📈 Общая статистика", callback_data="t19_progress")],
+        [InlineKeyboardButton("📤 Экспорт результатов", callback_data="t19_export")],
+        [InlineKeyboardButton("⬅️ Назад", callback_data="t19_menu")]
+    ])
+    
+    await query.edit_message_text(
+        text,
+        reply_markup=kb,
+        parse_mode=ParseMode.HTML
+    )
+    return states.CHOOSING_MODE
+
+async def settings_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Настройки проверки."""
+    query = update.callback_query
+    await query.answer()
+    
+    current_level = evaluator.strictness if evaluator else StrictnessLevel.STRICT
+    
+    text = f"""⚙️ <b>Настройки проверки</b>
+
+<b>Текущий уровень:</b> {current_level.value}
+
+<b>Описание уровней:</b>
+
+🟢 <b>Базовый</b>
+• Проверка наличия 3 примеров
+• Базовая проверка соответствия теме
+• Подходит для начинающих
+
+🟡 <b>Стандартный</b>
+• Проверка развернутости примеров
+• Выявление очевидных ошибок
+• Рекомендуется для подготовки
+
+🔴 <b>Строгий</b> (рекомендуется)
+• Детальная проверка фактов
+• Проверка соответствия законодательству РФ
+• Выявление всех типов ошибок
+
+🔥 <b>Экспертный</b>
+• Максимальная строгость
+• Проверка актуальности данных
+• Как на реальном экзамене"""
+    
+    kb_buttons = []
+    for level in StrictnessLevel:
+        emoji = "✅" if level == current_level else ""
+        kb_buttons.append([
+            InlineKeyboardButton(
+                f"{emoji} {level.value}",
+                callback_data=f"t19_set_strictness:{level.name}"
+            )
+        ])
+    
+    kb_buttons.append([InlineKeyboardButton("⬅️ Назад", callback_data="t19_menu")])
+    
+    await query.edit_message_text(
+        text,
+        reply_markup=InlineKeyboardMarkup(kb_buttons),
+        parse_mode=ParseMode.HTML
+    )
+    return states.CHOOSING_MODE
+
+
+async def set_strictness(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Установка уровня строгости."""
+    global evaluator
+    
+    query = update.callback_query
+    await query.answer()
+    
+    level_str = query.data.split(":")[1].upper()
+    
+    try:
+        new_level = StrictnessLevel[level_str]
+        evaluator = Task19AIEvaluator(strictness=new_level)
+        
+        await query.answer(f"✅ Установлен уровень: {new_level.value}", show_alert=True)
+        
+        # Возвращаемся в настройки
+        return await settings_mode(update, context)
+        
+    except Exception as e:
+        logger.error(f"Error setting strictness: {e}")
+        await query.answer("❌ Ошибка изменения настроек", show_alert=True)
+        return states.CHOOSING_MODE
