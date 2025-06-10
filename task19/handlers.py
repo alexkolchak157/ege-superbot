@@ -26,19 +26,20 @@ logger = logging.getLogger(__name__)
 # Глобальное хранилище для данных задания 19
 task19_data = {}
 
-# Создаем evaluator с нужным уровнем строгости
-try:
-    strictness_level = StrictnessLevel[TASK19_STRICTNESS]
-except KeyError:
-    logger.warning(f"Invalid strictness level: {TASK19_STRICTNESS}. Using STRICT.")
-    strictness_level = StrictnessLevel.STRICT
-
-try:
-    evaluator = Task19AIEvaluator(strictness=strictness_level)
-    logger.info(f"Task19 AI evaluator created with {strictness_level.value} strictness")
-except Exception as e:
-    logger.warning(f"Failed to create AI evaluator: {e}. Will work without AI.")
-    evaluator = None
+# Инициализируем evaluator если еще не создан
+global evaluator
+if not evaluator:
+    try:
+        strictness_level = StrictnessLevel[os.getenv('TASK19_STRICTNESS', 'STRICT').upper()]
+    except KeyError:
+        strictness_level = StrictnessLevel.STRICT
+    
+    try:
+        evaluator = Task19AIEvaluator(strictness=strictness_level)
+        logger.info(f"Task19 AI evaluator initialized with {strictness_level.value} strictness")
+    except Exception as e:
+        logger.warning(f"Failed to initialize AI evaluator: {e}")
+        evaluator = None
 
 
 # Добавить команду для изменения уровня строгости (опционально)
@@ -631,7 +632,8 @@ async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data['task19_results'].append({
             'topic': topic['title'],
             'score': result.total_score,
-            'max_score': result.max_score
+            'max_score': result.max_score,
+            'timestamp': datetime.now().isoformat()  # Добавить эту строку
         })
         
         # Кнопки для действий после проверки
