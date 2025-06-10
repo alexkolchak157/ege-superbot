@@ -4,7 +4,7 @@ import logging
 from typing import List, Optional, Dict, Any
 from dataclasses import dataclass
 from enum import Enum
-from dataclasses import dataclass
+from datetime import datetime
 from typing import Dict
 
 logger = logging.getLogger(__name__)
@@ -55,18 +55,18 @@ class StrictnessLevel(Enum):
 class StrictnessConfig:
     """Конфигурация параметров строгости."""
     level: StrictnessLevel
-    min_example_length: int          # Минимальная длина примера в символах
-    require_localization: bool       # Требовать локализацию в пространстве/времени
-    require_specific_details: bool   # Требовать конкретные детали
-    penalize_extra_errors: bool      # Применять правило вычета за доп. ошибки
-    temperature: float               # Температура для AI (ниже = строже)
+    min_example_length: int
+    require_localization: bool
+    require_specific_details: bool
+    penalize_extra_errors: bool
+    temperature: float
     
     @classmethod
     def get_config(cls, level: StrictnessLevel) -> "StrictnessConfig":
         """Получить конфигурацию для уровня строгости."""
         configs = {
-            StrictnessLevel.LENIENT: cls(
-                level=StrictnessLevel.LENIENT,
+            StrictnessLevel.BASIC: cls(
+                level=StrictnessLevel.BASIC,
                 min_example_length=30,
                 require_localization=False,
                 require_specific_details=False,
@@ -86,8 +86,16 @@ class StrictnessConfig:
                 min_example_length=70,
                 require_localization=True,
                 require_specific_details=True,
-                penalize_extra_errors=True,  # Полное соответствие ФИПИ
+                penalize_extra_errors=True,
                 temperature=0.1
+            ),
+            StrictnessLevel.EXPERT: cls(
+                level=StrictnessLevel.EXPERT,
+                min_example_length=80,
+                require_localization=True,
+                require_specific_details=True,
+                penalize_extra_errors=True,
+                temperature=0.05
             )
         }
         return configs[level]
@@ -97,6 +105,7 @@ class Task19AIEvaluator(BaseAIEvaluator):
     
     def __init__(self, strictness: StrictnessLevel = StrictnessLevel.STRICT):
         self.strictness = strictness
+        self.config = StrictnessConfig.get_config(strictness)
         requirements = TaskRequirements(
             task_number=19,
             task_name="Примеры социальных объектов",
@@ -283,6 +292,38 @@ class Task19AIEvaluator(BaseAIEvaluator):
         
         # Иначе считаем по обычным правилам
         return min(analysis.get("valid_examples_count", 0), 3)
+
+    async def check_factual_accuracy(self, answer: str, topic: str) -> List[str]:
+    """Проверка фактических ошибок в ответе."""
+    if not hasattr(self, 'ai_service') or not self.ai_service:
+        return []
+    
+    prompt = f"""Проверь фактическую точность примеров по теме "{topic}".
+
+ОТВЕТ УЧЕНИКА:
+{answer}
+
+Найди ТОЛЬКО явные фактические ошибки:
+- Неверные даты, имена, числа
+- Несуществующие организации или законы
+- Ошибки в правовых нормах
+- Анахронизмы
+
+Верни список найденных ошибок в формате JSON:
+["ошибка 1", "ошибка 2", ...]
+
+Если ошибок нет, верни пустой список: []"""
+
+    try:
+        async with self.ai_service:
+            result = await self.ai_service.get_json_completion(
+                prompt,
+                system_prompt="Ты эксперт по проверке фактов. Выявляй только явные ошибки.",
+                temperature=0.1
+            )
+            return result if isinstance(result, list) else []
+    except Exception:
+        return []
     
     async def _generate_task19_feedback(
         self,
