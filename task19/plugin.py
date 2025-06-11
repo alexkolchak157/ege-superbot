@@ -88,7 +88,6 @@ class Task19Plugin(BotPlugin):
                 
                 states.CHOOSING_TOPIC: [
                     CallbackQueryHandler(handlers.choose_topic, pattern="^t19_topic:"),
-                    CallbackQueryHandler(handlers.navigate_topics, pattern="^t19_page:"),
                     CallbackQueryHandler(handlers.practice_mode, pattern="^t19_practice$"),
                     CallbackQueryHandler(handlers.block_menu, pattern="^t19_block:"),
                     CallbackQueryHandler(handlers.select_block, pattern="^t19_select_block$"),
