@@ -62,7 +62,7 @@ class Task19Plugin(BotPlugin):
                     
                     # Навигация по темам
                     CallbackQueryHandler(handlers.block_menu, pattern="^t19_block:"),
-                    CallbackQueryHandler(handlers.list_topics, pattern="^t19_list_topics$"),
+                    CallbackQueryHandler(handlers.list_topics, pattern="^t19_list_topics($|:page:\d+)"),
                     CallbackQueryHandler(handlers.random_topic_all, pattern="^t19_random_all$"),
                     CallbackQueryHandler(handlers.random_topic_block, pattern="^t19_random_block$"),
                     
@@ -80,7 +80,7 @@ class Task19Plugin(BotPlugin):
                 
                 states.CHOOSING_BLOCK: [
                     CallbackQueryHandler(handlers.block_menu, pattern="^t19_block:"),
-                    CallbackQueryHandler(handlers.list_topics, pattern="^t19_list_topics$"),
+                    CallbackQueryHandler(handlers.list_topics, pattern="^t19_list_topics($|:page:\d+)"),
                     CallbackQueryHandler(handlers.random_topic_block, pattern="^t19_random_block$"),
                     CallbackQueryHandler(handlers.practice_mode, pattern="^t19_practice$"),
                     CallbackQueryHandler(handlers.select_block, pattern="^t19_select_block$"),
