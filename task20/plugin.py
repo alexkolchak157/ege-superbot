@@ -33,8 +33,93 @@ class Task20Plugin(BotPlugin):
     
     def register(self, app):
         """Регистрация обработчиков в приложении."""
-        # Здесь будет ConversationHandler по аналогии с task19
-        pass
+        
+        conv_handler = ConversationHandler(
+            entry_points=[
+                CallbackQueryHandler(
+                    handlers.entry_from_menu,
+                    pattern=f"^choose_{self.code}$"
+                ),
+                CommandHandler("task20", handlers.cmd_task20),
+            ],
+            states={
+                states.CHOOSING_MODE: [
+                    # Основные режимы
+                    CallbackQueryHandler(handlers.practice_mode, pattern="^t20_practice$"),
+                    CallbackQueryHandler(handlers.theory_mode, pattern="^t20_theory$"),
+                    CallbackQueryHandler(handlers.examples_bank, pattern="^t20_examples$"),
+                    CallbackQueryHandler(handlers.my_progress, pattern="^t20_progress$"),
+                    CallbackQueryHandler(handlers.settings_mode, pattern="^t20_settings$"),
+                    CallbackQueryHandler(handlers.back_to_main_menu, pattern="^to_main_menu$"),
+                    CallbackQueryHandler(handlers.noop, pattern="^noop$"),
+                    
+                    # Обработчики для выбора тем
+                    CallbackQueryHandler(handlers.select_block, pattern="^t20_select_block$"),
+                    CallbackQueryHandler(handlers.handle_result_action, pattern="^t20_(new_topic|retry)$"),
+                    CallbackQueryHandler(handlers.return_to_menu, pattern="^t20_menu$"),
+                    
+                    # Навигация по темам
+                    CallbackQueryHandler(handlers.block_menu, pattern="^t20_block:"),
+                    CallbackQueryHandler(handlers.list_topics, pattern="^t20_list_topics($|:page:\d+)"),
+                    CallbackQueryHandler(handlers.random_topic_all, pattern="^t20_random_all$"),
+                    CallbackQueryHandler(handlers.random_topic_block, pattern="^t20_random_block$"),
+                    
+                    # Банк суждений
+                    CallbackQueryHandler(handlers.bank_navigation, pattern="^t20_bank_nav:"),
+                    CallbackQueryHandler(handlers.bank_search, pattern="^t20_bank_search$"),
+                    
+                    # Настройки
+                    CallbackQueryHandler(handlers.set_strictness, pattern="^t20_set_strictness:"),
+                    
+                    # Статистика
+                    CallbackQueryHandler(handlers.detailed_progress, pattern="^t20_detailed_progress$"),
+                    CallbackQueryHandler(handlers.export_results, pattern="^t20_export$"),
+                ],
+                
+                states.CHOOSING_BLOCK: [
+                    CallbackQueryHandler(handlers.block_menu, pattern="^t20_block:"),
+                    CallbackQueryHandler(handlers.list_topics, pattern="^t20_list_topics$"),
+                    CallbackQueryHandler(handlers.random_topic_block, pattern="^t20_random_block$"),
+                    CallbackQueryHandler(handlers.practice_mode, pattern="^t20_practice$"),
+                    CallbackQueryHandler(handlers.select_block, pattern="^t20_select_block$"),
+                ],
+                
+                states.CHOOSING_TOPIC: [
+                    CallbackQueryHandler(handlers.choose_topic, pattern="^t20_topic:"),
+                    CallbackQueryHandler(handlers.block_menu, pattern="^t20_block:"),
+                    CallbackQueryHandler(handlers.select_block, pattern="^t20_select_block$"),
+                    CallbackQueryHandler(handlers.list_topics, pattern="^t20_list_topics:page:"),
+                ],
+                
+                states.ANSWERING: [
+                    MessageHandler(filters.TEXT & ~filters.COMMAND, handlers.handle_answer),
+                    CallbackQueryHandler(handlers.practice_mode, pattern="^t20_practice$"),
+                ],
+                
+                states.AWAITING_FEEDBACK: [
+                    CallbackQueryHandler(handlers.practice_mode, pattern="^next_topic$"),
+                    CallbackQueryHandler(handlers.return_to_menu, pattern="^back_main$"),
+                    CallbackQueryHandler(handlers.back_to_main_menu, pattern="^to_main_menu$"),
+                    CallbackQueryHandler(handlers.practice_mode, pattern="^retry_plan$"),
+                ],
+                
+                states.SEARCHING: [
+                    MessageHandler(filters.TEXT & ~filters.COMMAND, handlers.handle_bank_search),
+                    CallbackQueryHandler(handlers.examples_bank, pattern="^t20_examples$"),
+                ],
+            },
+            fallbacks=[
+                CommandHandler("cancel", handlers.cmd_cancel),
+                CallbackQueryHandler(handlers.return_to_menu, pattern="^t20_menu$"),
+                CallbackQueryHandler(handlers.back_to_main_menu, pattern="^to_main_menu$"),
+            ],
+            name="task20_conversation",
+            persistent=False,
+        )
+        
+        # Регистрируем обработчики в приложении
+        app.add_handler(conv_handler)
+        logger.info(f"Registered handlers for {self.title} plugin")
 
 # Экспортируем плагин
 plugin = Task20Plugin()
