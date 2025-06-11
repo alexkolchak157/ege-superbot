@@ -294,11 +294,11 @@ class Task19AIEvaluator(BaseAIEvaluator):
         return min(analysis.get("valid_examples_count", 0), 3)
 
     async def check_factual_accuracy(self, answer: str, topic: str) -> List[str]:
-    """Проверка фактических ошибок в ответе."""
-    if not hasattr(self, 'ai_service') or not self.ai_service:
-        return []
-    
-    prompt = f"""Проверь фактическую точность примеров по теме "{topic}".
+        """Проверка фактических ошибок в ответе."""
+        if not hasattr(self, 'ai_service') or not self.ai_service:
+            return []
+
+        prompt = f"""Проверь фактическую точность примеров по теме "{topic}".
 
 ОТВЕТ УЧЕНИКА:
 {answer}
@@ -314,16 +314,16 @@ class Task19AIEvaluator(BaseAIEvaluator):
 
 Если ошибок нет, верни пустой список: []"""
 
-    try:
-        async with self.ai_service:
-            result = await self.ai_service.get_json_completion(
-                prompt,
-                system_prompt="Ты эксперт по проверке фактов. Выявляй только явные ошибки.",
-                temperature=0.1
-            )
-            return result if isinstance(result, list) else []
-    except Exception:
-        return []
+        try:
+            async with self.ai_service:
+                result = await self.ai_service.get_json_completion(
+                    prompt,
+                    system_prompt="Ты эксперт по проверке фактов. Выявляй только явные ошибки.",
+                    temperature=0.1
+                )
+                return result if isinstance(result, list) else []
+        except Exception:
+            return []
     
     async def _generate_task19_feedback(
         self,
@@ -333,10 +333,10 @@ class Task19AIEvaluator(BaseAIEvaluator):
         topic: str
     ) -> str:
         """Генерация развёрнутой обратной связи для задания 19"""
-        
+
         system_prompt = """Ты - опытный преподаватель обществознания, даёшь обратную связь по заданию 19.
 Будь конкретным, доброжелательным и конструктивным. Используй эмодзи для наглядности."""
-        
+
         examples_info = []
         for ex in analysis.get("examples_analysis", [])[:3]:
             status = "✅" if all([
@@ -344,7 +344,7 @@ class Task19AIEvaluator(BaseAIEvaluator):
                 ex.get("is_specific"), ex.get("is_correct")
             ]) else "❌"
             examples_info.append(f"{status} Пример {ex['example_num']}")
-        
+
         prompt = f"""Ученик выполнял задание 19 по теме "{topic}".
 Оценка: {score}/3 балла
 
@@ -355,12 +355,12 @@ class Task19AIEvaluator(BaseAIEvaluator):
 
 Составь краткую обратную связь (3-4 предложения):
 1. Что получилось хорошо
-2. Главная проблема (если есть) 
+2. Главная проблема (если есть)
 3. Конкретный совет для улучшения
 4. Мотивирующее заключение
 
 НЕ повторяй баллы и оценки - они уже показаны."""
-        
+
         async with self.ai_service:
             result = await self.ai_service.get_completion(
                 prompt,
@@ -376,10 +376,10 @@ class Task19AIEvaluator(BaseAIEvaluator):
         lines = [line.strip() for line in answer.split('\n') if line.strip()]
         examples = [line for line in lines if len(line) > 20]
         examples_count = len(examples)
-        
+
         # Простая оценка
         score = min(examples_count, 3) if examples_count <= 3 else 0
-        
+
         feedback = f"Найдено примеров: {examples_count}\n"
         if examples_count < 3:
             feedback += "❌ Необходимо привести три примера.\n"
@@ -387,13 +387,13 @@ class Task19AIEvaluator(BaseAIEvaluator):
             feedback += "✅ Количество примеров соответствует требованиям.\n"
         else:
             feedback += "⚠️ Приведено больше трех примеров. Если хотя бы один содержит ошибку, все примеры не засчитываются.\n"
-        
+
         suggestions = []
         if examples_count < 3:
             suggestions.append("Добавьте больше конкретных примеров")
         if any(len(ex) < 50 for ex in examples):
             suggestions.append("Сделайте примеры более развернутыми и конкретными")
-        
+
         return EvaluationResult(
             scores={"Правильность примеров": score},
             total_score=score,
