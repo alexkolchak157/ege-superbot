@@ -1,29 +1,40 @@
-from flask import Blueprint
-from .task20_handlers import (
-    handle_task20_check,
-    handle_task20_bulk_check,
-    handle_task20_statistics,
-    handle_task20_export
+"""Плагин для задания 20."""
+
+import logging
+from telegram.ext import (
+    ConversationHandler, CommandHandler, CallbackQueryHandler,
+    MessageHandler, filters
 )
+from core.plugin_base import BotPlugin
+from core import states
+from . import handlers
 
-# Создаем Blueprint для задания 20
-task20_bp = Blueprint('task20', __name__, url_prefix='/api/task20')
+logger = logging.getLogger(__name__)
 
-# Регистрируем маршруты
-task20_bp.route('/check', methods=['POST'])(handle_task20_check)
-task20_bp.route('/bulk-check', methods=['POST'])(handle_task20_bulk_check)
-task20_bp.route('/statistics', methods=['GET'])(handle_task20_statistics)
-task20_bp.route('/export', methods=['POST'])(handle_task20_export)
-
-def init_task20(app):
-    """
-    Инициализация плагина задания 20
+class Task20Plugin(BotPlugin):
+    code = "task20"
+    title = "Задание 20 (Суждения)"
+    menu_priority = 16  # После task19
     
-    Args:
-        app: Flask приложение
-    """
-    app.register_blueprint(task20_bp)
-    app.logger.info("Task 20 plugin initialized")
+    async def post_init(self, app):
+        """Инициализация данных для задания 20."""
+        try:
+            await handlers.init_task20_data()
+            logger.info(f"Task20 plugin initialized successfully")
+        except Exception as e:
+            logger.error(f"Failed to initialize task20 data: {e}")
+    
+    def entry_handler(self):
+        """Возвращает обработчик для входа из главного меню."""
+        return CallbackQueryHandler(
+            handlers.entry_from_menu,
+            pattern=f"^choose_{self.code}$"
+        )
+    
+    def register(self, app):
+        """Регистрация обработчиков в приложении."""
+        # Здесь будет ConversationHandler по аналогии с task19
+        pass
 
-# Экспортируем для использования в других модулях
-__all__ = ['task20_bp', 'init_task20']
+# Экспортируем плагин
+plugin = Task20Plugin()
