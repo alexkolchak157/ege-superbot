@@ -13,7 +13,7 @@ REVIEWING_MISTAKES = 8    # Работа над ошибками
 # Состояния для task19
 SELECTING_TOPIC = 10     # Выбор темы для task19
 WAITING_ANSWER = 11      # Ожидание ответа для task19
-SEARCHING = 'searching'
+SEARCHING = 12
 
 # Состояния для task24
 AWAITING_PLAN = 20       # Ожидание плана от пользователя
