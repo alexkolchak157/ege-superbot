@@ -98,10 +98,10 @@ class Task19Plugin(BotPlugin):
                     CallbackQueryHandler(handlers.practice_mode, pattern="^t19_practice$"),
                 ],
                 states.AWAITING_FEEDBACK: [
-                    CallbackQueryHandler(handlers.next_topic, pattern="^next_topic$"),
-                    CallbackQueryHandler(handlers.back_to_menu, pattern="^back_main$"),
+                    CallbackQueryHandler(handlers.practice_mode, pattern="^next_topic$"),
+                    CallbackQueryHandler(handlers.return_to_menu, pattern="^back_main$"),
                     CallbackQueryHandler(handlers.back_to_main_menu, pattern="^to_main_menu$"),
-                    CallbackQueryHandler(handlers.retry_plan, pattern="^retry_plan$"),
+                    CallbackQueryHandler(handlers.practice_mode, pattern="^retry_plan$"),
                 ],
             },
             fallbacks=[
