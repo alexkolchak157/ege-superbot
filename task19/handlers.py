@@ -27,7 +27,6 @@ logger = logging.getLogger(__name__)
 task19_data = {}
 
 # Инициализируем evaluator если еще не создан
-global evaluator
 if not evaluator:
     try:
         strictness_level = StrictnessLevel[os.getenv('TASK19_STRICTNESS', 'STRICT').upper()]
