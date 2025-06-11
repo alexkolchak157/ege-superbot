@@ -95,6 +95,11 @@ async def apply_strictness(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.error(f"Error setting strictness: {e}")
         await query.answer("❌ Ошибка изменения настроек", show_alert=True)
 
+def is_admin(user_id: int) -> bool:
+    """Проверка прав администратора."""
+    # Замените на ваши ID админов
+    ADMIN_IDS = [149841646]  # Добавьте сюда ID администраторов
+    return user_id in ADMIN_IDS
 
 async def delete_previous_messages(context: ContextTypes.DEFAULT_TYPE, chat_id: int, keep_message_id: Optional[int] = None):
     """Удаляет предыдущие сообщения диалога (включая сообщения пользователя)."""
@@ -180,7 +185,7 @@ async def entry_from_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     text = (
         "📝 <b>Задание 19</b>\n\n"
-        "В этом задании нужно привести примеры, иллюстрирующие "
+        "В этом задании нужно привести примеры, иллюстрирующих "
         "различные обществоведческие понятия и явления.\n\n"
         "Выберите режим работы:"
     )
@@ -190,6 +195,7 @@ async def entry_from_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("📚 Теория и советы", callback_data="t19_theory")],
         [InlineKeyboardButton("🏦 Банк примеров", callback_data="t19_examples")],
         [InlineKeyboardButton("📊 Мой прогресс", callback_data="t19_progress")],
+        [InlineKeyboardButton("⚙️ Настройки", callback_data="t19_settings")],  # ДОБАВИТЬ ЭТУ СТРОКУ
         [InlineKeyboardButton("🏠 Главное меню", callback_data="to_main_menu")]
     ])
     
@@ -819,12 +825,12 @@ async def bank_navigation(update: Update, context: ContextTypes.DEFAULT_TYPE):
     nav_row = []
     
     if current_idx > 0:
-        nav_row.append(InlineKeyboardButton("⬅️", callback_data=f"t19_bank_next:{current_idx-1}"))
+        nav_row.append(InlineKeyboardButton("⬅️", callback_data=f"t19_bank_nav:{current_idx-1}"))
     
     nav_row.append(InlineKeyboardButton(f"{current_idx+1}/{len(topics)}", callback_data="noop"))
     
     if current_idx < len(topics) - 1:
-        nav_row.append(InlineKeyboardButton("➡️", callback_data=f"t19_bank_next:{current_idx+1}"))
+        nav_row.append(InlineKeyboardButton("➡️", callback_data=f"t19_bank_nav:{current_idx+1}"))
     
     kb_buttons.append(nav_row)
     kb_buttons.append([InlineKeyboardButton("⬅️ В меню", callback_data="t19_menu")])
@@ -982,7 +988,7 @@ async def handle_result_action(update: Update, context: ContextTypes.DEFAULT_TYP
     
     elif query.data == "t19_progress":
         # Показываем прогресс (не удаляем сообщения)
-        return await show_progress(update, context)
+        return await my_progress(update, context)
 
 async def cmd_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Отмена текущего действия."""
