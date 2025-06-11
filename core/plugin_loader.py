@@ -19,7 +19,7 @@ def discover_plugins() -> None:
     
     for mod in pkgutil.iter_modules():
         # расширяйте условие по мере появления новых пакетов
-        if mod.name in ("test_part", "task24", "task19"):
+        if mod.name in ("test_part", "task24", "task19", "task20"):
             try:
                 logger.info(f"Loading plugin: {mod.name}")
                 plugin_module = importlib.import_module(f"{mod.name}.plugin")
