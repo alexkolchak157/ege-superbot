@@ -4,6 +4,7 @@ import logging
 import os
 import json
 from typing import Optional, Dict, List
+from datetime import datetime  # <-- Добавьте эту строку
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.constants import ParseMode
