@@ -155,7 +155,13 @@ class Task20AIEvaluator(BaseAIEvaluator if AI_EVALUATOR_AVAILABLE else object):
 - Общие рассуждения без чёткой аргументации
 - Суждения, не соответствующие типу (например, негативный вместо позитивного)
 
-ВАЖНО: Будь строг в оценке, но справедлив. Учитывай российский контекст."""
+ВАЖНО: Будь строг в оценке, но справедлив. Учитывай российский контекст.
+
+При проверке:
+- Будь лаконичен в комментариях
+- Давай конкретные, практические советы
+- Не используй общие фразы типа "нужно больше стараться"
+- Для каждого неудачного суждения предложи, как его переформулировать"""
 
         # Модификация в зависимости от уровня строгости
         if self.strictness == StrictnessLevel.LENIENT:
@@ -213,7 +219,7 @@ class Task20AIEvaluator(BaseAIEvaluator if AI_EVALUATOR_AVAILABLE else object):
     "valid_arguments": [
         {{
             "number": номер суждения,
-            "text": "текст суждения",
+            "text": "краткое описание сути суждения (до 50 слов)",
             "has_generalization": true/false,
             "comment": "почему засчитано"
         }}
@@ -221,16 +227,23 @@ class Task20AIEvaluator(BaseAIEvaluator if AI_EVALUATOR_AVAILABLE else object):
     "invalid_arguments": [
         {{
             "number": номер суждения,
-            "text": "текст суждения",
-            "reason": "почему не засчитано",
-            "is_concrete_example": true/false
+            "text": "краткое описание сути суждения (до 50 слов)",
+            "reason": "конкретная причина, почему не засчитано",
+            "is_concrete_example": true/false,
+            "improvement": "конкретный совет, как исправить именно это суждение"
         }}
     ],
-    "feedback": "общий комментарий по проверке",
-    "suggestions": ["рекомендация 1", "рекомендация 2"],
+    "feedback": "краткий общий комментарий (2-3 предложения)",
+    "suggestions": ["конкретная рекомендация по улучшению ответа", "ещё одна конкретная рекомендация"],
     "factual_errors": ["ошибка 1", "ошибка 2"] или []
 }}
 ```
+
+ВАЖНЫЕ ТРЕБОВАНИЯ К ОТВЕТУ:
+1. В "feedback" пиши кратко, только самое важное
+2. В "suggestions" давай КОНКРЕТНЫЕ советы, а не общие фразы
+3. Для каждого незасчитанного суждения в "improvement" напиши, КАК ИМЕННО его улучшить
+4. Не повторяй одни и те же фразы
 
 ВАЖНО: Верни ТОЛЬКО валидный JSON в блоке кода, без дополнительного текста."""
 
@@ -287,36 +300,41 @@ class Task20AIEvaluator(BaseAIEvaluator if AI_EVALUATOR_AVAILABLE else object):
         )
     
     def _parse_response(self, response: Dict[str, Any], answer: str, topic: str) -> EvaluationResult:
-        """Парсинг ответа от YandexGPT."""
-        try:
-            score = response.get("score", 0)
-            
-            # Формируем детальную обратную связь
-            feedback = response.get("feedback", "")
-            
-            if response.get("valid_arguments"):
-                feedback += "\n\n✅ Засчитанные суждения:\n"
-                for arg in response["valid_arguments"]:
-                    feedback += f"{arg['number']}. {arg.get('comment', '')}\n"
-            
-            if response.get("invalid_arguments"):
-                feedback += "\n\n❌ Не засчитанные суждения:\n"
-                for arg in response["invalid_arguments"]:
-                    feedback += f"{arg['number']}. {arg.get('reason', '')}\n"
-            
-            if response.get("penalty_applied"):
-                feedback += f"\n\n⚠️ Применён штраф: {response.get('penalty_reason', '')}"
-            
-            return EvaluationResult(
-                scores={"К1": score},
-                total_score=score,
-                max_score=3,
-                feedback=feedback,
-                detailed_analysis=response,
-                suggestions=response.get("suggestions", []),
-                factual_errors=response.get("factual_errors", [])
-            )
-            
-        except Exception as e:
-            logger.error(f"Error parsing YandexGPT response: {e}")
-            return self._basic_evaluation(answer, topic)
+            """Парсинг ответа от YandexGPT."""
+            try:
+                score = response.get("score", 0)
+                
+                # Формируем краткую обратную связь
+                feedback = response.get("feedback", "")
+                
+                # Добавляем информацию о засчитанных суждениях (кратко)
+                if response.get("valid_arguments"):
+                    feedback += f"\n\n✅ <b>Засчитанные суждения:</b>\n"
+                    for i, arg in enumerate(response["valid_arguments"], 1):
+                        feedback += f"{i}. {arg.get('comment', 'Суждение корректно')}\n"
+                
+                # Добавляем информацию о незасчитанных суждениях с конкретными советами
+                if response.get("invalid_arguments"):
+                    feedback += f"\n\n❌ <b>Не засчитанные суждения:</b>\n"
+                    for arg in response["invalid_arguments"]:
+                        feedback += f"{arg['number']}. {arg.get('reason', 'Не соответствует критериям')}\n"
+                        if arg.get('improvement'):
+                            feedback += f"   💡 <i>Совет: {arg['improvement']}</i>\n"
+                
+                # Добавляем информацию о штрафах (если есть)
+                if response.get("penalty_applied"):
+                    feedback += f"\n⚠️ <b>Применён штраф:</b> {response.get('penalty_reason', '')}"
+                
+                return EvaluationResult(
+                    scores={"К1": score},
+                    total_score=score,
+                    max_score=3,
+                    feedback=feedback,
+                    detailed_analysis=response,
+                    suggestions=response.get("suggestions", []),
+                    factual_errors=response.get("factual_errors", [])
+                )
+                
+            except Exception as e:
+                logger.error(f"Error parsing YandexGPT response: {e}")
+                return self._basic_evaluation(answer, topic)
