@@ -24,28 +24,41 @@ async def init_task20_data():
     
     try:
         with open(data_file, "r", encoding="utf-8") as f:
-            raw = json.load(f)
+            topics_list = json.load(f)
         
-        # Преобразуем данные: собираем все темы в единый список
+        # Преобразуем список тем в нужную структуру
         all_topics = []
         topic_by_id = {}
         topics_by_block = {}
+        blocks = {}
         
-        for block_name, block in raw.get("blocks", {}).items():
-            topics_by_block[block_name] = []
-            for topic in block.get("topics", []):
-                topic["block"] = block_name
-                all_topics.append(topic)
-                topic_by_id[topic["id"]] = topic
-                topics_by_block[block_name].append(topic)
+        for topic in topics_list:
+            # Добавляем тему в общий список
+            all_topics.append(topic)
+            
+            # Индексируем по ID
+            topic_by_id[topic["id"]] = topic
+            
+            # Группируем по блокам
+            block_name = topic.get("block", "Без категории")
+            if block_name not in topics_by_block:
+                topics_by_block[block_name] = []
+                blocks[block_name] = {"topics": []}
+            
+            topics_by_block[block_name].append(topic)
+            blocks[block_name]["topics"].append(topic)
         
-        raw["topics"] = all_topics
-        raw["topic_by_id"] = topic_by_id
-        raw["topics_by_block"] = topics_by_block
-        
-        task20_data = raw
+        # Формируем итоговую структуру данных
+        task20_data = {
+            "topics": all_topics,
+            "topic_by_id": topic_by_id,
+            "topics_by_block": topics_by_block,
+            "blocks": blocks
+        }
         
         logger.info(f"Loaded {len(all_topics)} topics for task20")
+        logger.info(f"Blocks: {list(blocks.keys())}")
+        
     except Exception as e:
         logger.error(f"Failed to load task20 data: {e}")
         task20_data = {"topics": [], "blocks": {}, "topics_by_block": {}}
