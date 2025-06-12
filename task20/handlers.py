@@ -1052,25 +1052,22 @@ async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Проверяем наличие evaluator
         if not evaluator:
             logger.warning("Evaluator is None, using basic evaluation")
+            # Простая проверка без AI
             arguments = [arg.strip() for arg in user_answer.split('\n') if arg.strip()]
             score = min(len(arguments), 3) if len(arguments) <= 3 else 0
             
             feedback = f"📊 <b>Результаты проверки</b>\n\n"
             feedback += f"<b>Тема:</b> {topic['title']}\n"
-            feedback += f"<b>Оценка:</b> {result.total_score}/{result.max_score} баллов\n\n"
+            feedback += f"<b>Суждений найдено:</b> {len(arguments)}\n\n"
             
-            if result.feedback:
-                feedback += f"<b>Комментарий:</b>\n{result.feedback}\n"
+            if len(arguments) >= 3:
+                feedback += "✅ Вы привели достаточное количество суждений.\n"
+            else:
+                feedback += "❌ Необходимо привести три суждения.\n"
             
-            if result.suggestions:
-                feedback += f"\n<b>Рекомендации:</b>\n"
-                for suggestion in result.suggestions:
-                    feedback += f"• {suggestion}\n"
+            feedback += "\n⚠️ <i>AI-проверка недоступна. Обратитесь к преподавателю для детальной оценки.</i>"
             
-            # Убираем показ эталонных суждений
-            # Вместо этого просто добавляем совет если оценка не максимальная
-            if result.total_score < result.max_score:
-                feedback += "\n💡 <i>Для улучшения результата обратите внимание на рекомендации выше.</i>"
+            # НЕ показываем эталонные суждения!
             
             result_data = {
                 'topic_id': topic['id'],
@@ -1097,18 +1094,17 @@ async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
             feedback += f"<b>Оценка:</b> {result.total_score}/{result.max_score} баллов\n\n"
             
             if result.feedback:
-                feedback += f"<b>Комментарий:</b>\n{result.feedback}\n\n"
+                feedback += f"<b>Комментарий:</b>\n{result.feedback}\n"
             
             if result.suggestions:
-                feedback += f"<b>Рекомендации:</b>\n"
+                feedback += f"\n<b>Рекомендации:</b>\n"
                 for suggestion in result.suggestions:
                     feedback += f"• {suggestion}\n"
-                feedback += "\n"
             
-            # Показываем эталонные суждения
-            feedback += "<b>Эталонные суждения по теме:</b>\n\n"
-            for i, example in enumerate(topic.get('example_arguments', [])[:3], 1):
-                feedback += f"{i}. <i>{example['argument']}</i>\n\n"
+            # НЕ показываем эталонные суждения!
+            # Вместо этого добавляем совет если оценка не максимальная
+            if result.total_score < result.max_score:
+                feedback += "\n💡 <i>Для улучшения результата обратите внимание на рекомендации выше.</i>"
             
             # Данные для сохранения
             result_data = {
