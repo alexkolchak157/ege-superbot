@@ -5,7 +5,7 @@ import os
 import json
 from typing import Optional, Dict, List
 from datetime import datetime  # <-- Добавьте эту строку
-
+from .evaluator import Task20AIEvaluator, StrictnessLevel, EvaluationResult
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.constants import ParseMode
 from telegram.ext import ContextTypes, ConversationHandler
@@ -17,9 +17,12 @@ logger = logging.getLogger(__name__)
 # Глобальное хранилище для данных задания 20
 task20_data = {}
 
+evaluator = None
+
+
 async def init_task20_data():
     """Инициализация данных для задания 20."""
-    global task20_data
+    global task20_data, evaluator
     
     data_file = os.path.join(os.path.dirname(__file__), "task20_topics.json")
     
@@ -63,6 +66,23 @@ async def init_task20_data():
     except Exception as e:
         logger.error(f"Failed to load task20 data: {e}")
         task20_data = {"topics": [], "blocks": {}, "topics_by_block": {}}
+    
+    # Инициализируем AI evaluator
+    if AI_EVALUATOR_AVAILABLE:
+        try:
+            strictness_level = StrictnessLevel[os.getenv('TASK20_STRICTNESS', 'STANDARD').upper()]
+        except KeyError:
+            strictness_level = StrictnessLevel.STANDARD
+        
+        try:
+            evaluator = Task20AIEvaluator(strictness=strictness_level)
+            logger.info(f"Task20 AI evaluator initialized with {strictness_level.value} strictness")
+        except Exception as e:
+            logger.warning(f"Failed to initialize AI evaluator: {e}")
+            evaluator = None
+    else:
+        logger.warning("AI evaluator not available for task20")
+        evaluator = None
 
 async def entry_from_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Вход в задание 20 из главного меню."""
@@ -994,7 +1014,7 @@ async def choose_topic(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return states.ANSWERING
 
 async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обработка ответа пользователя."""
+    """Обработка ответа пользователя с AI-проверкой."""
     user_answer = update.message.text
     topic = context.user_data.get('current_topic')
     
@@ -1007,98 +1027,126 @@ async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return states.CHOOSING_MODE
     
-    # Сохраняем ответ
-    if 'task20_results' not in context.user_data:
-        context.user_data['task20_results'] = []
-    
-    # Простая проверка на количество суждений (по количеству абзацев/предложений)
-    arguments = [arg.strip() for arg in user_answer.split('\n') if arg.strip()]
-    
-    # Базовая оценка
-    score = 0
-    feedback_points = []
-    
-    # Проверяем количество аргументов
-    if len(arguments) >= 3:
-        score = 3
-        feedback_points.append("✅ Приведено достаточное количество суждений")
-    elif len(arguments) == 2:
-        score = 2
-        feedback_points.append("⚠️ Приведено только 2 суждения из 3 требуемых")
-    elif len(arguments) == 1:
-        score = 1
-        feedback_points.append("❌ Приведено только 1 суждение из 3 требуемых")
-    else:
-        score = 0
-        feedback_points.append("❌ Суждения не обнаружены")
-    
-    # Проверяем на наличие конкретных примеров (простая эвристика)
-    concrete_indicators = [
-        'например', 'в 20', 'году', 'компания', 'страна', 
-        'россия', 'сша', 'китай', 'франция', 'германия',
-        'apple', 'google', 'microsoft', 'января', 'февраля',
-        'марта', 'апреля', 'мая', 'июня', 'июля', 'августа',
-        'сентября', 'октября', 'ноября', 'декабря'
-    ]
-    
-    has_concrete = any(indicator in user_answer.lower() for indicator in concrete_indicators)
-    if has_concrete and score > 0:
-        score = max(0, score - 1)
-        feedback_points.append("⚠️ Обнаружены конкретные примеры (даты, названия компаний/стран)")
-    
-    # Проверяем наличие обобщающих конструкций
-    generalizing_words = [
-        'способствует', 'приводит к', 'влияет на', 'обеспечивает',
-        'позволяет', 'создает', 'формирует', 'развивает', 'определяет',
-        'препятствует', 'ограничивает', 'снижает', 'повышает',
-        'улучшает', 'ухудшает', 'стимулирует', 'порождает'
-    ]
-    
-    has_generalizing = any(word in user_answer.lower() for word in generalizing_words)
-    if has_generalizing:
-        feedback_points.append("✅ Использованы обобщающие конструкции")
-    else:
-        feedback_points.append("💡 Рекомендуется использовать больше обобщающих слов")
-    
-    # Сохраняем результат
-    result = {
-        'topic_id': topic['id'],
-        'topic_title': topic['title'],
-        'block': topic['block'],
-        'answer': user_answer,
-        'score': score,
-        'max_score': 3,
-        'timestamp': datetime.now().isoformat(),
-        'arguments_count': len(arguments)
-    }
-    
-    context.user_data['task20_results'].append(result)
-    
-    # Формируем отзыв
-    feedback = f"📊 <b>Результаты проверки</b>\n\n"
-    feedback += f"<b>Тема:</b> {topic['title']}\n"
-    feedback += f"<b>Оценка:</b> {score}/3 баллов\n\n"
-    
-    feedback += "<b>Анализ ответа:</b>\n"
-    for point in feedback_points:
-        feedback += f"{point}\n"
-    
-    feedback += "\n<b>Эталонные суждения по теме:</b>\n\n"
-    for i, example in enumerate(topic.get('example_arguments', [])[:3], 1):
-        feedback += f"{i}. <i>{example['argument']}</i>\n\n"
-    
-    kb = InlineKeyboardMarkup([
-        [InlineKeyboardButton("🔄 Попробовать снова", callback_data="t20_retry")],
-        [InlineKeyboardButton("📝 Новая тема", callback_data="t20_new_topic")],
-        [InlineKeyboardButton("📊 Мой прогресс", callback_data="t20_progress")],
-        [InlineKeyboardButton("⬅️ В меню", callback_data="t20_menu")]
-    ])
-    
-    await update.message.reply_text(
-        feedback,
-        reply_markup=kb,
-        parse_mode=ParseMode.HTML
+    # Показываем сообщение о проверке
+    thinking_msg = await update.message.reply_text(
+        "🤔 Анализирую ваши суждения..."
     )
+    
+    result: Optional[EvaluationResult] = None
+    
+    try:
+        # Проверяем наличие evaluator
+        if not evaluator:
+            # Простая проверка без AI
+            # Простая проверка без AI
+            arguments = [arg.strip() for arg in user_answer.split('\n') if arg.strip()]
+            score = min(len(arguments), 3) if len(arguments) <= 3 else 0
+            
+            feedback = f"📊 <b>Результаты проверки</b>\n\n"
+            feedback += f"<b>Тема:</b> {topic['title']}\n"
+            feedback += f"<b>Суждений найдено:</b> {len(arguments)}\n\n"
+            
+            if len(arguments) >= 3:
+                feedback += "✅ Вы привели достаточное количество суждений.\n"
+            else:
+                feedback += "❌ Необходимо привести три суждения.\n"
+            
+            feedback += "\n⚠️ <i>AI-проверка недоступна. Обратитесь к преподавателю для детальной оценки.</i>"
+            
+            # Показываем эталонные суждения
+            feedback += "\n\n<b>Эталонные суждения по теме:</b>\n\n"
+            for i, example in enumerate(topic.get('example_arguments', [])[:3], 1):
+                feedback += f"{i}. <i>{example['argument']}</i>\n\n"
+            
+            result_data = {
+                'topic_id': topic['id'],
+                'topic_title': topic['title'],
+                'block': topic['block'],
+                'answer': user_answer,
+                'score': score,
+                'max_score': 3,
+                'timestamp': datetime.now().isoformat(),
+                'arguments_count': len(arguments)
+            }
+        else:
+            # AI-проверка
+            result = await evaluator.evaluate(
+                answer=user_answer,
+                topic=topic['title'],
+                task_text=topic['task_text'],
+                key_points=topic.get('key_points', [])
+            )
+            
+            # Формируем отзыв
+            feedback = f"📊 <b>Результаты проверки</b>\n\n"
+            feedback += f"<b>Тема:</b> {topic['title']}\n"
+            feedback += f"<b>Оценка:</b> {result.total_score}/{result.max_score} баллов\n\n"
+            
+            if result.feedback:
+                feedback += f"<b>Комментарий:</b>\n{result.feedback}\n\n"
+            
+            if result.suggestions:
+                feedback += f"<b>Рекомендации:</b>\n"
+                for suggestion in result.suggestions:
+                    feedback += f"• {suggestion}\n"
+                feedback += "\n"
+            
+            # Показываем эталонные суждения
+            feedback += "<b>Эталонные суждения по теме:</b>\n\n"
+            for i, example in enumerate(topic.get('example_arguments', [])[:3], 1):
+                feedback += f"{i}. <i>{example['argument']}</i>\n\n"
+            
+            # Данные для сохранения
+            result_data = {
+                'topic_id': topic['id'],
+                'topic_title': topic['title'],
+                'block': topic['block'],
+                'answer': user_answer,
+                'score': result.total_score,
+                'max_score': result.max_score,
+                'timestamp': datetime.now().isoformat(),
+                'ai_analysis': result.detailed_analysis
+            }
+        
+        # Удаляем сообщение "Анализирую..."
+        try:
+            await thinking_msg.delete()
+        except:
+            pass
+        
+        # Сохраняем результат
+        if 'task20_results' not in context.user_data:
+            context.user_data['task20_results'] = []
+        context.user_data['task20_results'].append(result_data)
+        
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("🔄 Попробовать снова", callback_data="t20_retry")],
+            [InlineKeyboardButton("📝 Новая тема", callback_data="t20_new_topic")],
+            [InlineKeyboardButton("📊 Мой прогресс", callback_data="t20_progress")],
+            [InlineKeyboardButton("⬅️ В меню", callback_data="t20_menu")]
+        ])
+        
+        await update.message.reply_text(
+            feedback,
+            reply_markup=kb,
+            parse_mode=ParseMode.HTML
+        )
+        
+    except Exception as e:
+        logger.error(f"Error in handle_answer: {e}")
+        
+        # Удаляем сообщение "Анализирую..."
+        try:
+            await thinking_msg.delete()
+        except:
+            pass
+        
+        await update.message.reply_text(
+            "❌ Произошла ошибка при проверке. Попробуйте еще раз.",
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("⬅️ В меню", callback_data="t20_menu")
+            ]])
+        )
     
     return states.AWAITING_FEEDBACK
 
