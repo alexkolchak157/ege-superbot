@@ -2,6 +2,7 @@
 
 import logging
 import os
+import json
 from enum import Enum
 from typing import Dict, List, Any, Optional
 from dataclasses import dataclass
@@ -202,6 +203,7 @@ class Task20AIEvaluator(BaseAIEvaluator if AI_EVALUATOR_AVAILABLE else object):
 - Должны использоваться обобщающие конструкции
 
 Ответь в формате JSON:
+```json
 {{
     "score": число от 0 до 3,
     "valid_arguments_count": количество засчитанных суждений,
@@ -227,12 +229,15 @@ class Task20AIEvaluator(BaseAIEvaluator if AI_EVALUATOR_AVAILABLE else object):
     "feedback": "общий комментарий по проверке",
     "suggestions": ["рекомендация 1", "рекомендация 2"],
     "factual_errors": ["ошибка 1", "ошибка 2"] или []
-}}"""
+}}
+```
+
+ВАЖНО: Верни ТОЛЬКО валидный JSON в блоке кода, без дополнительного текста."""
 
         try:
             # Используем сервис YandexGPT
             async with YandexGPTService(self.config) as service:
-                result = await service.get_completion_json(
+                result = await service.get_json_completion(
                     prompt=evaluation_prompt,
                     system_prompt=self.get_system_prompt(),
                     temperature=self.config.temperature
