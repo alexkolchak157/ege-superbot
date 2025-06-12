@@ -1,6 +1,8 @@
 # В самом начале файла task20/handlers.py
 import logging
 import os
+import csv
+import io
 import json
 from typing import Optional, Dict, List
 from datetime import datetime
@@ -99,18 +101,31 @@ async def entry_from_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     
+    # Проверяем достижения
+    user_id = update.effective_user.id
+    new_achievements = await achievements_check(context, user_id)
+    
     text = (
         "📝 <b>Задание 20</b>\n\n"
         "В этом задании нужно сформулировать суждения (аргументы) "
         "абстрактного характера с элементами обобщения.\n\n"
         "⚠️ <b>Важно:</b> НЕ приводите конкретные примеры!\n\n"
-        "Выберите режим работы:"
     )
+    
+    # Показываем новые достижения
+    if new_achievements:
+        text += "🎉 <b>Новые достижения:</b>\n"
+        for ach in new_achievements:
+            text += f"{ach['name']} - {ach['desc']}\n"
+        text += "\n"
+    
+    text += "Выберите режим работы:"
     
     kb = InlineKeyboardMarkup([
         [InlineKeyboardButton("💪 Практика", callback_data="t20_practice")],
         [InlineKeyboardButton("📚 Теория и советы", callback_data="t20_theory")],
         [InlineKeyboardButton("🏦 Банк суждений", callback_data="t20_examples")],
+        [InlineKeyboardButton("🔧 Работа над ошибками", callback_data="t20_mistakes")],
         [InlineKeyboardButton("📊 Мой прогресс", callback_data="t20_progress")],
         [InlineKeyboardButton("⚙️ Настройки", callback_data="t20_settings")],
         [InlineKeyboardButton("🏠 Главное меню", callback_data="to_main_menu")]
@@ -195,6 +210,12 @@ async def theory_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
 • 0 баллов - суждения неверного типа или отсутствуют
 
 <b>Важно:</b> Если наряду с требуемыми суждениями приведено 2 или более дополнительных суждения с ошибками, ответ оценивается в 0 баллов!
+
+<b>Новые возможности:</b>
+🔧 <b>Работа над ошибками</b> - повторите темы с низкими баллами
+📈 <b>Детальная статистика</b> - графики вашего прогресса
+🏅 <b>Достижения</b> - мотивация для улучшения результатов
+⚙️ <b>Уровни строгости</b> - от мягкого до экспертного
 
 Выберите раздел для изучения:"""
     
@@ -465,16 +486,17 @@ async def my_progress(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
     
     results = context.user_data.get('task20_results', [])
+    achievements = context.user_data.get('task20_achievements', set())
     
     if not results:
         await query.edit_message_text(
             "📊 <b>Ваш прогресс</b>\n\n"
             "Вы еще не выполнили ни одного задания.\n"
             "Начните с режима практики!",
-            reply_markup=InlineKeyboardMarkup([[
-                InlineKeyboardButton("💪 Начать практику", callback_data="t20_practice"),
-                InlineKeyboardButton("⬅️ Назад", callback_data="t20_menu")
-            ]]),
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("💪 Начать практику", callback_data="t20_practice")],
+                [InlineKeyboardButton("⬅️ Назад", callback_data="t20_menu")]
+            ]),
             parse_mode=ParseMode.HTML
         )
         return states.CHOOSING_MODE
@@ -490,9 +512,15 @@ async def my_progress(update: Update, context: ContextTypes.DEFAULT_TYPE):
     for result in results:
         block = result['block']
         if block not in blocks_stats:
-            blocks_stats[block] = {'attempts': 0, 'total_score': 0}
+            blocks_stats[block] = {'attempts': 0, 'total_score': 0, 'topics': set()}
         blocks_stats[block]['attempts'] += 1
         blocks_stats[block]['total_score'] += result['score']
+        blocks_stats[block]['topics'].add(result['topic_title'])
+    
+    # Статистика по последним попыткам
+    recent_results = results[-10:]  # Последние 10 попыток
+    recent_score = sum(r['score'] for r in recent_results)
+    recent_avg = recent_score / len(recent_results)
     
     text = f"""📊 <b>Ваш прогресс</b>
 
@@ -500,24 +528,37 @@ async def my_progress(update: Update, context: ContextTypes.DEFAULT_TYPE):
 • Выполнено заданий: {total_attempts}
 • Общий балл: {total_score}/{max_possible_score}
 • Средний балл: {average_score:.1f}/3
+• Средний балл за последние {len(recent_results)} попыток: {recent_avg:.1f}/3
+• Достижений получено: {len(achievements)}/6
 
-<b>По блокам:</b>
-"""
+<b>По блокам:</b>"""
     
     for block, stats in blocks_stats.items():
         avg = stats['total_score'] / stats['attempts']
-        text += f"\n<b>{block}:</b>\n"
+        text += f"\n\n<b>{block}:</b>\n"
         text += f"  • Попыток: {stats['attempts']}\n"
         text += f"  • Средний балл: {avg:.1f}/3\n"
+        text += f"  • Изучено тем: {len(stats['topics'])}"
     
-    # Последние результаты
-    text += "\n<b>Последние результаты:</b>\n"
-    for result in results[-3:]:
-        text += f"• {result['topic_title']}: {result['score']}/3\n"
+    # Анализ прогресса
+    if total_attempts >= 5:
+        if recent_avg > average_score:
+            text += "\n\n📈 <b>Ваши результаты улучшаются!</b>"
+        elif recent_avg < average_score:
+            text += "\n\n📉 <b>Результаты снижаются. Внимательнее читайте рекомендации!</b>"
+        else:
+            text += "\n\n➡️ <b>Результаты стабильны. Продолжайте практиковаться!</b>"
+    
+    # Рекомендации
+    if average_score < 2:
+        text += "\n\n💡 <b>Совет:</b> Попробуйте режим 'Работа над ошибками' для улучшения результатов."
     
     kb = InlineKeyboardMarkup([
-        [InlineKeyboardButton("📈 Подробная статистика", callback_data="t20_detailed_progress")],
+        [InlineKeyboardButton("📈 Детальная статистика", callback_data="t20_detailed_progress")],
+        [InlineKeyboardButton("🏅 Достижения", callback_data="t20_achievements")],
         [InlineKeyboardButton("📤 Экспорт результатов", callback_data="t20_export")],
+        [InlineKeyboardButton("🔧 Работа над ошибками", callback_data="t20_mistakes")],
+        [InlineKeyboardButton("💪 Продолжить практику", callback_data="t20_practice")],
         [InlineKeyboardButton("⬅️ Назад", callback_data="t20_menu")]
     ])
     
@@ -533,25 +574,63 @@ async def settings_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     
-    text = """⚙️ <b>Настройки проверки</b>
-
-<b>Текущий режим:</b> Базовая проверка
-
-В будущих версиях здесь можно будет настроить:
-• Уровень строгости AI-проверки
-• Детальность обратной связи
-• Автоматическое выявление ошибок
-
-<b>Доступные настройки:</b>"""
+    current_level = evaluator.strictness if evaluator else StrictnessLevel.STANDARD
     
-    kb = InlineKeyboardMarkup([
-        [InlineKeyboardButton("🔄 Сбросить прогресс", callback_data="t20_reset_progress")],
-        [InlineKeyboardButton("⬅️ Назад", callback_data="t20_menu")]
-    ])
+    # Получаем статистику для каждого уровня
+    user_id = update.effective_user.id
+    stats_by_level = context.bot_data.get(f'task20_stats_by_level_{user_id}', {})
+    
+    text = f"""⚙️ <b>Настройки проверки</b>
+
+<b>Текущий уровень:</b> {current_level.value}
+
+<b>Описание уровней:</b>
+
+🟢 <b>Мягкий</b>
+• Засчитывает суждения с небольшими недочётами
+• Подходит для начинающих
+• Средний балл пользователей: 2.3/3
+
+🟡 <b>Стандартный</b> (рекомендуется)
+• Баланс между строгостью и справедливостью
+• Соответствует реальным критериям ЕГЭ
+• Средний балл пользователей: 1.8/3
+
+🔴 <b>Строгий</b>
+• Требует полного соответствия критериям
+• Как на реальном экзамене
+• Средний балл пользователей: 1.2/3
+
+🔥 <b>Экспертный</b>
+• Максимальная строгость
+• Для тех, кто хочет гарантированно высокий балл
+• Средний балл пользователей: 0.8/3"""
+    
+    kb_buttons = []
+    for level in StrictnessLevel:
+        emoji = "✅" if level == current_level else ""
+        # Показываем личную статистику для уровня
+        level_stats = stats_by_level.get(level.name, {})
+        attempts = level_stats.get('attempts', 0)
+        avg_score = level_stats.get('avg_score', 0)
+        
+        button_text = f"{emoji} {level.value}"
+        if attempts > 0:
+            button_text += f" (ваш балл: {avg_score:.1f})"
+        
+        kb_buttons.append([
+            InlineKeyboardButton(
+                button_text,
+                callback_data=f"t20_set_strictness:{level.name}"
+            )
+        ])
+    
+    kb_buttons.append([InlineKeyboardButton("🔄 Сбросить прогресс", callback_data="t20_reset_progress")])
+    kb_buttons.append([InlineKeyboardButton("⬅️ Назад", callback_data="t20_menu")])
     
     await query.edit_message_text(
         text,
-        reply_markup=kb,
+        reply_markup=InlineKeyboardMarkup(kb_buttons),
         parse_mode=ParseMode.HTML
     )
     return states.CHOOSING_MODE
@@ -676,7 +755,7 @@ async def handle_result_action(update: Update, context: ContextTypes.DEFAULT_TYP
     query = update.callback_query
     await query.answer()
     
-    action = query.data.split("_")[1]
+    action = query.data.split("_")[2]  # t20_new_topic -> new, t20_retry -> retry
     
     if action == "retry":
         # Повторить ту же тему
@@ -692,12 +771,16 @@ async def handle_result_action(update: Update, context: ContextTypes.DEFAULT_TYP
                 parse_mode=ParseMode.HTML
             )
             return states.ANSWERING
+        else:
+            await query.answer("Тема не найдена", show_alert=True)
+            return await return_to_menu(update, context)
     
     elif action == "new":
-        # Вернуться к выбору темы
+        # Вернуться к выбору новой темы
         return await practice_mode(update, context)
     
     return states.CHOOSING_MODE
+
 
 async def block_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Меню выбранного блока."""
@@ -944,10 +1027,35 @@ async def bank_search(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return states.SEARCHING
 
 async def set_strictness(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Настройка строгости (заглушка)."""
+    """Установка уровня строгости."""
+    global evaluator
+    
     query = update.callback_query
-    await query.answer("Функция будет доступна после подключения AI-проверки", show_alert=True)
-    return states.CHOOSING_MODE
+    await query.answer()
+    
+    level_str = query.data.split(":")[1].upper()
+    
+    try:
+        new_level = StrictnessLevel[level_str]
+        
+        # Пересоздаем evaluator с новым уровнем
+        from .evaluator import Task20AIEvaluator, AI_EVALUATOR_AVAILABLE
+        
+        if AI_EVALUATOR_AVAILABLE:
+            evaluator = Task20AIEvaluator(strictness=new_level)
+            await query.answer(f"✅ Установлен уровень: {new_level.value}", show_alert=True)
+            logger.info(f"Task20 strictness changed to {new_level.value}")
+        else:
+            await query.answer("❌ AI-проверка недоступна", show_alert=True)
+        
+        # Возвращаемся в настройки
+        return await settings_mode(update, context)
+        
+    except Exception as e:
+        logger.error(f"Error setting strictness: {e}")
+        await query.answer("❌ Ошибка изменения настроек", show_alert=True)
+        return states.CHOOSING_MODE
+
 
 async def handle_settings_actions(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработчик действий в настройках."""
@@ -961,33 +1069,312 @@ async def handle_settings_actions(update: Update, context: ContextTypes.DEFAULT_
     return states.CHOOSING_MODE
 
 async def detailed_progress(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Детальная статистика - заглушка."""
+    """Детальная статистика с графиками."""
     query = update.callback_query
     await query.answer()
     
+    results = context.user_data.get('task20_results', [])
+    
+    if len(results) < 5:
+        await query.answer("Нужно минимум 5 попыток для детальной статистики", show_alert=True)
+        return await my_progress(update, context)
+    
+    try:
+        import matplotlib
+        matplotlib.use('Agg')  # Для работы без GUI
+        import matplotlib.pyplot as plt
+        from io import BytesIO
+        
+        # Создаем фигуру с несколькими графиками
+        fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(12, 10))
+        fig.suptitle('Детальная статистика по заданию 20', fontsize=16)
+        
+        # График 1: Динамика результатов
+        scores = [r['score'] for r in results]
+        attempts = list(range(1, len(scores) + 1))
+        
+        ax1.plot(attempts, scores, 'b-o', linewidth=2, markersize=8)
+        ax1.axhline(y=2, color='orange', linestyle='--', alpha=0.7, label='Проходной балл')
+        ax1.axhline(y=3, color='green', linestyle='--', alpha=0.7, label='Максимум')
+        
+        # Добавляем скользящее среднее
+        if len(scores) >= 5:
+            window_size = 5
+            moving_avg = []
+            for i in range(len(scores) - window_size + 1):
+                moving_avg.append(sum(scores[i:i+window_size]) / window_size)
+            ax1.plot(range(window_size, len(scores) + 1), moving_avg, 'r-', linewidth=2, alpha=0.7, label='Среднее за 5 попыток')
+        
+        ax1.set_xlabel('Попытка')
+        ax1.set_ylabel('Баллы')
+        ax1.set_title('Динамика результатов')
+        ax1.legend()
+        ax1.grid(True, alpha=0.3)
+        ax1.set_ylim(-0.5, 3.5)
+        
+        # График 2: Распределение баллов
+        score_counts = {0: 0, 1: 0, 2: 0, 3: 0}
+        for score in scores:
+            score_counts[score] += 1
+        
+        bars = ax2.bar(score_counts.keys(), score_counts.values(), color=['red', 'orange', 'yellow', 'green'])
+        ax2.set_xlabel('Баллы')
+        ax2.set_ylabel('Количество')
+        ax2.set_title('Распределение результатов')
+        ax2.set_xticks([0, 1, 2, 3])
+        
+        # Добавляем проценты на столбцы
+        total = len(scores)
+        for bar, (score, count) in zip(bars, score_counts.items()):
+            height = bar.get_height()
+            ax2.text(bar.get_x() + bar.get_width()/2., height,
+                    f'{count}\n({count/total*100:.0f}%)',
+                    ha='center', va='bottom')
+        
+        # График 3: Статистика по блокам
+        blocks_data = {}
+        for result in results:
+            block = result['block']
+            if block not in blocks_data:
+                blocks_data[block] = []
+            blocks_data[block].append(result['score'])
+        
+        block_names = list(blocks_data.keys())[:5]  # Максимум 5 блоков
+        block_avgs = [sum(scores)/len(scores) for block, scores in blocks_data.items()][:5]
+        
+        bars3 = ax3.bar(range(len(block_names)), block_avgs, color='skyblue')
+        ax3.set_xlabel('Блоки')
+        ax3.set_ylabel('Средний балл')
+        ax3.set_title('Результаты по блокам')
+        ax3.set_xticks(range(len(block_names)))
+        ax3.set_xticklabels([name[:15] + '...' if len(name) > 15 else name for name in block_names], rotation=45, ha='right')
+        ax3.set_ylim(0, 3.5)
+        
+        # Добавляем значения на столбцы
+        for bar in bars3:
+            height = bar.get_height()
+            ax3.text(bar.get_x() + bar.get_width()/2., height,
+                    f'{height:.2f}',
+                    ha='center', va='bottom')
+        
+        # График 4: Прогресс за последние 30 дней
+        from datetime import datetime, timedelta
+        
+        # Группируем по дням
+        daily_scores = {}
+        for result in results[-30:]:  # Последние 30 результатов
+            try:
+                date = datetime.fromisoformat(result['timestamp']).date()
+                if date not in daily_scores:
+                    daily_scores[date] = []
+                daily_scores[date].append(result['score'])
+            except:
+                continue
+        
+        if daily_scores:
+            dates = sorted(daily_scores.keys())
+            daily_avgs = [sum(daily_scores[date])/len(daily_scores[date]) for date in dates]
+            
+            ax4.plot(dates, daily_avgs, 'g-o', linewidth=2, markersize=8)
+            ax4.set_xlabel('Дата')
+            ax4.set_ylabel('Средний балл')
+            ax4.set_title('Прогресс по дням')
+            ax4.tick_params(axis='x', rotation=45)
+            ax4.grid(True, alpha=0.3)
+            ax4.set_ylim(0, 3.5)
+        else:
+            ax4.text(0.5, 0.5, 'Недостаточно данных', ha='center', va='center', transform=ax4.transAxes)
+        
+        plt.tight_layout()
+        
+        # Сохраняем график
+        buf = BytesIO()
+        plt.savefig(buf, format='png', dpi=150, bbox_inches='tight')
+        buf.seek(0)
+        plt.close()
+        
+        # Отправляем график
+        await query.message.reply_photo(
+            photo=buf,
+            caption=f"📊 <b>Детальная статистика</b>\n\n"
+                   f"Всего попыток: {len(results)}\n"
+                   f"Средний балл: {sum(scores)/len(scores):.2f}/3\n"
+                   f"Лучший результат: {max(scores)}/3\n"
+                   f"Процент максимальных баллов: {score_counts[3]/total*100:.0f}%",
+            parse_mode=ParseMode.HTML
+        )
+        
+    except ImportError:
+        await query.answer("Для графиков нужно установить matplotlib: pip install matplotlib", show_alert=True)
+        return await my_progress(update, context)
+    except Exception as e:
+        logger.error(f"Error creating progress chart: {e}")
+        await query.answer("Ошибка при создании графика", show_alert=True)
+        return await my_progress(update, context)
+    
+    return states.CHOOSING_MODE
+
+async def achievements_check(context: ContextTypes.DEFAULT_TYPE, user_id: int):
+    """Проверка и выдача достижений."""
+    results = context.user_data.get('task20_results', [])
+    achievements = context.user_data.get('task20_achievements', set())
+    new_achievements = []
+    
+    # Определяем достижения
+    achievement_conditions = {
+        'first_perfect': {
+            'name': '🌟 Первый идеал',
+            'desc': 'Получить первый максимальный балл',
+            'check': lambda r: any(res['score'] == 3 for res in r)
+        },
+        'consistency_5': {
+            'name': '🎯 Стабильность',
+            'desc': 'Получить 3 балла 5 раз подряд',
+            'check': lambda r: any(all(r[i:i+5]) for i in range(len(r)-4) if all(res['score'] == 3 for res in r[i:i+5]))
+        },
+        'explorer_10': {
+            'name': '🗺️ Исследователь',
+            'desc': 'Изучить 10 разных тем',
+            'check': lambda r: len(set(res['topic_id'] for res in r)) >= 10
+        },
+        'persistent_20': {
+            'name': '💪 Упорство',
+            'desc': 'Выполнить 20 заданий',
+            'check': lambda r: len(r) >= 20
+        },
+        'master_50': {
+            'name': '🏆 Мастер',
+            'desc': 'Выполнить 50 заданий со средним баллом выше 2.5',
+            'check': lambda r: len(r) >= 50 and sum(res['score'] for res in r) / len(r) >= 2.5
+        },
+        'comeback': {
+            'name': '🔥 Возвращение',
+            'desc': 'Получить 3 балла после 3+ неудачных попыток',
+            'check': lambda r: any(
+                r[i]['score'] == 3 and all(r[j]['score'] < 2 for j in range(max(0, i-3), i))
+                for i in range(3, len(r))
+            )
+        }
+    }
+    
+    # Проверяем каждое достижение
+    for ach_id, ach_data in achievement_conditions.items():
+        if ach_id not in achievements and ach_data['check'](results):
+            achievements.add(ach_id)
+            new_achievements.append(ach_data)
+    
+    # Сохраняем достижения
+    context.user_data['task20_achievements'] = achievements
+    
+    return new_achievements
+
+async def show_achievements(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Показать все достижения."""
+    query = update.callback_query
+    await query.answer()
+    
+    achievements = context.user_data.get('task20_achievements', set())
+    
+    all_achievements = {
+        'first_perfect': ('🌟 Первый идеал', 'Получить первый максимальный балл'),
+        'consistency_5': ('🎯 Стабильность', 'Получить 3 балла 5 раз подряд'),
+        'explorer_10': ('🗺️ Исследователь', 'Изучить 10 разных тем'),
+        'persistent_20': ('💪 Упорство', 'Выполнить 20 заданий'),
+        'master_50': ('🏆 Мастер', 'Выполнить 50 заданий со средним баллом выше 2.5'),
+        'comeback': ('🔥 Возвращение', 'Получить 3 балла после 3+ неудачных попыток')
+    }
+    
+    text = "🏅 <b>Ваши достижения</b>\n\n"
+    
+    # Полученные достижения
+    if achievements:
+        text += "<b>Получено:</b>\n"
+        for ach_id in achievements:
+            if ach_id in all_achievements:
+                name, desc = all_achievements[ach_id]
+                text += f"{name} - {desc}\n"
+        text += "\n"
+    
+    # Доступные достижения
+    not_achieved = set(all_achievements.keys()) - achievements
+    if not_achieved:
+        text += "<b>Доступно:</b>\n"
+        for ach_id in not_achieved:
+            name, desc = all_achievements[ach_id]
+            text += f"❓ {name[2:]} - {desc}\n"
+    
+    # Прогресс
+    text += f"\n<b>Прогресс:</b> {len(achievements)}/{len(all_achievements)}"
+    
+    kb = InlineKeyboardMarkup([[
+        InlineKeyboardButton("⬅️ Назад", callback_data="t20_progress")
+    ]])
+    
     await query.edit_message_text(
-        "📈 <b>Детальная статистика</b>\n\n"
-        "Функция в разработке...",
-        reply_markup=InlineKeyboardMarkup([[
-            InlineKeyboardButton("⬅️ Назад", callback_data="t20_progress")
-        ]]),
+        text,
+        reply_markup=kb,
         parse_mode=ParseMode.HTML
     )
     return states.CHOOSING_MODE
 
 async def export_results(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Экспорт результатов - заглушка."""
+    """Экспорт результатов в CSV."""
     query = update.callback_query
     await query.answer()
     
-    await query.edit_message_text(
-        "📤 <b>Экспорт результатов</b>\n\n"
-        "Функция в разработке...",
-        reply_markup=InlineKeyboardMarkup([[
-            InlineKeyboardButton("⬅️ Назад", callback_data="t20_progress")
-        ]]),
-        parse_mode=ParseMode.HTML
-    )
+    results = context.user_data.get('task20_results', [])
+    
+    if not results:
+        await query.answer("Нет результатов для экспорта", show_alert=True)
+        return states.CHOOSING_MODE
+    
+    try:
+        import csv
+        import io
+        
+        # Создаем CSV в памяти
+        output = io.StringIO()
+        writer = csv.writer(output, delimiter=';')
+        
+        # Заголовки
+        writer.writerow(['Дата и время', 'Тема', 'Блок', 'Балл', 'Максимальный балл'])
+        
+        # Данные
+        for result in results:
+            timestamp = result.get('timestamp', 'Не указано')
+            # Преобразуем timestamp в читаемый формат
+            try:
+                from datetime import datetime
+                dt = datetime.fromisoformat(timestamp)
+                formatted_time = dt.strftime('%d.%m.%Y %H:%M')
+            except:
+                formatted_time = timestamp
+            
+            writer.writerow([
+                formatted_time,
+                result.get('topic_title', 'Не указано'),
+                result.get('block', 'Не указано'),
+                result.get('score', 0),
+                result.get('max_score', 3)
+            ])
+        
+        # Получаем CSV как строку
+        output.seek(0)
+        csv_data = output.getvalue()
+        
+        # Отправляем файл
+        await query.message.reply_document(
+            document=io.BytesIO(csv_data.encode('utf-8-sig')),  # utf-8-sig для корректного отображения в Excel
+            filename=f"task20_results_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+            caption="📊 Ваши результаты по заданию 20"
+        )
+        
+        await query.answer("✅ Результаты экспортированы")
+        
+    except Exception as e:
+        logger.error(f"Error exporting results: {e}")
+        await query.answer("❌ Ошибка при экспорте", show_alert=True)
+    
     return states.CHOOSING_MODE
 
 async def choose_topic(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1022,6 +1409,29 @@ async def choose_topic(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     
     return states.ANSWERING
+
+async def save_stats_by_level(context: ContextTypes.DEFAULT_TYPE, user_id: int, score: int):
+    """Сохранение статистики по уровням строгости."""
+    if not evaluator:
+        return
+    
+    current_level = evaluator.strictness.name
+    stats_key = f'task20_stats_by_level_{user_id}'
+    
+    if stats_key not in context.bot_data:
+        context.bot_data[stats_key] = {}
+    
+    if current_level not in context.bot_data[stats_key]:
+        context.bot_data[stats_key][current_level] = {
+            'attempts': 0,
+            'total_score': 0,
+            'avg_score': 0
+        }
+    
+    stats = context.bot_data[stats_key][current_level]
+    stats['attempts'] += 1
+    stats['total_score'] += score
+    stats['avg_score'] = stats['total_score'] / stats['attempts']
 
 async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработка ответа пользователя с AI-проверкой."""
@@ -1128,6 +1538,16 @@ async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if 'task20_results' not in context.user_data:
             context.user_data['task20_results'] = []
         context.user_data['task20_results'].append(result_data)
+        await save_stats_by_level(context, user_id, result_data['score'])
+                # Проверяем достижения
+        user_id = update.effective_user.id
+        new_achievements = await achievements_check(context, user_id)
+        
+        # Если есть новые достижения, добавляем их в feedback
+        if new_achievements:
+            feedback += "\n\n🎉 <b>Новые достижения:</b>\n"
+            for ach in new_achievements:
+                feedback += f"{ach['name']} - {ach['desc']}\n"
         
         kb = InlineKeyboardMarkup([
             [InlineKeyboardButton("🔄 Попробовать снова", callback_data="t20_retry")],
@@ -1215,9 +1635,9 @@ async def cmd_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Отмена текущего действия."""
     await update.message.reply_text(
         "Действие отменено.",
-        reply_markup=InlineKeyboardMarkup([[
-            InlineKeyboardButton("📝 В меню задания 20", callback_data="t20_menu"),
-            InlineKeyboardButton("🏠 Главное меню", callback_data="to_main_menu")
-        ]])
+        reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton("📝 В меню задания 20", callback_data="t20_menu")],
+            [InlineKeyboardButton("🏠 Главное меню", callback_data="to_main_menu")]
+        ])
     )
     return ConversationHandler.END
