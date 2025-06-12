@@ -1,23 +1,24 @@
-"""Обработчики для задания 20."""
-
+# В самом начале файла task20/handlers.py
 import logging
 import os
 import json
 from typing import Optional, Dict, List
-from datetime import datetime  # <-- Добавьте эту строку
-from .evaluator import Task20AIEvaluator, StrictnessLevel, EvaluationResult
+from datetime import datetime
+
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.constants import ParseMode
 from telegram.ext import ContextTypes, ConversationHandler
 
 from core import states
 
+# ВАЖНО: Этот импорт должен быть здесь
+from .evaluator import Task20AIEvaluator, StrictnessLevel, EvaluationResult, AI_EVALUATOR_AVAILABLE
+
 logger = logging.getLogger(__name__)
 
-# Глобальное хранилище для данных задания 20
+# Глобальные переменные
 task20_data = {}
-
-evaluator = None
+evaluator = None  # ВАЖНО: должна быть объявлена
 
 
 async def init_task20_data():
@@ -68,21 +69,30 @@ async def init_task20_data():
         task20_data = {"topics": [], "blocks": {}, "topics_by_block": {}}
     
     # Инициализируем AI evaluator
+    # Важно: импортируем здесь, чтобы избежать циклических импортов
+    from .evaluator import Task20AIEvaluator, StrictnessLevel, AI_EVALUATOR_AVAILABLE
+    
+    logger.info(f"AI_EVALUATOR_AVAILABLE = {AI_EVALUATOR_AVAILABLE}")
+    
     if AI_EVALUATOR_AVAILABLE:
         try:
             strictness_level = StrictnessLevel[os.getenv('TASK20_STRICTNESS', 'STANDARD').upper()]
+            logger.info(f"Using strictness level: {strictness_level.value}")
         except KeyError:
             strictness_level = StrictnessLevel.STANDARD
+            logger.info("Using default strictness level: STANDARD")
         
         try:
             evaluator = Task20AIEvaluator(strictness=strictness_level)
-            logger.info(f"Task20 AI evaluator initialized with {strictness_level.value} strictness")
+            logger.info(f"Task20 AI evaluator initialized successfully with {strictness_level.value} strictness")
         except Exception as e:
-            logger.warning(f"Failed to initialize AI evaluator: {e}")
+            logger.error(f"Failed to initialize AI evaluator: {e}", exc_info=True)
             evaluator = None
     else:
-        logger.warning("AI evaluator not available for task20")
+        logger.warning("AI evaluator not available for task20 - check imports")
         evaluator = None
+        
+    logger.info(f"Final evaluator status: {'initialized' if evaluator else 'not initialized'}")
 
 async def entry_from_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Вход в задание 20 из главного меню."""
@@ -1018,6 +1028,10 @@ async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_answer = update.message.text
     topic = context.user_data.get('current_topic')
     
+    # Отладочное логирование
+    logger.info(f"handle_answer called, evaluator = {evaluator}")
+    logger.info(f"evaluator type: {type(evaluator) if evaluator else 'None'}")
+    
     if not topic:
         await update.message.reply_text(
             "❌ Ошибка: тема не выбрана. Начните заново.",
@@ -1037,26 +1051,26 @@ async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         # Проверяем наличие evaluator
         if not evaluator:
-            # Простая проверка без AI
-            # Простая проверка без AI
+            logger.warning("Evaluator is None, using basic evaluation")
             arguments = [arg.strip() for arg in user_answer.split('\n') if arg.strip()]
             score = min(len(arguments), 3) if len(arguments) <= 3 else 0
             
             feedback = f"📊 <b>Результаты проверки</b>\n\n"
             feedback += f"<b>Тема:</b> {topic['title']}\n"
-            feedback += f"<b>Суждений найдено:</b> {len(arguments)}\n\n"
+            feedback += f"<b>Оценка:</b> {result.total_score}/{result.max_score} баллов\n\n"
             
-            if len(arguments) >= 3:
-                feedback += "✅ Вы привели достаточное количество суждений.\n"
-            else:
-                feedback += "❌ Необходимо привести три суждения.\n"
+            if result.feedback:
+                feedback += f"<b>Комментарий:</b>\n{result.feedback}\n"
             
-            feedback += "\n⚠️ <i>AI-проверка недоступна. Обратитесь к преподавателю для детальной оценки.</i>"
+            if result.suggestions:
+                feedback += f"\n<b>Рекомендации:</b>\n"
+                for suggestion in result.suggestions:
+                    feedback += f"• {suggestion}\n"
             
-            # Показываем эталонные суждения
-            feedback += "\n\n<b>Эталонные суждения по теме:</b>\n\n"
-            for i, example in enumerate(topic.get('example_arguments', [])[:3], 1):
-                feedback += f"{i}. <i>{example['argument']}</i>\n\n"
+            # Убираем показ эталонных суждений
+            # Вместо этого просто добавляем совет если оценка не максимальная
+            if result.total_score < result.max_score:
+                feedback += "\n💡 <i>Для улучшения результата обратите внимание на рекомендации выше.</i>"
             
             result_data = {
                 'topic_id': topic['id'],
