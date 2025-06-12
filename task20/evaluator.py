@@ -4,11 +4,55 @@ import logging
 import os
 from enum import Enum
 from typing import Dict, List, Any, Optional
-
-from core.ai_evaluator import BaseAIEvaluator, EvaluationResult, TaskRequirements
-from core.ai_config import get_yandex_config, TaskType
+from dataclasses import dataclass
 
 logger = logging.getLogger(__name__)
+
+# Безопасный импорт
+try:
+    from core.ai_evaluator import (
+        BaseAIEvaluator,
+        EvaluationResult,
+        TaskRequirements,
+    )
+    from core.ai_service import YandexGPTService, YandexGPTConfig, YandexGPTModel
+    AI_EVALUATOR_AVAILABLE = True
+except ImportError as e:
+    logger.warning(f"AI evaluator components not available: {e}")
+    AI_EVALUATOR_AVAILABLE = False
+    
+    # Заглушки для работы без AI
+    @dataclass
+    class TaskRequirements:
+        task_number: int
+        task_name: str
+        max_score: int
+        criteria: List[Dict]
+        description: str
+    
+    @dataclass
+    class EvaluationResult:
+        scores: Dict[str, int]
+        total_score: int
+        max_score: int
+        feedback: str
+        detailed_analysis: Optional[Dict] = None
+        suggestions: Optional[List[str]] = None
+        factual_errors: Optional[List[str]] = None
+    
+    class BaseAIEvaluator:
+        def __init__(self, requirements: TaskRequirements):
+            self.requirements = requirements
+    
+    class YandexGPTService:
+        pass
+    
+    class YandexGPTConfig:
+        pass
+    
+    class YandexGPTModel:
+        LITE = "yandexgpt-lite"
+        PRO = "yandexgpt"
 
 
 class StrictnessLevel(Enum):
@@ -19,25 +63,60 @@ class StrictnessLevel(Enum):
     EXPERT = "Экспертный"
 
 
-class Task20AIEvaluator(BaseAIEvaluator):
+class Task20AIEvaluator(BaseAIEvaluator if AI_EVALUATOR_AVAILABLE else object):
     """AI-проверщик для задания 20 с настраиваемой строгостью."""
     
     def __init__(self, strictness: StrictnessLevel = StrictnessLevel.STANDARD):
-        requirements = TaskRequirements(
-            task_number=20,
-            task_name="Формулирование суждений",
-            max_score=3,
-            criteria=[
-                {
-                    "name": "К1",
-                    "max_score": 3,
-                    "description": "Корректность суждений (по 1 баллу за каждое)"
-                }
-            ],
-            description="Сформулируйте три суждения..."
-        )
-        super().__init__(requirements)
         self.strictness = strictness
+        
+        if AI_EVALUATOR_AVAILABLE:
+            requirements = TaskRequirements(
+                task_number=20,
+                task_name="Формулирование суждений",
+                max_score=3,
+                criteria=[
+                    {
+                        "name": "К1",
+                        "max_score": 3,
+                        "description": "Корректность суждений (по 1 баллу за каждое)"
+                    }
+                ],
+                description="Сформулируйте три суждения..."
+            )
+            super().__init__(requirements)
+        else:
+            self.requirements = TaskRequirements(
+                task_number=20,
+                task_name="Формулирование суждений",
+                max_score=3,
+                criteria=[{"name": "К1", "max_score": 3, "description": "Корректность суждений"}],
+                description="Сформулируйте три суждения..."
+            )
+        
+        # Инициализируем сервис если доступен
+        self.ai_service = None
+        if AI_EVALUATOR_AVAILABLE:
+            try:
+                config = YandexGPTConfig.from_env()
+                # Выбираем модель в зависимости от строгости
+                if strictness in [StrictnessLevel.STRICT, StrictnessLevel.EXPERT]:
+                    config.model = YandexGPTModel.PRO
+                else:
+                    config.model = YandexGPTModel.LITE
+                
+                # Настройка температуры
+                if strictness == StrictnessLevel.LENIENT:
+                    config.temperature = 0.4
+                elif strictness == StrictnessLevel.STANDARD:
+                    config.temperature = 0.3
+                else:
+                    config.temperature = 0.2
+                    
+                self.config = config
+                logger.info(f"Task20 AI evaluator configured with {strictness.value} strictness")
+            except Exception as e:
+                logger.error(f"Failed to configure AI service: {e}")
+                self.config = None
     
     def get_system_prompt(self) -> str:
         """Системный промпт для YandexGPT."""
@@ -92,7 +171,10 @@ class Task20AIEvaluator(BaseAIEvaluator):
     async def evaluate(self, answer: str, topic: str, **kwargs) -> EvaluationResult:
         """Оценка ответа через YandexGPT."""
         task_text = kwargs.get('task_text', '')
-        key_points = kwargs.get('key_points', [])
+        
+        # Если AI недоступен, используем базовую оценку
+        if not AI_EVALUATOR_AVAILABLE or not self.config:
+            return self._basic_evaluation(answer, topic)
         
         # Формируем промпт для проверки
         evaluation_prompt = f"""Проверь ответ на задание 20 ЕГЭ.
@@ -148,24 +230,20 @@ class Task20AIEvaluator(BaseAIEvaluator):
 }}"""
 
         try:
-            # Получаем конфигурацию для YandexGPT
-            config = get_yandex_config(TaskType.TASK_20)
-            
-            # Вызываем API
-            response = await self._call_yandex_api(
-                system_prompt=self.get_system_prompt(),
-                user_prompt=evaluation_prompt,
-                config=config
-            )
-            
-            if response.get("error"):
-                logger.error(f"YandexGPT error: {response.get('error')}")
-                # Возвращаем базовую оценку
-                return self._basic_evaluation(answer, topic)
-            
-            # Преобразуем ответ в EvaluationResult
-            return self._parse_response(response, answer, topic)
-            
+            # Используем сервис YandexGPT
+            async with YandexGPTService(self.config) as service:
+                result = await service.get_completion_json(
+                    prompt=evaluation_prompt,
+                    system_prompt=self.get_system_prompt(),
+                    temperature=self.config.temperature
+                )
+                
+                if result:
+                    return self._parse_response(result, answer, topic)
+                else:
+                    logger.error("Failed to get JSON response from YandexGPT")
+                    return self._basic_evaluation(answer, topic)
+                    
         except Exception as e:
             logger.error(f"Error in Task20 evaluation: {e}")
             return self._basic_evaluation(answer, topic)
@@ -175,6 +253,16 @@ class Task20AIEvaluator(BaseAIEvaluator):
         arguments = [arg.strip() for arg in answer.split('\n') if arg.strip()]
         score = min(len(arguments), 3) if len(arguments) <= 3 else 2
         
+        # Проверяем на наличие конкретных примеров
+        concrete_indicators = [
+            'например', 'в 20', 'году', 'компания', 'страна',
+            'россия', 'сша', 'китай', 'франция', 'германия'
+        ]
+        
+        has_concrete = any(indicator in answer.lower() for indicator in concrete_indicators)
+        if has_concrete and score > 0:
+            score = max(0, score - 1)
+        
         return EvaluationResult(
             scores={"К1": score},
             total_score=score,
@@ -182,7 +270,8 @@ class Task20AIEvaluator(BaseAIEvaluator):
             feedback=f"Обнаружено суждений: {len(arguments)}",
             detailed_analysis={
                 "arguments_count": len(arguments),
-                "score": score
+                "score": score,
+                "has_concrete_examples": has_concrete
             },
             suggestions=[
                 "Используйте больше обобщающих конструкций",
