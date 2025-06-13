@@ -42,47 +42,49 @@ async def init_task20_data():
         try:
             with open(data_file, "r", encoding="utf-8") as f:
                 topics_list = json.load(f)
-        
-        # Преобразуем список тем в нужную структуру
-        all_topics = []
-        topic_by_id = {}
-        topics_by_block = {}
-        blocks = {}
-        
-        for topic in topics_list:
-            # Добавляем тему в общий список
-            all_topics.append(topic)
             
-            # Индексируем по ID
-            topic_by_id[topic["id"]] = topic
+            # Преобразуем список тем в нужную структуру
+            all_topics = []
+            topic_by_id = {}
+            topics_by_block = {}
+            blocks = {}
             
-            # Группируем по блокам
-            block_name = topic.get("block", "Без категории")
-            if block_name not in topics_by_block:
-                topics_by_block[block_name] = []
-                blocks[block_name] = {"topics": []}
+            for topic in topics_list:
+                # Добавляем тему в общий список
+                all_topics.append(topic)
+                
+                # Индексируем по ID
+                topic_by_id[topic["id"]] = topic
+                
+                # Группируем по блокам
+                block_name = topic.get("block", "Без категории")
+                if block_name not in topics_by_block:
+                    topics_by_block[block_name] = []
+                    blocks[block_name] = {"topics": []}
+                
+                topics_by_block[block_name].append(topic)
+                blocks[block_name]["topics"].append(topic)
             
-            topics_by_block[block_name].append(topic)
-            blocks[block_name]["topics"].append(topic)
-        
-        # Формируем итоговую структуру данных
-        task20_data = {
-            "topics": all_topics,
-            "topic_by_id": topic_by_id,
-            "topics_by_block": topics_by_block,
-            "blocks": blocks
-        }
-        
-        logger.info(f"Loaded {len(all_topics)} topics for task20")
-        logger.info(f"Blocks: {list(blocks.keys())}")
+            # Формируем итоговую структуру данных
+            task20_data = {
+                "topics": all_topics,
+                "topic_by_id": topic_by_id,
+                "topics_by_block": topics_by_block,
+                "blocks": blocks
+            }
+            
+            logger.info(f"Loaded {len(all_topics)} topics for task20")
+            logger.info(f"Blocks: {list(blocks.keys())}")
 
-        # Сохраняем в кэш
-        await cache.set('task20_data', task20_data)        
-        # Создаём селектор
-        topic_selector = TopicSelector(topics_list)    
-    except Exception as e:
-        logger.error(f"Failed to load task20 data: {e}")
-        task20_data = {"topics": [], "blocks": {}, "topics_by_block": {}}
+            # Сохраняем в кэш
+            await cache.set('task20_data', task20_data)        
+            # Создаём селектор
+            topic_selector = TopicSelector(topics_list)
+            
+        except Exception as e:  # ← ЭТОТ БЛОК ДОЛЖЕН БЫТЬ С ОТСТУПОМ НА УРОВНЕ try
+            logger.error(f"Failed to load task20 data: {e}")
+            task20_data = {"topics": [], "blocks": {}, "topics_by_block": {}}
+            topic_selector = None
     
     # Инициализируем AI evaluator
     # Важно: импортируем здесь, чтобы избежать циклических импортов
