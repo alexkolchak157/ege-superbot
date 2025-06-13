@@ -1,5 +1,5 @@
 # task20/__init__.py
+# Не импортируем evaluator напрямую
 from .plugin import plugin
-from .evaluator import Task20AIEvaluator
 
-__all__ = ['plugin', 'Task20AIEvaluator']
+__all__ = ['plugin']
