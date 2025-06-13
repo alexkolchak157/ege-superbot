@@ -905,6 +905,49 @@ async def random_topic_all(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     return states.ANSWERING
 
+async def mistakes_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Режим работы над ошибками."""
+    query = update.callback_query
+    await query.answer()
+    
+    results = context.user_data.get('task20_results', [])
+    
+    # Находим темы с низкими баллами
+    low_score_topics = [r for r in results if r['score'] < 2]
+    
+    if not low_score_topics:
+        await query.edit_message_text(
+            "👍 <b>Отличная работа!</b>\n\n"
+            "У вас нет тем с низкими баллами для повторения.",
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("⬅️ Назад", callback_data="t20_menu")
+            ]]),
+            parse_mode=ParseMode.HTML
+        )
+        return states.CHOOSING_MODE
+    
+    text = f"🔧 <b>Работа над ошибками</b>\n\n"
+    text += f"Найдено тем с низкими баллами: {len(low_score_topics)}\n\n"
+    text += "Темы для повторения:\n"
+    
+    for i, result in enumerate(low_score_topics[:5]):  # Показываем до 5 тем
+        text += f"• {result['topic_title']} ({result['score']}/3)\n"
+    
+    text += "\n<i>Выберите тему для повторения или начните со случайной.</i>"
+    
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("🎲 Случайная тема из ошибок", callback_data="t20_random_mistake")],
+        [InlineKeyboardButton("📝 Выбрать тему", callback_data="t20_select_mistake")],
+        [InlineKeyboardButton("⬅️ Назад", callback_data="t20_menu")]
+    ])
+    
+    await query.edit_message_text(
+        text,
+        reply_markup=kb,
+        parse_mode=ParseMode.HTML
+    )
+    return states.CHOOSING_MODE
+
 async def random_topic_block(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Выбор случайной темы из блока."""
     query = update.callback_query
