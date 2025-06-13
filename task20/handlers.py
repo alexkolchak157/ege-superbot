@@ -4,7 +4,7 @@ import os
 import csv
 import io
 import json
-from typing import Optional, Dict, List  # ← ЭТА СТРОКА ОБЯЗАТЕЛЬНА
+from typing import Optional, Dict, List
 from datetime import datetime
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
@@ -13,17 +13,31 @@ from telegram.ext import ContextTypes, ConversationHandler
 
 from core import states
 
-# ВАЖНО: Этот импорт должен быть здесь
-from .evaluator import Task20AIEvaluator, StrictnessLevel, EvaluationResult, AI_EVALUATOR_AVAILABLE
-from .cache import cache
-from .utils import TopicSelector
-
 logger = logging.getLogger(__name__)
 
-# Глобальные переменные
+# Глобальные переменные (БЕЗ типизации)
 task20_data = {}
 evaluator = None
 topic_selector = None
+
+# Импорты внутренних модулей ПОСЛЕ определения переменных
+try:
+    from .evaluator import Task20AIEvaluator, StrictnessLevel, EvaluationResult, AI_EVALUATOR_AVAILABLE
+except ImportError as e:
+    logger.error(f"Failed to import evaluator: {e}")
+    AI_EVALUATOR_AVAILABLE = False
+
+try:
+    from .cache import cache
+except ImportError as e:
+    logger.error(f"Failed to import cache: {e}")
+    cache = None
+
+try:
+    from .utils import TopicSelector
+except ImportError as e:
+    logger.error(f"Failed to import utils: {e}")
+    TopicSelector = None
 
 
 async def init_task20_data():
@@ -211,7 +225,7 @@ async def show_achievement_notification(update: Update, context: ContextTypes.DE
         name=f"delete_achievement_{msg.message_id}"
     )
 
-async def practice_mode_enhanced(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def practice_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Режим практики с улучшенным UX."""
     query = update.callback_query
     await query.answer()
@@ -567,7 +581,7 @@ async def examples_bank(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     return states.CHOOSING_MODE
 
-async def my_progress_enhanced(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def my_progress(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Улучшенный показ прогресса."""
     query = update.callback_query
     await query.answer()
