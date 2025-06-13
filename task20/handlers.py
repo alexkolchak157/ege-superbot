@@ -4,6 +4,8 @@ import os
 import csv
 import io
 import json
+from .cache import cache
+from .utils import TopicSelector
 from typing import Optional, Dict, List
 from datetime import datetime
 
@@ -21,17 +23,25 @@ logger = logging.getLogger(__name__)
 # Глобальные переменные
 task20_data = {}
 evaluator = None  # ВАЖНО: должна быть объявлена
+topic_selector: Optional[TopicSelector] = None
 
 
 async def init_task20_data():
-    """Инициализация данных для задания 20."""
-    global task20_data, evaluator
+    """Инициализация данных с кэшированием."""
+    global task20_data, evaluator, topic_selector
     
-    data_file = os.path.join(os.path.dirname(__file__), "task20_topics.json")
-    
-    try:
-        with open(data_file, "r", encoding="utf-8") as f:
-            topics_list = json.load(f)
+    # Проверяем кэш
+    cached_data = await cache.get('task20_data')
+    if cached_data:
+        task20_data = cached_data
+        topic_selector = TopicSelector(task20_data['topics'])
+        logger.info("Loaded task20 data from cache")
+    else:
+        # Загружаем из файла
+        data_file = os.path.join(os.path.dirname(__file__), "task20_topics.json")
+        try:
+            with open(data_file, "r", encoding="utf-8") as f:
+                topics_list = json.load(f)
         
         # Преобразуем список тем в нужную структуру
         all_topics = []
@@ -65,7 +75,11 @@ async def init_task20_data():
         
         logger.info(f"Loaded {len(all_topics)} topics for task20")
         logger.info(f"Blocks: {list(blocks.keys())}")
-        
+
+        # Сохраняем в кэш
+        await cache.set('task20_data', task20_data)        
+        # Создаём селектор
+        topic_selector = TopicSelector(topics_list)    
     except Exception as e:
         logger.error(f"Failed to load task20 data: {e}")
         task20_data = {"topics": [], "blocks": {}, "topics_by_block": {}}
@@ -166,17 +180,88 @@ async def cmd_task20(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     return states.CHOOSING_MODE
 
-async def practice_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Режим практики - выбор способа тренировки."""
+async def show_achievement_notification(update: Update, context: ContextTypes.DEFAULT_TYPE, achievement: Dict):
+    """Показать уведомление о достижении."""
+    text = f"""
+🎉 <b>Новое достижение!</b>
+
+{achievement['icon']} <b>{achievement['name']}</b>
+<i>{achievement['description']}</i>
+
+{achievement.get('reward_text', '')}
+"""
+    
+    kb = InlineKeyboardMarkup([[
+        InlineKeyboardButton("👍 Отлично!", callback_data="t20_achievement_ok")
+    ]])
+    
+    # Отправляем как отдельное сообщение
+    msg = await update.effective_message.reply_text(
+        text, 
+        reply_markup=kb,
+        parse_mode=ParseMode.HTML
+    )
+    
+    # Удаляем через 10 секунд
+    context.job_queue.run_once(
+        lambda ctx: msg.delete(), 
+        when=10, 
+        name=f"delete_achievement_{msg.message_id}"
+    )
+
+async def practice_mode_enhanced(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Режим практики с улучшенным UX."""
     query = update.callback_query
     await query.answer()
     
-    text = (
-        "💪 <b>Режим практики</b>\n\n"
-        "Выберите способ тренировки:"
-    )
+    # Анализируем прогресс пользователя
+    progress = UserProgress(context.user_data)
+    stats = progress.get_stats()
     
-    kb = InlineKeyboardMarkup([
+    text = "💪 <b>Режим практики</b>\n\n"
+    
+    # Показываем мини-статистику
+    if stats['total_attempts'] > 0:
+        text += f"📊 Ваш прогресс: {stats['total_attempts']} попыток, средний балл {stats['average_score']:.1f}/3\n"
+        
+        if stats['streak'] > 0:
+            text += f"🔥 Серия правильных ответов: {stats['streak']}\n"
+        
+        text += "\n"
+    
+    # Показываем подсказку, если нужно
+    tip = progress.should_show_tip()
+    if tip:
+        text += f"{tip}\n\n"
+    
+    text += "Выберите способ тренировки:"
+    
+    kb_buttons = []
+    
+    # Кнопка "Продолжить с последней темы"
+    if progress.last_topic_id and topic_selector:
+        last_topic = topic_selector.topics_by_id.get(progress.last_topic_id)
+        if last_topic:
+            kb_buttons.append([
+                InlineKeyboardButton(
+                    f"⏮️ Продолжить: {last_topic['title'][:30]}...", 
+                    callback_data=f"t20_topic:{last_topic['id']}"
+                )
+            ])
+    
+    # Кнопка "Рекомендованная тема"
+    if stats['total_attempts'] >= 3 and topic_selector:
+        recommended = SmartRecommendations.get_next_topic_recommendation(progress, topic_selector)
+        if recommended:
+            kb_buttons.append([
+                InlineKeyboardButton(
+                    "🎯 Рекомендуем эту тему", 
+                    callback_data=f"t20_topic:{recommended['id']}"
+                )
+            ])
+    
+    # Стандартные кнопки
+    kb_buttons.extend([
         [InlineKeyboardButton("📚 Выбрать блок тем", callback_data="t20_select_block")],
         [InlineKeyboardButton("🎲 Случайная тема", callback_data="t20_random_all")],
         [InlineKeyboardButton("⬅️ Назад", callback_data="t20_menu")]
@@ -184,7 +269,7 @@ async def practice_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     await query.edit_message_text(
         text,
-        reply_markup=kb,
+        reply_markup=InlineKeyboardMarkup(kb_buttons),
         parse_mode=ParseMode.HTML
     )
     return states.CHOOSING_MODE
@@ -480,8 +565,8 @@ async def examples_bank(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     return states.CHOOSING_MODE
 
-async def my_progress(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Показ прогресса пользователя."""
+async def my_progress_enhanced(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Улучшенный показ прогресса."""
     query = update.callback_query
     await query.answer()
     
@@ -489,78 +574,91 @@ async def my_progress(update: Update, context: ContextTypes.DEFAULT_TYPE):
     achievements = context.user_data.get('task20_achievements', set())
     
     if not results:
-        await query.edit_message_text(
-            "📊 <b>Ваш прогресс</b>\n\n"
-            "Вы еще не выполнили ни одного задания.\n"
-            "Начните с режима практики!",
-            reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("💪 Начать практику", callback_data="t20_practice")],
-                [InlineKeyboardButton("⬅️ Назад", callback_data="t20_menu")]
-            ]),
-            parse_mode=ParseMode.HTML
-        )
-        return states.CHOOSING_MODE
-    
-    # Подсчет статистики
-    total_attempts = len(results)
-    total_score = sum(r['score'] for r in results)
-    max_possible_score = total_attempts * 3
-    average_score = total_score / total_attempts
-    
-    # Статистика по блокам
-    blocks_stats = {}
-    for result in results:
-        block = result['block']
-        if block not in blocks_stats:
-            blocks_stats[block] = {'attempts': 0, 'total_score': 0, 'topics': set()}
-        blocks_stats[block]['attempts'] += 1
-        blocks_stats[block]['total_score'] += result['score']
-        blocks_stats[block]['topics'].add(result['topic_title'])
-    
-    # Статистика по последним попыткам
-    recent_results = results[-10:]  # Последние 10 попыток
-    recent_score = sum(r['score'] for r in recent_results)
-    recent_avg = recent_score / len(recent_results)
-    
-    text = f"""📊 <b>Ваш прогресс</b>
+        # Красивое сообщение для новичков
+        text = """📊 <b>Ваш прогресс</b>
 
-<b>Общая статистика:</b>
-• Выполнено заданий: {total_attempts}
-• Общий балл: {total_score}/{max_possible_score}
-• Средний балл: {average_score:.1f}/3
-• Средний балл за последние {len(recent_results)} попыток: {recent_avg:.1f}/3
-• Достижений получено: {len(achievements)}/6
+🌟 Добро пожаловать в задание 20!
 
-<b>По блокам:</b>"""
-    
-    for block, stats in blocks_stats.items():
-        avg = stats['total_score'] / stats['attempts']
-        text += f"\n\n<b>{block}:</b>\n"
-        text += f"  • Попыток: {stats['attempts']}\n"
-        text += f"  • Средний балл: {avg:.1f}/3\n"
-        text += f"  • Изучено тем: {len(stats['topics'])}"
-    
-    # Анализ прогресса
-    if total_attempts >= 5:
-        if recent_avg > average_score:
-            text += "\n\n📈 <b>Ваши результаты улучшаются!</b>"
-        elif recent_avg < average_score:
-            text += "\n\n📉 <b>Результаты снижаются. Внимательнее читайте рекомендации!</b>"
+Здесь вы научитесь формулировать абстрактные суждения с элементами обобщения.
+
+<b>Что вас ждёт:</b>
+• 📚 45+ тем для изучения
+• 🎯 Персональные рекомендации
+• 🏅 Система достижений
+• 📈 Детальная статистика
+
+Готовы начать? Выберите "Практика" в меню!"""
+        
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("💪 Начать практику", callback_data="t20_practice")],
+            [InlineKeyboardButton("📚 Сначала теорию", callback_data="t20_theory")],
+            [InlineKeyboardButton("⬅️ Назад", callback_data="t20_menu")]
+        ])
+    else:
+        # Детальная статистика для опытных
+        total_attempts = len(results)
+        scores = [r['score'] for r in results]
+        average_score = sum(scores) / len(scores)
+        unique_topics = len(set(r['topic_id'] for r in results))
+        
+        # Визуальные элементы
+        progress_bar = UIComponents.create_progress_bar(unique_topics, 45)  # Предполагаем 45 тем
+        trend = 'up' if len(scores) >= 2 and scores[-1] > scores[-5:][0] else 'neutral'
+        trend_indicator = UIComponents.create_trend_indicator(trend)
+        
+        # Подсчёт времени
+        total_time = UserProgress(context.user_data).get_stats()['total_time']
+        time_formatted = UIComponents.format_time_spent(total_time)
+        
+        text = f"""📊 <b>Ваш прогресс по заданию 20</b>
+
+<b>📈 Общая статистика:</b>
+├ 📝 Выполнено заданий: {total_attempts}
+├ ⭐ Средний балл: {average_score:.2f}/3
+├ 📚 Изучено тем: {unique_topics}/45
+├ ⏱️ Время практики: {time_formatted}
+└ 📊 Тренд: {trend_indicator}
+
+<b>🎯 Прогресс по темам:</b>
+{progress_bar}
+
+<b>🏆 Лучшие результаты:</b>"""
+        
+        # Топ-3 темы
+        topic_scores = {}
+        for result in results:
+            topic_id = result['topic_id']
+            if topic_id not in topic_scores or result['score'] > topic_scores[topic_id]['score']:
+                topic_scores[topic_id] = {
+                    'title': result['topic_title'],
+                    'score': result['score']
+                }
+        
+        top_topics = sorted(topic_scores.values(), key=lambda x: x['score'], reverse=True)[:3]
+        for i, topic in enumerate(top_topics, 1):
+            score_visual = UIComponents.create_score_visual(topic['score'])
+            text += f"\n{i}. {topic['title'][:30]}... {score_visual}"
+        
+        # Достижения
+        if achievements:
+            text += f"\n\n🏅 <b>Получено достижений:</b> {len(achievements)}"
+        
+        # Персональные рекомендации
+        if average_score < 2:
+            text += "\n\n💡 <b>Рекомендация:</b> Изучите раздел 'Полезные конструкции' в теории"
+        elif unique_topics < 10:
+            text += "\n\n💡 <b>Рекомендация:</b> Попробуйте темы из разных блоков"
         else:
-            text += "\n\n➡️ <b>Результаты стабильны. Продолжайте практиковаться!</b>"
-    
-    # Рекомендации
-    if average_score < 2:
-        text += "\n\n💡 <b>Совет:</b> Попробуйте режим 'Работа над ошибками' для улучшения результатов."
-    
-    kb = InlineKeyboardMarkup([
-        [InlineKeyboardButton("📈 Детальная статистика", callback_data="t20_detailed_progress")],
-        [InlineKeyboardButton("🏅 Достижения", callback_data="t20_achievements")],
-        [InlineKeyboardButton("📤 Экспорт результатов", callback_data="t20_export")],
-        [InlineKeyboardButton("🔧 Работа над ошибками", callback_data="t20_mistakes")],
-        [InlineKeyboardButton("💪 Продолжить практику", callback_data="t20_practice")],
-        [InlineKeyboardButton("⬅️ Назад", callback_data="t20_menu")]
-    ])
+            text += "\n\n🌟 <b>Отличная работа!</b> Продолжайте в том же духе!"
+        
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("📈 Детальная статистика", callback_data="t20_detailed_progress")],
+            [InlineKeyboardButton("🏅 Достижения", callback_data="t20_achievements")],
+            [InlineKeyboardButton("📤 Экспорт результатов", callback_data="t20_export")],
+            [InlineKeyboardButton("🔧 Работа над ошибками", callback_data="t20_mistakes")],
+            [InlineKeyboardButton("💪 Продолжить практику", callback_data="t20_practice")],
+            [InlineKeyboardButton("⬅️ Назад", callback_data="t20_menu")]
+        ])
     
     await query.edit_message_text(
         text,
@@ -568,6 +666,61 @@ async def my_progress(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode=ParseMode.HTML
     )
     return states.CHOOSING_MODE
+
+async def format_result_message(result: Dict, topic: Dict) -> str:
+    """Красивое форматирование результата проверки."""
+    score_visual = UIComponents.create_score_visual(result.total_score)
+    
+    # Заголовок в зависимости от результата
+    if result.total_score == 3:
+        header = "🎉 <b>Отличный результат!</b>"
+        emoji = "🌟"
+    elif result.total_score == 2:
+        header = "👍 <b>Хороший результат!</b>"
+        emoji = "✅"
+    elif result.total_score == 1:
+        header = "📝 <b>Есть над чем поработать</b>"
+        emoji = "💡"
+    else:
+        header = "❌ <b>Нужно больше практики</b>"
+        emoji = "📚"
+    
+    text = f"""{header}
+
+<b>Тема:</b> {topic['title']}
+<b>Результат:</b> {score_visual} ({result.total_score}/3 балла)
+
+{emoji} <b>Детальный анализ:</b>
+"""
+    
+    # Красивое форматирование критериев
+    for i, criterion in enumerate(result.criteria_scores, 1):
+        if criterion.met:
+            status = "✅"
+            color = "🟢"
+        else:
+            status = "❌"
+            color = "🔴"
+        
+        text += f"\n{color} <b>Критерий {i}:</b> {status}"
+        if criterion.feedback:
+            text += f"\n   └ <i>{criterion.feedback}</i>"
+    
+    # Общий комментарий
+    if result.general_feedback:
+        text += f"\n\n💬 <b>Комментарий эксперта:</b>\n<i>{result.general_feedback}</i>"
+    
+    # Рекомендации в зависимости от оценки
+    if result.total_score < 3:
+        text += "\n\n💡 <b>Совет:</b> "
+        if result.total_score == 0:
+            text += "Изучите примеры в 'Банке суждений' для этой темы"
+        elif result.total_score == 1:
+            text += "Обратите внимание на использование обобщающих конструкций"
+        else:
+            text += "Проверьте, все ли суждения носят абстрактный характер"
+    
+    return text
 
 async def settings_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Настройки проверки."""
@@ -872,37 +1025,31 @@ async def list_topics(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return states.CHOOSING_TOPIC
 
 async def random_topic_all(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Выбор случайной темы из всех."""
+    """Выбор случайной темы - оптимизированная версия."""
     query = update.callback_query
     await query.answer()
     
-    import random
+    # Используем оптимизированный селектор
+    done_topics = {r['topic_id'] for r in context.user_data.get('task20_results', [])}
+    topic = topic_selector.get_random_topic(exclude_ids=done_topics)
     
-    topics = task20_data.get("topics", [])
-    if not topics:
+    if not topic:
         await query.edit_message_text(
-            "❌ Темы не найдены",
+            "🎉 Поздравляем! Вы изучили все темы!",
             reply_markup=InlineKeyboardMarkup([[
                 InlineKeyboardButton("⬅️ Назад", callback_data="t20_practice")
             ]])
         )
         return states.CHOOSING_MODE
     
-    topic = random.choice(topics)
     context.user_data['current_topic'] = topic
     
     text = _build_topic_message(topic)
-    
     kb = InlineKeyboardMarkup([
         [InlineKeyboardButton("❌ Отмена", callback_data="t20_practice")]
     ])
     
-    await query.edit_message_text(
-        text,
-        reply_markup=kb,
-        parse_mode=ParseMode.HTML
-    )
-    
+    await query.edit_message_text(text, reply_markup=kb, parse_mode=ParseMode.HTML)
     return states.ANSWERING
 
 async def random_topic_block(update: Update, context: ContextTypes.DEFAULT_TYPE):
