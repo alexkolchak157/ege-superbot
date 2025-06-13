@@ -4,9 +4,7 @@ import os
 import csv
 import io
 import json
-from .cache import cache
-from .utils import TopicSelector
-from typing import Optional, Dict, List
+from typing import Optional, Dict, List  # ← ЭТА СТРОКА ОБЯЗАТЕЛЬНА
 from datetime import datetime
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
@@ -17,13 +15,15 @@ from core import states
 
 # ВАЖНО: Этот импорт должен быть здесь
 from .evaluator import Task20AIEvaluator, StrictnessLevel, EvaluationResult, AI_EVALUATOR_AVAILABLE
+from .cache import cache
+from .utils import TopicSelector
 
 logger = logging.getLogger(__name__)
 
 # Глобальные переменные
 task20_data = {}
-evaluator = None  # ВАЖНО: должна быть объявлена
-topic_selector: Optional[TopicSelector] = None
+evaluator = None
+topic_selector = None
 
 
 async def init_task20_data():
