@@ -1,6 +1,6 @@
 """Утилиты для оптимизации."""
 
-from typing import List, Dict, Set
+from typing import List, Dict, Set, Optional
 import random
 
 class TopicSelector:
