@@ -1,4 +1,4 @@
-# В самом начале файла task20/handlers.py
+# Начало файла task20/handlers.py
 import logging
 import os
 import csv
@@ -39,6 +39,19 @@ except ImportError as e:
     logger.error(f"Failed to import utils: {e}")
     TopicSelector = None
 
+try:
+    from .user_experience import UserProgress, SmartRecommendations
+except ImportError as e:
+    logger.error(f"Failed to import user_experience: {e}")
+    UserProgress = None
+    SmartRecommendations = None
+
+try:
+    from .ui_components import UIComponents, EnhancedKeyboards
+except ImportError as e:
+    logger.error(f"Failed to import ui_components: {e}")
+    UIComponents = None
+    EnhancedKeyboards = None
 
 async def init_task20_data():
     """Инициализация данных с кэшированием."""
@@ -230,9 +243,18 @@ async def practice_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     
-    # Анализируем прогресс пользователя
-    progress = UserProgress(context.user_data)
-    stats = progress.get_stats()
+    # Проверяем доступность UserProgress
+    if UserProgress:
+        progress = UserProgress(context.user_data)
+        stats = progress.get_stats()
+    else:
+        # Fallback, если UserProgress не доступен
+        stats = {
+            'total_attempts': 0,
+            'average_score': 0,
+            'streak': 0
+        }
+        progress = None
     
     text = "💪 <b>Режим практики</b>\n\n"
     
@@ -246,16 +268,17 @@ async def practice_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
         text += "\n"
     
     # Показываем подсказку, если нужно
-    tip = progress.should_show_tip()
-    if tip:
-        text += f"{tip}\n\n"
+    if progress and hasattr(progress, 'should_show_tip'):
+        tip = progress.should_show_tip()
+        if tip:
+            text += f"{tip}\n\n"
     
     text += "Выберите способ тренировки:"
     
     kb_buttons = []
     
     # Кнопка "Продолжить с последней темы"
-    if progress.last_topic_id and topic_selector:
+    if progress and progress.last_topic_id and topic_selector:
         last_topic = topic_selector.topics_by_id.get(progress.last_topic_id)
         if last_topic:
             kb_buttons.append([
@@ -266,7 +289,7 @@ async def practice_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
             ])
     
     # Кнопка "Рекомендованная тема"
-    if stats['total_attempts'] >= 3 and topic_selector:
+    if stats['total_attempts'] >= 3 and topic_selector and SmartRecommendations:
         recommended = SmartRecommendations.get_next_topic_recommendation(progress, topic_selector)
         if recommended:
             kb_buttons.append([
@@ -618,9 +641,18 @@ async def my_progress(update: Update, context: ContextTypes.DEFAULT_TYPE):
         unique_topics = len(set(r['topic_id'] for r in results))
         
         # Визуальные элементы
-        progress_bar = UIComponents.create_progress_bar(unique_topics, 45)  # Предполагаем 45 тем
-        trend = 'up' if len(scores) >= 2 and scores[-1] > scores[-5:][0] else 'neutral'
-        trend_indicator = UIComponents.create_trend_indicator(trend)
+        if UIComponents:
+            progress_bar = UIComponents.create_progress_bar(unique_topics, 45)  # Предполагаем 45 тем
+            trend_indicator = UIComponents.create_trend_indicator(trend)
+            time_formatted = UIComponents.format_time_spent(total_time)
+        else:
+            # Fallback версии без UIComponents
+            progress_percent = int(unique_topics / 45 * 100)
+            progress_bar = f"{progress_percent}% ({unique_topics}/45)"
+            trend_indicator = "📈 Растёт" if trend == 'up' else "➡️ Стабильно"
+            hours = total_time // 60
+            mins = total_time % 60
+            time_formatted = f"{hours}ч {mins}мин" if hours > 0 else f"{total_time} мин"
         
         # Подсчёт времени
         total_time = UserProgress(context.user_data).get_stats()['total_time']
@@ -685,6 +717,10 @@ async def my_progress(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def format_result_message(result: Dict, topic: Dict) -> str:
     """Красивое форматирование результата проверки."""
+    if UIComponents:
+        score_visual = UIComponents.create_score_visual(topic['score'])
+    else:
+        score_visual = f"{topic['score']}/3"
     score_visual = UIComponents.create_score_visual(result.total_score)
     
     # Заголовок в зависимости от результата
