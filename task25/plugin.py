@@ -1,216 +1,119 @@
-# plugins/task25/plugin.py
+"""Плагин для задания 25."""
 
-from typing import Dict, Any, Optional
 import logging
-import re
+from telegram.ext import (
+    ConversationHandler, CommandHandler, CallbackQueryHandler,
+    MessageHandler, filters
+)
+from core.plugin_base import BotPlugin
+from core import states
+from . import handlers
 
 logger = logging.getLogger(__name__)
 
-class Task25Plugin:
-    """Плагин для проверки задания 25 ЕГЭ по обществознанию"""
+class Task25Plugin(BotPlugin):
+    code = "task25"
+    title = "Задание 25 (Развёрнутый ответ)"
+    menu_priority = 17  # После task20
     
-    def __init__(self):
-        self.name = "task25"
-        self.display_name = "Задание 25"
-        self.description = "Обоснование, ответ на вопрос и примеры"
-        self.max_score = 6
-        self.criteria = {
-            "25.1": {
-                "name": "Обоснование",
-                "description": "Корректное обоснование с опорой на обществоведческие знания",
-                "max_score": 2
-            },
-            "25.2": {
-                "name": "Ответ на вопрос",
-                "description": "Указание требуемого количества объектов", 
-                "max_score": 1
-            },
-            "25.3": {
-                "name": "Примеры",
-                "description": "Развёрнутые примеры, соответствующие требованиям",
-                "max_score": 3
-            }
-        }
-        
-    def get_info(self) -> Dict[str, Any]:
-        """Возвращает информацию о плагине"""
-        return {
-            "name": self.name,
-            "display_name": self.display_name,
-            "description": self.description,
-            "max_score": self.max_score,
-            "criteria": self.criteria
-        }
-    
-    def create_evaluation_prompt(self, task_text: str, student_answer: str) -> str:
-        """Создает промпт для оценки ответа через YandexGPT"""
-        return f"""Ты эксперт ЕГЭ по обществознанию. Оцени ответ ученика на задание 25.
-
-ЗАДАНИЕ:
-{task_text}
-
-ОТВЕТ УЧЕНИКА:
-{student_answer}
-
-КРИТЕРИИ ОЦЕНИВАНИЯ:
-
-Критерий 25.1 - Обоснование (максимум 2 балла):
-- 2 балла: Приведено корректное обоснование с опорой на обществоведческие знания в нескольких распространённых предложениях, которое не содержит ошибок, неточностей и раскрывает причинно-следственные и(или) функциональные связи соответствующих объектов/процессов
-- 1 балл: Приведено в целом корректное обоснование с опорой на обществоведческие знания в нескольких распространённых предложениях, которое содержит отдельные неточности/иные недостатки, не искажающие сущность обосновываемого тезиса, И/ИЛИ не полностью раскрывает причинно-следственные и(или) функциональные связи соответствующих объектов/процессов
-- 0 баллов: Все иные ситуации, включая обоснование, приведённое в одном предложении или словосочетании И/ИЛИ обоснование, приведённое без опоры на обществоведческие знания, на бытовом уровне
-
-Критерий 25.2 - Ответ на вопрос (максимум 1 балл):
-- 1 балл: Дан правильный ответ на вопрос: указано необходимое количество требуемых объектов при отсутствии неверных позиций
-- 0 баллов: Все иные ситуации, включая отсутствие данного в явном виде ответа на вопрос, оформленного как самостоятельный элемент
-
-Критерий 25.3 - Примеры (максимум 3 балла):
-- 3 балла: В соответствии с требованиями конкретного задания правильно приведены три примера при отсутствии дополнительных (сверх требуемых трёх) примеров, содержащих неточности/ошибки
-- 2 балла: В соответствии с требованиями конкретного задания правильно приведены только два примера при отсутствии дополнительных (сверх требуемых трёх) примеров, содержащих неточности/ошибки
-- 1 балл: В соответствии с требованиями конкретного задания правильно приведён только один пример при отсутствии дополнительных (сверх требуемых трёх) примеров, содержащих неточности/ошибки. ИЛИ В соответствии с требованиями конкретного задания правильно приведены два-три примера при наличии одного или более дополнительных (сверх требуемых трёх), содержащих неточности/ошибки
-- 0 баллов: Все иные ситуации
-
-ВАЖНЫЕ ПРАВИЛА:
-1. Обоснование должно быть в НЕСКОЛЬКИХ РАСПРОСТРАНЁННЫХ предложениях
-2. Ответ на вопрос должен быть оформлен как самостоятельный элемент
-3. Примеры должны быть РАЗВЁРНУТЫМИ (отдельные слова не засчитываются)
-4. Примеры должны соответствовать указанным в пункте 2 объектам
-5. Качество дополнительных примеров влияет на оценку
-
-Проанализируй ответ и выстави баллы строго в формате:
-Критерий 25.1: X балла
-[Обоснование оценки]
-
-Критерий 25.2: X балл
-[Обоснование оценки]
-
-Критерий 25.3: X балла
-[Обоснование оценки]
-
-Итого: X из 6 баллов"""
-
-    def parse_evaluation_response(self, response: str) -> Dict[str, Any]:
-        """Парсит ответ от YandexGPT и извлекает оценки"""
+    async def post_init(self, app):
+        """Инициализация данных для задания 25."""
         try:
-            scores = {}
-            feedback = {}
-            
-            # Парсим критерий 25.1
-            pattern_25_1 = r"Критерий 25\.1:\s*(\d+)\s*балл"
-            match = re.search(pattern_25_1, response)
-            if match:
-                scores["25.1"] = int(match.group(1))
-                # Извлекаем обоснование после критерия 25.1 до критерия 25.2
-                feedback_pattern = r"Критерий 25\.1:.*?\n(.*?)(?=Критерий 25\.2:|$)"
-                feedback_match = re.search(feedback_pattern, response, re.DOTALL)
-                if feedback_match:
-                    feedback["25.1"] = feedback_match.group(1).strip()
-            
-            # Парсим критерий 25.2
-            pattern_25_2 = r"Критерий 25\.2:\s*(\d+)\s*балл"
-            match = re.search(pattern_25_2, response)
-            if match:
-                scores["25.2"] = int(match.group(1))
-                # Извлекаем обоснование после критерия 25.2 до критерия 25.3
-                feedback_pattern = r"Критерий 25\.2:.*?\n(.*?)(?=Критерий 25\.3:|$)"
-                feedback_match = re.search(feedback_pattern, response, re.DOTALL)
-                if feedback_match:
-                    feedback["25.2"] = feedback_match.group(1).strip()
-            
-            # Парсим критерий 25.3
-            pattern_25_3 = r"Критерий 25\.3:\s*(\d+)\s*балл"
-            match = re.search(pattern_25_3, response)
-            if match:
-                scores["25.3"] = int(match.group(1))
-                # Извлекаем обоснование после критерия 25.3 до "Итого"
-                feedback_pattern = r"Критерий 25\.3:.*?\n(.*?)(?=Итого:|$)"
-                feedback_match = re.search(feedback_pattern, response, re.DOTALL)
-                if feedback_match:
-                    feedback["25.3"] = feedback_match.group(1).strip()
-            
-            # Вычисляем общий балл
-            total_score = sum(scores.values())
-            
-            # Проверяем корректность оценок
-            if scores.get("25.1", 0) > 2:
-                scores["25.1"] = 2
-            if scores.get("25.2", 0) > 1:
-                scores["25.2"] = 1  
-            if scores.get("25.3", 0) > 3:
-                scores["25.3"] = 3
-                
-            total_score = sum(scores.values())
-            
-            return {
-                "success": True,
-                "scores": scores,
-                "feedback": feedback,
-                "total_score": total_score,
-                "max_score": self.max_score
-            }
-            
+            await handlers.init_task25_data()
+            logger.info(f"Task25 plugin initialized successfully")
         except Exception as e:
-            logger.error(f"Ошибка при парсинге ответа YandexGPT: {e}")
-            logger.error(f"Ответ: {response}")
-            return {
-                "success": False,
-                "error": str(e),
-                "raw_response": response
-            }
+            logger.error(f"Failed to initialize task25 data: {e}")
     
-    def format_feedback(self, evaluation: Dict[str, Any]) -> str:
-        """Форматирует сообщение с результатами для пользователя"""
-        if not evaluation.get("success"):
-            return "❌ Произошла ошибка при проверке ответа. Попробуйте ещё раз."
-            
-        scores = evaluation.get("scores", {})
-        feedback = evaluation.get("feedback", {})
-        total = evaluation.get("total_score", 0)
-        
-        message = f"📊 **Результаты проверки задания 25**\n\n"
-        
-        # Критерий 25.1
-        score_25_1 = scores.get("25.1", 0)
-        message += f"**Критерий 25.1 (Обоснование):** {score_25_1}/2\n"
-        if feedback.get("25.1"):
-            message += f"{feedback['25.1']}\n\n"
-        
-        # Критерий 25.2
-        score_25_2 = scores.get("25.2", 0)
-        message += f"**Критерий 25.2 (Ответ на вопрос):** {score_25_2}/1\n"
-        if feedback.get("25.2"):
-            message += f"{feedback['25.2']}\n\n"
-            
-        # Критерий 25.3
-        score_25_3 = scores.get("25.3", 0)
-        message += f"**Критерий 25.3 (Примеры):** {score_25_3}/3\n"
-        if feedback.get("25.3"):
-            message += f"{feedback['25.3']}\n\n"
-            
-        message += f"**Итого: {total}/{self.max_score} баллов**"
-        
-        # Добавляем рекомендации при неполном балле
-        if total < self.max_score:
-            message += "\n\n💡 **Рекомендации:**\n"
-            
-            if score_25_1 < 2:
-                if score_25_1 == 0:
-                    message += "• Приведите обоснование в нескольких распространённых предложениях с опорой на обществоведческие знания\n"
-                else:
-                    message += "• Полнее раскройте причинно-следственные связи в обосновании\n"
+    def entry_handler(self):
+        """Возвращает обработчик для входа из главного меню."""
+        return CallbackQueryHandler(
+            handlers.entry_from_menu,
+            pattern=f"^choose_{self.code}$"
+        )
+    
+    def register(self, app):
+        """Регистрация обработчиков в приложении."""
+        conv_handler = ConversationHandler(
+            entry_points=[
+                CallbackQueryHandler(
+                    handlers.entry_from_menu,
+                    pattern=f"^choose_{self.code}$"
+                ),
+                CommandHandler("task25", handlers.cmd_task25),
+            ],
+            states={
+                states.CHOOSING_MODE: [
+                    # Основные режимы
+                    CallbackQueryHandler(handlers.practice_mode, pattern="^t25_practice$"),
+                    CallbackQueryHandler(handlers.theory_mode, pattern="^t25_theory$"),
+                    CallbackQueryHandler(handlers.examples_bank, pattern="^t25_examples$"),
+                    CallbackQueryHandler(handlers.my_progress, pattern="^t25_progress$"),
+                    CallbackQueryHandler(handlers.settings_mode, pattern="^t25_settings$"),
+                    CallbackQueryHandler(handlers.back_to_main_menu, pattern="^to_main_menu$"),
+                    CallbackQueryHandler(handlers.noop, pattern="^noop$"),
                     
-            if score_25_2 < 1:
-                message += "• Четко выделите ответ на вопрос как отдельный элемент с указанием всех требуемых объектов\n"
+                    # Обработчики для выбора тем
+                    CallbackQueryHandler(handlers.select_block, pattern="^t25_select_block$"),
+                    CallbackQueryHandler(handlers.handle_result_action, pattern="^t25_(new_topic|retry)$"),
+                    CallbackQueryHandler(handlers.return_to_menu, pattern="^t25_menu$"),
+                    
+                    # Навигация по темам
+                    CallbackQueryHandler(handlers.block_menu, pattern="^t25_block:"),
+                    CallbackQueryHandler(handlers.list_topics, pattern="^t25_list_topics($|:page:\d+)"),
+                    CallbackQueryHandler(handlers.random_topic_all, pattern="^t25_random_all$"),
+                    CallbackQueryHandler(handlers.random_topic_block, pattern="^t25_random_block$"),
+                    
+                    # Банк примеров
+                    CallbackQueryHandler(handlers.bank_navigation, pattern="^t25_bank_nav:"),
+                    CallbackQueryHandler(handlers.bank_search, pattern="^t25_bank_search$"),
+                    
+                    # Настройки
+                    CallbackQueryHandler(handlers.handle_settings_actions, pattern="^t25_(reset_progress|confirm_reset)$"),
+                    CallbackQueryHandler(handlers.set_strictness, pattern="^t25_strictness:"),
+                    
+                    # Прогресс
+                    CallbackQueryHandler(handlers.show_block_stats, pattern="^t25_stats_blocks$"),
+                    CallbackQueryHandler(handlers.detailed_progress, pattern="^t25_detailed_progress$"),
+                ],
                 
-            if score_25_3 < 3:
-                if score_25_3 == 0:
-                    message += "• Приведите развёрнутые примеры для каждого названного объекта\n"
-                elif score_25_3 == 1:
-                    message += "• Добавьте ещё два развёрнутых примера\n"
-                else:
-                    message += "• Добавьте ещё один развёрнутый пример\n"
+                states.CHOOSING_BLOCK: [
+                    CallbackQueryHandler(handlers.block_menu, pattern="^t25_block:"),
+                    CallbackQueryHandler(handlers.select_block, pattern="^t25_select_block$"),
+                    CallbackQueryHandler(handlers.list_topics, pattern="^t25_list_topics:page:"),
+                ],
+                
+                states.ANSWERING: [
+                    MessageHandler(filters.TEXT & ~filters.COMMAND, handlers.handle_answer),
+                    CallbackQueryHandler(handlers.practice_mode, pattern="^t25_practice$"),
+                ],
+                
+                states.AWAITING_FEEDBACK: [
+                    CallbackQueryHandler(handlers.handle_result_action, pattern="^t25_retry$"),
+                    CallbackQueryHandler(handlers.handle_result_action, pattern="^t25_new_topic$"),
+                    CallbackQueryHandler(handlers.my_progress, pattern="^t25_progress$"),
+                    CallbackQueryHandler(handlers.return_to_menu, pattern="^t25_menu$"),
+                    CallbackQueryHandler(handlers.back_to_main_menu, pattern="^to_main_menu$"),
+                ],
+                
+                states.SEARCHING: [
+                    MessageHandler(filters.TEXT & ~filters.COMMAND, handlers.handle_bank_search),
+                    CallbackQueryHandler(handlers.examples_bank, pattern="^t25_examples$"),
+                ],
+            },
+            fallbacks=[
+                CommandHandler("cancel", handlers.cmd_cancel),
+                CallbackQueryHandler(handlers.return_to_menu, pattern="^t25_menu$"),
+                CallbackQueryHandler(handlers.back_to_main_menu, pattern="^to_main_menu$"),
+            ],
+            name="task25_conversation",
+            persistent=False,
+        )
         
-        return message
+        # Регистрируем обработчики в приложении
+        app.add_handler(conv_handler)
+        logger.info(f"Registered handlers for {self.title} plugin")
 
-def setup() -> Task25Plugin:
-    """Точка входа для регистрации плагина"""
-    return Task25Plugin()
+# Экспортируем плагин
+plugin = Task25Plugin()
+
+__all__ = ['plugin']
