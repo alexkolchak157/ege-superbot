@@ -62,24 +62,87 @@ async def init_task25_data():
         with open(data_file, "r", encoding="utf-8") as f:
             raw = json.load(f)
         
-        # Преобразуем данные в единую структуру
+        # Проверяем формат данных
         all_topics = []
         topic_by_id = {}
         topics_by_block = {}
+        blocks = {}
         
-        for block_name, block in raw.get("blocks", {}).items():
-            topics_by_block[block_name] = []
-            for topic in block.get("topics", []):
-                topic["block"] = block_name
+        # Если это список тем
+        if isinstance(raw, list):
+            for topic in raw:
+                if isinstance(topic, dict):
+                    # Генерируем ID если его нет
+                    if 'id' not in topic:
+                        topic['id'] = f"topic_{len(all_topics) + 1}"
+                    
+                    # Определяем блок если его нет
+                    if 'block' not in topic:
+                        # Пытаемся определить блок по ключевым словам в теме
+                        topic['block'] = _determine_block(topic.get('title', ''))
+                    
+                    block_name = topic['block']
+                    
+                    # Добавляем в общий список
+                    all_topics.append(topic)
+                    topic_by_id[topic['id']] = topic
+                    
+                    # Группируем по блокам
+                    if block_name not in topics_by_block:
+                        topics_by_block[block_name] = []
+                        blocks[block_name] = {"name": block_name, "topics": []}
+                    
+                    topics_by_block[block_name].append(topic)
+                    blocks[block_name]["topics"].append(topic)
+        
+        # Если это объект с полем blocks (новый формат)
+        elif isinstance(raw, dict) and 'blocks' in raw:
+            for block_name, block in raw.get("blocks", {}).items():
+                topics_by_block[block_name] = []
+                blocks[block_name] = block
+                
+                for topic in block.get("topics", []):
+                    if 'id' not in topic:
+                        topic['id'] = f"topic_{len(all_topics) + 1}"
+                    
+                    topic["block"] = block_name
+                    all_topics.append(topic)
+                    topic_by_id[topic["id"]] = topic
+                    topics_by_block[block_name].append(topic)
+        
+        # Если это объект с полем topics (альтернативный формат)
+        elif isinstance(raw, dict) and 'topics' in raw:
+            for topic in raw.get('topics', []):
+                if 'id' not in topic:
+                    topic['id'] = f"topic_{len(all_topics) + 1}"
+                
+                if 'block' not in topic:
+                    topic['block'] = _determine_block(topic.get('title', ''))
+                
+                block_name = topic['block']
                 all_topics.append(topic)
-                topic_by_id[topic["id"]] = topic
+                topic_by_id[topic['id']] = topic
+                
+                if block_name not in topics_by_block:
+                    topics_by_block[block_name] = []
+                    blocks[block_name] = {"name": block_name, "topics": []}
+                
                 topics_by_block[block_name].append(topic)
+        
+        # Если блоков не создано, создаём дефолтный
+        if not blocks:
+            blocks = {"Общие темы": {"name": "Общие темы", "topics": all_topics}}
+            topics_by_block = {"Общие темы": all_topics}
+            
+            # Обновляем блок у всех тем
+            for topic in all_topics:
+                topic['block'] = "Общие темы"
         
         task25_data = {
             "topics": all_topics,
             "topic_by_id": topic_by_id,
             "topics_by_block": topics_by_block,
-            "blocks": raw.get("blocks", {})
+            "blocks": blocks
         }
         
         # Создаём селектор если модуль доступен
@@ -94,7 +157,7 @@ async def init_task25_data():
             await cache.set('task25_data', task25_data)
             
     except Exception as e:
-        logger.error(f"Failed to load task25 data: {e}")
+        logger.error(f"Failed to load task25 data: {e}", exc_info=True)
         task25_data = {"topics": [], "blocks": {}, "topics_by_block": {}}
         topic_selector = None
     
@@ -118,6 +181,28 @@ async def init_task25_data():
         logger.warning("AI evaluator not available for task25")
         evaluator = None
 
+
+def _determine_block(title: str) -> str:
+    """Определяет блок темы по ключевым словам в заголовке."""
+    title_lower = title.lower()
+    
+    # Ключевые слова для каждого блока
+    block_keywords = {
+        "Человек и общество": ["человек", "общество", "личность", "социализация", "культура", "мировоззрение"],
+        "Экономика": ["экономика", "рынок", "спрос", "предложение", "деньги", "банк", "предприятие", "бизнес"],
+        "Социальные отношения": ["семья", "социальная", "группа", "страта", "мобильность", "конфликт"],
+        "Политика": ["политика", "власть", "государство", "демократия", "выборы", "партия", "президент"],
+        "Право": ["право", "закон", "конституция", "суд", "преступление", "правонарушение", "юридическая"]
+    }
+    
+    # Проверяем каждый блок
+    for block, keywords in block_keywords.items():
+        for keyword in keywords:
+            if keyword in title_lower:
+                return block
+    
+    # Если не удалось определить - возвращаем общий блок
+    return "Общие темы"
 
 async def entry_from_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Вход в задание 25 из главного меню."""
@@ -810,3 +895,442 @@ async def detailed_progress(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Детальный прогресс."""
     # Реализация...
     pass
+
+def _format_evaluation_result(result: EvaluationResult, topic: Dict) -> str:
+    """Форматирует результат проверки для отображения пользователю."""
+    
+    # Заголовок с темой
+    formatted = f"📊 <b>Результаты проверки</b>\n\n"
+    formatted += f"<b>Тема:</b> {topic.get('title', 'Не указана')}\n"
+    formatted += f"{'─' * 30}\n\n"
+    
+    # Если есть основная обратная связь от AI, используем её
+    if hasattr(result, 'feedback') and result.feedback:
+        formatted += result.feedback
+    else:
+        # Иначе форматируем вручную
+        scores = result.scores if hasattr(result, 'scores') else {}
+        
+        # К1 - Обоснование
+        k1_score = scores.get('k1', 0)
+        formatted += f"<b>К1 (Обоснование):</b> {k1_score}/2\n"
+        if k1_score == 2:
+            formatted += "✅ Развёрнутое обоснование с опорой на теорию\n"
+        elif k1_score == 1:
+            formatted += "⚠️ Обоснование есть, но недостаточно развёрнутое\n"
+        else:
+            formatted += "❌ Обоснование отсутствует или неверное\n"
+        
+        # К2 - Ответ на вопрос
+        k2_score = scores.get('k2', 0)
+        formatted += f"\n<b>К2 (Ответ на вопрос):</b> {k2_score}/1\n"
+        if k2_score == 1:
+            formatted += "✅ Дан правильный и полный ответ\n"
+        else:
+            formatted += "❌ Ответ неверный или отсутствует\n"
+        
+        # К3 - Примеры
+        k3_score = scores.get('k3', 0)
+        formatted += f"\n<b>К3 (Примеры):</b> {k3_score}/3\n"
+        if k3_score == 3:
+            formatted += "✅ Приведены три корректных развёрнутых примера\n"
+        elif k3_score > 0:
+            formatted += f"⚠️ Засчитано примеров: {k3_score}\n"
+        else:
+            formatted += "❌ Корректные примеры отсутствуют\n"
+        
+        # Итоговый балл
+        total = result.total_score if hasattr(result, 'total_score') else sum(scores.values())
+        formatted += f"\n{'─' * 30}\n"
+        formatted += f"<b>Итого:</b> {total}/6 баллов\n"
+    
+    # Добавляем эмодзи в зависимости от результата
+    total = result.total_score if hasattr(result, 'total_score') else 0
+    if total >= 5:
+        formatted += "\n🎉 Отличный результат!"
+    elif total >= 3:
+        formatted += "\n👍 Хороший результат!"
+    elif total >= 1:
+        formatted += "\n💪 Есть над чем поработать!"
+    else:
+        formatted += "\n📚 Рекомендуем изучить теорию и примеры!"
+    
+    # Показываем эталонный ответ, если результат низкий
+    if total < 4 and 'example_answers' in topic:
+        formatted += "\n\n" + _format_example_answer(topic)
+    
+    return formatted
+
+
+def _format_example_answer(topic: Dict) -> str:
+    """Форматирует эталонный ответ для показа."""
+    example = topic.get('example_answers', {})
+    if not example:
+        return ""
+    
+    formatted = "📚 <b>Эталонный ответ:</b>\n\n"
+    
+    # Часть 1 - Обоснование
+    if 'part1' in example:
+        formatted += f"<b>1. Обоснование:</b>\n"
+        formatted += f"{example['part1'].get('answer', '')}\n\n"
+    
+    # Часть 2 - Ответ на вопрос
+    if 'part2' in example:
+        formatted += f"<b>2. Ответ на вопрос:</b>\n"
+        formatted += f"{example['part2'].get('answer', '')}\n\n"
+    
+    # Часть 3 - Примеры
+    if 'part3' in example:
+        formatted += "<b>3. Примеры:</b>\n"
+        for i, ex in enumerate(example['part3'], 1):
+            ex_type = ex.get('type', 'Пример')
+            ex_text = ex.get('example', '')
+            formatted += f"{i}) <i>{ex_type}:</i> {ex_text}\n"
+    
+    return formatted
+
+
+async def handle_strictness_change(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработчик изменения уровня строгости."""
+    query = update.callback_query
+    await query.answer()
+    
+    # Парсим уровень из callback_data
+    _, level_str = query.data.split(':')
+    
+    global evaluator
+    
+    try:
+        # Определяем новый уровень
+        new_level = StrictnessLevel[level_str.upper()]
+        
+        # Пересоздаём evaluator с новым уровнем
+        if AI_EVALUATOR_AVAILABLE:
+            evaluator = Task25AIEvaluator(strictness=new_level)
+            
+            await query.answer(f"✅ Установлен уровень: {new_level.value}", show_alert=True)
+            logger.info(f"Changed strictness level to {new_level.value}")
+        else:
+            await query.answer("❌ AI-проверка недоступна", show_alert=True)
+            
+    except Exception as e:
+        logger.error(f"Error changing strictness: {e}")
+        await query.answer("❌ Ошибка при изменении настроек", show_alert=True)
+    
+    # Возвращаемся в меню настроек
+    return await show_settings(update, context)
+
+
+async def handle_progress(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Показывает прогресс пользователя."""
+    query = update.callback_query
+    await query.answer()
+    
+    stats = context.user_data.get('practice_stats', {})
+    
+    if not stats:
+        text = "📊 <b>Ваш прогресс</b>\n\n"
+        text += "Вы ещё не решали задания. Начните практику!"
+    else:
+        text = "📊 <b>Ваш прогресс</b>\n\n"
+        
+        total_attempts = 0
+        total_score = 0
+        topics_tried = 0
+        
+        for topic_id, topic_stats in stats.items():
+            if topic_stats['attempts'] > 0:
+                topics_tried += 1
+                total_attempts += topic_stats['attempts']
+                if topic_stats['scores']:
+                    # Берём лучший результат по теме
+                    best_score = max(topic_stats['scores'])
+                    total_score += best_score
+        
+        if topics_tried > 0:
+            avg_score = total_score / topics_tried
+            text += f"<b>Тем изучено:</b> {topics_tried}\n"
+            text += f"<b>Всего попыток:</b> {total_attempts}\n"
+            text += f"<b>Средний балл:</b> {avg_score:.1f}/6\n\n"
+            
+            # Детализация по темам
+            text += "<b>По темам:</b>\n"
+            for topic_id, topic_stats in stats.items():
+                if topic_stats['attempts'] > 0:
+                    topic = task25_data.get('topic_by_id', {}).get(topic_id, {})
+                    topic_title = topic.get('title', 'Неизвестная тема')[:30]
+                    
+                    if topic_stats['scores']:
+                        best = max(topic_stats['scores'])
+                        last = topic_stats['scores'][-1]
+                        text += f"• {topic_title}: {best}/6 (попыток: {topic_stats['attempts']})\n"
+        else:
+            text += "Начните практику для отслеживания прогресса!"
+    
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("⬅️ Назад", callback_data="t25_menu")]
+    ])
+    
+    await query.edit_message_text(
+        text,
+        reply_markup=kb,
+        parse_mode=ParseMode.HTML
+    )
+    
+    return states.CHOOSING_MODE
+
+
+async def handle_reset_progress(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Сброс прогресса пользователя."""
+    query = update.callback_query
+    
+    # Очищаем статистику
+    context.user_data['practice_stats'] = {}
+    
+    await query.answer("✅ Прогресс сброшен", show_alert=True)
+    
+    # Возвращаемся в настройки
+    return await show_settings(update, context)
+
+async def choose_practice_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Выбор режима практики."""
+    query = update.callback_query
+    await query.answer()
+    
+    text = "💪 <b>Режим практики</b>\n\nВыберите способ выбора темы:"
+    
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("🎲 Случайная тема", callback_data="t25_random")],
+        [InlineKeyboardButton("📚 По блокам", callback_data="t25_by_block")],
+        [InlineKeyboardButton("📈 По сложности", callback_data="t25_by_difficulty")],
+        [InlineKeyboardButton("🎯 Рекомендованная", callback_data="t25_recommended")],
+        [InlineKeyboardButton("⬅️ Назад", callback_data="t25_menu")]
+    ])
+    
+    await query.edit_message_text(
+        text,
+        reply_markup=kb,
+        parse_mode=ParseMode.HTML
+    )
+    
+    return states.CHOOSING_MODE
+
+
+async def handle_random_topic(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Выбор случайной темы."""
+    query = update.callback_query
+    await query.answer()
+    
+    if topic_selector:
+        user_id = update.effective_user.id
+        topic = topic_selector.get_random_topic(user_id)
+    else:
+        # Fallback - простой случайный выбор
+        if task25_data.get('topics'):
+            topic = random.choice(task25_data['topics'])
+        else:
+            topic = None
+    
+    if not topic:
+        await query.answer("❌ Темы не найдены", show_alert=True)
+        return states.CHOOSING_MODE
+    
+    # Сохраняем тему
+    context.user_data['current_topic'] = topic
+    
+    # Форматируем и показываем
+    from .utils import format_topic_for_display
+    topic_text = format_topic_for_display(topic)
+    
+    await query.edit_message_text(
+        f"{topic_text}\n\n"
+        "📝 <b>Напишите развёрнутый ответ:</b>",
+        parse_mode=ParseMode.HTML
+    )
+    
+    return states.AWAITING_ANSWER
+
+
+async def choose_block(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Выбор блока для практики."""
+    query = update.callback_query
+    await query.answer()
+    
+    blocks = list(task25_data.get("blocks", {}).keys())
+    
+    if not blocks:
+        await query.edit_message_text(
+            "❌ Блоки тем не найдены",
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("⬅️ Назад", callback_data="t25_practice")
+            ]])
+        )
+        return states.CHOOSING_MODE
+    
+    text = "📚 <b>Выберите блок тем:</b>"
+    
+    kb_buttons = []
+    for block in blocks:
+        topics_count = len(task25_data["topics_by_block"].get(block, []))
+        kb_buttons.append([
+            InlineKeyboardButton(
+                f"{block} ({topics_count} тем)",
+                callback_data=f"t25_block:{block}"
+            )
+        ])
+    
+    kb_buttons.append([InlineKeyboardButton("⬅️ Назад", callback_data="t25_practice")])
+    
+    await query.edit_message_text(
+        text,
+        reply_markup=InlineKeyboardMarkup(kb_buttons),
+        parse_mode=ParseMode.HTML
+    )
+    
+    return states.CHOOSING_MODE
+
+
+async def handle_by_difficulty(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Выбор темы по сложности."""
+    query = update.callback_query
+    await query.answer()
+    
+    text = "📊 <b>Выберите уровень сложности:</b>"
+    
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("🟢 Лёгкий", callback_data="t25_diff:easy")],
+        [InlineKeyboardButton("🟡 Средний", callback_data="t25_diff:medium")],
+        [InlineKeyboardButton("🔴 Сложный", callback_data="t25_diff:hard")],
+        [InlineKeyboardButton("⬅️ Назад", callback_data="t25_practice")]
+    ])
+    
+    await query.edit_message_text(
+        text,
+        reply_markup=kb,
+        parse_mode=ParseMode.HTML
+    )
+    
+    return states.CHOOSING_MODE
+
+
+async def handle_difficulty_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработка выбранной сложности."""
+    query = update.callback_query
+    await query.answer()
+    
+    # Извлекаем уровень сложности
+    _, difficulty = query.data.split(':')
+    
+    if topic_selector:
+        user_id = update.effective_user.id
+        topic = topic_selector.get_topic_by_difficulty(user_id, difficulty)
+    else:
+        # Fallback
+        topics = [t for t in task25_data.get('topics', []) 
+                 if t.get('difficulty', 'medium') == difficulty]
+        topic = random.choice(topics) if topics else None
+    
+    if not topic:
+        await query.answer(f"❌ Нет тем уровня {difficulty}", show_alert=True)
+        return states.CHOOSING_MODE
+    
+    # Сохраняем тему
+    context.user_data['current_topic'] = topic
+    
+    # Показываем тему
+    from .utils import format_topic_for_display
+    topic_text = format_topic_for_display(topic)
+    
+    await query.edit_message_text(
+        f"{topic_text}\n\n"
+        "📝 <b>Напишите развёрнутый ответ:</b>",
+        parse_mode=ParseMode.HTML
+    )
+    
+    return states.AWAITING_ANSWER
+
+
+async def handle_recommended(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Выбор рекомендованной темы."""
+    query = update.callback_query
+    await query.answer()
+    
+    user_stats = context.user_data.get('practice_stats', {})
+    
+    if topic_selector and user_stats:
+        user_id = update.effective_user.id
+        topic = topic_selector.get_recommended_topic(user_id, user_stats)
+    else:
+        # Если нет статистики - даём случайную тему средней сложности
+        topics = [t for t in task25_data.get('topics', []) 
+                 if t.get('difficulty', 'medium') == 'medium']
+        topic = random.choice(topics) if topics else None
+    
+    if not topic:
+        await query.answer("❌ Не удалось подобрать тему", show_alert=True)
+        return states.CHOOSING_MODE
+    
+    # Сохраняем тему
+    context.user_data['current_topic'] = topic
+    
+    # Показываем с пояснением
+    from .utils import format_topic_for_display
+    topic_text = format_topic_for_display(topic)
+    
+    recommendation_text = "🎯 <b>Рекомендованная тема</b>\n"
+    if user_stats:
+        recommendation_text += "<i>Выбрана на основе вашей статистики</i>\n\n"
+    else:
+        recommendation_text += "<i>Начните с темы средней сложности</i>\n\n"
+    
+    await query.edit_message_text(
+        recommendation_text + topic_text + "\n\n"
+        "📝 <b>Напишите развёрнутый ответ:</b>",
+        parse_mode=ParseMode.HTML
+    )
+    
+    return states.AWAITING_ANSWER
+
+
+# Обновлённая функция регистрации обработчиков
+def register_task25_handlers(app):
+    """Регистрация всех обработчиков задания 25."""
+    from telegram.ext import CommandHandler, CallbackQueryHandler, MessageHandler, filters
+    
+    # Команды
+    app.add_handler(CommandHandler("task25", cmd_task25))
+    
+    # Основное меню
+    app.add_handler(CallbackQueryHandler(entry_from_menu, pattern="^t25_menu$"))
+    app.add_handler(CallbackQueryHandler(choose_practice_mode, pattern="^t25_practice$"))
+    app.add_handler(CallbackQueryHandler(show_theory, pattern="^t25_theory$"))
+    app.add_handler(CallbackQueryHandler(show_settings, pattern="^t25_settings$"))
+    
+    # Выбор темы
+    app.add_handler(CallbackQueryHandler(handle_random_topic, pattern="^t25_random$"))
+    app.add_handler(CallbackQueryHandler(choose_block, pattern="^t25_by_block$"))
+    app.add_handler(CallbackQueryHandler(handle_by_difficulty, pattern="^t25_by_difficulty$"))
+    app.add_handler(CallbackQueryHandler(handle_recommended, pattern="^t25_recommended$"))
+    
+    # Обработка выбора
+    app.add_handler(CallbackQueryHandler(handle_topic_by_block, pattern="^t25_block:"))
+    app.add_handler(CallbackQueryHandler(handle_difficulty_selected, pattern="^t25_diff:"))
+    
+    # После ответа
+    app.add_handler(CallbackQueryHandler(handle_retry, pattern="^t25_retry$"))
+    app.add_handler(CallbackQueryHandler(handle_new_topic, pattern="^t25_new_topic$"))
+    app.add_handler(CallbackQueryHandler(handle_progress, pattern="^t25_progress$"))
+    
+    # Настройки
+    app.add_handler(CallbackQueryHandler(handle_strictness_change, pattern="^t25_strictness:"))
+    app.add_handler(CallbackQueryHandler(handle_reset_progress, pattern="^t25_reset_progress$"))
+    
+    # Обработчик текстовых ответов (для любого состояния AWAITING_ANSWER)
+    app.add_handler(MessageHandler(
+        filters.TEXT & ~filters.COMMAND,
+        handle_answer
+    ), group=1)  # Используем группу для приоритета
+    
+    # Возврат в главное меню
+    app.add_handler(CallbackQueryHandler(back_to_main_menu, pattern="^to_main_menu$"))

@@ -286,96 +286,176 @@ class Task25AIEvaluator(BaseAIEvaluator if AI_EVALUATOR_AVAILABLE else object):
     
     def _create_evaluation_result(self, result: Dict, topic: Dict) -> EvaluationResult:
         """Создаёт итоговый результат оценки."""
-        scores = {
-            "К1": result.get('k1_score', 0),
-            "К2": result.get('k2_score', 0),
-            "К3": result.get('k3_score', 0)
-        }
-        
-        total_score = sum(scores.values())
-        
-        # Формируем обратную связь
+        # Формируем основную обратную связь
         feedback_parts = []
         
         # К1 - Обоснование
+        k1_score = result.get('k1_score', 0)
         k1_comment = result.get('k1_comment', '')
+        feedback_parts.append(f"<b>К1 (Обоснование):</b> {k1_score}/2")
         if k1_comment:
-            feedback_parts.append(f"<b>Обоснование:</b> {k1_comment}")
+            feedback_parts.append(f"💡 {k1_comment}")
         
-        # К2 - Ответ
+        # К2 - Ответ на вопрос
+        k2_score = result.get('k2_score', 0)
         k2_comment = result.get('k2_comment', '')
+        feedback_parts.append(f"\n<b>К2 (Ответ на вопрос):</b> {k2_score}/1")
         if k2_comment:
-            feedback_parts.append(f"<b>Ответ на вопрос:</b> {k2_comment}")
+            feedback_parts.append(f"📝 {k2_comment}")
         
         # К3 - Примеры
+        k3_score = result.get('k3_score', 0)
         k3_comment = result.get('k3_comment', '')
+        feedback_parts.append(f"\n<b>К3 (Примеры):</b> {k3_score}/3")
         if k3_comment:
-            feedback_parts.append(f"<b>Примеры:</b> {k3_comment}")
+            feedback_parts.append(f"📚 {k3_comment}")
+        
+        # Найденные примеры
+        examples_found = result.get('k3_examples_found', [])
+        if examples_found:
+            feedback_parts.append("\n<b>Засчитанные примеры:</b>")
+            for i, example in enumerate(examples_found[:3], 1):
+                feedback_parts.append(f"{i}. {example}")
+        
+        # Общий балл
+        total_score = result.get('total_score', 0)
+        feedback_parts.append(f"\n<b>Итого:</b> {total_score}/6 баллов")
         
         # Общий комментарий
-        general = result.get('general_feedback', '')
-        if general:
-            feedback_parts.append(f"\n{general}")
+        general_feedback = result.get('general_feedback', '')
+        if general_feedback:
+            feedback_parts.append(f"\n💭 {general_feedback}")
         
-        feedback = "\n\n".join(feedback_parts)
+        # Фактические ошибки
+        factual_errors = result.get('factual_errors', [])
+        if factual_errors:
+            feedback_parts.append("\n<b>❌ Фактические ошибки:</b>")
+            for error in factual_errors:
+                feedback_parts.append(f"• {error}")
         
-        # Детальный анализ
-        detailed_analysis = {
-            "scores_breakdown": scores,
-            "examples_found": result.get('k3_examples_found', []),
-            "strictness_level": self.strictness.value
-        }
+        # Рекомендации
+        suggestions = result.get('suggestions', [])
+        if suggestions:
+            feedback_parts.append("\n<b>💡 Рекомендации:</b>")
+            for suggestion in suggestions:
+                feedback_parts.append(f"• {suggestion}")
+        
+        # Добавляем информацию об уровне проверки
+        feedback_parts.append(f"\n<i>Уровень проверки: {self.strictness.value}</i>")
         
         return EvaluationResult(
-            scores=scores,
+            scores={
+                'k1': k1_score,
+                'k2': k2_score,
+                'k3': k3_score
+            },
             total_score=total_score,
             max_score=6,
-            feedback=feedback,
-            detailed_analysis=detailed_analysis,
-            suggestions=result.get('suggestions', []),
-            factual_errors=result.get('factual_errors', [])
+            feedback='\n'.join(feedback_parts),
+            detailed_analysis=result,
+            suggestions=suggestions,
+            factual_errors=factual_errors
         )
     
     def _get_fallback_result(self) -> EvaluationResult:
         """Возвращает результат при недоступности AI."""
         return EvaluationResult(
-            scores={"К1": 0, "К2": 0, "К3": 0},
+            scores={'k1': 0, 'k2': 0, 'k3': 0},
             total_score=0,
             max_score=6,
-            feedback="AI-проверка временно недоступна. Обратитесь к преподавателю.",
+            feedback=(
+                "❌ <b>AI-проверка временно недоступна</b>\n\n"
+                "К сожалению, автоматическая проверка сейчас невозможна.\n"
+                "Пожалуйста, попробуйте позже или обратитесь к преподавателю.\n\n"
+                "Для самостоятельной проверки убедитесь, что ваш ответ содержит:\n"
+                "1. Развёрнутое обоснование (К1)\n"
+                "2. Чёткий ответ на вопрос (К2)\n"
+                "3. Три конкретных примера (К3)"
+            ),
             detailed_analysis={},
-            suggestions=[],
+            suggestions=[
+                "Проверьте структуру ответа",
+                "Убедитесь в наличии всех трёх частей",
+                "Примеры должны быть конкретными и развёрнутыми"
+            ],
             factual_errors=[]
         )
-    
+
     def _parse_text_response(self, response: str) -> Dict:
-        """Парсит текстовый ответ если JSON не найден."""
-        result = {
-            "k1_score": 0,
-            "k2_score": 0,
-            "k3_score": 0,
-            "total_score": 0,
-            "general_feedback": response[:500]  # Берём первые 500 символов
-        }
-        
-        # Пытаемся найти баллы в тексте
+        """Парсит текстовый ответ AI когда JSON не найден."""
         import re
         
-        # К1
-        k1_match = re.search(r'К1.*?(\d)', response, re.IGNORECASE)
-        if k1_match:
-            result['k1_score'] = int(k1_match.group(1))
+        result = {
+            'k1_score': 0,
+            'k1_comment': '',
+            'k2_score': 0,
+            'k2_comment': '',
+            'k3_score': 0,
+            'k3_comment': '',
+            'k3_examples_found': [],
+            'total_score': 0,
+            'general_feedback': '',
+            'suggestions': [],
+            'factual_errors': []
+        }
         
-        # К2
-        k2_match = re.search(r'К2.*?(\d)', response, re.IGNORECASE)
-        if k2_match:
-            result['k2_score'] = int(k2_match.group(1))
-        
-        # К3
-        k3_match = re.search(r'К3.*?(\d)', response, re.IGNORECASE)
-        if k3_match:
-            result['k3_score'] = int(k3_match.group(1))
-        
-        result['total_score'] = result['k1_score'] + result['k2_score'] + result['k3_score']
+        try:
+            # Ищем оценки по критериям
+            # К1
+            k1_match = re.search(r'К1.*?(\d+).*?бал', response, re.IGNORECASE | re.DOTALL)
+            if k1_match:
+                result['k1_score'] = int(k1_match.group(1))
+            
+            # К2
+            k2_match = re.search(r'К2.*?(\d+).*?бал', response, re.IGNORECASE | re.DOTALL)
+            if k2_match:
+                result['k2_score'] = int(k2_match.group(1))
+            
+            # К3
+            k3_match = re.search(r'К3.*?(\d+).*?бал', response, re.IGNORECASE | re.DOTALL)
+            if k3_match:
+                result['k3_score'] = int(k3_match.group(1))
+            
+            # Общий балл
+            total_match = re.search(r'(?:итого|всего|общий балл).*?(\d+)', response, re.IGNORECASE)
+            if total_match:
+                result['total_score'] = int(total_match.group(1))
+            else:
+                result['total_score'] = result['k1_score'] + result['k2_score'] + result['k3_score']
+            
+            # Ищем примеры
+            examples_section = re.search(r'(?:примеры|засчитанные примеры):(.*?)(?:рекомендации|советы|ошибки|$)', 
+                                       response, re.IGNORECASE | re.DOTALL)
+            if examples_section:
+                examples_text = examples_section.group(1)
+                # Ищем нумерованные примеры
+                example_matches = re.findall(r'\d+[.)]\s*(.+?)(?=\d+[.)]|$)', examples_text, re.DOTALL)
+                result['k3_examples_found'] = [ex.strip() for ex in example_matches[:3]]
+            
+            # Ищем рекомендации
+            suggestions_section = re.search(r'(?:рекомендации|советы):(.*?)(?:ошибки|$)', 
+                                          response, re.IGNORECASE | re.DOTALL)
+            if suggestions_section:
+                suggestions_text = suggestions_section.group(1)
+                suggestion_matches = re.findall(r'[•\-]\s*(.+?)(?=[•\-]|$)', suggestions_text, re.DOTALL)
+                result['suggestions'] = [s.strip() for s in suggestion_matches]
+            
+            # Ищем ошибки
+            errors_section = re.search(r'(?:ошибки|неточности):(.*?)$', response, re.IGNORECASE | re.DOTALL)
+            if errors_section:
+                errors_text = errors_section.group(1)
+                error_matches = re.findall(r'[•\-]\s*(.+?)(?=[•\-]|$)', errors_text, re.DOTALL)
+                result['factual_errors'] = [e.strip() for e in error_matches]
+            
+            # Если комментарии не найдены отдельно, берём часть текста
+            if not result['k1_comment']:
+                k1_section = re.search(r'К1[^:]*:(.*?)(?=К2|$)', response, re.IGNORECASE | re.DOTALL)
+                if k1_section:
+                    result['k1_comment'] = k1_section.group(1).strip()[:100]
+            
+            logger.info(f"Parsed text response: {result}")
+            
+        except Exception as e:
+            logger.error(f"Error parsing text response: {e}")
         
         return result
