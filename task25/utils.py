@@ -204,54 +204,51 @@ class TopicSelector:
 
 
 def format_topic_for_display(topic: Dict) -> str:
-    """
-    Форматировать тему для отображения пользователю.
+    """Форматирует тему для отображения пользователю."""
+    text = "📝 <b>Задание 25</b>\n\n"
     
-    Args:
-        topic: Словарь с данными темы
-        
-    Returns:
-        Отформатированная строка
-    """
-    parts = []
+    # Заголовок темы
+    text += f"<b>Тема:</b> {topic.get('title', 'Не указана')}\n"
     
-    # Заголовок
-    parts.append(f"<b>{topic.get('title', 'Без названия')}</b>")
-    
-    # Текст задания
-    task_text = topic.get('task_text', '')
-    if task_text:
-        parts.append(f"\n{task_text}")
-    
-    # Части задания
-    topic_parts = topic.get('parts', {})
-    if topic_parts:
-        parts.append("\n<b>Задание состоит из частей:</b>")
-        
-        if topic_parts.get('part1'):
-            parts.append(f"1️⃣ {topic_parts['part1']}")
-        if topic_parts.get('part2'):
-            parts.append(f"2️⃣ {topic_parts['part2']}")
-        if topic_parts.get('part3'):
-            parts.append(f"3️⃣ {topic_parts['part3']}")
-    
-    # Метаинформация
-    meta_parts = []
+    # Блок
     if 'block' in topic:
-        meta_parts.append(f"Блок: {topic['block']}")
+        text += f"<b>Блок:</b> {topic['block']}\n"
+    
+    # Сложность (если есть)
     if 'difficulty' in topic:
-        difficulty_emoji = {
-            'easy': '🟢',
-            'medium': '🟡',
-            'hard': '🔴'
+        diff_map = {
+            'easy': '🟢 Лёгкая',
+            'medium': '🟡 Средняя',
+            'hard': '🔴 Сложная'
         }
-        emoji = difficulty_emoji.get(topic['difficulty'], '⚪')
-        meta_parts.append(f"Сложность: {emoji}")
+        text += f"<b>Сложность:</b> {diff_map.get(topic['difficulty'], topic['difficulty'])}\n"
     
-    if meta_parts:
-        parts.append(f"\n<i>{' • '.join(meta_parts)}</i>")
+    text += "\n"
     
-    return '\n'.join(parts)
+    # Если задание разбито на части
+    if 'parts' in topic:
+        parts = topic['parts']
+        
+        if 'part1' in parts:
+            text += f"<b>1. Обоснование (2 балла):</b>\n{parts['part1']}\n\n"
+        
+        if 'part2' in parts:
+            text += f"<b>2. Ответ на вопрос (1 балл):</b>\n{parts['part2']}\n\n"
+        
+        if 'part3' in parts:
+            text += f"<b>3. Примеры (3 балла):</b>\n{parts['part3']}\n\n"
+    else:
+        # Если задание в едином формате
+        text += f"<b>Задание:</b>\n{topic.get('task_text', 'Текст задания не указан')}\n\n"
+    
+    # Требования к ответу
+    text += "<b>Требования к ответу:</b>\n"
+    text += "1️⃣ Развёрнутое обоснование (2 балла)\n"
+    text += "2️⃣ Точный ответ на вопрос (1 балл)\n"
+    text += "3️⃣ Три конкретных примера (3 балла)\n"
+    text += "\n<i>Максимальный балл: 6</i>"
+    
+    return text
 
 
 def validate_answer_structure(answer: str) -> Dict[str, any]:

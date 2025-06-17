@@ -11,6 +11,10 @@ from . import handlers
 
 logger = logging.getLogger(__name__)
 
+# Добавляем новые состояния
+CHOOSING_BLOCK = 101
+ANSWERING_PARTS = 102
+
 class Task25Plugin(BotPlugin):
     code = "task25"
     title = "Задание 25 (Развёрнутый ответ)"
@@ -59,32 +63,51 @@ class Task25Plugin(BotPlugin):
                     
                     # Навигация по темам
                     CallbackQueryHandler(handlers.block_menu, pattern="^t25_block:"),
-                    CallbackQueryHandler(handlers.list_topics, pattern="^t25_list_topics($|:page:\d+)"),
+                    CallbackQueryHandler(handlers.show_topic_list, pattern="^t25_list_topics:"),
+                    CallbackQueryHandler(handlers.show_topic_by_id, pattern="^t25_topic:"),
                     CallbackQueryHandler(handlers.random_topic_all, pattern="^t25_random_all$"),
                     CallbackQueryHandler(handlers.random_topic_block, pattern="^t25_random_block$"),
                     
-                    # Банк примеров
-                    CallbackQueryHandler(handlers.bank_navigation, pattern="^t25_bank_nav:"),
-                    CallbackQueryHandler(handlers.bank_search, pattern="^t25_bank_search$"),
-                    
                     # Настройки
-                    CallbackQueryHandler(handlers.handle_settings_actions, pattern="^t25_(reset_progress|confirm_reset)$"),
+                    CallbackQueryHandler(handlers.handle_settings_change, pattern="^t25_set_mode:"),
+                    CallbackQueryHandler(handlers.toggle_examples, pattern="^t25_toggle_examples$"),
+                    CallbackQueryHandler(handlers.strictness_menu, pattern="^t25_strictness_menu$"),
                     CallbackQueryHandler(handlers.set_strictness, pattern="^t25_strictness:"),
                     
+                    # Банк примеров
+                    CallbackQueryHandler(handlers.search_examples, pattern="^t25_search_examples$"),
+                    CallbackQueryHandler(handlers.examples_by_block, pattern="^t25_examples_by_block$"),
+                    CallbackQueryHandler(handlers.best_examples, pattern="^t25_best_examples$"),
+                    CallbackQueryHandler(handlers.show_example, pattern="^t25_show_example:"),
+                    
+                    # Теория
+                    CallbackQueryHandler(handlers.example_answers, pattern="^t25_example_answers$"),
+                    CallbackQueryHandler(handlers.common_mistakes, pattern="^t25_common_mistakes$"),
+                    
                     # Прогресс
-                    CallbackQueryHandler(handlers.show_block_stats, pattern="^t25_stats_blocks$"),
-                    CallbackQueryHandler(handlers.detailed_progress, pattern="^t25_detailed_progress$"),
-                ],
-                
-                states.CHOOSING_BLOCK: [
-                    CallbackQueryHandler(handlers.block_menu, pattern="^t25_block:"),
-                    CallbackQueryHandler(handlers.select_block, pattern="^t25_select_block$"),
-                    CallbackQueryHandler(handlers.list_topics, pattern="^t25_list_topics:page:"),
+                    CallbackQueryHandler(handlers.detailed_stats, pattern="^t25_detailed_stats$"),
+                    CallbackQueryHandler(handlers.recommendations, pattern="^t25_recommendations$"),
                 ],
                 
                 states.ANSWERING: [
                     MessageHandler(filters.TEXT & ~filters.COMMAND, handlers.handle_answer),
                     CallbackQueryHandler(handlers.practice_mode, pattern="^t25_practice$"),
+                    CallbackQueryHandler(handlers.return_to_menu, pattern="^t25_menu$"),
+                ],
+                
+                ANSWERING_PARTS: [
+                    MessageHandler(filters.TEXT & ~filters.COMMAND, handlers.handle_answer_parts),
+                    CallbackQueryHandler(handlers.practice_mode, pattern="^t25_practice$"),
+                    CallbackQueryHandler(handlers.return_to_menu, pattern="^t25_menu$"),
+                ],
+                
+                CHOOSING_BLOCK: [
+                    CallbackQueryHandler(handlers.block_menu, pattern="^t25_block:"),
+                    CallbackQueryHandler(handlers.show_topic_list, pattern="^t25_list_topics:"),
+                    CallbackQueryHandler(handlers.random_topic_block, pattern="^t25_random_block$"),
+                    CallbackQueryHandler(handlers.select_block, pattern="^t25_select_block$"),
+                    CallbackQueryHandler(handlers.practice_mode, pattern="^t25_practice$"),
+                    CallbackQueryHandler(handlers.return_to_menu, pattern="^t25_menu$"),
                 ],
                 
                 states.AWAITING_FEEDBACK: [
@@ -98,6 +121,7 @@ class Task25Plugin(BotPlugin):
                 states.SEARCHING: [
                     MessageHandler(filters.TEXT & ~filters.COMMAND, handlers.handle_bank_search),
                     CallbackQueryHandler(handlers.examples_bank, pattern="^t25_examples$"),
+                    CallbackQueryHandler(handlers.return_to_menu, pattern="^t25_menu$"),
                 ],
             },
             fallbacks=[
