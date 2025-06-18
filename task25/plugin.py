@@ -55,11 +55,14 @@ class Task25Plugin(BotPlugin):
                     CallbackQueryHandler(handlers.my_progress, pattern="^t25_progress$"),
                     CallbackQueryHandler(handlers.settings_mode, pattern="^t25_settings$"),
                     CallbackQueryHandler(handlers.back_to_main_menu, pattern="^to_main_menu$"),
+                    CallbackQueryHandler(handlers.list_all_topics, pattern="^t25_all_topics_list$"),
+                    CallbackQueryHandler(handlers.list_by_difficulty, pattern="^t25_list_by_diff:"),
                     CallbackQueryHandler(handlers.noop, pattern="^noop$"),
                     
                     # Обработчики для выбора тем
                     CallbackQueryHandler(handlers.select_block, pattern="^t25_select_block$"),
                     CallbackQueryHandler(handlers.handle_result_action, pattern="^t25_(new_topic|retry)$"),
+                    CallbackQueryHandler(handlers.another_topic_from_current, pattern="^t25_another_topic$"),
                     CallbackQueryHandler(handlers.return_to_menu, pattern="^t25_menu$"),
                     
                     # Навигация по темам
@@ -93,12 +96,16 @@ class Task25Plugin(BotPlugin):
                 states.ANSWERING: [
                     MessageHandler(filters.TEXT & ~filters.COMMAND, handlers.handle_answer),
                     CallbackQueryHandler(handlers.practice_mode, pattern="^t25_practice$"),
+                    CallbackQueryHandler(handlers.another_topic_from_current, pattern="^t25_another_topic$"),
+                    CallbackQueryHandler(handlers.random_topic_block, pattern="^t25_random_block$"),
+                    CallbackQueryHandler(handlers.block_menu, pattern="^t25_block:"),
                     CallbackQueryHandler(handlers.return_to_menu, pattern="^t25_menu$"),
                 ],
                 
                 ANSWERING_PARTS: [
                     MessageHandler(filters.TEXT & ~filters.COMMAND, handlers.handle_answer_parts),
                     CallbackQueryHandler(handlers.practice_mode, pattern="^t25_practice$"),
+                    CallbackQueryHandler(handlers.block_menu, pattern="^t25_block:"),
                     CallbackQueryHandler(handlers.return_to_menu, pattern="^t25_menu$"),
                 ],
                 
