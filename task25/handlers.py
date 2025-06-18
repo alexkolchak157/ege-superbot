@@ -655,7 +655,15 @@ async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
             if result:
                 score = result.total_score
-                feedback = result.format_feedback()
+                # Форматируем результат вручную
+                feedback = f"📊 <b>Результаты проверки</b>\n\n"
+                feedback += f"<b>Итого: {result.total_score}/{result.max_score} баллов</b>\n\n"
+                feedback += f"{result.feedback}\n"
+
+                if result.suggestions:
+                    feedback += "\n💡 <b>Рекомендации:</b>\n"
+                    for s in result.suggestions:
+                        feedback += f"• {s}\n"
         else:
             logger.warning("AI evaluator not available, using basic evaluation")
             # Базовая проверка без AI

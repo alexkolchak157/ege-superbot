@@ -31,6 +31,10 @@ except ImportError as e:
         criteria: List[Dict]
         description: str
     
+# Вариант 1: Добавьте метод format_feedback в класс EvaluationResult
+
+# Найдите определение класса EvaluationResult в task25/evaluator.py и добавьте метод:
+
     @dataclass
     class EvaluationResult:
         scores: Dict[str, int]
@@ -265,22 +269,26 @@ class Task25AIEvaluator(BaseAIEvaluator if AI_EVALUATOR_AVAILABLE else object):
             # Формируем промпт для оценки
             eval_prompt = self._build_evaluation_prompt(answer, topic)
             
-            # Получаем оценку от AI
-            result = await self.ai_service.get_completion(
-                prompt=eval_prompt,
-                system_prompt=self.get_system_prompt(),
-                temperature=self.get_temperature()
-            )
+            # Используем async with для ai_service
+            async with self.ai_service as service:
+                result = await service.get_completion(
+                    prompt=eval_prompt,
+                    system_prompt=self.get_system_prompt(),
+                    temperature=self.get_temperature()
+                )
+            
+            # Проверяем успешность
             if not result["success"]:
                 logger.error(f"AI service error: {result.get('error', 'Unknown error')}")
                 return self._get_fallback_result()
-
+            
             response = result["text"]
+            
             # Парсим результат
-            result = self._parse_ai_response(response)
+            parsed_result = self._parse_ai_response(response)
             
             # Валидируем и корректируем оценки
-            validated_result = self._validate_scores(result)
+            validated_result = self._validate_scores(parsed_result)
             
             # Формируем итоговый результат
             return self._create_evaluation_result(validated_result, topic)
