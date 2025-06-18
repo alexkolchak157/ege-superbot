@@ -302,7 +302,6 @@ async def theory_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     return states.CHOOSING_MODE
 
-
 async def select_block(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Выбор блока тем."""
     query = update.callback_query
@@ -334,6 +333,7 @@ async def select_block(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     
     return states.CHOOSING_MODE
+
 
 
 async def block_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -944,6 +944,7 @@ async def examples_bank(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     
     return states.CHOOSING_MODE
+
 
 async def show_example_topic(query, context: ContextTypes.DEFAULT_TYPE, topic_idx: int):
     """Показывает эталонный ответ для темы по индексу."""
