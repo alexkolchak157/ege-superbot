@@ -20,3 +20,7 @@ AWAITING_PLAN = 20       # Ожидание плана от пользовате
 SHOWING_PLAN = 21        # Показ эталонного плана
 AWAITING_SEARCH = 22     # Ожидание поискового запроса
 AWAITING_FEEDBACK = 23     
+
+# Новые состояния для task25
+CHOOSING_BLOCK = 101  # Выбор блока тем
+ANSWERING_PARTS = 102  # Ответ по частям
