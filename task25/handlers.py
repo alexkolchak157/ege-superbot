@@ -1,4 +1,3 @@
-# Начало файла task25/handlers.py
 import logging
 import os
 import json
@@ -12,6 +11,9 @@ from telegram.ext import ContextTypes, ConversationHandler
 
 from core import states
 from core.plugin_loader import build_main_menu
+
+# Добавьте этот импорт для состояния ANSWERING_PARTS
+from core.states import ANSWERING_PARTS
 
 logger = logging.getLogger(__name__)
 
@@ -40,7 +42,6 @@ try:
 except ImportError as e:
     logger.error(f"Failed to import utils: {e}")
     TopicSelector = None
-
 
 async def init_task25_data():
     """Инициализация данных для задания 25."""
@@ -482,6 +483,7 @@ async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
             if result:
                 score = result.total_score
+                feedback = result.format_feedback()
         else:
             logger.warning("AI evaluator not available, using basic evaluation")
             # Базовая проверка без AI
@@ -510,8 +512,15 @@ async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
             'blocks_progress': {}
         })
         
+        # Преобразуем set в list для сохранения
+        if isinstance(stats['topics_completed'], set):
+            topics_completed_set = stats['topics_completed']
+        else:
+            topics_completed_set = set(stats['topics_completed'])
+        
         stats['total_attempts'] += 1
-        stats['topics_completed'].add(topic.get('id'))
+        topics_completed_set.add(topic.get('id'))
+        stats['topics_completed'] = list(topics_completed_set)  # Сохраняем как list
         stats['scores'].append(score)
         
         # Обновляем прогресс по блокам
@@ -522,7 +531,7 @@ async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
         block_topics = task25_data.get('topics_by_block', {}).get(block_name, [])
         completed_in_block = len([
             t for t in block_topics 
-            if t.get('id') in stats['topics_completed']
+            if t.get('id') in topics_completed_set
         ])
         
         if block_topics:
@@ -532,10 +541,6 @@ async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         # Удаляем сообщение о проверке
         await thinking_msg.delete()
-        
-        # Формируем и отправляем результат
-        if result:
-            feedback = result.format_feedback()
         
         # Показываем эталонный ответ если включено в настройках
         settings = context.user_data.get('task25_settings', {})
@@ -551,7 +556,10 @@ async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 feedback += "<b>3. Примеры:</b>\n"
                 if isinstance(example['part3'], list):
                     for i, ex in enumerate(example['part3'], 1):
-                        feedback += f"{i}) {ex}\n"
+                        if isinstance(ex, dict):
+                            feedback += f"{i}) <i>{ex.get('type', '')}:</i> {ex.get('example', '')}\n"
+                        else:
+                            feedback += f"{i}) {ex}\n"
         
     except Exception as e:
         logger.error(f"Error during evaluation: {e}", exc_info=True)
@@ -582,8 +590,70 @@ async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return states.AWAITING_FEEDBACK
 
 
-# Обновляем ссылку на функцию
-handle_answer = handle_answer_with_stats
+# Добавьте эту новую функцию ПОСЛЕ handle_answer:
+
+async def handle_answer_parts(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработка ответа по частям."""
+    user_answer = update.message.text
+    topic = context.user_data.get('current_topic')
+    current_part = context.user_data.get('current_part', 1)
+    answers = context.user_data.get('part_answers', {})
+    
+    if not topic:
+        await update.message.reply_text("❌ Ошибка: тема не выбрана.")
+        return states.CHOOSING_MODE
+    
+    # Сохраняем ответ на текущую часть
+    answers[f'part{current_part}'] = user_answer
+    context.user_data['part_answers'] = answers
+    
+    # Переходим к следующей части или завершаем
+    if current_part < 3:
+        current_part += 1
+        context.user_data['current_part'] = current_part
+        
+        # Показываем следующую часть
+        parts = topic.get('parts', {})
+        part_text = parts.get(f'part{current_part}', '')
+        
+        part_names = {
+            2: "Ответ на вопрос",
+            3: "Примеры"
+        }
+        
+        text = (
+            f"✅ Часть {current_part - 1} получена!\n\n"
+            f"<b>Часть {current_part}: {part_names.get(current_part, '')}</b>\n\n"
+            f"{part_text}\n\n"
+            f"💡 <i>Отправьте ваш ответ</i>"
+        )
+        
+        await update.message.reply_text(
+            text,
+            parse_mode=ParseMode.HTML
+        )
+        
+        return ANSWERING_PARTS  # Используем константу из states
+    
+    else:
+        # Все части собраны, объединяем и проверяем
+        full_answer = "\n\n".join([
+            f"Часть 1 (Обоснование):\n{answers.get('part1', '')}",
+            f"Часть 2 (Ответ):\n{answers.get('part2', '')}",
+            f"Часть 3 (Примеры):\n{answers.get('part3', '')}"
+        ])
+        
+        # Очищаем временные данные
+        context.user_data.pop('part_answers', None)
+        context.user_data.pop('current_part', None)
+        
+        # Сохраняем полный ответ для проверки
+        context.user_data['full_answer'] = full_answer
+        
+        # Вызываем стандартную функцию проверки
+        # Создаем фиктивное обновление с полным текстом
+        update.message.text = full_answer
+        return await handle_answer(update, context)
 
 
 def _format_evaluation_result(result: EvaluationResult, topic: Dict) -> str:

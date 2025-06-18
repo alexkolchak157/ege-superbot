@@ -1,5 +1,3 @@
-"""Плагин для задания 25."""
-
 import logging
 from telegram.ext import (
     ConversationHandler, CommandHandler, CallbackQueryHandler,
@@ -8,6 +6,9 @@ from telegram.ext import (
 from core.plugin_base import BotPlugin
 from core import states
 from . import handlers
+
+# Импортируем константу ANSWERING_PARTS
+from core.states import ANSWERING_PARTS
 
 logger = logging.getLogger(__name__)
 
