@@ -31,77 +31,6 @@ except ImportError as e:
         criteria: List[Dict]
         description: str
     
-    # Расширяем класс EvaluationResult для задания 25
-    class Task25EvaluationResult(EvaluationResult if AI_EVALUATOR_AVAILABLE else object):
-        """Расширенный результат оценки для задания 25."""
-        
-        def format_feedback(self) -> str:
-            """Форматирует результат для отображения пользователю."""
-            text = f"📊 <b>Результаты проверки</b>\n\n"
-            
-            # Баллы по критериям
-            text += "<b>Баллы по критериям:</b>\n"
-            
-            # Используем ключи из scores, которые могут быть k1_score, k2_score, k3_score или К1, К2, К3
-            scores = self.scores if hasattr(self, 'scores') and self.scores else {}
-            
-            # Проверяем разные форматы ключей
-            k1_score = scores.get('k1_score', scores.get('К1', 0))
-            k2_score = scores.get('k2_score', scores.get('К2', 0))
-            k3_score = scores.get('k3_score', scores.get('К3', 0))
-            
-            text += f"К1 (Обоснование): {k1_score}/2\n"
-            text += f"К2 (Ответ): {k2_score}/1\n"
-            text += f"К3 (Примеры): {k3_score}/3\n"
-            
-            # Итоговый балл
-            text += f"\n<b>Итого: {self.total_score}/{self.max_score} баллов</b>\n\n"
-            
-            # Основная обратная связь
-            if self.feedback:
-                text += f"{self.feedback}\n"
-            
-            # Детальный анализ если есть
-            if self.detailed_analysis:
-                text += "\n<b>Детальный анализ:</b>\n"
-                
-                # Комментарии по критериям
-                if 'k1_comment' in self.detailed_analysis:
-                    text += f"\n<b>Обоснование:</b> {self.detailed_analysis['k1_comment']}\n"
-                
-                if 'k2_comment' in self.detailed_analysis:
-                    text += f"\n<b>Ответ:</b> {self.detailed_analysis['k2_comment']}\n"
-                
-                if 'k3_comment' in self.detailed_analysis:
-                    text += f"\n<b>Примеры:</b> {self.detailed_analysis['k3_comment']}\n"
-                    
-                    # Найденные примеры
-                    if 'k3_examples_found' in self.detailed_analysis:
-                        examples = self.detailed_analysis['k3_examples_found']
-                        if examples and isinstance(examples, list):
-                            text += "\nНайденные примеры:\n"
-                            for i, ex in enumerate(examples[:3], 1):
-                                text += f"{i}. {ex}\n"
-            
-            # Рекомендации
-            if self.suggestions:
-                text += "\n💡 <b>Рекомендации:</b>\n"
-                for suggestion in self.suggestions:
-                    text += f"• {suggestion}\n"
-            
-            # Фактические ошибки
-            if self.factual_errors:
-                text += "\n⚠️ <b>Обратите внимание:</b>\n"
-                for error in self.factual_errors:
-                    if isinstance(error, dict):
-                        text += f"• {error.get('error', error)}"
-                        if 'correction' in error:
-                            text += f" → {error['correction']}"
-                        text += "\n"
-                    else:
-                        text += f"• {error}\n"
-            
-            return text
     
     class BaseAIEvaluator:
         def __init__(self, requirements: TaskRequirements):
@@ -113,10 +42,81 @@ except ImportError as e:
     class YandexGPTConfig:
         pass
     
-    class YandexGPTModel:
-        LITE = "yandexgpt-lite"
-        PRO = "yandexgpt"
+class YandexGPTModel:
+    LITE = "yandexgpt-lite"
+    PRO = "yandexgpt"
 
+
+class Task25EvaluationResult(EvaluationResult if AI_EVALUATOR_AVAILABLE else object):
+    """Расширенный результат оценки для задания 25."""
+
+    def format_feedback(self) -> str:
+        """Форматирует результат для отображения пользователю."""
+        text = f"📊 <b>Результаты проверки</b>\n\n"
+
+        # Баллы по критериям
+        text += "<b>Баллы по критериям:</b>\n"
+
+        # Используем ключи из scores, которые могут быть k1_score, k2_score, k3_score или К1, К2, К3
+        scores = self.scores if hasattr(self, 'scores') and self.scores else {}
+
+        # Проверяем разные форматы ключей
+        k1_score = scores.get('k1_score', scores.get('К1', 0))
+        k2_score = scores.get('k2_score', scores.get('К2', 0))
+        k3_score = scores.get('k3_score', scores.get('К3', 0))
+
+        text += f"К1 (Обоснование): {k1_score}/2\n"
+        text += f"К2 (Ответ): {k2_score}/1\n"
+        text += f"К3 (Примеры): {k3_score}/3\n"
+
+        # Итоговый балл
+        text += f"\n<b>Итого: {self.total_score}/{self.max_score} баллов</b>\n\n"
+
+        # Основная обратная связь
+        if self.feedback:
+            text += f"{self.feedback}\n"
+
+        # Детальный анализ если есть
+        if self.detailed_analysis:
+            text += "\n<b>Детальный анализ:</b>\n"
+
+            # Комментарии по критериям
+            if 'k1_comment' in self.detailed_analysis:
+                text += f"\n<b>Обоснование:</b> {self.detailed_analysis['k1_comment']}\n"
+
+            if 'k2_comment' in self.detailed_analysis:
+                text += f"\n<b>Ответ:</b> {self.detailed_analysis['k2_comment']}\n"
+
+            if 'k3_comment' in self.detailed_analysis:
+                text += f"\n<b>Примеры:</b> {self.detailed_analysis['k3_comment']}\n"
+
+                # Найденные примеры
+                if 'k3_examples_found' in self.detailed_analysis:
+                    examples = self.detailed_analysis['k3_examples_found']
+                    if examples and isinstance(examples, list):
+                        text += "\nНайденные примеры:\n"
+                        for i, ex in enumerate(examples[:3], 1):
+                            text += f"{i}. {ex}\n"
+
+        # Рекомендации
+        if self.suggestions:
+            text += "\n💡 <b>Рекомендации:</b>\n"
+            for suggestion in self.suggestions:
+                text += f"• {suggestion}\n"
+
+        # Фактические ошибки
+        if self.factual_errors:
+            text += "\n⚠️ <b>Обратите внимание:</b>\n"
+            for error in self.factual_errors:
+                if isinstance(error, dict):
+                    text += f"• {error.get('error', error)}"
+                    if 'correction' in error:
+                        text += f" → {error['correction']}"
+                    text += "\n"
+                else:
+                    text += f"• {error}\n"
+
+        return text
 
 class StrictnessLevel(Enum):
     """Уровни строгости проверки."""
