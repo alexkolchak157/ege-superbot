@@ -31,19 +31,9 @@ except ImportError as e:
         criteria: List[Dict]
         description: str
     
-# Вариант 1: Добавьте метод format_feedback в класс EvaluationResult
-
-# Найдите определение класса EvaluationResult в task25/evaluator.py и добавьте метод:
-
-    @dataclass
-    class EvaluationResult:
-        scores: Dict[str, int]
-        total_score: int
-        max_score: int
-        feedback: str
-        detailed_analysis: Optional[Dict] = None
-        suggestions: Optional[List[str]] = None
-        factual_errors: Optional[List[str]] = None
+    # Расширяем класс EvaluationResult для задания 25
+    class Task25EvaluationResult(EvaluationResult if AI_EVALUATOR_AVAILABLE else object):
+        """Расширенный результат оценки для задания 25."""
         
         def format_feedback(self) -> str:
             """Форматирует результат для отображения пользователю."""
@@ -51,23 +41,31 @@ except ImportError as e:
             
             # Баллы по критериям
             text += "<b>Баллы по критериям:</b>\n"
-            for criterion, score in self.scores.items():
-                if criterion == 'k1_score':
-                    text += f"К1 (Обоснование): {score}/2\n"
-                elif criterion == 'k2_score':
-                    text += f"К2 (Ответ): {score}/1\n"
-                elif criterion == 'k3_score':
-                    text += f"К3 (Примеры): {score}/3\n"
             
+            # Используем ключи из scores, которые могут быть k1_score, k2_score, k3_score или К1, К2, К3
+            scores = self.scores if hasattr(self, 'scores') and self.scores else {}
+            
+            # Проверяем разные форматы ключей
+            k1_score = scores.get('k1_score', scores.get('К1', 0))
+            k2_score = scores.get('k2_score', scores.get('К2', 0))
+            k3_score = scores.get('k3_score', scores.get('К3', 0))
+            
+            text += f"К1 (Обоснование): {k1_score}/2\n"
+            text += f"К2 (Ответ): {k2_score}/1\n"
+            text += f"К3 (Примеры): {k3_score}/3\n"
+            
+            # Итоговый балл
             text += f"\n<b>Итого: {self.total_score}/{self.max_score} баллов</b>\n\n"
             
             # Основная обратная связь
-            text += f"{self.feedback}\n"
+            if self.feedback:
+                text += f"{self.feedback}\n"
             
             # Детальный анализ если есть
             if self.detailed_analysis:
                 text += "\n<b>Детальный анализ:</b>\n"
                 
+                # Комментарии по критериям
                 if 'k1_comment' in self.detailed_analysis:
                     text += f"\n<b>Обоснование:</b> {self.detailed_analysis['k1_comment']}\n"
                 
@@ -77,10 +75,11 @@ except ImportError as e:
                 if 'k3_comment' in self.detailed_analysis:
                     text += f"\n<b>Примеры:</b> {self.detailed_analysis['k3_comment']}\n"
                     
+                    # Найденные примеры
                     if 'k3_examples_found' in self.detailed_analysis:
                         examples = self.detailed_analysis['k3_examples_found']
                         if examples and isinstance(examples, list):
-                            text += "Найденные примеры:\n"
+                            text += "\nНайденные примеры:\n"
                             for i, ex in enumerate(examples[:3], 1):
                                 text += f"{i}. {ex}\n"
             
@@ -94,7 +93,13 @@ except ImportError as e:
             if self.factual_errors:
                 text += "\n⚠️ <b>Обратите внимание:</b>\n"
                 for error in self.factual_errors:
-                    text += f"• {error}\n"
+                    if isinstance(error, dict):
+                        text += f"• {error.get('error', error)}"
+                        if 'correction' in error:
+                            text += f" → {error['correction']}"
+                        text += "\n"
+                    else:
+                        text += f"• {error}\n"
             
             return text
     
@@ -377,8 +382,8 @@ class Task25AIEvaluator(BaseAIEvaluator if AI_EVALUATOR_AVAILABLE else object):
         
         return validated
     
-    def _create_evaluation_result(self, result: Dict, topic: Dict) -> EvaluationResult:
-        """Создаёт итоговый результат оценки."""
+    def _create_evaluation_result(self, result: Dict, topic: Dict) -> Task25EvaluationResult:
+        """Создаёт итоговый результат оценки с поддержкой format_feedback."""
         # Извлекаем баллы
         scores = {
             'k1_score': result.get('k1_score', 0),
@@ -408,7 +413,8 @@ class Task25AIEvaluator(BaseAIEvaluator if AI_EVALUATOR_AVAILABLE else object):
             'k3_examples_found': result.get('k3_examples_found', [])
         }
         
-        return EvaluationResult(
+        # Создаем расширенный результат
+        eval_result = Task25EvaluationResult(
             scores=scores,
             total_score=total_score,
             max_score=6,
@@ -417,6 +423,8 @@ class Task25AIEvaluator(BaseAIEvaluator if AI_EVALUATOR_AVAILABLE else object):
             suggestions=result.get('suggestions', []),
             factual_errors=result.get('factual_errors', [])
         )
+        
+        return eval_result
     
     def _get_fallback_result(self) -> EvaluationResult:
         """Возвращает базовый результат при ошибке AI."""

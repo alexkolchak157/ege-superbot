@@ -50,10 +50,23 @@ async def init_task25_data():
     if cache:
         cached_data = await cache.get('task25_data')
         if cached_data:
-            task25_data = cached_data
-            topic_selector = TopicSelector(task25_data['topics']) if TopicSelector else None
-            logger.info("Loaded task25 data from cache")
-            return
+            # Проверяем, что данные действительно загружены и корректны
+            if (isinstance(cached_data, dict) and 
+                'topics' in cached_data and 
+                cached_data['topics']):  # Проверяем, что topics не пустой
+                
+                task25_data = cached_data
+                if TopicSelector:
+                    topic_selector = TopicSelector(task25_data['topics'])
+                logger.info(f"Loaded task25 data from cache: {len(task25_data['topics'])} topics")
+                
+                # Инициализируем evaluator после загрузки данных
+                _init_evaluator()
+                return
+            else:
+                logger.warning("Cached data is invalid, loading from file")
+                # Удаляем невалидный кэш
+                await cache.delete('task25_data')
     
     # Загружаем из файла
     data_file = os.path.join(os.path.dirname(__file__), "task25_topics.json")
@@ -78,7 +91,6 @@ async def init_task25_data():
                     
                     # Определяем блок если его нет
                     if 'block' not in topic:
-                        # Пытаемся определить блок по ключевым словам в теме
                         topic['block'] = _determine_block(topic.get('title', ''))
                     
                     block_name = topic['block']
@@ -95,66 +107,33 @@ async def init_task25_data():
                     topics_by_block[block_name].append(topic)
                     blocks[block_name]["topics"].append(topic)
         
-        # Если это объект с полем blocks (новый формат)
-        elif isinstance(raw, dict) and 'blocks' in raw:
-            for block_name, block in raw.get("blocks", {}).items():
-                topics_by_block[block_name] = []
-                blocks[block_name] = block
-                
-                for topic in block.get("topics", []):
-                    if 'id' not in topic:
-                        topic['id'] = f"topic_{len(all_topics) + 1}"
-                    
-                    topic["block"] = block_name
-                    all_topics.append(topic)
-                    topic_by_id[topic["id"]] = topic
-                    topics_by_block[block_name].append(topic)
-        
-        # Если это объект с полем topics (альтернативный формат)
-        elif isinstance(raw, dict) and 'topics' in raw:
-            for topic in raw.get('topics', []):
-                if 'id' not in topic:
-                    topic['id'] = f"topic_{len(all_topics) + 1}"
-                
-                if 'block' not in topic:
-                    topic['block'] = _determine_block(topic.get('title', ''))
-                
-                block_name = topic['block']
-                all_topics.append(topic)
-                topic_by_id[topic['id']] = topic
-                
-                if block_name not in topics_by_block:
-                    topics_by_block[block_name] = []
-                    blocks[block_name] = {"name": block_name, "topics": []}
-                
-                topics_by_block[block_name].append(topic)
-        
-        # Если блоков не создано, создаём дефолтный
-        if not blocks:
-            blocks = {"Общие темы": {"name": "Общие темы", "topics": all_topics}}
-            topics_by_block = {"Общие темы": all_topics}
-            
-            # Обновляем блок у всех тем
+        # Если данные не пустые, формируем итоговую структуру
+        if all_topics:
+            # Добавляем темы без блока в "Общие темы"
             for topic in all_topics:
-                topic['block'] = "Общие темы"
-        
-        task25_data = {
-            "topics": all_topics,
-            "topic_by_id": topic_by_id,
-            "topics_by_block": topics_by_block,
-            "blocks": blocks
-        }
-        
-        # Создаём селектор если модуль доступен
-        if TopicSelector:
-            topic_selector = TopicSelector(all_topics)
-        
-        logger.info(f"Loaded {len(all_topics)} topics for task25")
-        logger.info(f"Blocks: {list(topics_by_block.keys())}")
-        
-        # Сохраняем в кэш
-        if cache:
-            await cache.set('task25_data', task25_data)
+                if not topic.get('block'):
+                    topic['block'] = "Общие темы"
+            
+            task25_data = {
+                "topics": all_topics,
+                "topic_by_id": topic_by_id,
+                "topics_by_block": topics_by_block,
+                "blocks": blocks
+            }
+            
+            # Создаём селектор если модуль доступен
+            if TopicSelector:
+                topic_selector = TopicSelector(all_topics)
+            
+            logger.info(f"Loaded {len(all_topics)} topics for task25")
+            logger.info(f"Blocks: {list(topics_by_block.keys())}")
+            
+            # Сохраняем в кэш только если данные валидны
+            if cache and all_topics:
+                await cache.set('task25_data', task25_data, ttl=86400)  # 24 часа
+        else:
+            logger.error("No topics found in data file")
+            task25_data = {"topics": [], "blocks": {}, "topics_by_block": {}}
             
     except Exception as e:
         logger.error(f"Failed to load task25 data: {e}", exc_info=True)
@@ -162,6 +141,13 @@ async def init_task25_data():
         topic_selector = None
     
     # Инициализируем AI evaluator
+    _init_evaluator()
+
+
+def _init_evaluator():
+    """Инициализация AI evaluator."""
+    global evaluator
+    
     if AI_EVALUATOR_AVAILABLE:
         try:
             strictness_level = StrictnessLevel[os.getenv('TASK25_STRICTNESS', 'STANDARD').upper()]
@@ -180,7 +166,6 @@ async def init_task25_data():
     else:
         logger.warning("AI evaluator not available for task25")
         evaluator = None
-
 
 def _determine_block(title: str) -> str:
     """Определяет блок темы по ключевым словам в заголовке."""
@@ -611,7 +596,10 @@ async def random_topic_all(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return states.ANSWERING
 
 async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обработка ответа пользователя с сохранением статистики."""
+    """Обработка ответа пользователя."""
+    if update.message is None or update.message.text is None:
+        return states.CHOOSING_MODE
+    
     user_answer = update.message.text
     topic = context.user_data.get('current_topic')
     user_id = update.effective_user.id
@@ -654,69 +642,27 @@ async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
             if result:
                 score = result.total_score
-                # Форматируем результат вручную
-                feedback = f"📊 <b>Результаты проверки</b>\n\n"
-                feedback += f"<b>Итого: {result.total_score}/{result.max_score} баллов</b>\n\n"
-                feedback += f"{result.feedback}\n"
-
-                if result.suggestions:
-                    feedback += "\n💡 <b>Рекомендации:</b>\n"
-                    for s in result.suggestions:
-                        feedback += f"• {s}\n"
+                
+                # Форматируем результат
+                # Проверяем, есть ли метод format_feedback
+                if hasattr(result, 'format_feedback'):
+                    feedback = result.format_feedback()
+                else:
+                    # Используем утилитную функцию
+                    from .evaluator import format_evaluation_feedback
+                    feedback = format_evaluation_feedback(result, topic)
+            else:
+                # Если evaluator вернул None
+                feedback = _get_fallback_feedback(user_answer, topic)
+                score = 0
         else:
             logger.warning("AI evaluator not available, using basic evaluation")
             # Базовая проверка без AI
-            parts = user_answer.split('\n\n')
-            
-            feedback = f"📊 <b>Результаты проверки</b>\n\n"
-            feedback += f"<b>Тема:</b> {topic['title']}\n"
-            feedback += f"<b>Частей в ответе:</b> {len(parts)}\n\n"
-            
-            if len(parts) >= 3:
-                feedback += "✅ Структура ответа соответствует требованиям.\n"
-                score = 4  # Примерная оценка
-                feedback += "📌 <b>Предварительная оценка:</b> 3-4 балла\n\n"
-            else:
-                feedback += "❌ Необходимо три части: обоснование, ответ, примеры.\n"
-                score = 2  # Примерная оценка
-                feedback += "📌 <b>Предварительная оценка:</b> 0-2 балла\n\n"
-            
-            feedback += "⚠️ <i>AI-проверка недоступна. Обратитесь к преподавателю для детальной оценки.</i>"
+            feedback = _get_fallback_feedback(user_answer, topic)
+            score = _estimate_score(user_answer)
         
         # Сохраняем статистику
-        stats = context.user_data.get('task25_stats', {
-            'total_attempts': 0,
-            'topics_completed': set(),
-            'scores': [],
-            'blocks_progress': {}
-        })
-        
-        # Преобразуем set в list для сохранения
-        if isinstance(stats['topics_completed'], set):
-            topics_completed_set = stats['topics_completed']
-        else:
-            topics_completed_set = set(stats['topics_completed'])
-        
-        stats['total_attempts'] += 1
-        topics_completed_set.add(topic.get('id'))
-        stats['topics_completed'] = list(topics_completed_set)  # Сохраняем как list
-        stats['scores'].append(score)
-        
-        # Обновляем прогресс по блокам
-        block_name = topic.get('block', 'Общие темы')
-        if block_name not in stats['blocks_progress']:
-            stats['blocks_progress'][block_name] = 0
-        
-        block_topics = task25_data.get('topics_by_block', {}).get(block_name, [])
-        completed_in_block = len([
-            t for t in block_topics 
-            if t.get('id') in topics_completed_set
-        ])
-        
-        if block_topics:
-            stats['blocks_progress'][block_name] = (completed_in_block / len(block_topics)) * 100
-        
-        context.user_data['task25_stats'] = stats
+        await _save_user_stats(context, topic, score)
         
         # Удаляем сообщение о проверке
         await thinking_msg.delete()
@@ -724,21 +670,7 @@ async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Показываем эталонный ответ если включено в настройках
         settings = context.user_data.get('task25_settings', {})
         if settings.get('show_examples', True) and 'example_answers' in topic:
-            feedback += "\n\n📚 <b>Эталонный ответ:</b>\n\n"
-            
-            example = topic['example_answers']
-            if 'part1' in example:
-                feedback += f"<b>1. Обоснование:</b>\n{example['part1']}\n\n"
-            if 'part2' in example:
-                feedback += f"<b>2. Ответ:</b>\n{example['part2']}\n\n"
-            if 'part3' in example:
-                feedback += "<b>3. Примеры:</b>\n"
-                if isinstance(example['part3'], list):
-                    for i, ex in enumerate(example['part3'], 1):
-                        if isinstance(ex, dict):
-                            feedback += f"{i}) <i>{ex.get('type', '')}:</i> {ex.get('example', '')}\n"
-                        else:
-                            feedback += f"{i}) {ex}\n"
+            feedback += _format_example_answer(topic)
         
     except Exception as e:
         logger.error(f"Error during evaluation: {e}", exc_info=True)
@@ -749,26 +681,53 @@ async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await thinking_msg.delete()
     
     # Кнопки действий
-    kb = InlineKeyboardMarkup([
+    kb_buttons = [
         [
-            InlineKeyboardButton("🔄 Повторить", callback_data="t25_retry"),
-            InlineKeyboardButton("🎲 Новая тема", callback_data="t25_new_topic")
+            InlineKeyboardButton("🔁 Попробовать ещё раз", callback_data="t25_retry"),
+            InlineKeyboardButton("📝 Новая тема", callback_data="t25_new_topic")
         ],
-        [
-            InlineKeyboardButton("📊 Мой прогресс", callback_data="t25_progress"),
-            InlineKeyboardButton("📝 В меню", callback_data="t25_menu")
-        ]
-    ])
+        [InlineKeyboardButton("📊 Мой прогресс", callback_data="t25_progress")],
+        [InlineKeyboardButton("⬅️ В меню", callback_data="t25_menu")]
+    ]
     
     await update.message.reply_text(
-        feedback[:4000],  # Telegram limit
-        reply_markup=kb,
+        feedback,
+        reply_markup=InlineKeyboardMarkup(kb_buttons),
         parse_mode=ParseMode.HTML
     )
     
-    return states.AWAITING_FEEDBACK
+    return states.CHOOSING_MODE
+
+def _get_fallback_feedback(user_answer: str, topic: Dict) -> str:
+    """Базовая проверка без AI."""
+    parts = user_answer.split('\n\n')
+    
+    feedback = f"📊 <b>Результаты проверки</b>\n\n"
+    feedback += f"<b>Тема:</b> {topic['title']}\n"
+    feedback += f"<b>Частей в ответе:</b> {len(parts)}\n\n"
+    
+    if len(parts) >= 3:
+        feedback += "✅ Структура ответа соответствует требованиям.\n"
+        feedback += "📌 <b>Предварительная оценка:</b> 3-4 балла\n\n"
+    else:
+        feedback += "❌ Необходимо три части: обоснование, ответ, примеры.\n"
+        feedback += "📌 <b>Предварительная оценка:</b> 0-2 балла\n\n"
+    
+    feedback += "⚠️ <i>AI-проверка недоступна. Обратитесь к преподавателю для детальной оценки.</i>"
+    
+    return feedback
 
 
+def _estimate_score(user_answer: str) -> int:
+    """Примерная оценка без AI."""
+    parts = user_answer.split('\n\n')
+    if len(parts) >= 3:
+        return 3  # Средний балл
+    elif len(parts) >= 2:
+        return 2
+    else:
+        return 1
+        
 # Добавьте эту новую функцию ПОСЛЕ handle_answer:
 
 async def handle_answer_parts(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -2123,6 +2082,41 @@ async def detailed_progress(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     return states.CHOOSING_MODE
 
+async def _save_user_stats(context: ContextTypes.DEFAULT_TYPE, topic: Dict, score: int):
+    """Сохраняет статистику пользователя."""
+    stats = context.user_data.get('task25_stats', {
+        'total_attempts': 0,
+        'topics_completed': [],  # Используем list вместо set
+        'scores': [],
+        'blocks_progress': {}
+    })
+    
+    # Обновляем статистику
+    stats['total_attempts'] += 1
+    
+    # Добавляем тему если её ещё нет
+    topic_id = topic.get('id')
+    if topic_id and topic_id not in stats['topics_completed']:
+        stats['topics_completed'].append(topic_id)
+    
+    stats['scores'].append(score)
+    
+    # Обновляем прогресс по блокам
+    block_name = topic.get('block', 'Общие темы')
+    if block_name not in stats['blocks_progress']:
+        stats['blocks_progress'][block_name] = 0
+    
+    # Подсчитываем прогресс
+    block_topics = task25_data.get('topics_by_block', {}).get(block_name, [])
+    if block_topics:
+        completed_in_block = len([
+            t for t in block_topics 
+            if t.get('id') in stats['topics_completed']
+        ])
+        stats['blocks_progress'][block_name] = (completed_in_block / len(block_topics)) * 100
+    
+    context.user_data['task25_stats'] = stats
+
 def _format_evaluation_result(result: EvaluationResult, topic: Dict) -> str:
     """Форматирует результат проверки для отображения пользователю."""
     
@@ -2190,62 +2184,32 @@ def _format_evaluation_result(result: EvaluationResult, topic: Dict) -> str:
 
 
 def _format_example_answer(topic: Dict) -> str:
-    """Форматирует эталонный ответ для показа пользователю."""
+    """Форматирует эталонный ответ."""
     example = topic.get('example_answers', {})
     if not example:
         return ""
     
-    formatted = "📚 <b>Эталонный ответ:</b>\n"
-    formatted += "━" * 35 + "\n\n"
+    text = "\n\n📚 <b>Эталонный ответ:</b>\n\n"
     
-    # Часть 1 - Обоснование
     if 'part1' in example:
-        formatted += "📌 <b>1. Обоснование (2 балла):</b>\n"
-        if isinstance(example['part1'], dict):
-            formatted += f"{example['part1'].get('answer', example['part1'])}\n"
-        else:
-            formatted += f"{example['part1']}\n"
-        formatted += "\n"
+        text += f"<b>1. Обоснование:</b>\n{example['part1']}\n\n"
     
-    # Часть 2 - Ответ на вопрос
     if 'part2' in example:
-        formatted += "📌 <b>2. Ответ на вопрос (1 балл):</b>\n"
-        if isinstance(example['part2'], dict):
-            formatted += f"{example['part2'].get('answer', example['part2'])}\n"
-        elif isinstance(example['part2'], list):
-            # Если это список пунктов
-            for item in example['part2']:
-                formatted += f"• {item}\n"
-        else:
-            formatted += f"{example['part2']}\n"
-        formatted += "\n"
+        text += f"<b>2. Ответ:</b>\n{example['part2']}\n\n"
     
-    # Часть 3 - Примеры
     if 'part3' in example:
-        formatted += "📌 <b>3. Примеры (3 балла):</b>\n\n"
-        
+        text += "<b>3. Примеры:</b>\n"
         if isinstance(example['part3'], list):
             for i, ex in enumerate(example['part3'], 1):
                 if isinstance(ex, dict):
-                    ex_type = ex.get('type', f'Пример {i}')
-                    ex_text = ex.get('example', '')
-                    formatted += f"<b>{i}) {ex_type}:</b>\n"
-                    formatted += f"{ex_text}\n\n"
+                    text += f"\n{i}) <i>{ex.get('type', 'Пример')}:</i>\n"
+                    text += f"{ex.get('example', ex)}\n"
                 else:
-                    # Если просто текст
-                    formatted += f"<b>{i})</b> {ex}\n\n"
+                    text += f"{i}) {ex}\n"
         else:
-            # Если примеры в виде текста
-            formatted += f"{example['part3']}\n"
+            text += f"{example['part3']}\n"
     
-    # Дополнительные пояснения (если есть)
-    if 'explanation' in topic:
-        formatted += "\n💡 <b>Пояснения:</b>\n"
-        formatted += f"<i>{topic['explanation']}</i>\n"
-    
-    formatted += "\n━" * 35
-    
-    return formatted
+    return text
 
 async def handle_strictness_change(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработчик изменения уровня строгости."""
