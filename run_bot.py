@@ -12,9 +12,6 @@ import os
 from pathlib import Path
 from core.admin_tools import register_admin_handlers
 
-# После регистрации всех плагинов
-register_admin_handlers(app)
-
 def load_env(env_file='.env'):
     """
     Загружает переменные окружения из .env файла.
