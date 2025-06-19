@@ -192,8 +192,11 @@ async def entry_from_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Добавляем админские кнопки если пользователь - админ
     if admin_manager.is_admin(user_id):
         admin_buttons = get_admin_keyboard_extension(user_id)
-        for row in admin_buttons:
-            kb.inline_keyboard.append(row)
+        # InlineKeyboardMarkup.inline_keyboard возвращает кортеж кортежей, поэтому
+        # создаем новую клавиатуру на основе существующей и админских кнопок
+        keyboard_rows = [list(row) for row in kb.inline_keyboard]
+        keyboard_rows.extend(admin_buttons)
+        kb = InlineKeyboardMarkup(keyboard_rows)
     
     await query.edit_message_text(
         "📝 <b>Задание 24 - составление сложного плана</b>\n\n"
@@ -1361,8 +1364,9 @@ async def cmd_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     kb = keyboards.build_main_menu_keyboard()
     if admin_manager.is_admin(user_id):
         admin_buttons = get_admin_keyboard_extension(user_id)
-        for row in admin_buttons:
-            kb.inline_keyboard.append(row)
+        keyboard_rows = [list(row) for row in kb.inline_keyboard]
+        keyboard_rows.extend(admin_buttons)
+        kb = InlineKeyboardMarkup(keyboard_rows)
     
     await update.message.reply_text(
         "❌ Действие отменено.\n\nВыберите режим:",
