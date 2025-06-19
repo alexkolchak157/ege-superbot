@@ -13,7 +13,7 @@ from core import states
 from core.plugin_loader import build_main_menu
 
 # Добавьте этот импорт для состояния ANSWERING_PARTS
-from core.states import ANSWERING_PARTS
+from core.states import ANSWERING_PARTS, CHOOSING_BLOCK_T25
 
 logger = logging.getLogger(__name__)
 
@@ -479,7 +479,7 @@ async def block_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode=ParseMode.HTML
     )
     
-    return states.CHOOSING_BLOCK
+    return states.CHOOSING_BLOCK_T25
 
 
 def _build_topic_message(topic: Dict) -> str:
@@ -1491,7 +1491,7 @@ async def list_topics(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode=ParseMode.HTML
     )
     
-    return states.CHOOSING_BLOCK
+    return states.CHOOSING_BLOCK_T25
 
 async def show_topic_by_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Показ конкретной темы по ID."""
@@ -2552,7 +2552,7 @@ async def handle_topic_by_block(update: Update, context: ContextTypes.DEFAULT_TY
         parse_mode=ParseMode.HTML
     )
     
-    return states.CHOOSING_BLOCK
+    return states.CHOOSING_BLOCK_T25
 
 
 async def handle_retry(update: Update, context: ContextTypes.DEFAULT_TYPE):

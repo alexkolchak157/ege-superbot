@@ -8,13 +8,11 @@ from core import states
 from . import handlers
 
 # Импортируем константу ANSWERING_PARTS
-from core.states import ANSWERING_PARTS
+from core.states import ANSWERING_PARTS, CHOOSING_BLOCK_T25
 
 logger = logging.getLogger(__name__)
 
-# Добавляем новые состояния
-CHOOSING_BLOCK = 101
-ANSWERING_PARTS = 102
+# Добавляем новые состояния из core.states
 
 class Task25Plugin(BotPlugin):
     code = "task25"
@@ -109,7 +107,7 @@ class Task25Plugin(BotPlugin):
                     CallbackQueryHandler(handlers.return_to_menu, pattern="^t25_menu$"),
                 ],
                 
-                CHOOSING_BLOCK: [
+                CHOOSING_BLOCK_T25: [
                     CallbackQueryHandler(handlers.block_menu, pattern="^t25_block:"),
                     CallbackQueryHandler(handlers.show_topic_list, pattern="^t25_list_topics:"),
                     CallbackQueryHandler(handlers.random_topic_block, pattern="^t25_random_block$"),
