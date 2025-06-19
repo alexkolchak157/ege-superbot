@@ -1,0 +1,7 @@
+#!/bin/sh
+# Prevent committing Python compiled files or __pycache__ directories
+if git diff --cached --name-only | grep -E '\.pyc$|__pycache__/' >/dev/null; then
+  echo "Aborting commit: compiled Python files detected." >&2
+  git diff --cached --name-only | grep -E '\.pyc$|__pycache__/'
+  exit 1
+fi
