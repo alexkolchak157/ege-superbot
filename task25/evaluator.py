@@ -16,6 +16,7 @@ try:
         EvaluationResult,
         TaskRequirements,
     )
+    # ВАЖНО: Импортируем YandexGPTModel из core.ai_service
     from core.ai_service import YandexGPTService, YandexGPTConfig, YandexGPTModel
     AI_EVALUATOR_AVAILABLE = True
 except ImportError as e:
@@ -31,6 +32,15 @@ except ImportError as e:
         criteria: List[Dict]
         description: str
     
+    @dataclass
+    class EvaluationResult:
+        scores: Dict[str, int]
+        total_score: int
+        max_score: int
+        feedback: str
+        detailed_analysis: Optional[Dict] = None
+        suggestions: Optional[List[str]] = None
+        factual_errors: Optional[List[str]] = None
     
     class BaseAIEvaluator:
         def __init__(self, requirements: TaskRequirements):
@@ -42,9 +52,11 @@ except ImportError as e:
     class YandexGPTConfig:
         pass
     
-class YandexGPTModel:
-    LITE = "yandexgpt-lite"
-    PRO = "yandexgpt"
+    # Заглушка для Enum когда AI недоступен
+    from enum import Enum
+    class YandexGPTModel(Enum):
+        LITE = "yandexgpt-lite"
+        PRO = "yandexgpt"
 
 
 class Task25EvaluationResult(EvaluationResult if AI_EVALUATOR_AVAILABLE else object):
@@ -126,6 +138,7 @@ class StrictnessLevel(Enum):
     EXPERT = "Экспертный"
 
 
+
 class Task25AIEvaluator(BaseAIEvaluator if AI_EVALUATOR_AVAILABLE else object):
     """AI-проверщик для задания 25 с настраиваемой строгостью."""
     
@@ -173,15 +186,47 @@ class Task25AIEvaluator(BaseAIEvaluator if AI_EVALUATOR_AVAILABLE else object):
             return
             
         try:
-            config = YandexGPTConfig(
-                api_key=os.getenv('YANDEX_GPT_API_KEY'),
-                folder_id=os.getenv('YANDEX_GPT_FOLDER_ID'),
-                model=YandexGPTModel.PRO,  # Используем PRO для сложного задания
+            # Получаем API ключи из окружения
+            api_key = os.getenv('YANDEX_GPT_API_KEY')
+            folder_id = os.getenv('YANDEX_GPT_FOLDER_ID')
+            
+            if not api_key or not folder_id:
+                logger.error("YANDEX_GPT_API_KEY и YANDEX_GPT_FOLDER_ID должны быть установлены")
+                self.ai_service = None
+                return
+            
+            # Создаем конфигурацию с правильным типом модели
+            api_key = os.getenv('YANDEX_GPT_API_KEY')
+        folder_id = os.getenv('YANDEX_GPT_FOLDER_ID')
+        
+        if not api_key or not folder_id:
+            logger.error("YANDEX_GPT_API_KEY и YANDEX_GPT_FOLDER_ID должны быть установлены")
+            self.ai_service = None
+            return
+        
+        api_key = os.getenv('YANDEX_GPT_API_KEY')
+        folder_id = os.getenv('YANDEX_GPT_FOLDER_ID')
+        
+        if not api_key or not folder_id:
+            logger.error("YANDEX_GPT_API_KEY и YANDEX_GPT_FOLDER_ID должны быть установлены")
+            self.ai_service = None
+            return
+        
+        config = YandexGPTConfig(
+            api_key=api_key,
+            folder_id=folder_id,
+            api_key=api_key,
+            folder_id=folder_id,
+                api_key=api_key,
+                folder_id=folder_id,
+                model=YandexGPTModel.PRO,  # Это Enum, не строка!
                 temperature=self._get_temperature(),
                 max_tokens=3000
             )
+            
             self.ai_service = YandexGPTService(config)
             logger.info(f"Task25 AI service initialized with {self.strictness.value} strictness")
+            
         except Exception as e:
             logger.error(f"Failed to initialize AI service: {e}")
             self.ai_service = None
@@ -521,3 +566,76 @@ class Task25AIEvaluator(BaseAIEvaluator if AI_EVALUATOR_AVAILABLE else object):
             result['general_feedback'] = "Ответ обработан, но детальный анализ недоступен."
         
         return result
+        
+def format_evaluation_feedback(result: EvaluationResult, topic: Dict = None) -> str:
+    """
+    Форматирует результат оценки для отображения пользователю.
+    
+    Args:
+        result: Результат оценки
+        topic: Информация о теме (опционально)
+        
+    Returns:
+        Отформатированный текст для отображения
+    """
+    # Если у результата есть метод format_feedback, используем его
+    if hasattr(result, 'format_feedback'):
+        return result.format_feedback()
+    
+    # Иначе форматируем вручную
+    text = f"📊 <b>Результаты проверки</b>\n\n"
+    
+    if topic:
+        text += f"<b>Тема:</b> {topic.get('title', 'Не указана')}\n"
+        text += f"{'─' * 30}\n\n"
+    
+    # Баллы по критериям
+    if result.scores:
+        text += "<b>Баллы по критериям:</b>\n"
+        
+        # Проверяем разные форматы ключей
+        k1_score = result.scores.get('k1_score', result.scores.get('К1', 0))
+        k2_score = result.scores.get('k2_score', result.scores.get('К2', 0))
+        k3_score = result.scores.get('k3_score', result.scores.get('К3', 0))
+        
+        text += f"К1 (Обоснование): {k1_score}/2\n"
+        text += f"К2 (Ответ): {k2_score}/1\n"
+        text += f"К3 (Примеры): {k3_score}/3\n"
+    
+    # Итоговый балл
+    text += f"\n<b>Итого: {result.total_score}/{result.max_score} баллов</b>\n\n"
+    
+    # Основная обратная связь
+    if result.feedback:
+        text += f"{result.feedback}\n"
+    
+    # Детальный анализ если есть
+    if hasattr(result, 'detailed_analysis') and result.detailed_analysis:
+        if 'k1_comment' in result.detailed_analysis:
+            text += f"\n<b>Обоснование:</b> {result.detailed_analysis['k1_comment']}\n"
+        
+        if 'k2_comment' in result.detailed_analysis:
+            text += f"\n<b>Ответ:</b> {result.detailed_analysis['k2_comment']}\n"
+        
+        if 'k3_comment' in result.detailed_analysis:
+            text += f"\n<b>Примеры:</b> {result.detailed_analysis['k3_comment']}\n"
+    
+    # Рекомендации
+    if hasattr(result, 'suggestions') and result.suggestions:
+        text += "\n💡 <b>Рекомендации:</b>\n"
+        for suggestion in result.suggestions:
+            text += f"• {suggestion}\n"
+    
+    # Фактические ошибки
+    if hasattr(result, 'factual_errors') and result.factual_errors:
+        text += "\n⚠️ <b>Обратите внимание:</b>\n"
+        for error in result.factual_errors:
+            if isinstance(error, dict):
+                text += f"• {error.get('error', str(error))}"
+                if 'correction' in error:
+                    text += f" → {error['correction']}"
+                text += "\n"
+            else:
+                text += f"• {error}\n"
+    
+    return text
