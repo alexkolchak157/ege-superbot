@@ -71,13 +71,20 @@ def load_env(env_file='.env'):
 
 
 if __name__ == "__main__":
-    # Тест загрузки
+    # Загружаем переменные окружения и при успехе выводим их
     if load_env():
         print("\nТекущие значения:")
-        print(f"TELEGRAM_BOT_TOKEN: {'*' * 10}{os.getenv('TELEGRAM_BOT_TOKEN', '')[-10:]}")
-        print(f"YANDEX_GPT_API_KEY: {'*' * 10}{os.getenv('YANDEX_GPT_API_KEY', '')[-10:]}")
-        print(f"YANDEX_GPT_FOLDER_ID: {os.getenv('YANDEX_GPT_FOLDER_ID', 'не установлен')}")
-        
-if __name__ == "__main__":
+        print(
+            f"TELEGRAM_BOT_TOKEN: {'*' * 10}{os.getenv('TELEGRAM_BOT_TOKEN', '')[-10:]}"
+        )
+        print(
+            f"YANDEX_GPT_API_KEY: {'*' * 10}{os.getenv('YANDEX_GPT_API_KEY', '')[-10:]}"
+        )
+        print(
+            f"YANDEX_GPT_FOLDER_ID: {os.getenv('YANDEX_GPT_FOLDER_ID', 'не установлен')}"
+        )
+
+    # Запускаем приложение бота
     from core.app import main
+
     main()
