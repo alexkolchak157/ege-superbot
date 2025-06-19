@@ -197,6 +197,10 @@ class Task25AIEvaluator(BaseAIEvaluator if AI_EVALUATOR_AVAILABLE else object):
             
             # Создаем конфигурацию с правильным типом модели
             api_key = os.getenv('YANDEX_GPT_API_KEY')
+            
+        except Exception as e:
+            logger.error(f"Error: {e}")
+            raise
         folder_id = os.getenv('YANDEX_GPT_FOLDER_ID')
         
         if not api_key or not folder_id:
@@ -223,7 +227,6 @@ class Task25AIEvaluator(BaseAIEvaluator if AI_EVALUATOR_AVAILABLE else object):
                 temperature=self._get_temperature(),
                 max_tokens=3000
             )
-            
             self.ai_service = YandexGPTService(config)
             logger.info(f"Task25 AI service initialized with {self.strictness.value} strictness")
             
@@ -638,4 +641,6 @@ def format_evaluation_feedback(result: EvaluationResult, topic: Dict = None) -> 
             else:
                 text += f"• {error}\n"
     
-    return text
+    return text        except Exception as e:
+            logger.error(f"Error: {e}")
+            raise
