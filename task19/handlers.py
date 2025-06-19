@@ -159,19 +159,29 @@ async def init_task19_data():
         with open(data_file, "r", encoding="utf-8") as f:
             raw = json.load(f)
 
-        # Преобразуем данные: собираем все темы в единый список
+        if isinstance(raw, list):
+            topics_list = raw
+        else:
+            topics_list = []
+            for block_name, block in raw.get("blocks", {}).items():
+                for topic in block.get("topics", []):
+                    topic["block"] = block_name
+                    topics_list.append(topic)
+
         all_topics = []
         topic_by_id: Dict[int, Dict] = {}
-        for block_name, block in raw.get("blocks", {}).items():
-            for topic in block.get("topics", []):
-                topic["block"] = block_name
-                all_topics.append(topic)
-                topic_by_id[topic["id"]] = topic
+        blocks = {}
+        for topic in topics_list:
+            block = topic.get("block", "Без категории")
+            all_topics.append(topic)
+            topic_by_id[topic["id"]] = topic
+            blocks.setdefault(block, {"topics": []})["topics"].append(topic)
 
-        raw["topics"] = all_topics
-        raw["topic_by_id"] = topic_by_id
-
-        task19_data = raw
+        task19_data = {
+            "topics": all_topics,
+            "topic_by_id": topic_by_id,
+            "blocks": blocks,
+        }
         logger.info(f"Loaded {len(all_topics)} topics for task19")
     except Exception as e:
         logger.error(f"Failed to load task19 data: {e}")
@@ -1287,25 +1297,34 @@ async def init_task19_data():
     try:
         with open(data_file, "r", encoding="utf-8") as f:
             raw = json.load(f)
-        
-        # Преобразуем данные: собираем все темы в единый список
+
+        # Поддержка двух форматов данных: список тем или словарь блоков
+        if isinstance(raw, list):
+            topics_list = raw
+        else:
+            topics_list = []
+            for block_name, block in raw.get("blocks", {}).items():
+                for topic in block.get("topics", []):
+                    topic["block"] = block_name
+                    topics_list.append(topic)
+
         all_topics = []
         topic_by_id = {}
         topics_by_block = {}
-        
-        for block_name, block in raw.get("blocks", {}).items():
-            topics_by_block[block_name] = []
-            for topic in block.get("topics", []):
-                topic["block"] = block_name
-                all_topics.append(topic)
-                topic_by_id[topic["id"]] = topic
-                topics_by_block[block_name].append(topic)
-        
-        raw["topics"] = all_topics
-        raw["topic_by_id"] = topic_by_id
-        raw["topics_by_block"] = topics_by_block
-        
-        task19_data = raw
+
+        for topic in topics_list:
+            block_name = topic.get("block", "Без категории")
+            all_topics.append(topic)
+            topic_by_id[topic["id"]] = topic
+            topics_by_block.setdefault(block_name, []).append(topic)
+
+        task19_data = {
+            "topics": all_topics,
+            "topic_by_id": topic_by_id,
+            "topics_by_block": topics_by_block,
+            "blocks": {b: {"topics": t} for b, t in topics_by_block.items()},
+        }
+
         _topics_cache = raw
         _topics_cache_time = datetime.now()
         
