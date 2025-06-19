@@ -6,7 +6,7 @@ import io
 import json
 from typing import Optional, Dict, List
 from datetime import datetime
-
+from core.document_processor import DocumentHandlerMixin
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.constants import ParseMode
 from telegram.ext import ContextTypes, ConversationHandler
@@ -58,60 +58,152 @@ async def init_task20_data():
     global task20_data, evaluator, topic_selector
     
     # Проверяем кэш
-    cached_data = await cache.get('task20_data')
-    if cached_data:
-        task20_data = cached_data
-        topic_selector = TopicSelector(task20_data['topics'])
-        logger.info("Loaded task20 data from cache")
-    else:
-        # Загружаем из файла
-        data_file = os.path.join(os.path.dirname(__file__), "task20_topics.json")
-        try:
-            with open(data_file, "r", encoding="utf-8") as f:
-                topics_list = json.load(f)
+    if cache:
+        cached_data = await cache.get('task20_data')
+        if cached_data:
+            task20_data = cached_data
+            if TopicSelector:
+                topic_selector = TopicSelector(task20_data['topics'])
+            logger.info("Loaded task20 data from cache")
+        else:
+            # Загружаем из файла
+            data_file = os.path.join(os.path.dirname(__file__), "task20_topics.json")
             
-            # Преобразуем список тем в нужную структуру
-            all_topics = []
-            topic_by_id = {}
-            topics_by_block = {}
-            blocks = {}
-            
-            for topic in topics_list:
-                # Добавляем тему в общий список
-                all_topics.append(topic)
-                
-                # Индексируем по ID
-                topic_by_id[topic["id"]] = topic
-                
-                # Группируем по блокам
-                block_name = topic.get("block", "Без категории")
-                if block_name not in topics_by_block:
-                    topics_by_block[block_name] = []
-                    blocks[block_name] = {"topics": []}
-                
-                topics_by_block[block_name].append(topic)
-                blocks[block_name]["topics"].append(topic)
-            
-            # Формируем итоговую структуру данных
-            task20_data = {
-                "topics": all_topics,
-                "topic_by_id": topic_by_id,
-                "topics_by_block": topics_by_block,
-                "blocks": blocks
-            }
-            
-            logger.info(f"Loaded {len(all_topics)} topics for task20")
-            logger.info(f"Blocks: {list(blocks.keys())}")
+            # Проверяем наличие файла
+            if not os.path.exists(data_file):
+                logger.error(f"Topics file not found: {data_file}")
+                task20_data = {
+                    "topics": [],
+                    "topic_by_id": {},
+                    "topics_by_block": {},
+                    "blocks": {}
+                }
+                topic_selector = None
+                logger.warning("Task20 initialized with empty data due to missing topics file")
+            else:
+                try:
+                    with open(data_file, "r", encoding="utf-8") as f:
+                        topics_list = json.load(f)
+                    
+                    # Проверяем, что это список
+                    if not isinstance(topics_list, list):
+                        logger.error(f"Invalid topics file format: expected list, got {type(topics_list)}")
+                        topics_list = []
+                    
+                    # Преобразуем список тем в нужную структуру
+                    all_topics = []
+                    topic_by_id = {}
+                    topics_by_block = {}
+                    blocks = {}
+                    
+                    for topic in topics_list:
+                        # Валидация темы
+                        if not isinstance(topic, dict):
+                            logger.warning(f"Skipping invalid topic: {topic}")
+                            continue
+                        
+                        if 'id' not in topic or 'title' not in topic:
+                            logger.warning(f"Skipping topic without id or title: {topic}")
+                            continue
+                        
+                        # Добавляем тему в общий список
+                        all_topics.append(topic)
+                        
+                        # Индексируем по ID
+                        topic_by_id[topic["id"]] = topic
+                        
+                        # Группируем по блокам
+                        block_name = topic.get("block", "Без категории")
+                        if block_name not in topics_by_block:
+                            topics_by_block[block_name] = []
+                            blocks[block_name] = {"topics": []}
+                        
+                        topics_by_block[block_name].append(topic)
+                        blocks[block_name]["topics"].append(topic)
+                    
+                    # Формируем итоговую структуру данных
+                    task20_data = {
+                        "topics": all_topics,
+                        "topic_by_id": topic_by_id,
+                        "topics_by_block": topics_by_block,
+                        "blocks": blocks
+                    }
+                    
+                    logger.info(f"Loaded {len(all_topics)} topics for task20")
+                    logger.info(f"Blocks: {list(blocks.keys())}")
 
-            # Сохраняем в кэш
-            await cache.set('task20_data', task20_data)        
-            # Создаём селектор
-            topic_selector = TopicSelector(topics_list)
-            
-        except Exception as e:  # ← ЭТОТ БЛОК ДОЛЖЕН БЫТЬ С ОТСТУПОМ НА УРОВНЕ try
-            logger.error(f"Failed to load task20 data: {e}")
-            task20_data = {"topics": [], "blocks": {}, "topics_by_block": {}}
+                    # Сохраняем в кэш
+                    if cache:
+                        await cache.set('task20_data', task20_data)
+                    
+                    # Создаём селектор
+                    if TopicSelector and all_topics:
+                        topic_selector = TopicSelector(all_topics)
+                    else:
+                        topic_selector = None
+                    
+                except json.JSONDecodeError as e:
+                    logger.error(f"Failed to parse task20 topics JSON: {e}")
+                    task20_data = {"topics": [], "blocks": {}, "topics_by_block": {}, "topic_by_id": {}}
+                    topic_selector = None
+                except Exception as e:
+                    logger.error(f"Failed to load task20 data: {e}")
+                    task20_data = {"topics": [], "blocks": {}, "topics_by_block": {}, "topic_by_id": {}}
+                    topic_selector = None
+    else:
+        # Если кэш недоступен, загружаем напрямую
+        logger.warning("Cache not available, loading data directly")
+        data_file = os.path.join(os.path.dirname(__file__), "task20_topics.json")
+        
+        if not os.path.exists(data_file):
+            logger.error(f"Topics file not found: {data_file}")
+            task20_data = {
+                "topics": [],
+                "topic_by_id": {},
+                "topics_by_block": {},
+                "blocks": {}
+            }
             topic_selector = None
+        else:
+            try:
+                with open(data_file, "r", encoding="utf-8") as f:
+                    topics_list = json.load(f)
+                
+                # Та же логика обработки...
+                all_topics = []
+                topic_by_id = {}
+                topics_by_block = {}
+                blocks = {}
+                
+                for topic in topics_list:
+                    if not isinstance(topic, dict) or 'id' not in topic or 'title' not in topic:
+                        continue
+                    
+                    all_topics.append(topic)
+                    topic_by_id[topic["id"]] = topic
+                    
+                    block_name = topic.get("block", "Без категории")
+                    if block_name not in topics_by_block:
+                        topics_by_block[block_name] = []
+                        blocks[block_name] = {"topics": []}
+                    
+                    topics_by_block[block_name].append(topic)
+                    blocks[block_name]["topics"].append(topic)
+                
+                task20_data = {
+                    "topics": all_topics,
+                    "topic_by_id": topic_by_id,
+                    "topics_by_block": topics_by_block,
+                    "blocks": blocks
+                }
+                
+                if TopicSelector and all_topics:
+                    topic_selector = TopicSelector(all_topics)
+                
+            except Exception as e:
+                logger.error(f"Failed to load task20 data: {e}")
+                task20_data = {"topics": [], "blocks": {}, "topics_by_block": {}, "topic_by_id": {}}
+                topic_selector = None
     
     # Инициализируем AI evaluator
     # Важно: импортируем здесь, чтобы избежать циклических импортов
@@ -1013,6 +1105,27 @@ async def block_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode=ParseMode.HTML
     )
     return states.CHOOSING_MODE
+
+async def handle_answer_document_task20(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработка суждений из документа для task20."""
+    
+    topic = context.user_data.get('current_topic')
+    if not topic:
+        await update.message.reply_text("❌ Ошибка: тема не выбрана.")
+        return states.CHOOSING_MODE
+    
+    extracted_text = await DocumentHandlerMixin.handle_document_answer(
+        update, 
+        context,
+        task_name="суждения"
+    )
+    
+    if not extracted_text:
+        return states.ANSWERING
+    
+    # Передаем в обычный обработчик
+    update.message.text = extracted_text
+    return await handle_answer(update, context)
 
 async def list_topics(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Показ списка тем в блоке с пагинацией."""
