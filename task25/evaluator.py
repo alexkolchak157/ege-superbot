@@ -184,52 +184,31 @@ class Task25AIEvaluator(BaseAIEvaluator if AI_EVALUATOR_AVAILABLE else object):
         """Инициализация AI-сервиса."""
         if not AI_EVALUATOR_AVAILABLE:
             return
-            
+
         try:
-            # Получаем API ключи из окружения
-            api_key = os.getenv('YANDEX_GPT_API_KEY')
-            folder_id = os.getenv('YANDEX_GPT_FOLDER_ID')
-            
+            api_key = os.getenv("YANDEX_GPT_API_KEY")
+            folder_id = os.getenv("YANDEX_GPT_FOLDER_ID")
+
             if not api_key or not folder_id:
-                logger.error("YANDEX_GPT_API_KEY и YANDEX_GPT_FOLDER_ID должны быть установлены")
+                logger.error(
+                    "YANDEX_GPT_API_KEY и YANDEX_GPT_FOLDER_ID должны быть установлены"
+                )
                 self.ai_service = None
                 return
-            
-            # Создаем конфигурацию с правильным типом модели
-            api_key = os.getenv('YANDEX_GPT_API_KEY')
-            
-        except Exception as e:
-            logger.error(f"Error: {e}")
-            raise
-        folder_id = os.getenv('YANDEX_GPT_FOLDER_ID')
-        
-        if not api_key or not folder_id:
-            logger.error("YANDEX_GPT_API_KEY и YANDEX_GPT_FOLDER_ID должны быть установлены")
-            self.ai_service = None
-            return
-        
-        api_key = os.getenv('YANDEX_GPT_API_KEY')
-        folder_id = os.getenv('YANDEX_GPT_FOLDER_ID')
-        
-        if not api_key or not folder_id:
-            logger.error("YANDEX_GPT_API_KEY и YANDEX_GPT_FOLDER_ID должны быть установлены")
-            self.ai_service = None
-            return
-        
-        config = YandexGPTConfig(
-            api_key=api_key,
-            folder_id=folder_id,
-            api_key=api_key,
-            folder_id=folder_id,
+
+            config = YandexGPTConfig(
                 api_key=api_key,
                 folder_id=folder_id,
                 model=YandexGPTModel.PRO,  # Это Enum, не строка!
                 temperature=self._get_temperature(),
-                max_tokens=3000
+                max_tokens=3000,
             )
+
             self.ai_service = YandexGPTService(config)
-            logger.info(f"Task25 AI service initialized with {self.strictness.value} strictness")
-            
+            logger.info(
+                f"Task25 AI service initialized with {self.strictness.value} strictness"
+            )
+
         except Exception as e:
             logger.error(f"Failed to initialize AI service: {e}")
             self.ai_service = None
@@ -641,6 +620,4 @@ def format_evaluation_feedback(result: EvaluationResult, topic: Dict = None) -> 
             else:
                 text += f"• {error}\n"
     
-    return text        except Exception as e:
-            logger.error(f"Error: {e}")
-            raise
+    return text
