@@ -9,7 +9,7 @@ from core.document_processor import DocumentHandlerMixin
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.constants import ParseMode
 from telegram.ext import ContextTypes
-
+from core.admin_tools import admin_manager
 from core import states
 from core.ai_evaluator import Task19Evaluator, EvaluationResult
 from datetime import datetime
@@ -48,7 +48,7 @@ async def set_strictness(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
     
     # Проверка прав (добавьте свою логику проверки админов)
-    if not is_admin(query.from_user.id):
+    if not admin_manager.is_admin(user_id):
         await query.answer("⛔ Только для администраторов", show_alert=True)
         return
     
@@ -94,12 +94,6 @@ async def apply_strictness(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         logger.error(f"Error setting strictness: {e}")
         await query.answer("❌ Ошибка изменения настроек", show_alert=True)
-
-def is_admin(user_id: int) -> bool:
-    """Проверка прав администратора."""
-    # Замените на ваши ID админов
-    ADMIN_IDS = [149841646]  # Добавьте сюда ID администраторов
-    return user_id in ADMIN_IDS
 
 async def delete_previous_messages(context: ContextTypes.DEFAULT_TYPE, chat_id: int, keep_message_id: Optional[int] = None):
     """Удаляет предыдущие сообщения диалога (включая сообщения пользователя)."""
