@@ -1,24 +1,25 @@
-"""AI-оценщик для задания 19."""
+"""AI-проверка для задания 20 через YandexGPT."""
 
 import logging
-from typing import List, Optional, Dict, Any
-from dataclasses import dataclass
+import os
+import json
 from enum import Enum
-from datetime import datetime
-from typing import Dict
+from typing import Dict, List, Any, Optional
+from dataclasses import dataclass
 
 logger = logging.getLogger(__name__)
 
-# Безопасный импорт базовых классов
+# Безопасный импорт
 try:
     from core.ai_evaluator import (
         BaseAIEvaluator,
         EvaluationResult,
         TaskRequirements,
     )
+    from core.ai_service import YandexGPTService, YandexGPTConfig, YandexGPTModel
     AI_EVALUATOR_AVAILABLE = True
-except ImportError:
-    logger.warning("AI evaluator base classes not available")
+except ImportError as e:
+    logger.warning(f"AI evaluator components not available: {e}")
     AI_EVALUATOR_AVAILABLE = False
     
     # Заглушки для работы без AI
@@ -43,361 +44,295 @@ except ImportError:
     class BaseAIEvaluator:
         def __init__(self, requirements: TaskRequirements):
             self.requirements = requirements
+    
+    class YandexGPTService:
+        pass
+    
+    class YandexGPTConfig:
+        pass
+    
+    
+
 
 class StrictnessLevel(Enum):
-    """Уровни строгости проверки"""
-    BASIC = "Базовый"
-    STANDARD = "Стандартный"  
+    """Уровни строгости проверки."""
+    LENIENT = "Мягкий"
+    STANDARD = "Стандартный" 
     STRICT = "Строгий"
     EXPERT = "Экспертный"
 
-@dataclass
-class StrictnessConfig:
-    """Конфигурация параметров строгости."""
-    level: StrictnessLevel
-    min_example_length: int
-    require_localization: bool
-    require_specific_details: bool
-    penalize_extra_errors: bool
-    temperature: float
-    
-    @classmethod
-    def get_config(cls, level: StrictnessLevel) -> "StrictnessConfig":
-        """Получить конфигурацию для уровня строгости."""
-        configs = {
-            StrictnessLevel.BASIC: cls(
-                level=StrictnessLevel.BASIC,
-                min_example_length=30,
-                require_localization=False,
-                require_specific_details=False,
-                penalize_extra_errors=False,
-                temperature=0.5
-            ),
-            StrictnessLevel.STANDARD: cls(
-                level=StrictnessLevel.STANDARD,
-                min_example_length=50,
-                require_localization=True,
-                require_specific_details=True,
-                penalize_extra_errors=False,
-                temperature=0.3
-            ),
-            StrictnessLevel.STRICT: cls(
-                level=StrictnessLevel.STRICT,
-                min_example_length=70,
-                require_localization=True,
-                require_specific_details=True,
-                penalize_extra_errors=True,
-                temperature=0.1
-            ),
-            StrictnessLevel.EXPERT: cls(
-                level=StrictnessLevel.EXPERT,
-                min_example_length=80,
-                require_localization=True,
-                require_specific_details=True,
-                penalize_extra_errors=True,
-                temperature=0.05
-            )
-        }
-        return configs[level]
 
-class Task19AIEvaluator(BaseAIEvaluator):
-    """AI-оценщик для задания 19 с настраиваемой строгостью"""
+class Task20AIEvaluator(BaseAIEvaluator if AI_EVALUATOR_AVAILABLE else object):
+    """AI-проверщик для задания 20 с настраиваемой строгостью."""
     
-    def __init__(self, strictness: StrictnessLevel = StrictnessLevel.STRICT):
+    def __init__(self, strictness: StrictnessLevel = StrictnessLevel.STANDARD):
         self.strictness = strictness
-        self.config = StrictnessConfig.get_config(strictness)
-        requirements = TaskRequirements(
-            task_number=19,
-            task_name="Примеры социальных объектов",
-            max_score=3,
-            criteria=[
-                {
-                    "name": "Правильность примеров",
-                    "max_score": 3,
-                    "description": "По 1 баллу за каждый корректный пример"
-                }
-            ],
-            description="Приведите три примера, иллюстрирующих..."
-        )
-        super().__init__(requirements)
+        
+        if AI_EVALUATOR_AVAILABLE:
+            requirements = TaskRequirements(
+                task_number=20,
+                task_name="Формулирование суждений",
+                max_score=3,
+                criteria=[
+                    {
+                        "name": "К1",
+                        "max_score": 3,
+                        "description": "Корректность суждений (по 1 баллу за каждое)"
+                    }
+                ],
+                description="Сформулируйте три суждения..."
+            )
+            super().__init__(requirements)
+        else:
+            self.requirements = TaskRequirements(
+                task_number=20,
+                task_name="Формулирование суждений",
+                max_score=3,
+                criteria=[{"name": "К1", "max_score": 3, "description": "Корректность суждений"}],
+                description="Сформулируйте три суждения..."
+            )
+        
+        # Инициализируем сервис если доступен
+        self.ai_service = None
+        if AI_EVALUATOR_AVAILABLE:
+            try:
+                config = YandexGPTConfig.from_env()
+                # Выбираем модель в зависимости от строгости
+                if strictness in [StrictnessLevel.STRICT, StrictnessLevel.EXPERT]:
+                    config.model = YandexGPTModel.PRO
+                else:
+                    config.model = YandexGPTModel.LITE
+                
+                # Настройка температуры
+                if strictness == StrictnessLevel.LENIENT:
+                    config.temperature = 0.4
+                elif strictness == StrictnessLevel.STANDARD:
+                    config.temperature = 0.3
+                else:
+                    config.temperature = 0.2
+                    
+                self.config = config
+                logger.info(f"Task20 AI evaluator configured with {strictness.value} strictness")
+            except Exception as e:
+                logger.error(f"Failed to configure AI service: {e}")
+                self.config = None
     
     def get_system_prompt(self) -> str:
-        """Системный промпт с учетом уровня строгости"""
-        
-        base_prompt = """Ты - эксперт ЕГЭ по обществознанию, проверяющий задание 19."""
-        
-        if self.strictness == StrictnessLevel.BASIC:
-            return base_prompt + """
-Проверяй основные требования: наличие трех примеров, их соответствие теме."""
-            
+        """Системный промпт для YandexGPT."""
+        base_prompt = """Ты - опытный эксперт ЕГЭ по обществознанию, специализирующийся на проверке задания 20.
+
+ВАЖНЫЕ ПРАВИЛА ДЛЯ ЗАДАНИЯ 20:
+1. В отличие от задания 19, здесь НЕ нужны конкретные примеры
+2. Требуются суждения АБСТРАКТНОГО характера с элементами обобщения
+3. Суждения должны быть более широкого объёма и менее конкретного содержания
+4. Каждое суждение должно быть сформулировано как распространённое предложение
+5. Суждения должны содержать элементы обобщения
+
+КРИТЕРИИ ОЦЕНИВАНИЯ:
+- 3 балла: приведены все требуемые суждения правильного типа
+- 2 балла: приведено на одно суждение меньше требуемого
+- 1 балл: приведено на два суждения меньше требуемого  
+- 0 баллов: приведен только один аргумент ИЛИ рассуждения общего характера
+
+ШТРАФЫ:
+- Если наряду с требуемыми суждениями есть 2+ дополнительных с ошибками → 0 баллов
+- Если есть 1 дополнительное с ошибкой → минус 1 балл от фактического
+
+ЧТО СЧИТАЕТСЯ ПРАВИЛЬНЫМ СУЖДЕНИЕМ ДЛЯ ЗАДАНИЯ 20:
+- Содержит элементы обобщения (способствует, приводит к, влияет на, обеспечивает, позволяет, создает, формирует, развивает, препятствует, ограничивает, снижает, повышает, улучшает, ухудшает, определяет, зависит от)
+- НЕ содержит конкретных примеров (дат, имён, названий конкретных стран/организаций/компаний)
+- Является распространённым предложением (не менее 5 слов)
+- Соответствует требованию задания
+- Содержит причинно-следственные связи
+
+ЧТО НЕ ЗАСЧИТЫВАЕТСЯ:
+- Конкретные примеры (например: "В 2020 году в России...", "Компания Apple...", "Во Франции...")
+- Упоминание конкретных личностей, дат, событий
+- Слишком конкретное содержание без обобщения
+- Отдельные слова и словосочетания
+- Общие рассуждения без чёткой аргументации
+- Суждения, не соответствующие типу (например, негативный вместо позитивного)
+
+ВАЖНО: Будь строг в оценке, но справедлив. Учитывай российский контекст.
+
+При проверке:
+- Будь лаконичен в комментариях
+- Давай конкретные, практические советы
+- Не используй общие фразы типа "нужно больше стараться"
+- Для каждого неудачного суждения предложи, как его переформулировать"""
+
+        # Модификация в зависимости от уровня строгости
+        if self.strictness == StrictnessLevel.LENIENT:
+            base_prompt += "\n\nУРОВЕНЬ: МЯГКИЙ - засчитывай суждения с небольшими недочётами."
         elif self.strictness == StrictnessLevel.STANDARD:
-            return base_prompt + """
-Проверяй: развернутость примеров, соответствие теме, базовую корректность.
-Обращай внимание на очевидные фактические ошибки."""
-            
-        else:  # STRICT или EXPERT
-            return base_prompt + """
-СТРОЖАЙШИЕ ТРЕБОВАНИЯ:
-1. Проверяй КАЖДЫЙ факт на соответствие российскому законодательству
-2. НЕ ПРОПУСКАЙ правовые ошибки - они критичны!
-3. Будь особенно внимателен к:
-   - Трудовому праву (ЗАПРЕЩЕНЫ штрафы работников!)
-   - Административным процедурам
-   - Конституционным нормам
-   - Экономическим реалиям РФ
-
-АВТОМАТИЧЕСКИ НЕ ЗАСЧИТЫВАЙ примеры с:
-- Штрафами работников работодателями (нарушение ст. 192 ТК РФ)
-- Несуществующими в РФ органами власти
-- Неверными правовыми процедурами
-- Анахронизмами или устаревшими данными
-
-Помни: штраф работника = грубейшая ошибка! В РФ допустимы только:
-- Замечание
-- Выговор  
-- Увольнение по соответствующим основаниям
-
-Лучше быть слишком строгим, чем пропустить ошибку!"""
+            base_prompt += "\n\nУРОВЕНЬ: СТАНДАРТНЫЙ - следуй критериям, но прощай мелкие недочёты."
+        elif self.strictness == StrictnessLevel.STRICT:
+            base_prompt += "\n\nУРОВЕНЬ: СТРОГИЙ - требуй полного соответствия критериям ФИПИ."
+        elif self.strictness == StrictnessLevel.EXPERT:
+            base_prompt += "\n\nУРОВЕНЬ: ЭКСПЕРТНЫЙ - максимальная строгость, как на реальном экзамене."
+        
+        return base_prompt
     
-    def _apply_scoring_rules(self, valid_count: int, invalid_count: int) -> int:
-        """Применение правил подсчёта баллов в зависимости от строгости."""
-        final_score = valid_count
+    async def evaluate(self, answer: str, topic: str, **kwargs) -> EvaluationResult:
+        """Оценка ответа через YandexGPT."""
+        task_text = kwargs.get('task_text', '')
         
-        if self.config.penalize_extra_errors:
-            # Строгое правило ФИПИ
-            if invalid_count >= 2:
-                final_score = 0
-            elif invalid_count == 1 and final_score > 0:
-                final_score -= 1
+        # Если AI недоступен, используем базовую оценку
+        if not AI_EVALUATOR_AVAILABLE or not self.config:
+            return self._basic_evaluation(answer, topic)
         
-        return min(final_score, 3)  # Максимум 3 балла
-    
-    async def evaluate(
-        self, 
-        answer: str, 
-        topic: str,
-        task_text: str,
-        key_points: List[str] = None,
-        **kwargs
-    ) -> EvaluationResult:
-        """
-        Оценка ответа на задание 19
-        
-        Args:
-            answer: Ответ ученика
-            topic: Тема задания
-            task_text: Полный текст задания
-            key_points: Ключевые аспекты для проверки
-        """
-        
-        # Подготовка промпта для оценки
-        key_points_text = ""
-        if key_points:
-            key_points_text = f"\nКлючевые аспекты для проверки:\n" + "\n".join([f"- {kp}" for kp in key_points])
-        
-        evaluation_prompt = f"""Проверь ответ на задание 19 ЕГЭ по обществознанию.
+        # Формируем промпт для проверки
+        evaluation_prompt = f"""Проверь ответ на задание 20 ЕГЭ.
 
 ЗАДАНИЕ: {task_text}
-Тема: "{topic}"
-{key_points_text}
+
+ТЕМА: {topic}
 
 ОТВЕТ УЧЕНИКА:
 {answer}
 
-АЛГОРИТМ ПРОВЕРКИ:
-1. Подсчитай общее количество приведённых примеров
-2. Если примеров больше 3, проверь ВСЕ на наличие ошибок
-3. Для каждого примера определи:
-   - Является ли он развёрнутым (не просто слово/словосочетание)
-   - Соответствует ли теме задания
-   - Конкретен ли (есть детали, контекст)
-   - Фактически корректен ли
-   - Не дублирует ли другой пример
+ПОШАГОВЫЙ АЛГОРИТМ:
+1. Определи, сколько всего суждений привёл ученик
+2. Если больше 3 - проверь ВСЕ на ошибки (любая серьёзная ошибка = 0 баллов за всё)
+3. Для каждого суждения оцени:
+   - Абстрактность (нет конкретных примеров)
+   - Наличие обобщения
+   - Соответствие заданию
+   - Логичность и корректность
+   - Распространённость (не менее 5 слов)
 
-ФОРМАТ ОТВЕТА:
+УЧИТЫВАЙ:
+- Суждения должны быть теоретическими
+- НЕ должно быть конкретных дат, имён, названий
+- Должны использоваться обобщающие конструкции
+
+Ответь в формате JSON:
+```json
 {{
-    "total_examples_count": число,
-    "has_extra_examples": true/false,
-    "examples_analysis": [
-        {{
-            "example_num": 1,
-            "text": "краткое описание примера",
-            "is_developed": true/false,
-            "is_relevant": true/false,
-            "is_specific": true/false,
-            "is_correct": true/false,
-            "is_duplicate": true/false,
-            "error_description": "описание ошибки или null"
-        }},
-        ...
-    ],
-    "valid_examples_count": число (сколько примеров можно засчитать),
     "score": число от 0 до 3,
-    "scoring_explanation": "объяснение выставленной оценки",
-    "main_issues": ["список основных проблем"],
-    "suggestions": ["конкретные рекомендации"]
-}}"""
+    "valid_arguments_count": количество засчитанных суждений,
+    "total_arguments": общее количество суждений в ответе,
+    "penalty_applied": true/false,
+    "penalty_reason": "причина штрафа" или null,
+    "valid_arguments": [
+        {{
+            "number": номер суждения,
+            "text": "краткое описание сути суждения (до 50 слов)",
+            "has_generalization": true/false,
+            "comment": "почему засчитано"
+        }}
+    ],
+    "invalid_arguments": [
+        {{
+            "number": номер суждения,
+            "text": "краткое описание сути суждения (до 50 слов)",
+            "reason": "конкретная причина, почему не засчитано",
+            "is_concrete_example": true/false,
+            "improvement": "конкретный совет, как исправить именно это суждение"
+        }}
+    ],
+    "feedback": "краткий общий комментарий (2-3 предложения)",
+    "suggestions": ["конкретная рекомендация по улучшению ответа", "ещё одна конкретная рекомендация"],
+    "factual_errors": ["ошибка 1", "ошибка 2"] или []
+}}
+```
 
-        async with self.ai_service:
-            result = await self.ai_service.get_json_completion(
-                evaluation_prompt,
-                system_prompt=self.get_system_prompt(),
-                temperature=0.2
-            )
+ВАЖНЫЕ ТРЕБОВАНИЯ К ОТВЕТУ:
+1. В "feedback" пиши кратко, только самое важное
+2. В "suggestions" давай КОНКРЕТНЫЕ советы, а не общие фразы
+3. Для каждого незасчитанного суждения в "improvement" напиши, КАК ИМЕННО его улучшить
+4. Не повторяй одни и те же фразы
 
-            if not result:
-                return self._get_fallback_result(answer, topic)
-
-            # Определение финального балла с учётом правил ЕГЭ 2025
-            score = self._calculate_final_score(result)
-
-            # Проверка фактических ошибок
-            factual_errors = await self.check_factual_accuracy(answer, topic)
-
-            # Генерация персонализированной обратной связи
-            feedback = await self._generate_task19_feedback(
-                answer, score, result, topic
-            )
-
-            return EvaluationResult(
-                scores={"Правильность примеров": score},
-                total_score=score,
-                max_score=3,
-                feedback=feedback,
-                detailed_analysis=result,
-                suggestions=result.get("suggestions", []),
-                factual_errors=factual_errors
-            )
-    
-    def _calculate_final_score(self, analysis: Dict[str, Any]) -> int:
-        """Расчёт финального балла с учётом правил ЕГЭ 2025"""
-        
-        # Если есть дополнительные примеры с ошибками
-        if analysis.get("has_extra_examples", False):
-            examples = analysis.get("examples_analysis", [])
-            extra_examples = [ex for ex in examples[3:] if ex.get("example_num", 0) > 3]
-            
-            # Проверяем наличие ошибок в дополнительных примерах
-            for ex in extra_examples:
-                if not all([
-                    ex.get("is_developed", False),
-                    ex.get("is_relevant", False),
-                    ex.get("is_specific", False),
-                    ex.get("is_correct", False),
-                    not ex.get("is_duplicate", False)
-                ]):
-                    # Есть ошибка в дополнительном примере - 0 баллов
-                    logger.info("Обнаружена ошибка в дополнительном примере - выставляется 0 баллов")
-                    return 0
-        
-        # Иначе считаем по обычным правилам
-        return min(analysis.get("valid_examples_count", 0), 3)
-
-    async def check_factual_accuracy(self, answer: str, topic: str) -> List[str]:
-        """Проверка фактических ошибок в ответе."""
-        if not hasattr(self, 'ai_service') or not self.ai_service:
-            return []
-
-        prompt = f"""Проверь фактическую точность примеров по теме "{topic}".
-
-ОТВЕТ УЧЕНИКА:
-{answer}
-
-Найди ТОЛЬКО явные фактические ошибки:
-- Неверные даты, имена, числа
-- Несуществующие организации или законы
-- Ошибки в правовых нормах
-- Анахронизмы
-
-Верни список найденных ошибок в формате JSON:
-["ошибка 1", "ошибка 2", ...]
-
-Если ошибок нет, верни пустой список: []"""
+ВАЖНО: Верни ТОЛЬКО валидный JSON в блоке кода, без дополнительного текста."""
 
         try:
-            async with self.ai_service:
-                result = await self.ai_service.get_json_completion(
-                    prompt,
-                    system_prompt="Ты эксперт по проверке фактов. Выявляй только явные ошибки.",
-                    temperature=0.1
+            # Используем сервис YandexGPT
+            async with YandexGPTService(self.config) as service:
+                result = await service.get_json_completion(
+                    prompt=evaluation_prompt,
+                    system_prompt=self.get_system_prompt(),
+                    temperature=self.config.temperature
                 )
-                return result if isinstance(result, list) else []
-        except Exception:
-            return []
+                
+                if result:
+                    return self._parse_response(result, answer, topic)
+                else:
+                    logger.error("Failed to get JSON response from YandexGPT")
+                    return self._basic_evaluation(answer, topic)
+                    
+        except Exception as e:
+            logger.error(f"Error in Task20 evaluation: {e}")
+            return self._basic_evaluation(answer, topic)
     
-    async def _generate_task19_feedback(
-        self,
-        answer: str,
-        score: int,
-        analysis: Dict[str, Any],
-        topic: str
-    ) -> str:
-        """Генерация развёрнутой обратной связи для задания 19"""
-
-        system_prompt = """Ты - опытный преподаватель обществознания, даёшь обратную связь по заданию 19.
-Будь конкретным, доброжелательным и конструктивным. Используй эмодзи для наглядности."""
-
-        examples_info = []
-        for ex in analysis.get("examples_analysis", [])[:3]:
-            status = "✅" if all([
-                ex.get("is_developed"), ex.get("is_relevant"),
-                ex.get("is_specific"), ex.get("is_correct")
-            ]) else "❌"
-            examples_info.append(f"{status} Пример {ex['example_num']}")
-
-        prompt = f"""Ученик выполнял задание 19 по теме "{topic}".
-Оценка: {score}/3 балла
-
-Статус примеров:
-{chr(10).join(examples_info)}
-
-Основные проблемы: {', '.join(analysis.get('main_issues', [])) or 'нет'}
-
-Составь краткую обратную связь (3-4 предложения):
-1. Что получилось хорошо
-2. Главная проблема (если есть)
-3. Конкретный совет для улучшения
-4. Мотивирующее заключение
-
-НЕ повторяй баллы и оценки - они уже показаны."""
-
-        async with self.ai_service:
-            result = await self.ai_service.get_completion(
-                prompt,
-                system_prompt=system_prompt,
-                temperature=0.7
-            )
-
-            return result["text"] if result["success"] else ""
-    
-    def _get_fallback_result(self, answer: str, topic: str) -> EvaluationResult:
-        """Простая оценка без AI"""
-        # Подсчитываем примеры (строки длиннее 20 символов)
-        lines = [line.strip() for line in answer.split('\n') if line.strip()]
-        examples = [line for line in lines if len(line) > 20]
-        examples_count = len(examples)
-
-        # Простая оценка
-        score = min(examples_count, 3) if examples_count <= 3 else 0
-
-        feedback = f"Найдено примеров: {examples_count}\n"
-        if examples_count < 3:
-            feedback += "❌ Необходимо привести три примера.\n"
-        elif examples_count == 3:
-            feedback += "✅ Количество примеров соответствует требованиям.\n"
-        else:
-            feedback += "⚠️ Приведено больше трех примеров. Если хотя бы один содержит ошибку, все примеры не засчитываются.\n"
-
-        suggestions = []
-        if examples_count < 3:
-            suggestions.append("Добавьте больше конкретных примеров")
-        if any(len(ex) < 50 for ex in examples):
-            suggestions.append("Сделайте примеры более развернутыми и конкретными")
-
+    def _basic_evaluation(self, answer: str, topic: str) -> EvaluationResult:
+        """Базовая оценка без AI."""
+        arguments = [arg.strip() for arg in answer.split('\n') if arg.strip()]
+        score = min(len(arguments), 3) if len(arguments) <= 3 else 2
+        
+        # Проверяем на наличие конкретных примеров
+        concrete_indicators = [
+            'например', 'в 20', 'году', 'компания', 'страна',
+            'россия', 'сша', 'китай', 'франция', 'германия'
+        ]
+        
+        has_concrete = any(indicator in answer.lower() for indicator in concrete_indicators)
+        if has_concrete and score > 0:
+            score = max(0, score - 1)
+        
         return EvaluationResult(
-            scores={"Правильность примеров": score},
+            scores={"К1": score},
             total_score=score,
             max_score=3,
-            feedback=feedback,
-            suggestions=suggestions
+            feedback=f"Обнаружено суждений: {len(arguments)}",
+            detailed_analysis={
+                "arguments_count": len(arguments),
+                "score": score,
+                "has_concrete_examples": has_concrete
+            },
+            suggestions=[
+                "Используйте больше обобщающих конструкций",
+                "Избегайте конкретных примеров",
+                "Формулируйте развёрнутые предложения"
+            ],
+            factual_errors=[]
         )
+    
+    def _parse_response(self, response: Dict[str, Any], answer: str, topic: str) -> EvaluationResult:
+            """Парсинг ответа от YandexGPT."""
+            try:
+                score = response.get("score", 0)
+                
+                # Формируем краткую обратную связь
+                feedback = response.get("feedback", "")
+                
+                # Добавляем информацию о засчитанных суждениях (кратко)
+                if response.get("valid_arguments"):
+                    feedback += f"\n\n✅ <b>Засчитанные суждения:</b>\n"
+                    for i, arg in enumerate(response["valid_arguments"], 1):
+                        feedback += f"{i}. {arg.get('comment', 'Суждение корректно')}\n"
+                
+                # Добавляем информацию о незасчитанных суждениях с конкретными советами
+                if response.get("invalid_arguments"):
+                    feedback += f"\n\n❌ <b>Не засчитанные суждения:</b>\n"
+                    for arg in response["invalid_arguments"]:
+                        feedback += f"{arg['number']}. {arg.get('reason', 'Не соответствует критериям')}\n"
+                        if arg.get('improvement'):
+                            feedback += f"   💡 <i>Совет: {arg['improvement']}</i>\n"
+                
+                # Добавляем информацию о штрафах (если есть)
+                if response.get("penalty_applied"):
+                    feedback += f"\n⚠️ <b>Применён штраф:</b> {response.get('penalty_reason', '')}"
+                
+                return EvaluationResult(
+                    scores={"К1": score},
+                    total_score=score,
+                    max_score=3,
+                    feedback=feedback,
+                    detailed_analysis=response,
+                    suggestions=response.get("suggestions", []),
+                    factual_errors=response.get("factual_errors", [])
+                )
+                
+            except Exception as e:
+                logger.error(f"Error parsing YandexGPT response: {e}")
+                return self._basic_evaluation(answer, topic)
