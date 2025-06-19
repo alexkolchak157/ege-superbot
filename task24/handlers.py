@@ -155,7 +155,7 @@ def init_data():
         plan_bot_data = PlanBotData({"plans": {}, "blocks": {}})
     
     # Загружаем список администраторов
-    load_admin_ids()
+    admin_manager._load_admin_ids()
     
     return data_loaded  # Возвращаем статус загрузки
 
