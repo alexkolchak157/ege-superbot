@@ -7,6 +7,7 @@ import asyncio
 import logging
 import sys
 import os
+import pytest
 
 # Добавляем корневую директорию в путь
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -16,6 +17,7 @@ logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 
+@pytest.mark.asyncio
 async def test_task19():
     """Тестирование компонентов task19"""
     
