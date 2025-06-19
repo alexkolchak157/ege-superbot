@@ -4,6 +4,7 @@ import logging
 from telegram.ext import Application, CommandHandler
 from core.plugin_loader import discover_plugins, build_main_menu, PLUGINS
 from core.menu_handlers import register_global_handlers
+from core.admin_tools import register_admin_handlers
 from core.config import BOT_TOKEN
 from core import db
 
@@ -49,6 +50,9 @@ def main():
 
     print("🌐 Регистрируем глобальные обработчики...")
     register_global_handlers(app)
+
+    print("🔧 Регистрируем админские обработчики...")
+    register_admin_handlers(app)
     
     print("📝 Регистрируем команду /start...")
     app.add_handler(CommandHandler("start", start))
