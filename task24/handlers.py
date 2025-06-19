@@ -615,7 +615,7 @@ async def navigate_topics(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 
-async def handle_plan(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def handle_plan_enhanced(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработка плана пользователя (текст или документ)."""
     
     # Если это документ - перенаправляем
