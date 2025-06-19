@@ -19,7 +19,6 @@ logger = logging.getLogger(__name__)
 
 # Глобальные переменные
 task25_data = {}
-evaluator = None
 topic_selector = None
 
 # Импорты внутренних модулей ПОСЛЕ определения переменных
