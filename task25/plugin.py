@@ -93,6 +93,7 @@ class Task25Plugin(BotPlugin):
                 
                 states.ANSWERING: [
                     MessageHandler(filters.TEXT & ~filters.COMMAND, handlers.handle_answer),
+                    MessageHandler(filters.Document.ALL, handlers.handle_answer_document_task25),
                     CallbackQueryHandler(handlers.practice_mode, pattern="^t25_practice$"),
                     CallbackQueryHandler(handlers.another_topic_from_current, pattern="^t25_another_topic$"),
                     CallbackQueryHandler(handlers.random_topic_block, pattern="^t25_random_block$"),
@@ -102,6 +103,7 @@ class Task25Plugin(BotPlugin):
                 
                 ANSWERING_PARTS: [
                     MessageHandler(filters.TEXT & ~filters.COMMAND, handlers.handle_answer_parts),
+                    MessageHandler(filters.Document.ALL, handlers.handle_answer_document_task25),
                     CallbackQueryHandler(handlers.practice_mode, pattern="^t25_practice$"),
                     CallbackQueryHandler(handlers.block_menu, pattern="^t25_block:"),
                     CallbackQueryHandler(handlers.return_to_menu, pattern="^t25_menu$"),
