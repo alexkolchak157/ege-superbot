@@ -40,9 +40,6 @@ class Task24Plugin(BotPlugin):
                     CallbackQueryHandler(handlers.export_progress, pattern="^export_progress$"),
                     CallbackQueryHandler(handlers.back_to_main_menu, pattern="^to_main_menu$"),
                     CallbackQueryHandler(handlers.cancel_reset, pattern="^cancel_reset$"),
-                    CallbackQueryHandler(handlers.admin_stats, pattern="^admin_stats$"),
-                    CallbackQueryHandler(handlers.admin_activity, pattern="^admin_activity$"),
-                    CallbackQueryHandler(handlers.admin_export, pattern="^admin_export$"),
                 ],
                 states.CHOOSING_TOPIC: [
                     CallbackQueryHandler(handlers.select_topic, pattern=r"^topic:"),

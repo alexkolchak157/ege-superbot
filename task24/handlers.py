@@ -12,24 +12,12 @@ from core import utils as core_utils
 from .checker import PlanBotData, evaluate_plan, FEEDBACK_KB
 from . import keyboards
 from core.document_processor import DocumentProcessor, DocumentHandlerMixin
+from core.admin_tools import admin_manager, admin_only, get_admin_keyboard_extension
 
 logger = logging.getLogger(__name__)
 
 # Глобальные данные
 plan_bot_data = None
-
-# Список ID администраторов (добавьте свои ID)
-ADMIN_IDS = []
-admin_ids_str = os.getenv('TASK24_ADMIN_IDS', '')
-if admin_ids_str:
-    try:
-        ADMIN_IDS = [int(id_str.strip()) for id_str in admin_ids_str.split(',') if id_str.strip()]
-    except ValueError:
-        logger.warning("Неверный формат TASK24_ADMIN_IDS в переменных окружения")
-
-def is_admin(user_id: int) -> bool:
-    """Проверка, является ли пользователь администратором."""
-    return user_id in ADMIN_IDS
 
 async def delete_previous_messages(context: ContextTypes.DEFAULT_TYPE, chat_id: int, keep_message_id: Optional[int] = None):
     """Удаляет предыдущие сообщения диалога."""
@@ -68,19 +56,6 @@ async def delete_previous_messages(context: ContextTypes.DEFAULT_TYPE, chat_id: 
     
     logger.info(f"Task24: Deleted {deleted_count}/{len(messages_to_delete)} messages")
 
-def admin_only(func):
-    """Декоратор для функций, доступных только администраторам."""
-    async def wrapper(update: Update, context: ContextTypes.DEFAULT_TYPE, *args, **kwargs):
-        user_id = update.effective_user.id if update.effective_user else None
-        if not user_id or not is_admin(user_id):
-            if update.callback_query:
-                await update.callback_query.answer("❌ Эта функция доступна только администраторам", show_alert=True)
-            else:
-                await update.message.reply_text("❌ Эта функция доступна только администраторам")
-            return ConversationHandler.END
-        return await func(update, context, *args, **kwargs)
-    return wrapper
-
 def get_user_stats(context: ContextTypes.DEFAULT_TYPE) -> Dict[str, any]:
     """Получение статистики пользователя."""
     practiced = context.user_data.get('practiced_topics', set())
@@ -117,43 +92,6 @@ def get_user_stats_from_data(user_data: dict, plan_bot_data) -> Dict[str, any]:
         'average_score': sum(s['total'] for s in scores_history) / len(scores_history) if scores_history else 0,
         'total_time_minutes': user_data.get('total_time_minutes', 0)
     }
-
-def load_admin_ids():
-    """Загрузка списка администраторов из конфига."""
-    global ADMIN_IDS
-    
-    # Сначала пробуем загрузить из переменных окружения
-    admin_ids_str = os.getenv('TASK24_ADMIN_IDS', '')
-    if admin_ids_str:
-        try:
-            ADMIN_IDS = [int(id_str.strip()) for id_str in admin_ids_str.split(',') if id_str.strip()]
-            logger.info(f"Загружено {len(ADMIN_IDS)} администраторов из переменных окружения")
-            return
-        except ValueError:
-            logger.warning("Неверный формат TASK24_ADMIN_IDS в переменных окружения")
-    
-    # Затем пробуем загрузить из файла
-    try:
-        config_file = os.path.join(os.path.dirname(__file__), 'admin_config.json')
-        if os.path.exists(config_file):
-            with open(config_file, 'r') as f:
-                config = json.load(f)
-                ADMIN_IDS = config.get('admin_ids', [])
-                logger.info(f"Загружено {len(ADMIN_IDS)} администраторов из файла")
-        else:
-            # Создаем файл с примером
-            example_config = {
-                "admin_ids": [],
-                "comment": "Добавьте сюда ID администраторов Telegram"
-            }
-            with open(config_file, 'w') as f:
-                json.dump(example_config, f, indent=4)
-            logger.info(f"Создан пример файла конфигурации: {config_file}")
-    except Exception as e:
-        logger.error(f"Ошибка загрузки админов из файла: {e}")
-    
-    if not ADMIN_IDS:
-        logger.warning("Список администраторов пуст - админские функции отключены")
 
 def save_score_to_history(context: ContextTypes.DEFAULT_TYPE, topic: str, k1: int, k2: int):
     """Сохранение оценки в историю."""
@@ -250,7 +188,12 @@ async def entry_from_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     # Строим клавиатуру с учетом прав пользователя
     user_id = query.from_user.id
-    kb = keyboards.build_main_menu_keyboard() if not is_admin(user_id) else build_admin_menu_keyboard()
+    kb = keyboards.build_main_menu_keyboard()
+    # Добавляем админские кнопки если пользователь - админ
+    if admin_manager.is_admin(user_id):
+        admin_buttons = get_admin_keyboard_extension(user_id)
+        for row in admin_buttons:
+            kb.inline_keyboard.append(row)
     
     await query.edit_message_text(
         "📝 <b>Задание 24 - составление сложного плана</b>\n\n"
@@ -260,26 +203,6 @@ async def entry_from_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     return states.CHOOSING_MODE
 
-def build_admin_menu_keyboard() -> InlineKeyboardMarkup:
-    """Расширенная клавиатура для администраторов."""
-    keyboard = [
-        [InlineKeyboardButton("💪 Тренироваться", callback_data="start_train")],
-        [InlineKeyboardButton("👀 Посмотреть эталоны", callback_data="start_show")],
-        [InlineKeyboardButton("🎯 Режим экзамена", callback_data="start_exam")],
-        [InlineKeyboardButton("🔍 Поиск темы", callback_data="search_topics")],
-        [InlineKeyboardButton("📜 Список всех тем", callback_data="show_list")],
-        [InlineKeyboardButton("📊 Мой прогресс", callback_data="show_progress")],
-        [InlineKeyboardButton("📋 Критерии оценки", callback_data="show_criteria")],
-        [InlineKeyboardButton("❓ Помощь", callback_data="show_help")],
-        [InlineKeyboardButton("🔄 Сбросить прогресс", callback_data="reset_progress")],
-        [InlineKeyboardButton("📤 Экспорт прогресса", callback_data="export_progress")],
-        # Админские функции
-        [InlineKeyboardButton("👥 Статистика пользователей", callback_data="admin_stats")],
-        [InlineKeyboardButton("📈 Активность", callback_data="admin_activity")],
-        [InlineKeyboardButton("🏠 Главное меню", callback_data="to_main_menu")]
-    ]
-    return InlineKeyboardMarkup(keyboard)
-
 async def cmd_start_plan(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Команда /start_plan."""
     # Инициализация времени сессии
@@ -287,7 +210,7 @@ async def cmd_start_plan(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data['session_start'] = datetime.now()
     
     user_id = update.effective_user.id
-    kb = keyboards.build_main_menu_keyboard() if not is_admin(user_id) else build_admin_menu_keyboard()
+    kb = keyboards.build_main_menu_keyboard()
     
     await update.message.reply_text(
         "📝 <b>Задание 24 - составление сложного плана</b>\n\n"
@@ -1111,7 +1034,7 @@ async def cancel_reset(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data.pop('confirm_reset', None)
     
     user_id = query.from_user.id
-    kb = keyboards.build_main_menu_keyboard() if not is_admin(user_id) else build_admin_menu_keyboard()
+    kb = keyboards.build_main_menu_keyboard()
     
     menu_text = (
         "📝 <b>Задание 24 - составление сложного плана</b>\n\n"
@@ -1200,7 +1123,7 @@ async def export_progress(update: Update, context: ContextTypes.DEFAULT_TYPE):
         pass
     
     # Отправляем документ с кнопкой возврата
-    kb = keyboards.build_main_menu_keyboard() if not is_admin(user_id) else build_admin_menu_keyboard()
+    kb = keyboards.build_main_menu_keyboard()
     
     await query.message.reply_document(
         document=file_data,
@@ -1319,7 +1242,7 @@ async def back_to_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await delete_previous_messages(context, query.message.chat_id)
     
     user_id = query.from_user.id
-    kb = keyboards.build_main_menu_keyboard() if not is_admin(user_id) else build_admin_menu_keyboard()
+    kb = keyboards.build_main_menu_keyboard()
     
     menu_text = (
         "📝 <b>Задание 24 - составление сложного плана</b>\n\n"
@@ -1433,7 +1356,13 @@ async def retry_plan(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def cmd_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Отмена текущего действия."""
     user_id = update.effective_user.id
-    kb = keyboards.build_main_menu_keyboard() if not is_admin(user_id) else build_admin_menu_keyboard()
+    
+    # ОБНОВЛЕННЫЙ КОД
+    kb = keyboards.build_main_menu_keyboard()
+    if admin_manager.is_admin(user_id):
+        admin_buttons = get_admin_keyboard_extension(user_id)
+        for row in admin_buttons:
+            kb.inline_keyboard.append(row)
     
     await update.message.reply_text(
         "❌ Действие отменено.\n\nВыберите режим:",
@@ -1448,243 +1377,94 @@ async def cmd_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     return states.CHOOSING_MODE
 
+
 async def cmd_criteria(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Команда /criteria - показ критериев оценки."""
     await show_criteria(update, context)
     return states.CHOOSING_MODE
 
-# ==================== АДМИНСКИЕ ФУНКЦИИ ====================
-
 @admin_only
-async def admin_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Статистика всех пользователей (только для админов)."""
+async def force_reset_user_progress(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Принудительный сброс прогресса пользователя (только для админов)."""
+    # Эта функция автоматически проверит права админа
+    user_id = int(update.callback_query.data.split(":")[-1])
+    
+    # Сброс данных пользователя
+    if user_id in context.application.user_data:
+        context.application.user_data[user_id].clear()
+        await update.callback_query.answer("✅ Прогресс пользователя сброшен", show_alert=True)
+    else:
+        await update.callback_query.answer("❌ Пользователь не найден", show_alert=True)
+
+
+# Пример функции, которая проверяет админские права внутри
+async def export_progress(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Экспорт прогресса."""
     query = update.callback_query
     await query.answer()
     
-    # Проверка наличия данных
-    if not plan_bot_data:
-        await query.edit_message_text(
-            "❌ Данные планов не загружены. Статистика недоступна.",
-            reply_markup=InlineKeyboardMarkup([[
-                InlineKeyboardButton("⬅️ Назад", callback_data="start_button")
-            ]]),
-            parse_mode=ParseMode.HTML
-        )
-        return states.CHOOSING_MODE
+    user_id = query.from_user.id
     
-    # Получаем данные всех пользователей из бота
-    application = context.application
+    # Обычный экспорт для всех пользователей
+    stats = get_user_stats(context)
+    practiced = context.user_data.get('practiced_topics', set())
     
-    # Собираем статистику
-    total_users = 0
-    active_users = 0
-    total_attempts = 0
-    all_scores = []
-    users_by_progress = {
-        '0-25%': 0,
-        '26-50%': 0,
-        '51-75%': 0,
-        '76-99%': 0,
-        '100%': 0
+    # Базовые данные для экспорта
+    progress_data = {
+        'user_info': {
+            'user_id': user_id,
+            'export_date': datetime.now().isoformat()
+        },
+        'statistics': {
+            'practiced_topics': list(practiced),
+            'total_topics': stats['total_topics'],
+            'progress_percent': stats['progress_percent'],
+            'average_score': stats['average_score'],
+            'total_time_minutes': stats['total_time_minutes']
+        },
+        'scores_history': stats['scores_history']
     }
     
-    # Проходим по всем пользовательским данным
-    for user_id, user_data in application.user_data.items():
-        if 'practiced_topics' in user_data:
-            total_users += 1
-            
-            # Используем функцию get_user_stats_from_data
-            user_stats = get_user_stats_from_data(user_data, plan_bot_data)
-            progress = user_stats['progress_percent']
-            
-            # Распределение по прогрессу
-            if progress == 0:
-                users_by_progress['0-25%'] += 1
-            elif progress <= 25:
-                users_by_progress['0-25%'] += 1
-            elif progress <= 50:
-                users_by_progress['26-50%'] += 1
-            elif progress <= 75:
-                users_by_progress['51-75%'] += 1
-            elif progress < 100:
-                users_by_progress['76-99%'] += 1
-            else:
-                users_by_progress['100%'] += 1
-            
-            # Активные пользователи (есть история оценок)
-            if user_stats['scores_history']:
-                active_users += 1
-                total_attempts += len(user_stats['scores_history'])
-                all_scores.extend([s['total'] for s in user_stats['scores_history']])
-    
-    # Формируем отчет
-    text = "👥 <b>Статистика пользователей</b>\n\n"
-    text += f"📊 Всего пользователей: {total_users}\n"
-    text += f"🎯 Активных (с попытками): {active_users}\n"
-    text += f"📝 Всего попыток: {total_attempts}\n"
-    
-    if all_scores:
-        avg_score = sum(all_scores) / len(all_scores)
-        text += f"⭐ Средний балл: {avg_score:.2f}/4\n"
-    
-    text += "\n<b>Распределение по прогрессу:</b>\n"
-    for range_name, count in users_by_progress.items():
-        if count > 0:
-            emoji = '🟢' if '100%' in range_name else '🟡' if '76' in range_name else '🟠' if '51' in range_name else '🔴'
-            text += f"{emoji} {range_name}: {count} чел.\n"
-    
-    # Топ тем
-    text += "\n<b>Популярные темы:</b>\n"
-    topic_attempts = {}
-    
-    for user_id, user_data in application.user_data.items():
-        for score in user_data.get('scores_history', []):
-            topic = score.get('topic', 'Unknown')
-            topic_attempts[topic] = topic_attempts.get(topic, 0) + 1
-    
-    # Топ-5 тем
-    if topic_attempts:
-        top_topics = sorted(topic_attempts.items(), key=lambda x: x[1], reverse=True)[:5]
-        for i, (topic, attempts) in enumerate(top_topics, 1):
-            # Обрезаем длинные названия тем
-            display_topic = topic[:40] + '...' if len(topic) > 40 else topic
-            text += f"{i}. {display_topic} ({attempts} попыток)\n"
-    else:
-        text += "Нет данных о попытках\n"
-    
-    kb = InlineKeyboardMarkup([
-        [InlineKeyboardButton("📊 Активность по дням", callback_data="admin_activity")],
-        [InlineKeyboardButton("📤 Экспорт данных", callback_data="admin_export")],
-        [InlineKeyboardButton("⬅️ Назад", callback_data="start_button")]
-    ])
-    
-    await query.edit_message_text(text, reply_markup=kb, parse_mode=ParseMode.HTML)
-    return states.CHOOSING_MODE
-
-@admin_only
-async def admin_activity(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """График активности пользователей по дням."""
-    query = update.callback_query
-    await query.answer()
-    
-    # Собираем активность по дням
-    from collections import defaultdict
-    daily_activity = defaultdict(int)
-    daily_users = defaultdict(set)
-    
-    application = context.application
-    
-    for user_id, user_data in application.user_data.items():
-        for score in user_data.get('scores_history', []):
-            timestamp = score.get('timestamp')
-            if timestamp:
-                try:
-                    date = datetime.fromisoformat(timestamp).date()
-                    daily_activity[date] += 1
-                    daily_users[date].add(user_id)
-                except:
-                    pass
-    
-    # Формируем отчет
-    text = "📈 <b>Активность по дням</b>\n\n"
-    
-    if not daily_activity:
-        text += "Нет данных об активности."
-    else:
-        # Последние 14 дней
-        sorted_days = sorted(daily_activity.keys(), reverse=True)[:14]
+    # Если админ - добавляем расширенные данные
+    if admin_manager.is_admin(user_id):
+        progress_data['admin_export'] = True
+        progress_data['detailed_topics'] = {}
         
-        for date in sorted_days:
-            attempts = daily_activity[date]
-            users = len(daily_users[date])
-            
-            # Визуализация
-            bar_length = min(attempts // 2, 20)
-            bar = "▓" * bar_length + "░" * (20 - bar_length)
-            
-            text += f"<code>{date.strftime('%d.%m')} {bar}</code>\n"
-            text += f"      Попыток: {attempts}, Юзеров: {users}\n"
-        
-        # Общая статистика
-        total_days = len(daily_activity)
-        total_attempts = sum(daily_activity.values())
-        avg_daily = total_attempts / total_days if total_days > 0 else 0
-        
-        text += f"\n<b>За {total_days} дней:</b>\n"
-        text += f"📊 Всего попыток: {total_attempts}\n"
-        text += f"📈 Среднее в день: {avg_daily:.1f}\n"
-    
-    kb = InlineKeyboardMarkup([
-        [InlineKeyboardButton("👥 Статистика юзеров", callback_data="admin_stats")],
-        [InlineKeyboardButton("⬅️ Назад", callback_data="start_button")]
-    ])
-    
-    await query.edit_message_text(text, reply_markup=kb, parse_mode=ParseMode.HTML)
-    return states.CHOOSING_MODE
-
-@admin_only
-async def admin_export(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Экспорт всех данных для анализа."""
-    query = update.callback_query
-    await query.answer("Подготовка данных...")
-    
-    application = context.application
-    
-    # Создаем структуру для экспорта
-    export_data = {
-        'export_date': datetime.now().isoformat(),
-        'total_users': 0,
-        'active_users': 0,
-        'users': {}
-    }
-    
-    # Собираем все данные
-    for user_id, user_data in application.user_data.items():
-        if 'practiced_topics' in user_data:
-            export_data['total_users'] += 1
-            
-            user_stats = get_user_stats_from_data(user_data, plan_bot_data)
-            
-            # Проверяем, активен ли пользователь
-            if user_data.get('scores_history'):
-                export_data['active_users'] += 1
-            
-            export_data['users'][str(user_id)] = {
-                'practiced_topics': list(user_data.get('practiced_topics', set())),
-                'progress_percent': user_stats['progress_percent'],
-                'scores_history': user_data.get('scores_history', []),
-                'total_time_minutes': user_data.get('total_time_minutes', 0),
-                'average_score': user_stats['average_score']
+        # Добавляем детализацию по блокам для админов
+        for block_name, topics in plan_bot_data.topics_by_block.items():
+            block_data = {
+                'total': len(topics),
+                'completed': sum(1 for idx, _ in topics if idx in practiced),
+                'topics': []
             }
+            
+            for idx, topic in topics:
+                topic_data = {
+                    'index': idx,
+                    'name': topic,
+                    'completed': idx in practiced,
+                    'scores': [s for s in stats['scores_history'] if s['topic'] == topic]
+                }
+                block_data['topics'].append(topic_data)
+            
+            progress_data['detailed_topics'][block_name] = block_data
     
     # Отправляем файл
     from io import BytesIO
-    file_data = BytesIO(json.dumps(export_data, indent=2, ensure_ascii=False).encode('utf-8'))
-    file_data.name = f"task24_full_export_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
-    
-    # Удаляем старое сообщение
-    try:
-        await query.message.delete()
-    except:
-        pass
-    
-    # Получаем правильную клавиатуру для админа
-    kb = build_admin_menu_keyboard()
+    file_data = BytesIO(json.dumps(progress_data, indent=2, ensure_ascii=False).encode('utf-8'))
+    file_data.name = f"progress_task24_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
     
     await query.message.reply_document(
         document=file_data,
         caption=(
-            f"📤 Полный экспорт данных\n"
-            f"Пользователей: {export_data['total_users']}\n"
-            f"Активных: {export_data['active_users']}\n"
-            f"Дата: {datetime.now().strftime('%d.%m.%Y %H:%M')}\n\n"
-            f"Используйте кнопки ниже для навигации:"
-        ),
-        reply_markup=kb
+            f"📤 Ваш прогресс\n"
+            f"Пройдено: {stats['progress_percent']}%\n"
+            f"Средний балл: {stats['average_score']:.1f}\n"
+            + ("\n🔧 Админский экспорт с расширенными данными" if admin_manager.is_admin(user_id) else "")
+        )
     )
     
     return states.CHOOSING_MODE
-
 
 async def safe_edit_or_reply(query, text: str, reply_markup=None, parse_mode=ParseMode.HTML):
     """
