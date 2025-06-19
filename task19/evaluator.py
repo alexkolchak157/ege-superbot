@@ -1,4 +1,4 @@
-"""AI-проверка для задания 20 через YandexGPT."""
+"""AI-проверка для задания 19 через YandexGPT."""
 
 import logging
 import os
@@ -62,34 +62,34 @@ class StrictnessLevel(Enum):
     EXPERT = "Экспертный"
 
 
-class Task20AIEvaluator(BaseAIEvaluator if AI_EVALUATOR_AVAILABLE else object):
-    """AI-проверщик для задания 20 с настраиваемой строгостью."""
+class Task19AIEvaluator(BaseAIEvaluator if AI_EVALUATOR_AVAILABLE else object):
+    """AI-проверщик для задания 19 с настраиваемой строгостью."""
     
     def __init__(self, strictness: StrictnessLevel = StrictnessLevel.STANDARD):
         self.strictness = strictness
         
         if AI_EVALUATOR_AVAILABLE:
             requirements = TaskRequirements(
-                task_number=20,
-                task_name="Формулирование суждений",
+                task_number=19,
+                task_name="Примеры социальных объектов",
                 max_score=3,
                 criteria=[
                     {
                         "name": "К1",
                         "max_score": 3,
-                        "description": "Корректность суждений (по 1 баллу за каждое)"
+                        "description": "Корректность примеров (по 1 баллу за каждый)"
                     }
                 ],
-                description="Сформулируйте три суждения..."
+                description="Приведите три примера, иллюстрирующие обществоведческое положение"
             )
             super().__init__(requirements)
         else:
             self.requirements = TaskRequirements(
-                task_number=20,
-                task_name="Формулирование суждений",
+                task_number=19,
+                task_name="Примеры социальных объектов",
                 max_score=3,
-                criteria=[{"name": "К1", "max_score": 3, "description": "Корректность суждений"}],
-                description="Сформулируйте три суждения..."
+                criteria=[{"name": "К1", "max_score": 3, "description": "Корректность примеров"}],
+                description="Приведите три примера, иллюстрирующие обществоведческое положение"
             )
         
         # Инициализируем сервис если доступен
@@ -112,16 +112,16 @@ class Task20AIEvaluator(BaseAIEvaluator if AI_EVALUATOR_AVAILABLE else object):
                     config.temperature = 0.2
                     
                 self.config = config
-                logger.info(f"Task20 AI evaluator configured with {strictness.value} strictness")
+                logger.info(f"Task19 AI evaluator configured with {strictness.value} strictness")
             except Exception as e:
                 logger.error(f"Failed to configure AI service: {e}")
                 self.config = None
     
     def get_system_prompt(self) -> str:
         """Системный промпт для YandexGPT."""
-        base_prompt = """Ты - опытный эксперт ЕГЭ по обществознанию, специализирующийся на проверке задания 20.
+        base_prompt = """Ты - опытный эксперт ЕГЭ по обществознанию, специализирующийся на проверке задания 19.
 
-ВАЖНЫЕ ПРАВИЛА ДЛЯ ЗАДАНИЯ 20:
+ВАЖНЫЕ ПРАВИЛА ДЛЯ ЗАДАНИЯ 19:
 1. В отличие от задания 19, здесь НЕ нужны конкретные примеры
 2. Требуются суждения АБСТРАКТНОГО характера с элементами обобщения
 3. Суждения должны быть более широкого объёма и менее конкретного содержания
@@ -138,7 +138,7 @@ class Task20AIEvaluator(BaseAIEvaluator if AI_EVALUATOR_AVAILABLE else object):
 - Если наряду с требуемыми суждениями есть 2+ дополнительных с ошибками → 0 баллов
 - Если есть 1 дополнительное с ошибкой → минус 1 балл от фактического
 
-ЧТО СЧИТАЕТСЯ ПРАВИЛЬНЫМ СУЖДЕНИЕМ ДЛЯ ЗАДАНИЯ 20:
+ЧТО СЧИТАЕТСЯ ПРАВИЛЬНЫМ СУЖДЕНИЕМ ДЛЯ ЗАДАНИЯ 19:
 - Содержит элементы обобщения (способствует, приводит к, влияет на, обеспечивает, позволяет, создает, формирует, развивает, препятствует, ограничивает, снижает, повышает, улучшает, ухудшает, определяет, зависит от)
 - НЕ содержит конкретных примеров (дат, имён, названий конкретных стран/организаций/компаний)
 - Является распространённым предложением (не менее 5 слов)
@@ -182,7 +182,7 @@ class Task20AIEvaluator(BaseAIEvaluator if AI_EVALUATOR_AVAILABLE else object):
             return self._basic_evaluation(answer, topic)
         
         # Формируем промпт для проверки
-        evaluation_prompt = f"""Проверь ответ на задание 20 ЕГЭ.
+        evaluation_prompt = f"""Проверь ответ на задание 19 ЕГЭ.
 
 ЗАДАНИЕ: {task_text}
 
@@ -261,7 +261,7 @@ class Task20AIEvaluator(BaseAIEvaluator if AI_EVALUATOR_AVAILABLE else object):
                     return self._basic_evaluation(answer, topic)
                     
         except Exception as e:
-            logger.error(f"Error in Task20 evaluation: {e}")
+            logger.error(f"Error in Task19 evaluation: {e}")
             return self._basic_evaluation(answer, topic)
     
     def _basic_evaluation(self, answer: str, topic: str) -> EvaluationResult:
