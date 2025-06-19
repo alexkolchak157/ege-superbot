@@ -96,6 +96,7 @@ class Task19Plugin(BotPlugin):
                 
                 states.ANSWERING: [
                     MessageHandler(filters.TEXT & ~filters.COMMAND, handlers.handle_answer),
+                    MessageHandler(filters.Document.ALL, handlers.handle_answer_document_task19),
                     CallbackQueryHandler(handlers.practice_mode, pattern="^t19_practice$"),
                 ],
                 states.AWAITING_FEEDBACK: [

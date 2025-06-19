@@ -5,7 +5,7 @@ import os
 import json
 import random
 from typing import Optional, Dict, List
-
+from core.document_processor import DocumentHandlerMixin
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.constants import ParseMode
 from telegram.ext import ContextTypes
@@ -727,6 +727,41 @@ async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data['task19_result_msg_id'] = result_msg.message_id
     
     return states.CHOOSING_MODE
+
+async def handle_answer_document_task19(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработка примеров из документа для task19."""
+    
+    # Проверяем состояние
+    topic = context.user_data.get('current_topic')
+    if not topic:
+        await update.message.reply_text(
+            "❌ Ошибка: тема не выбрана."
+        )
+        return ConversationHandler.END
+    
+    # Обрабатываем документ
+    extracted_text = await DocumentHandlerMixin.handle_document_answer(
+        update, 
+        context,
+        task_name="примеры"
+    )
+    
+    if not extracted_text:
+        return states.WAITING_ANSWER
+    
+    # Валидация
+    is_valid, error_msg = DocumentHandlerMixin.validate_document_content(
+        extracted_text,
+        task_type="examples"
+    )
+    
+    if not is_valid:
+        await update.message.reply_text(f"❌ {error_msg}")
+        return states.WAITING_ANSWER
+    
+    # Передаем в обычный обработчик
+    update.message.text = extracted_text
+    return await handle_answer(update, context)
 
 async def theory_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Показ теории и советов."""
