@@ -2,6 +2,9 @@
 ipython==8.19.0
 jupyterlab==4.0.9
 
+PyPDF2==3.0.1
+python-docx==0.8.11
+
 # Documentation
 sphinx==7.2.6
 sphinx-rtd-theme==2.0.0
