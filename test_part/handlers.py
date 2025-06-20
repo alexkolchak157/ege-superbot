@@ -199,6 +199,71 @@ async def select_block(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     return states.CHOOSING_MODE
 
+async def show_progress_enhanced(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Показ прогресса с улучшенным UI."""
+    user_id = update.effective_user.id
+    
+    # Получаем статистику из БД
+    stats = await db.get_user_stats(user_id)
+    streaks = await db.get_user_streaks(user_id)
+    
+    if not stats:
+        text = MessageFormatter.format_welcome_message(
+            "тестовую часть ЕГЭ",
+            is_new_user=True
+        )
+    else:
+        # Подсчет общей статистики
+        total_correct = sum(correct for _, correct, _ in stats)
+        total_answered = sum(total for _, _, total in stats)
+        overall_percentage = (total_correct / total_answered * 100) if total_answered > 0 else 0
+        
+        # Топ темы
+        top_results = []
+        for topic, correct, total in sorted(stats, key=lambda x: x[1]/x[2] if x[2] > 0 else 0, reverse=True)[:3]:
+            percentage = (correct / total * 100) if total > 0 else 0
+            topic_name = TOPIC_NAMES.get(topic, topic)
+            top_results.append({
+                'topic': topic_name,
+                'score': correct,
+                'max_score': total
+            })
+        
+        # Форматируем сообщение
+        text = MessageFormatter.format_progress_message({
+            'total_attempts': total_answered,
+            'average_score': overall_percentage / 100 * 3,  # Преобразуем в шкалу 0-3
+            'completed': len(stats),
+            'total': len(TOPIC_NAMES),
+            'total_time': 0,  # Можно добавить подсчет времени
+            'top_results': top_results,
+            'current_average': overall_percentage,
+            'previous_average': overall_percentage - 5  # Для демонстрации тренда
+        }, "тестовой части")
+        
+        # Добавляем стрики
+        if streaks:
+            text += f"\n\n<b>🔥 Серии:</b>\n"
+            text += UniversalUIComponents.format_statistics_tree({
+                'Дней подряд': streaks.get('current_daily', 0),
+                'Рекорд дней': streaks.get('max_daily', 0),
+                'Правильных подряд': streaks.get('current_correct', 0),
+                'Рекорд правильных': streaks.get('max_correct', 0)
+            })
+    
+    # Адаптивная клавиатура
+    kb = AdaptiveKeyboards.create_progress_keyboard(
+        has_detailed_stats=bool(stats),
+        can_export=bool(stats),
+        module_code="test"
+    )
+    
+    await update.message.reply_text(
+        text,
+        reply_markup=kb,
+        parse_mode=ParseMode.HTML
+    )
+
 async def check_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Проверка ответа с прогрессом только правильных ответов."""
     user_id = update.effective_user.id
