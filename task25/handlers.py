@@ -795,30 +795,52 @@ async def handle_answer_parts(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 
 def _format_evaluation_result(result: EvaluationResult, topic: Dict) -> str:
-    """Форматирует результат проверки."""
-    feedback = f"📊 <b>Результаты проверки</b>\n\n"
-    feedback += f"<b>Тема:</b> {topic['title']}\n\n"
+    """Форматирование результата с улучшенным UI."""
+    # Подсчет общего балла
+    total_score = sum(1 for part in result.part_scores.values() if part['score'] > 0)
+    max_score = 6
     
-    # Баллы по критериям
-    feedback += "<b>Баллы по критериям:</b>\n"
-    if hasattr(result, 'scores') and result.scores:
-        for criterion, score in result.scores.items():
-            max_score = 2 if criterion == "К1" else 1 if criterion == "К2" else 3
-            feedback += f"{criterion}: {score}/{max_score}\n"
+    # Базовое сообщение
+    text = MessageFormatter.format_result_message(
+        score=total_score,
+        max_score=max_score,
+        topic=topic['title']
+    )
     
-    feedback += f"\n<b>Итого:</b> {result.total_score}/{result.max_score} баллов\n\n"
+    # Детализация по частям с визуальными элементами
+    text += "\n\n<b>📋 Оценка по частям:</b>\n"
     
-    # Обратная связь
-    if hasattr(result, 'feedback') and result.feedback:
-        feedback += f"<b>Комментарий:</b>\n{result.feedback}\n\n"
+    for part_num in range(1, 4):
+        part_key = f'part{part_num}'
+        part_result = result.part_scores.get(part_key, {})
+        part_score = part_result.get('score', 0)
+        part_max = part_result.get('max_score', 2)
+        
+        # Визуализация оценки части
+        score_visual = UniversalUIComponents.create_score_visual(
+            part_score, part_max, use_stars=True
+        )
+        
+        # Цветовой индикатор
+        color = UniversalUIComponents.get_color_for_score(part_score, part_max)
+        
+        part_names = {
+            1: "Обоснование",
+            2: "Ответ на вопрос",
+            3: "Примеры"
+        }
+        
+        text += f"\n{color} <b>Часть {part_num} ({part_names[part_num]}):</b> {score_visual}"
+        
+        # Обратная связь по части
+        if part_result.get('feedback'):
+            text += f"\n   └ <i>{part_result['feedback']}</i>"
     
-    # Предложения по улучшению
-    if hasattr(result, 'suggestions') and result.suggestions:
-        feedback += "<b>Рекомендации:</b>\n"
-        for suggestion in result.suggestions:
-            feedback += f"• {suggestion}\n"
+    # Общий комментарий AI
+    if result.ai_feedback:
+        text += f"\n\n🤖 <b>Анализ AI:</b>\n<i>{result.ai_feedback}</i>"
     
-    return feedback
+    return text
 
 
 async def handle_result_action(update: Update, context: ContextTypes.DEFAULT_TYPE):
