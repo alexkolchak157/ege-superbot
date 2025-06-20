@@ -1406,44 +1406,6 @@ async def init_task19_data():
         logger.error(f"Failed to load task19 data: {e}")
         task19_data = {"topics": [], "blocks": {}, "topics_by_block": {}}
 
-async def return_to_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Возврат в меню задания 19."""
-    query = update.callback_query
-    await query.answer()
-    
-    # Получаем статистику для отображения
-    results = context.user_data.get('task19_results', [])
-    attempts = len(results)
-    avg_score = sum(r['score'] for r in results) / attempts if attempts > 0 else 0
-    
-    text = (
-        "📝 <b>Задание 19</b>\n\n"
-        "В этом задании нужно привести примеры, иллюстрирующие "
-        "различные обществоведческие понятия и явления.\n\n"
-    )
-    
-    # Добавляем краткую статистику если есть
-    if attempts > 0:
-        text += f"📊 Ваш прогресс: {attempts} попыток, средний балл {avg_score:.1f}/3\n\n"
-    
-    text += "Выберите режим работы:"
-    
-    kb = InlineKeyboardMarkup([
-        [InlineKeyboardButton("💪 Практика", callback_data="t19_practice")],
-        [InlineKeyboardButton("📚 Теория и советы", callback_data="t19_theory")],
-        [InlineKeyboardButton("🏦 Банк примеров", callback_data="t19_examples")],
-        [InlineKeyboardButton("📊 Мой прогресс", callback_data="t19_progress")],
-        [InlineKeyboardButton("⚙️ Настройки", callback_data="t19_settings")],
-        [InlineKeyboardButton("🏠 Главное меню", callback_data="to_main_menu")]
-    ])
-    
-    await query.edit_message_text(
-        text,
-        reply_markup=kb,
-        parse_mode=ParseMode.HTML
-    )
-    
-    return states.CHOOSING_MODE
 
 async def export_results(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Экспорт результатов в файл."""
