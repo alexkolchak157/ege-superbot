@@ -240,6 +240,12 @@ class TestPartPlugin(BotPlugin):
         app.add_handler(CommandHandler("score", handlers.cmd_score), group=3)
         app.add_handler(CommandHandler("export", handlers.cmd_export_stats), group=3)
         app.add_handler(CommandHandler("report", handlers.cmd_report), group=3)
+
+        # Callback handlers for статистика и подписка
+        app.add_handler(CallbackQueryHandler(handlers.handle_detailed_report, pattern="^detailed_report$"), group=3)
+        app.add_handler(CallbackQueryHandler(handlers.handle_export_csv, pattern="^export_csv$"), group=3)
+        app.add_handler(CallbackQueryHandler(handlers.handle_work_mistakes, pattern="^work_mistakes$"), group=3)
+        app.add_handler(CallbackQueryHandler(handlers.handle_check_subscription, pattern="^check_subscription$"), group=3)
         
         # Команда отладки (только для разработки)
         app.add_handler(CommandHandler("debug_streaks", handlers.cmd_debug_streaks), group=3)

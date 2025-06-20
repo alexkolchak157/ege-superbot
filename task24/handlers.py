@@ -979,6 +979,49 @@ async def show_block_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.edit_message_text(text, reply_markup=kb, parse_mode=ParseMode.HTML)
     return states.CHOOSING_MODE
 
+
+async def show_detailed_progress(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Показывает детальную статистику по всем темам."""
+    query = update.callback_query
+    await query.answer()
+
+    practiced = context.user_data.get('practiced_topics', set())
+    lines = []
+    for idx, name in plan_bot_data.get_all_topics_list():
+        mark = '✅' if idx in practiced else '❌'
+        lines.append(f"{mark} {name}")
+
+    text = "📋 <b>Детальный прогресс</b>\n\n" + "\n".join(lines)
+    kb = InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ Назад", callback_data="show_progress")]])
+    await query.edit_message_text(text, reply_markup=kb, parse_mode=ParseMode.HTML)
+    return states.CHOOSING_MODE
+
+
+async def show_completed(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Показывает список пройденных тем."""
+    query = update.callback_query
+    await query.answer()
+
+    practiced = context.user_data.get('practiced_topics', set())
+    completed = [name for idx, name in plan_bot_data.get_all_topics_list() if idx in practiced]
+    text = "✅ <b>Пройденные темы</b>\n\n" + ("\n".join(completed) if completed else "Нет")
+    kb = InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ Назад", callback_data="show_progress")]])
+    await query.edit_message_text(text, reply_markup=kb, parse_mode=ParseMode.HTML)
+    return states.CHOOSING_MODE
+
+
+async def show_remaining(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Показывает список оставшихся тем."""
+    query = update.callback_query
+    await query.answer()
+
+    practiced = context.user_data.get('practiced_topics', set())
+    remaining = [name for idx, name in plan_bot_data.get_all_topics_list() if idx not in practiced]
+    text = "📝 <b>Оставшиеся темы</b>\n\n" + ("\n".join(remaining) if remaining else "Все темы изучены!")
+    kb = InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ Назад", callback_data="show_progress")]])
+    await query.edit_message_text(text, reply_markup=kb, parse_mode=ParseMode.HTML)
+    return states.CHOOSING_MODE
+
 async def reset_progress(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Сброс прогресса с подтверждением."""
     query = update.callback_query
