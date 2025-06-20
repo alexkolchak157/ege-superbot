@@ -12,6 +12,7 @@ from telegram.constants import ParseMode
 from telegram.ext import ContextTypes, ConversationHandler
 from core.admin_tools import admin_manager
 from core import states
+from core.universal_ui import UniversalUIComponents, AdaptiveKeyboards, MessageFormatter
 
 logger = logging.getLogger(__name__)
 
@@ -45,13 +46,6 @@ except ImportError as e:
     logger.error(f"Failed to import user_experience: {e}")
     UserProgress = None
     SmartRecommendations = None
-
-try:
-    from .ui_components import UIComponents, EnhancedKeyboards
-except ImportError as e:
-    logger.error(f"Failed to import ui_components: {e}")
-    UIComponents = None
-    EnhancedKeyboards = None
 
 async def init_task20_data():
     """Инициализация данных с кэшированием."""
@@ -236,35 +230,26 @@ async def entry_from_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     
-    # Проверяем достижения
     user_id = update.effective_user.id
-    new_achievements = await achievements_check(context, user_id)
+    context.user_data['module'] = 'task20'
     
-    text = (
-        "📝 <b>Задание 20</b>\n\n"
-        "В этом задании нужно сформулировать суждения (аргументы) "
-        "абстрактного характера с элементами обобщения.\n\n"
-        "⚠️ <b>Важно:</b> НЕ приводите конкретные примеры!\n\n"
-    )
+    # Получаем статистику пользователя
+    if UserProgress:
+        user_stats = UserProgress(context.user_data).get_stats()
+    else:
+        user_stats = {
+            'total_attempts': 0,
+            'streak': 0,
+            'weak_topics_count': 0,
+            'progress_percent': 0
+        }
     
-    # Показываем новые достижения
-    if new_achievements:
-        text += "🎉 <b>Новые достижения:</b>\n"
-        for ach in new_achievements:
-            text += f"{ach['name']} - {ach['desc']}\n"
-        text += "\n"
+    # Используем универсальное приветствие
+    is_new_user = user_stats.get('total_attempts', 0) == 0
+    text = MessageFormatter.format_welcome_message("задание 20", is_new_user)
     
-    text += "Выберите режим работы:"
-    
-    kb = InlineKeyboardMarkup([
-        [InlineKeyboardButton("💪 Практика", callback_data="t20_practice")],
-        [InlineKeyboardButton("📚 Теория и советы", callback_data="t20_theory")],
-        [InlineKeyboardButton("🏦 Банк суждений", callback_data="t20_examples")],
-        [InlineKeyboardButton("🔧 Работа над ошибками", callback_data="t20_mistakes")],
-        [InlineKeyboardButton("📊 Мой прогресс", callback_data="t20_progress")],
-        [InlineKeyboardButton("⚙️ Настройки", callback_data="t20_settings")],
-        [InlineKeyboardButton("🏠 Главное меню", callback_data="to_main_menu")]
-    ])
+    # Создаем адаптивное меню
+    kb = AdaptiveKeyboards.create_menu_keyboard(user_stats, module_code="t20")
     
     await query.edit_message_text(
         text,
@@ -710,154 +695,83 @@ async def examples_bank(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return states.CHOOSING_MODE
 
 async def my_progress(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Улучшенный показ прогресса."""
+    """Показ прогресса пользователя с улучшенной визуализацией."""
     query = update.callback_query
     await query.answer()
     
     results = context.user_data.get('task20_results', [])
-    achievements = context.user_data.get('task20_achievements', set())
     
     if not results:
-        # Красивое сообщение для новичков
-        text = """📊 <b>Ваш прогресс</b>
-
-🌟 Добро пожаловать в задание 20!
-
-Здесь вы научитесь формулировать абстрактные суждения с элементами обобщения.
-
-<b>Что вас ждёт:</b>
-• 📚 45+ тем для изучения
-• 🎯 Персональные рекомендации
-• 🏅 Система достижений
-• 📈 Детальная статистика
-
-Готовы начать? Выберите "Практика" в меню!"""
-        
+        text = MessageFormatter.format_welcome_message("задание 20", is_new_user=True)
         kb = InlineKeyboardMarkup([
             [InlineKeyboardButton("💪 Начать практику", callback_data="t20_practice")],
             [InlineKeyboardButton("📚 Сначала теорию", callback_data="t20_theory")],
             [InlineKeyboardButton("⬅️ Назад", callback_data="t20_menu")]
         ])
     else:
-        # Детальная статистика для опытных
+        # Собираем статистику
         total_attempts = len(results)
         scores = [r['score'] for r in results]
         average_score = sum(scores) / len(scores)
         unique_topics = len(set(r['topic_id'] for r in results))
         
-        # Визуальные элементы
-        if UIComponents:
-            progress_bar = UIComponents.create_progress_bar(unique_topics, 45)  # Предполагаем 45 тем
-            trend_indicator = UIComponents.create_trend_indicator(trend)
-            time_formatted = UIComponents.format_time_spent(total_time)
-        else:
-            # Fallback версии без UIComponents
-            progress_percent = int(unique_topics / 45 * 100)
-            progress_bar = f"{progress_percent}% ({unique_topics}/45)"
-            trend_indicator = "📈 Растёт" if trend == 'up' else "➡️ Стабильно"
-            hours = total_time // 60
-            mins = total_time % 60
-            time_formatted = f"{hours}ч {mins}мин" if hours > 0 else f"{total_time} мин"
-        
-        # Подсчёт времени
-        total_time = UserProgress(context.user_data).get_stats()['total_time']
-        time_formatted = UIComponents.format_time_spent(total_time)
-        
-        text = f"""📊 <b>Ваш прогресс по заданию 20</b>
-
-<b>📈 Общая статистика:</b>
-├ 📝 Выполнено заданий: {total_attempts}
-├ ⭐ Средний балл: {average_score:.2f}/3
-├ 📚 Изучено тем: {unique_topics}/45
-├ ⏱️ Время практики: {time_formatted}
-└ 📊 Тренд: {trend_indicator}
-
-<b>🎯 Прогресс по темам:</b>
-{progress_bar}
-
-<b>🏆 Лучшие результаты:</b>"""
-        
-        # Топ-3 темы
+        # Топ результаты
         topic_scores = {}
         for result in results:
             topic_id = result['topic_id']
             if topic_id not in topic_scores or result['score'] > topic_scores[topic_id]['score']:
                 topic_scores[topic_id] = {
-                    'title': result['topic_title'],
-                    'score': result['score']
+                    'topic': result.get('topic_title', 'Неизвестная тема'),
+                    'score': result['score'],
+                    'max_score': 3
                 }
         
-        top_topics = sorted(topic_scores.values(), key=lambda x: x['score'], reverse=True)[:3]
-        for i, topic in enumerate(top_topics, 1):
-            score_visual = UIComponents.create_score_visual(topic['score'])
-            text += f"\n{i}. {topic['title'][:30]}... {score_visual}"
+        top_results = sorted(topic_scores.values(), key=lambda x: x['score'], reverse=True)[:3]
         
-        # Достижения
-        if achievements:
-            text += f"\n\n🏅 <b>Получено достижений:</b> {len(achievements)}"
+        # Форматируем сообщение универсальным способом
+        text = MessageFormatter.format_progress_message({
+            'total_attempts': total_attempts,
+            'average_score': average_score,
+            'completed': unique_topics,
+            'total': len(task20_data.get('topics', [])),
+            'total_time': UserProgress(context.user_data).get_stats()['total_time'] if UserProgress else 0,
+            'top_results': top_results,
+            'current_average': average_score * 33.33,
+            'previous_average': (average_score * 33.33) - 5
+        }, "заданию 20")
         
-        # Персональные рекомендации
-        if average_score < 2:
-            text += "\n\n💡 <b>Рекомендация:</b> Изучите раздел 'Полезные конструкции' в теории"
-        elif unique_topics < 10:
-            text += "\n\n💡 <b>Рекомендация:</b> Попробуйте темы из разных блоков"
-        else:
-            text += "\n\n🌟 <b>Отличная работа!</b> Продолжайте в том же духе!"
-        
-        kb = InlineKeyboardMarkup([
-            [InlineKeyboardButton("📈 Детальная статистика", callback_data="t20_detailed_progress")],
-            [InlineKeyboardButton("🏅 Достижения", callback_data="t20_achievements")],
-            [InlineKeyboardButton("📤 Экспорт результатов", callback_data="t20_export")],
-            [InlineKeyboardButton("🔧 Работа над ошибками", callback_data="t20_mistakes")],
-            [InlineKeyboardButton("💪 Продолжить практику", callback_data="t20_practice")],
-            [InlineKeyboardButton("⬅️ Назад", callback_data="t20_menu")]
-        ])
+        kb = AdaptiveKeyboards.create_progress_keyboard(
+            has_detailed_stats=True,
+            can_export=True,
+            module_code="t20"
+        )
     
     await query.edit_message_text(
         text,
         reply_markup=kb,
         parse_mode=ParseMode.HTML
     )
+    
     return states.CHOOSING_MODE
 
-async def format_result_message(result: Dict, topic: Dict) -> str:
-    """Красивое форматирование результата проверки."""
-    if UIComponents:
-        score_visual = UIComponents.create_score_visual(topic['score'])
-    else:
-        score_visual = f"{topic['score']}/3"
-    score_visual = UIComponents.create_score_visual(result.total_score)
+def _format_evaluation_result(result: EvaluationResult, topic: Dict) -> str:
+    """Форматирование результата с использованием универсальных компонентов."""
+    # Используем универсальный форматтер
+    text = MessageFormatter.format_result_message(
+        score=result.total_score,
+        max_score=3,
+        topic=topic['title']
+    )
     
-    # Заголовок в зависимости от результата
-    if result.total_score == 3:
-        header = "🎉 <b>Отличный результат!</b>"
-        emoji = "🌟"
-    elif result.total_score == 2:
-        header = "👍 <b>Хороший результат!</b>"
-        emoji = "✅"
-    elif result.total_score == 1:
-        header = "📝 <b>Есть над чем поработать</b>"
-        emoji = "💡"
-    else:
-        header = "❌ <b>Нужно больше практики</b>"
-        emoji = "📚"
-    
-    text = f"""{header}
-
-<b>Тема:</b> {topic['title']}
-<b>Результат:</b> {score_visual} ({result.total_score}/3 балла)
-
-{emoji} <b>Детальный анализ:</b>
-"""
-    
-    # Красивое форматирование критериев
+    # Добавляем детальный анализ
+    text += "\n"
     for i, criterion in enumerate(result.criteria_scores, 1):
         if criterion.met:
             status = "✅"
-            color = "🟢"
+            color = UniversalUIComponents.COLOR_INDICATORS['green']
         else:
             status = "❌"
-            color = "🔴"
+            color = UniversalUIComponents.COLOR_INDICATORS['red']
         
         text += f"\n{color} <b>Критерий {i}:</b> {status}"
         if criterion.feedback:
@@ -866,16 +780,6 @@ async def format_result_message(result: Dict, topic: Dict) -> str:
     # Общий комментарий
     if result.general_feedback:
         text += f"\n\n💬 <b>Комментарий эксперта:</b>\n<i>{result.general_feedback}</i>"
-    
-    # Рекомендации в зависимости от оценки
-    if result.total_score < 3:
-        text += "\n\n💡 <b>Совет:</b> "
-        if result.total_score == 0:
-            text += "Изучите примеры в 'Банке суждений' для этой темы"
-        elif result.total_score == 1:
-            text += "Обратите внимание на использование обобщающих конструкций"
-        else:
-            text += "Проверьте, все ли суждения носят абстрактный характер"
     
     return text
 
@@ -1023,7 +927,10 @@ async def select_block(update: Update, context: ContextTypes.DEFAULT_TYPE):
             ]])
         )
         return states.CHOOSING_MODE
-    
+    progress_bar = UniversalUIComponents.create_progress_bar(
+        completed, len(topics), width=5, show_percentage=False
+    )
+    color = UniversalUIComponents.get_color_for_score(completed, len(topics))
     text = "📚 <b>Выберите блок тем:</b>"
     
     kb_buttons = []
@@ -1457,12 +1364,14 @@ async def detailed_progress(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     ha='center', va='bottom')
         
         # График 3: Статистика по блокам
-        blocks_data = {}
-        for result in results:
-            block = result['block']
-            if block not in blocks_data:
-                blocks_data[block] = []
-            blocks_data[block].append(result['score'])
+        for block_name, topics in task20_data.get('topics_by_block', {}).items():
+            completed = sum(1 for t in topics if t['id'] in completed_ids)
+            total = len(topics)
+    
+            progress_bar = UniversalUIComponents.create_progress_bar(completed, total)
+            color = UniversalUIComponents.get_color_for_score(completed, total)
+    
+            text += f"\n{color} <b>{block_name}:</b>\n{progress_bar}\n"
         
         block_names = list(blocks_data.keys())[:5]  # Максимум 5 блоков
         block_avgs = [sum(scores)/len(scores) for block, scores in blocks_data.items()][:5]
@@ -1917,12 +1826,11 @@ async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
             for ach in new_achievements:
                 feedback += f"{ach['name']} - {ach['desc']}\n"
         
-        kb = InlineKeyboardMarkup([
-            [InlineKeyboardButton("🔄 Попробовать снова", callback_data="t20_retry")],
-            [InlineKeyboardButton("📝 Новая тема", callback_data="t20_new_topic")],
-            [InlineKeyboardButton("📊 Мой прогресс", callback_data="t20_progress")],
-            [InlineKeyboardButton("⬅️ В меню", callback_data="t20_menu")]
-        ])
+        kb = AdaptiveKeyboards.create_result_keyboard(
+            score=score,
+            max_score=3,
+            module_code="t20"
+        )
         
         await update.message.reply_text(
             feedback,
