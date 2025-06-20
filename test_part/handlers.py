@@ -1265,18 +1265,48 @@ async def cmd_debug_streaks(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def handle_detailed_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Callback: отправляет детальный отчёт о прогрессе."""
+    """Детальный отчет по темам."""
     query = update.callback_query
     await query.answer()
-
-    user_id = query.from_user.id
-    try:
-        report = await utils.generate_detailed_report(user_id)
-        await query.edit_message_text(report, parse_mode=ParseMode.HTML)
-    except Exception as e:
-        logger.error(f"Ошибка генерации отчёта для user {user_id}: {e}")
-        await query.edit_message_text("Не удалось сформировать отчёт.")
-
+    
+    user_id = update.effective_user.id
+    stats = await db.get_user_stats(user_id)
+    
+    if not stats:
+        await query.answer("Нет данных для отчета", show_alert=True)
+        return ConversationHandler.END
+    
+    # Группируем по темам
+    by_topic = {}
+    for topic, correct, total in stats:
+        topic_name = TOPIC_NAMES.get(topic, topic)
+        percentage = (correct / total * 100) if total > 0 else 0
+        by_topic[topic_name] = {
+            'correct': correct,
+            'total': total,
+            'percentage': percentage
+        }
+    
+    # Сортируем по проценту
+    sorted_topics = sorted(by_topic.items(), key=lambda x: x[1]['percentage'], reverse=True)
+    
+    text = "📊 <b>Детальный отчет по темам</b>\n\n"
+    
+    for topic, data in sorted_topics[:10]:  # Топ 10
+        progress_bar = UniversalUIComponents.create_progress_bar(
+            data['correct'], data['total'], width=10
+        )
+        color = UniversalUIComponents.get_color_for_score(data['correct'], data['total'])
+        
+        text += f"{color} <b>{topic}</b>\n"
+        text += f"   {progress_bar}\n"
+        text += f"   Правильно: {data['correct']}/{data['total']}\n\n"
+    
+    kb = InlineKeyboardMarkup([[
+        InlineKeyboardButton("⬅️ Назад", callback_data="back_to_stat_menu")
+    ]])
+    
+    await query.edit_message_text(text, reply_markup=kb, parse_mode=ParseMode.HTML)
     return ConversationHandler.END
 
 
