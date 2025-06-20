@@ -985,11 +985,28 @@ async def show_completed(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Показывает список пройденных тем."""
     query = update.callback_query
     await query.answer()
-
-    practiced = context.user_data.get('practiced_topics', set())
-    completed = [name for idx, name in plan_bot_data.get_all_topics_list() if idx in practiced]
-    text = "✅ <b>Пройденные темы</b>\n\n" + ("\n".join(completed) if completed else "Нет")
-    kb = InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ Назад", callback_data="show_progress")]])
+    
+    scores_history = context.user_data.get('scores_history', [])
+    
+    if not scores_history:
+        text = "📋 <b>Выполненные темы</b>\n\nВы еще не выполняли задания."
+    else:
+        text = "📋 <b>Выполненные темы</b>\n\n"
+        
+        for score_data in scores_history[-10:]:  # Последние 10
+            score = score_data['total']
+            topic = score_data['topic']
+            
+            # Используем универсальную визуализацию
+            score_visual = UniversalUIComponents.create_score_visual(score, 4)
+            color = UniversalUIComponents.get_color_for_score(score, 4)
+            
+            text += f"{color} {topic}: {score_visual}\n"
+    
+    kb = InlineKeyboardMarkup([[
+        InlineKeyboardButton("⬅️ Назад", callback_data="show_progress")
+    ]])
+    
     await query.edit_message_text(text, reply_markup=kb, parse_mode=ParseMode.HTML)
     return states.CHOOSING_MODE
 
@@ -1182,8 +1199,8 @@ async def search_topics(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     return states.AWAITING_SEARCH
 
-def _format_evaluation_feedback_enhanced(k1: int, k2: int, topic_name: str) -> str:
-    """Форматирование отзыва с улучшенным UI."""
+def _format_evaluation_feedback(k1: int, k2: int, missing: list, topic_name: str) -> str:
+    """Форматирует отзыв о плане используя универсальные компоненты."""
     total_score = k1 + k2
     
     # Используем универсальное форматирование
@@ -1196,6 +1213,12 @@ def _format_evaluation_feedback_enhanced(k1: int, k2: int, topic_name: str) -> s
             "К2 (Корректность)": f"{k2}/1"
         }
     )
+    
+    # Добавляем специфичные для task24 детали
+    if k1 < 3 and missing:
+        text += "\n\n📝 <b>Пропущенные пункты:</b>"
+        for item in missing:
+            text += f"\n• {item}"
     
     return text
 

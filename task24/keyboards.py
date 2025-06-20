@@ -186,13 +186,10 @@ def build_search_keyboard() -> InlineKeyboardMarkup:
 
 def build_feedback_keyboard() -> InlineKeyboardMarkup:
     """Создает клавиатуру после проверки плана."""
-    keyboard = [
-        [
-            InlineKeyboardButton("🔄 Ещё тема", callback_data="next_topic"),
-            InlineKeyboardButton("📝 Меню планов", callback_data="back_main")
-        ],
-        [
-            InlineKeyboardButton("🏠 Главное меню", callback_data="to_main_menu")
-        ]
-    ]
-    return InlineKeyboardMarkup(keyboard)
+    # Использовать адаптивную клавиатуру
+    # score нужно получить из контекста
+    return AdaptiveKeyboards.create_result_keyboard(
+        score=context.user_data.get('last_score', 0),
+        max_score=4,
+        module_code="task24"
+    )
