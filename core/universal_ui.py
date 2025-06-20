@@ -217,7 +217,18 @@ class UniversalUIComponents:
             return cls.COLOR_INDICATORS['blue']
         else:
             return cls.COLOR_INDICATORS['red']
-
+    
+    @classmethod
+    def create_fancy_header(cls, title: str, subtitle: str = None) -> str:
+        """Создает красивый заголовок с рамкой"""
+        header = f"╔{'═' * (len(title) + 4)}╗\n"
+        header += f"║  {title}  ║\n"
+        header += f"╚{'═' * (len(title) + 4)}╝"
+        
+        if subtitle:
+            header += f"\n\n{subtitle}"
+        
+        return header
 
 class AdaptiveKeyboards:
     """Адаптивные клавиатуры, меняющиеся в зависимости от контекста."""
