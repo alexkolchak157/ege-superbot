@@ -86,8 +86,14 @@ async def show_streak_notification(update: Update, context: ContextTypes.DEFAULT
         
         # Автоудаление через 10 секунд
         if context.job_queue:
+            async def delete_msg(ctx: ContextTypes.DEFAULT_TYPE) -> None:
+                try:
+                    await msg.delete()
+                except Exception:
+                    pass
+
             context.job_queue.run_once(
-                lambda ctx: msg.delete(),
+                delete_msg,
                 when=10,
                 name=f"delete_streak_{msg.message_id}"
             )
