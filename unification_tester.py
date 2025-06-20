@@ -56,18 +56,26 @@ class UnificationTester:
         with open(filepath, 'r', encoding='utf-8') as f:
             content = f.read()
         
-        old_patterns = [
-            'UIComponents',
-            'EnhancedKeyboards',
+        # Используем регулярные выражения для точного совпадения названий
+        regex_patterns = [
+            ('UIComponents', re.compile(r'\bUIComponents\b')),
+            ('EnhancedKeyboards', re.compile(r'\bEnhancedKeyboards\b')),
+        ]
+
+        string_patterns = [
             'from .ui_components',
             'from .user_interface',
             '█' * 10,  # Старые прогресс-бары
             '▓' * 10,
         ]
-        
+
         found = []
-        for pattern in old_patterns:
-            if pattern in content and pattern != 'UniversalUIComponents':
+        for label, regex in regex_patterns:
+            if regex.search(content):
+                found.append(label)
+
+        for pattern in string_patterns:
+            if pattern in content:
                 found.append(pattern)
         
         return found
