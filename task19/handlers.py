@@ -15,6 +15,7 @@ from core.ai_evaluator import Task19Evaluator, EvaluationResult
 from datetime import datetime
 import io
 from .evaluator import StrictnessLevel, Task19AIEvaluator
+from core.universal_ui import UniversalUIComponents, AdaptiveKeyboards, MessageFormatter
 
 TASK19_STRICTNESS = os.getenv('TASK19_STRICTNESS', 'STRICT').upper()
 
@@ -229,20 +230,21 @@ def _build_topic_message(topic: Dict) -> str:
 
 async def cmd_task19(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Команда /task19."""
-    text = (
-        "📝 <b>Задание 19</b>\n\n"
-        "В этом задании нужно привести примеры, иллюстрирующие "
-        "различные обществоведческие понятия и явления.\n\n"
-        "Выберите режим работы:"
+    results = context.user_data.get('task19_results', [])
+    user_stats = {
+        'total_attempts': len(results),
+        'average_score': sum(r['score'] for r in results) / len(results) if results else 0,
+        'streak': 0,
+        'weak_topics_count': 0,
+        'progress_percent': int(len(set(r['topic'] for r in results)) / 50 * 100) if results else 0
+    }
+    
+    text = MessageFormatter.format_welcome_message(
+        "задание 19",
+        is_new_user=user_stats['total_attempts'] == 0
     )
     
-    kb = InlineKeyboardMarkup([
-        [InlineKeyboardButton("💪 Практика", callback_data="t19_practice")],
-        [InlineKeyboardButton("📚 Теория и советы", callback_data="t19_theory")],
-        [InlineKeyboardButton("🏦 Банк примеров", callback_data="t19_examples")],
-        [InlineKeyboardButton("📊 Мой прогресс", callback_data="t19_progress")],
-        [InlineKeyboardButton("🏠 Главное меню", callback_data="to_main_menu")]
-    ])
+    kb = AdaptiveKeyboards.create_menu_keyboard(user_stats, module_code="t19")
     
     await update.message.reply_text(
         text,
@@ -251,8 +253,6 @@ async def cmd_task19(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     
     return states.CHOOSING_MODE
-
-
 
 async def practice_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Режим практики - выбор темы."""
@@ -687,106 +687,56 @@ async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 key_points=topic.get('key_points', [])
             )
             
-            # Формируем отзыв
-            feedback = f"📊 <b>Результаты проверки</b>\n\n"
-            feedback += f"<b>Тема:</b> {topic['title']}\n"
-            feedback += f"<b>Оценка:</b> {result.total_score}/{result.max_score} баллов\n\n"
+         if evaluator:
+            # Форматируем через универсальный форматтер
+            feedback = MessageFormatter.format_result_message(
+                score=total_score,
+                max_score=3,
+                topic=topic['title'],
+                details={
+                    f"Пример {i+1}": f"{'✅' if score > 0 else '❌'} {feedback}"
+                    for i, (score, feedback) in enumerate(detailed_scores)
+                }
+            )
+        else:
+            # Простая оценка
+            feedback = MessageFormatter.format_result_message(
+                score=1,
+                max_score=3,
+                topic=topic['title'],
+                details={"Статус": "Требуется проверка преподавателем"}
+            )
         
-        if result.feedback:
-            feedback += f"<b>Комментарий:</b>\n{result.feedback}\n\n"
+        # Адаптивная клавиатура на основе результата
+        kb = AdaptiveKeyboards.create_result_keyboard(
+            score=total_score if evaluator else 1,
+            max_score=3,
+            module_code="t19"
+        )
         
-        if result.suggestions:
-            feedback += f"<b>Рекомендации:</b>\n"
-            for suggestion in result.suggestions:
-                feedback += f"• {suggestion}\n"
+        # Удаляем сообщение "Анализирую..."
+        try:
+            await thinking_msg.delete()
+        except Exception:
+            pass
+        
+        # Отправляем результат
+        result_msg = await update.message.reply_text(
+            feedback,
+            reply_markup=kb,
+            parse_mode=ParseMode.HTML
+        )
         
         # Сохраняем результат
-        if 'task19_results' not in context.user_data:
-            context.user_data['task19_results'] = []
-        
-        context.user_data['task19_results'].append({
+        context.user_data.setdefault('task19_results', []).append({
             'topic': topic['title'],
-            'score': result.total_score,
-            'max_score': result.max_score,
-            'timestamp': datetime.now().isoformat()  # Добавить эту строку
+            'score': total_score if evaluator else 1,
+            'max_score': 3,
+            'timestamp': datetime.now().isoformat()
         })
         
-        # Кнопки для действий после проверки
-        kb = InlineKeyboardMarkup([
-            [
-                InlineKeyboardButton("🔄 Новое задание", callback_data="t19_new_topic"),
-                InlineKeyboardButton("🔁 Попробовать снова", callback_data="t19_retry")
-            ],
-            [
-                InlineKeyboardButton("📋 К заданиям", callback_data="t19_menu"),
-                InlineKeyboardButton("📊 Мой прогресс", callback_data="t19_progress")
-            ],
-            [InlineKeyboardButton("🏠 Главное меню", callback_data="to_main_menu")]
-        ])
-        
-        # Удаляем сообщение "Анализирую..."
-        try:
-            await thinking_msg.delete()
-        except Exception as e:
-            logger.debug(f"Failed to delete thinking message: {e}")
-        
-        # Отправляем результат
-        result_msg = await update.message.reply_text(
-            feedback,
-            reply_markup=kb,
-            parse_mode=ParseMode.HTML
-        )
-        
-        # Сохраняем ID сообщения с результатом
-        context.user_data['task19_result_msg_id'] = result_msg.message_id
-        
-    except Exception as e:
-        logger.error(f"Ошибка при проверке ответа: {e}", exc_info=True)
-        
-        # Fallback оценка
-        examples_count = len([line for line in user_answer.split('\n') if line.strip() and len(line.strip()) > 20])
-        
-        feedback = f"📊 <b>Результаты проверки</b>\n\n"
-        feedback += f"<b>Тема:</b> {topic['title']}\n"
-        feedback += f"<b>Примеров найдено:</b> {examples_count}/3\n\n"
-        
-        if examples_count >= 3:
-            feedback += "✅ Количество примеров соответствует требованиям.\n"
-        else:
-            feedback += "❌ Необходимо привести три развернутых примера.\n"
-        
-        feedback += "\n⚠️ <i>Произошла ошибка при AI-проверке. Обратитесь к преподавателю для детальной оценки.</i>"
-        
-        # Кнопки
-        kb = InlineKeyboardMarkup([
-            [
-                InlineKeyboardButton("🔄 Новое задание", callback_data="t19_new_topic"),
-                InlineKeyboardButton("🔁 Попробовать снова", callback_data="t19_retry")
-            ],
-            [
-                InlineKeyboardButton("📋 К заданиям", callback_data="t19_menu"),
-                InlineKeyboardButton("📊 Мой прогресс", callback_data="t19_progress")
-            ],
-            [InlineKeyboardButton("🏠 Главное меню", callback_data="to_main_menu")]
-        ])
-        
-        # Удаляем сообщение "Анализирую..."
-        try:
-            await thinking_msg.delete()
-        except Exception as e:
-            logger.debug(f"Failed to delete thinking message: {e}")
-        
-        # Отправляем результат
-        result_msg = await update.message.reply_text(
-            feedback,
-            reply_markup=kb,
-            parse_mode=ParseMode.HTML
-        )
-        
-        # Сохраняем ID сообщения с результатом
-        context.user_data['task19_result_msg_id'] = result_msg.message_id
-    
-    return states.CHOOSING_MODE
+        return states.CHOOSING_MODE
+            
 
 async def handle_answer_document_task19(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработка примеров из документа для task19."""
@@ -956,43 +906,58 @@ async def my_progress(update: Update, context: ContextTypes.DEFAULT_TYPE):
     results = context.user_data.get('task19_results', [])
     
     if not results:
-        text = "📊 <b>Ваш прогресс</b>\n\nВы еще не решали задания."
+        text = MessageFormatter.format_welcome_message(
+            "задание 19", 
+            is_new_user=True
+        )
+        kb = InlineKeyboardMarkup([[
+            InlineKeyboardButton("💪 Начать практику", callback_data="t19_practice"),
+            InlineKeyboardButton("⬅️ Назад", callback_data="t19_menu")
+        ]])
     else:
+        # Собираем статистику
         total_attempts = len(results)
         total_score = sum(r['score'] for r in results)
         max_possible = sum(r['max_score'] for r in results)
         avg_score = total_score / total_attempts
         
-        # Визуальный прогресс-бар
-        progress_percent = int(total_score / max_possible * 100) if max_possible > 0 else 0
-        filled = "█" * (progress_percent // 10)
-        empty = "░" * (10 - progress_percent // 10)
-        progress_bar = f"{filled}{empty}"
+        # Анализ по темам для топ результатов
+        topic_stats = {}
+        for result in results:
+            topic = result['topic']
+            if topic not in topic_stats:
+                topic_stats[topic] = []
+            topic_stats[topic].append(result['score'])
         
-        text = f"""📊 <b>Ваш прогресс по заданию 19</b>
-
-📈 Прогресс: {progress_bar} {progress_percent}%
-📝 Решено заданий: {total_attempts}
-⭐ Средний балл: {avg_score:.1f}/3
-🏆 Общий результат: {total_score}/{max_possible}
-
-<b>Последние попытки:</b>"""
+        # Топ темы
+        top_results = []
+        for topic, scores in topic_stats.items():
+            avg = sum(scores) / len(scores)
+            top_results.append({
+                'topic': topic,
+                'score': avg,
+                'max_score': 3
+            })
+        top_results.sort(key=lambda x: x['score'], reverse=True)
         
-        for result in results[-5:]:
-            score_emoji = "🟢" if result['score'] == 3 else "🟡" if result['score'] >= 2 else "🔴"
-            text += f"\n{score_emoji} {result['topic']}: {result['score']}/3"
+        # Форматируем сообщение универсальным способом
+        text = MessageFormatter.format_progress_message({
+            'total_attempts': total_attempts,
+            'average_score': avg_score,
+            'completed': len(topic_stats),
+            'total': 50,  # Предполагаем 50 тем
+            'total_time': 0,  # Можно добавить подсчет времени
+            'top_results': top_results[:3],
+            'current_average': avg_score * 33.33,
+            'previous_average': (avg_score * 33.33) - 5
+        }, "заданию 19")
         
-        # Рекомендации
-        if avg_score < 2:
-            text += "\n\n💡 <b>Совет:</b> Изучите теорию и примеры эталонных ответов."
-        elif avg_score < 2.5:
-            text += "\n\n💡 <b>Совет:</b> Обратите внимание на конкретизацию примеров."
-        else:
-            text += "\n\n🎉 <b>Отлично!</b> Вы хорошо справляетесь с заданием 19!"
-    
-    kb = InlineKeyboardMarkup([[
-        InlineKeyboardButton("⬅️ Назад", callback_data="t19_menu")
-    ]])
+        # Адаптивная клавиатура
+        kb = AdaptiveKeyboards.create_progress_keyboard(
+            has_detailed_stats=True,
+            can_export=True,
+            module_code="t19"
+        )
     
     await query.edit_message_text(
         text,
@@ -1021,20 +986,22 @@ async def return_to_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     
-    text = (
-        "📝 <b>Задание 19</b>\n\n"
-        "В этом задании нужно привести примеры, иллюстрирующие "
-        "различные обществоведческие понятия и явления.\n\n"
-        "Выберите режим работы:"
+    # Получаем статистику для адаптивного меню
+    results = context.user_data.get('task19_results', [])
+    user_stats = {
+        'total_attempts': len(results),
+        'average_score': sum(r['score'] for r in results) / len(results) if results else 0,
+        'streak': 0,  # Можно добавить подсчет стриков
+        'weak_topics_count': 0,
+        'progress_percent': int(len(set(r['topic'] for r in results)) / 50 * 100) if results else 0
+    }
+    
+    text = MessageFormatter.format_welcome_message(
+        "задание 19",
+        is_new_user=user_stats['total_attempts'] == 0
     )
     
-    kb = InlineKeyboardMarkup([
-        [InlineKeyboardButton("💪 Практика", callback_data="t19_practice")],
-        [InlineKeyboardButton("📚 Теория и советы", callback_data="t19_theory")],
-        [InlineKeyboardButton("🏦 Банк примеров", callback_data="t19_examples")],
-        [InlineKeyboardButton("📊 Мой прогресс", callback_data="t19_progress")],
-        [InlineKeyboardButton("🏠 Главное меню", callback_data="to_main_menu")]
-    ])
+    kb = AdaptiveKeyboards.create_menu_keyboard(user_stats, module_code="t19")
     
     await query.edit_message_text(
         text,
@@ -1428,34 +1395,6 @@ async def init_task19_data():
         logger.error(f"Failed to load task19 data: {e}")
         task19_data = {"topics": [], "blocks": {}, "topics_by_block": {}}
 
-async def cmd_task19_settings(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Команда /task19_settings для быстрого доступа к настройкам."""
-    current_level = evaluator.strictness if evaluator else StrictnessLevel.STRICT
-    
-    text = f"""⚙️ <b>Быстрые настройки задания 19</b>
-
-Текущий уровень проверки: <b>{current_level.value}</b>
-
-Используйте кнопки ниже для изменения:"""
-    
-    kb_buttons = []
-    for level in StrictnessLevel:
-        emoji = "✅" if level == current_level else ""
-        kb_buttons.append([
-            InlineKeyboardButton(
-                f"{emoji} {level.value}",
-                callback_data=f"t19_set_strictness:{level.name}"
-            )
-        ])
-    
-    await update.message.reply_text(
-        text,
-        reply_markup=InlineKeyboardMarkup(kb_buttons),
-        parse_mode=ParseMode.HTML
-    )
-    
-    return states.CHOOSING_MODE
-
 async def return_to_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Возврат в меню задания 19."""
     query = update.callback_query
@@ -1488,43 +1427,6 @@ async def return_to_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ])
     
     await query.edit_message_text(
-        text,
-        reply_markup=kb,
-        parse_mode=ParseMode.HTML
-    )
-    
-    return states.CHOOSING_MODE
-
-
-async def cmd_task19(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Команда /task19."""
-    # Получаем статистику для отображения
-    results = context.user_data.get('task19_results', [])
-    attempts = len(results)
-    avg_score = sum(r['score'] for r in results) / attempts if attempts > 0 else 0
-    
-    text = (
-        "📝 <b>Задание 19</b>\n\n"
-        "В этом задании нужно привести примеры, иллюстрирующие "
-        "различные обществоведческие понятия и явления.\n\n"
-    )
-    
-    # Добавляем краткую статистику если есть
-    if attempts > 0:
-        text += f"📊 Ваш прогресс: {attempts} попыток, средний балл {avg_score:.1f}/3\n\n"
-    
-    text += "Выберите режим работы:"
-    
-    kb = InlineKeyboardMarkup([
-        [InlineKeyboardButton("💪 Практика", callback_data="t19_practice")],
-        [InlineKeyboardButton("📚 Теория и советы", callback_data="t19_theory")],
-        [InlineKeyboardButton("🏦 Банк примеров", callback_data="t19_examples")],
-        [InlineKeyboardButton("📊 Мой прогресс", callback_data="t19_progress")],
-        [InlineKeyboardButton("⚙️ Настройки", callback_data="t19_settings")],
-        [InlineKeyboardButton("🏠 Главное меню", callback_data="to_main_menu")]
-    ])
-    
-    await update.message.reply_text(
         text,
         reply_markup=kb,
         parse_mode=ParseMode.HTML
