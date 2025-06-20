@@ -1188,11 +1188,14 @@ async def show_example_topic(query, context: ContextTypes.DEFAULT_TYPE, topic_id
     )
 
 async def handle_example_navigation(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Навигация по примерам."""
+    """Навигация по примерам ответов."""
     query = update.callback_query
     await query.answer()
     
-    topic_idx = int(query.data.split(":")[1])
+    _, _, topic_idx = query.data.split(":")
+    topic_idx = int(topic_idx)
+    
+    # Вызываем существующую функцию show_example_topic
     await show_example_topic(query, context, topic_idx)
     return states.CHOOSING_MODE
 
@@ -1426,6 +1429,11 @@ async def noop(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer("🔜 Функция в разработке")
     return states.CHOOSING_MODE
 
+async def handle_noop(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Пустой обработчик для информационных кнопок."""
+    query = update.callback_query
+    await query.answer()
+    return None
 
 # Дополнительные обработчики...
 async def list_topics(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -2899,7 +2907,7 @@ def register_task25_handlers(app):
     
     # После ответа
     app.add_handler(CallbackQueryHandler(handle_retry, pattern="^t25_retry$"))
-    app.add_handler(CallbackQueryHandler(handle_new_topic, pattern="^t25_new_topic$"))
+    app.add_handler(CallbackQueryHandler(handle_new_topic, pattern="^t25_new$"))
     app.add_handler(CallbackQueryHandler(handle_result_action, pattern="^t25_result_"))
     
     # Прогресс и статистика

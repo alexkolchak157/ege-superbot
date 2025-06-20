@@ -123,7 +123,7 @@ class Task25Plugin(BotPlugin):
                 
                 states.AWAITING_FEEDBACK: [
                     CallbackQueryHandler(handlers.handle_result_action, pattern="^t25_retry$"),
-                    CallbackQueryHandler(handlers.handle_result_action, pattern="^t25_new_topic$"),
+                    CallbackQueryHandler(handlers.handle_result_action, pattern="^t25_new$"),
                     CallbackQueryHandler(handlers.my_progress, pattern="^t25_progress$"),
                     CallbackQueryHandler(handlers.return_to_menu, pattern="^t25_menu$"),
                     CallbackQueryHandler(handlers.back_to_main_menu, pattern="^to_main_menu$"),
