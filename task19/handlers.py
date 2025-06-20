@@ -504,6 +504,72 @@ async def select_topic(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     return states.ANSWERING
 
+async def show_progress_enhanced(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Показ прогресса с улучшенным UI."""
+    query = update.callback_query
+    await query.answer()
+    
+    results = context.user_data.get('task19_results', [])
+    
+    if not results:
+        text = MessageFormatter.format_welcome_message(
+            "задание 19", 
+            is_new_user=True
+        )
+        kb = InlineKeyboardMarkup([[
+            InlineKeyboardButton("💪 Начать практику", callback_data="t19_practice"),
+            InlineKeyboardButton("⬅️ Назад", callback_data="t19_menu")
+        ]])
+    else:
+        # Собираем статистику
+        total_attempts = len(results)
+        total_score = sum(r['score'] for r in results)
+        max_possible = sum(r['max_score'] for r in results)
+        avg_score = total_score / total_attempts
+        
+        # Анализ по темам
+        topic_stats = {}
+        for result in results:
+            topic = result['topic']
+            if topic not in topic_stats:
+                topic_stats[topic] = []
+            topic_stats[topic].append(result['score'])
+        
+        # Топ темы
+        top_results = []
+        for topic, scores in topic_stats.items():
+            avg = sum(scores) / len(scores)
+            top_results.append({
+                'topic': topic,
+                'score': avg,
+                'max_score': 3
+            })
+        top_results.sort(key=lambda x: x['score'], reverse=True)
+        
+        # Форматируем сообщение
+        text = MessageFormatter.format_progress_message({
+            'total_attempts': total_attempts,
+            'average_score': avg_score,
+            'completed': len(topic_stats),
+            'total': 50,  # Предполагаем 50 тем
+            'total_time': 0,  # Добавить подсчет времени
+            'top_results': top_results[:3]
+        }, "заданию 19")
+        
+        # Клавиатура прогресса
+        kb = AdaptiveKeyboards.create_progress_keyboard(
+            has_detailed_stats=True,
+            can_export=True,
+            module_code="t19"
+        )
+    
+    await query.edit_message_text(
+        text,
+        reply_markup=kb,
+        parse_mode=ParseMode.HTML
+    )
+    return states.CHOOSING_MODE
+
 async def choose_topic(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработка выбора темы."""
     query = update.callback_query
