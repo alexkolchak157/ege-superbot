@@ -1703,7 +1703,7 @@ async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработка ответа пользователя с AI-проверкой."""
     user_answer = update.message.text
     topic = context.user_data.get('current_topic')
-    user_id = update.effective_user.id  # ← ДОБАВИТЬ ЭТУ СТРОКУ ЗДЕСЬ
+    user_id = update.effective_user.id
     
     # Отладочное логирование
     logger.info(f"handle_answer called, evaluator = {evaluator}")

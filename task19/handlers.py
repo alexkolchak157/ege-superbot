@@ -200,7 +200,7 @@ async def entry_from_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("📚 Теория и советы", callback_data="t19_theory")],
         [InlineKeyboardButton("🏦 Банк примеров", callback_data="t19_examples")],
         [InlineKeyboardButton("📊 Мой прогресс", callback_data="t19_progress")],
-        [InlineKeyboardButton("⚙️ Настройки", callback_data="t19_settings")],  # ДОБАВИТЬ ЭТУ СТРОКУ
+        [InlineKeyboardButton("⚙️ Настройки", callback_data="t19_settings")],
         [InlineKeyboardButton("🏠 Главное меню", callback_data="to_main_menu")]
     ])
     
