@@ -723,7 +723,11 @@ async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Отправляем результат
         result_msg = await update.message.reply_text(
             feedback,
-            reply_markup=kb,
+            kb = AdaptiveKeyboards.create_result_keyboard(
+                score=total_score if evaluator else 1,
+                max_score=3,
+                module_code="t19"
+            )
             parse_mode=ParseMode.HTML
         )
         
@@ -862,17 +866,24 @@ async def bank_navigation(update: Update, context: ContextTypes.DEFAULT_TYPE):
     topics = task19_data.get('topics', [])
     
     if current_idx >= len(topics):
-        current_idx = 0  # Возвращаемся к первой теме
+        current_idx = 0
     
     topic = topics[current_idx]
     
-    text = f"📚 <b>Банк примеров</b> ({current_idx + 1}/{len(topics)})\n\n"
+    # Визуальный прогресс
+    progress_bar = UniversalUIComponents.create_progress_bar(
+        current_idx + 1, len(topics), width=20, show_percentage=True
+    )
+    
+    text = f"📚 <b>Банк примеров</b>\n{progress_bar}\n\n"
     text += f"<b>Тема:</b> {topic['title']}\n"
     text += f"<b>Задание:</b> {topic['task_text']}\n\n"
     text += "<b>Эталонные примеры:</b>\n\n"
     
     for i, example in enumerate(topic.get('example_answers', []), 1):
-        text += f"{i}. <b>{example['type']}</b>\n"
+        # Добавляем визуальные элементы для примеров
+        color = UniversalUIComponents.COLOR_INDICATORS['green']
+        text += f"{color} <b>{example['type']}</b>\n"
         text += f"   {example['example']}\n\n"
     
     # Навигация
@@ -1016,7 +1027,7 @@ async def handle_result_action(update: Update, context: ContextTypes.DEFAULT_TYP
     query = update.callback_query
     await query.answer()
     
-    if query.data == "t19_new_topic":
+    if query.data == "t19_new":
         # Удаляем все сообщения перед показом списка тем
         await delete_previous_messages(context, query.message.chat_id)
         
