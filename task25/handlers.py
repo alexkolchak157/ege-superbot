@@ -11,7 +11,7 @@ from telegram.ext import ContextTypes, ConversationHandler
 from core.admin_tools import admin_manager
 from core import states
 from core.plugin_loader import build_main_menu
-
+from core.universal_ui import UniversalUIComponents, AdaptiveKeyboards, MessageFormatter
 # Добавьте этот импорт для состояния ANSWERING_PARTS
 from core.states import ANSWERING_PARTS, CHOOSING_BLOCK_T25
 
@@ -613,86 +613,46 @@ async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return states.CHOOSING_MODE
     
-    # Показываем сообщение о проверке
-    thinking_msg = await update.message.reply_text(
-        "🤔 Анализирую ваш ответ..."
-    )
+    # Показываем индикатор обработки
+    thinking_msg = await update.message.reply_text("🤔 Анализирую ваш ответ...")
     
-    result = None
-    score = 0
-    
-    try:
-        # Проверяем наличие evaluator
-        if evaluator and AI_EVALUATOR_AVAILABLE:
-            logger.info(f"Using AI evaluator for user {user_id}")
-            
-            # Получаем настройки строгости
-            settings = context.user_data.get('task25_settings', {})
-            strictness = settings.get('strictness', 'standard')
-            
-            # Обновляем строгость в evaluator если нужно
-            if hasattr(evaluator, 'set_strictness'):
-                evaluator.set_strictness(strictness)
-            
-            result = await evaluator.evaluate(
-                answer=user_answer,
-                topic=topic,
-                user_id=user_id
-            )
-            
-            if result:
-                score = result.total_score
-                
-                # Форматируем результат
-                # Проверяем, есть ли метод format_feedback
-                if hasattr(result, 'format_feedback'):
-                    feedback = result.format_feedback()
-                else:
-                    # Используем утилитную функцию
-                    from .evaluator import format_evaluation_feedback
-                    feedback = format_evaluation_feedback(result, topic)
-            else:
-                # Если evaluator вернул None
-                feedback = _get_fallback_feedback(user_answer, topic)
-                score = 0
-        else:
-            logger.warning("AI evaluator not available, using basic evaluation")
-            # Базовая проверка без AI
+    # Проверяем ответ
+    if evaluator and AI_EVALUATOR_AVAILABLE:
+        try:
+            result = await evaluator.evaluate(topic, user_answer)
+            feedback = _format_evaluation_result(result, topic)
+            score = result.total_score
+        except Exception as e:
+            logger.error(f"Evaluation error: {e}")
             feedback = _get_fallback_feedback(user_answer, topic)
             score = _estimate_score(user_answer)
-        
-        # Сохраняем статистику
-        await _save_user_stats(context, topic, score)
-        
-        # Удаляем сообщение о проверке
-        await thinking_msg.delete()
-        
-        # Показываем эталонный ответ если включено в настройках
-        settings = context.user_data.get('task25_settings', {})
-        if settings.get('show_examples', True) and 'example_answers' in topic:
-            feedback += _format_example_answer(topic)
-        
-    except Exception as e:
-        logger.error(f"Error during evaluation: {e}", exc_info=True)
-        feedback = (
-            "❌ Произошла ошибка при проверке.\n"
-            "Попробуйте ещё раз или обратитесь к администратору."
-        )
-        await thinking_msg.delete()
+    else:
+        feedback = _get_fallback_feedback(user_answer, topic)
+        score = _estimate_score(user_answer)
     
-    # Кнопки действий
-    kb_buttons = [
-        [
-            InlineKeyboardButton("🔁 Попробовать ещё раз", callback_data="t25_retry"),
-            InlineKeyboardButton("📝 Новая тема", callback_data="t25_new_topic")
-        ],
-        [InlineKeyboardButton("📊 Мой прогресс", callback_data="t25_progress")],
-        [InlineKeyboardButton("⬅️ В меню", callback_data="t25_menu")]
-    ]
+    # Сохраняем результат
+    context.user_data.setdefault('task25_results', []).append({
+        'topic_id': topic['id'],
+        'topic_title': topic['title'],
+        'score': score,
+        'timestamp': datetime.now().isoformat()
+    })
+    
+    try:
+        await thinking_msg.delete()
+    except Exception:
+        pass
+    
+    # ЗАМЕНИТЬ создание kb_buttons на:
+    kb = AdaptiveKeyboards.create_result_keyboard(
+        score=score,
+        max_score=6,
+        module_code="t25"
+    )
     
     await update.message.reply_text(
         feedback,
-        reply_markup=InlineKeyboardMarkup(kb_buttons),
+        reply_markup=kb,  # Используем kb вместо InlineKeyboardMarkup(kb_buttons)
         parse_mode=ParseMode.HTML
     )
     
@@ -850,31 +810,20 @@ async def handle_result_action(update: Update, context: ContextTypes.DEFAULT_TYP
     
     action = query.data.split('_')[-1]
     
+    # Используем универсальные callback_data
     if action == 'retry':
-        # Повторить ту же тему
-        topic = context.user_data.get('current_topic')
-        if topic:
-            text = _build_topic_message(topic)
-            
-            kb = InlineKeyboardMarkup([
-                [InlineKeyboardButton("❌ Отмена", callback_data="t25_practice")]
-            ])
-            
-            await query.edit_message_text(
-                text,
-                reply_markup=kb,
-                parse_mode=ParseMode.HTML
-            )
-            
-            return states.ANSWERING
-    
+        return await handle_retry(update, context)
     elif action == 'new':
-        # Новая случайная тема
         return await random_topic_all(update, context)
+    elif action == 'theory':
+        return await theory_mode(update, context)
+    elif action == 'examples':
+        return await bank_examples(update, context)
+    elif action == 'menu':
+        return await return_to_menu(update, context)
     
     return states.CHOOSING_MODE
-    
-    return states.CHOOSING_MODE
+
 
 async def search_examples(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Начало поиска примеров."""
@@ -1262,57 +1211,60 @@ async def my_progress(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     
-    user_id = update.effective_user.id
+    results = context.user_data.get('task25_results', [])
     
-    # Получаем статистику пользователя
-    stats = context.user_data.get('task25_stats', {
-        'total_attempts': 0,
-        'topics_completed': set(),
-        'scores': [],
-        'blocks_progress': {}
-    })
-    
-    # Формируем текст статистики
-    text = f"📊 <b>Ваш прогресс по заданию 25</b>\n\n"
-    
-    text += f"📝 Всего попыток: {stats['total_attempts']}\n"
-    text += f"✅ Изучено тем: {len(stats['topics_completed'])}/{len(task25_data.get('topics', []))}\n"
-    
-    if stats['scores']:
-        avg_score = sum(stats['scores']) / len(stats['scores'])
-        text += f"⭐ Средний балл: {avg_score:.1f}/6\n\n"
+    if not results:
+        text = MessageFormatter.format_welcome_message(
+            "задание 25",
+            is_new_user=True
+        )
+        kb = InlineKeyboardMarkup([[
+            InlineKeyboardButton("💪 Начать практику", callback_data="t25_practice"),
+            InlineKeyboardButton("⬅️ Назад", callback_data="t25_menu")
+        ]])
     else:
-        text += "⭐ Средний балл: нет данных\n\n"
-    
-    # Прогресс по блокам
-    text += "<b>Прогресс по блокам:</b>\n"
-    for block_name, block_topics in task25_data.get('topics_by_block', {}).items():
-        completed = len([t for t in block_topics if t.get('id') in stats['topics_completed']])
-        total = len(block_topics)
-        percentage = (completed / total * 100) if total > 0 else 0
+        # Собираем статистику
+        total_attempts = len(results)
+        scores = [r['score'] for r in results]
+        average_score = sum(scores) / len(scores)
+        unique_topics = len(set(r['topic_id'] for r in results))
         
-        # Эмодзи прогресса
-        if percentage == 100:
-            emoji = "✅"
-        elif percentage >= 50:
-            emoji = "🟡"
-        else:
-            emoji = "⚪"
-            
-        text += f"{emoji} {block_name}: {completed}/{total} ({percentage:.0f}%)\n"
-    
-    kb = InlineKeyboardMarkup([
-        [InlineKeyboardButton("📈 Детальная статистика", callback_data="t25_detailed_stats")],
-        [InlineKeyboardButton("🎯 Рекомендации", callback_data="t25_recommendations")],
-        [InlineKeyboardButton("⬅️ Назад", callback_data="t25_menu")]
-    ])
+        # Топ результаты
+        topic_scores = {}
+        for result in results:
+            topic_id = result['topic_id']
+            if topic_id not in topic_scores or result['score'] > topic_scores[topic_id]:
+                topic_scores[topic_id] = {
+                    'topic': result.get('topic_title', 'Неизвестная тема'),
+                    'score': result['score'],
+                    'max_score': 6
+                }
+        
+        top_results = sorted(topic_scores.values(), key=lambda x: x['score'], reverse=True)[:3]
+        
+        # Форматируем сообщение
+        text = MessageFormatter.format_progress_message({
+            'total_attempts': total_attempts,
+            'average_score': average_score,
+            'completed': unique_topics,
+            'total': len(task25_data.get('topics', [])),
+            'total_time': 0,
+            'top_results': top_results,
+            'current_average': average_score / 6 * 100,
+            'previous_average': (average_score / 6 * 100) - 5
+        }, "заданию 25")
+        
+        kb = AdaptiveKeyboards.create_progress_keyboard(
+            has_detailed_stats=True,
+            can_export=True,
+            module_code="t25"
+        )
     
     await query.edit_message_text(
         text,
         reply_markup=kb,
         parse_mode=ParseMode.HTML
     )
-    
     return states.CHOOSING_MODE
 
 async def settings_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1423,7 +1375,32 @@ async def cmd_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def return_to_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Возврат в меню задания 25."""
-    return await entry_from_menu(update, context)
+    query = update.callback_query
+    await query.answer()
+    
+    results = context.user_data.get('task25_results', [])
+    user_stats = {
+        'total_attempts': len(results),
+        'average_score': sum(r['score'] for r in results) / len(results) if results else 0,
+        'streak': 0,
+        'weak_topics_count': 0,
+        'progress_percent': int(len(set(r.get('topic_id') for r in results)) / 100 * 100) if results else 0
+    }
+    
+    text = MessageFormatter.format_welcome_message(
+        "задание 25",
+        is_new_user=user_stats['total_attempts'] == 0
+    )
+    
+    kb = AdaptiveKeyboards.create_menu_keyboard(user_stats, module_code="t25")
+    
+    await query.edit_message_text(
+        text,
+        reply_markup=kb,
+        parse_mode=ParseMode.HTML
+    )
+    
+    return states.CHOOSING_MODE
 
 
 async def back_to_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
