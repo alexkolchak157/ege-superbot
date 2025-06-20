@@ -927,10 +927,7 @@ async def select_block(update: Update, context: ContextTypes.DEFAULT_TYPE):
             ]])
         )
         return states.CHOOSING_MODE
-    progress_bar = UniversalUIComponents.create_progress_bar(
-        completed, len(topics), width=5, show_percentage=False
-    )
-    color = UniversalUIComponents.get_color_for_score(completed, len(topics))
+
     text = "📚 <b>Выберите блок тем:</b>"
     
     kb_buttons = []
@@ -972,29 +969,21 @@ async def handle_result_action(update: Update, context: ContextTypes.DEFAULT_TYP
     query = update.callback_query
     await query.answer()
     
-    action = query.data.split("_")[2]  # t20_new_topic -> new, t20_retry -> retry
+    action = query.data.replace("t20_", "")
     
-    if action == "retry":
+    if action == 'retry':
         # Повторить ту же тему
         topic = context.user_data.get('current_topic')
         if topic:
             text = _build_topic_message(topic)
-            kb = InlineKeyboardMarkup([
-                [InlineKeyboardButton("❌ Отмена", callback_data="t20_menu")]
-            ])
             await query.edit_message_text(
                 text,
-                reply_markup=kb,
                 parse_mode=ParseMode.HTML
             )
             return states.ANSWERING
-        else:
-            await query.answer("Тема не найдена", show_alert=True)
-            return await return_to_menu(update, context)
-    
-    elif action == "new":
-        # Вернуться к выбору новой темы
-        return await practice_mode(update, context)
+    elif action == 'new':  # Изменено с 'new_topic'
+        # Новая случайная тема
+        return await random_topic(update, context)
     
     return states.CHOOSING_MODE
 

@@ -55,7 +55,7 @@ class Task20Plugin(BotPlugin):
                     
                     # Обработчики для выбора тем
                     CallbackQueryHandler(handlers.select_block, pattern="^t20_select_block$"),
-                    CallbackQueryHandler(handlers.handle_result_action, pattern="^t20_(new_topic|retry)$"),
+                    CallbackQueryHandler(handlers.handle_result_action, pattern="^t20_(new|retry)$"),
                     CallbackQueryHandler(handlers.return_to_menu, pattern="^t20_menu$"),
                     
                     # Навигация по темам
@@ -109,7 +109,7 @@ class Task20Plugin(BotPlugin):
                 
                 states.AWAITING_FEEDBACK: [
                     CallbackQueryHandler(handlers.handle_result_action, pattern="^t20_retry$"),
-                    CallbackQueryHandler(handlers.handle_result_action, pattern="^t20_new_topic$"),
+                    CallbackQueryHandler(handlers.handle_result_action, pattern="^t20_new$"),
                     CallbackQueryHandler(handlers.my_progress, pattern="^t20_progress$"),
                     CallbackQueryHandler(handlers.return_to_menu, pattern="^t20_menu$"),
                     CallbackQueryHandler(handlers.back_to_main_menu, pattern="^to_main_menu$"),
