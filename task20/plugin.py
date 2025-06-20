@@ -131,6 +131,7 @@ class Task20Plugin(BotPlugin):
         
         # Регистрируем обработчики в приложении
         app.add_handler(conv_handler)
+        app.add_handler(CallbackQueryHandler(handlers.handle_achievement_ok, pattern="^t20_achievement_ok$"))
         logger.info(f"Registered handlers for {self.title} plugin")
 
 # Экспортируем плагин

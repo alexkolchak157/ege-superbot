@@ -81,6 +81,9 @@ class Task25Plugin(BotPlugin):
                     CallbackQueryHandler(handlers.examples_by_block, pattern="^t25_examples_by_block$"),
                     CallbackQueryHandler(handlers.best_examples, pattern="^t25_best_examples$"),
                     CallbackQueryHandler(handlers.show_example, pattern="^t25_show_example:"),
+                    CallbackQueryHandler(handlers.handle_example_navigation, pattern="^t25_example_nav:"),
+                    CallbackQueryHandler(handlers.noop, pattern="^t25_noop$"),
+                    CallbackQueryHandler(handlers.handle_try_topic, pattern="^t25_try_topic:"),
                     
                     # Теория
                     CallbackQueryHandler(handlers.example_answers, pattern="^t25_example_answers$"),

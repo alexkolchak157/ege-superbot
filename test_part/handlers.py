@@ -1197,3 +1197,66 @@ async def cmd_debug_streaks(update: Update, context: ContextTypes.DEFAULT_TYPE):
         text = f"❌ Ошибка при чтении БД: {e}"
     
     await update.message.reply_text(text, parse_mode=ParseMode.HTML)
+
+
+async def handle_detailed_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Callback: отправляет детальный отчёт о прогрессе."""
+    query = update.callback_query
+    await query.answer()
+
+    user_id = query.from_user.id
+    try:
+        report = await utils.generate_detailed_report(user_id)
+        await query.edit_message_text(report, parse_mode=ParseMode.HTML)
+    except Exception as e:
+        logger.error(f"Ошибка генерации отчёта для user {user_id}: {e}")
+        await query.edit_message_text("Не удалось сформировать отчёт.")
+
+    return ConversationHandler.END
+
+
+async def handle_export_csv(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Callback: экспорт статистики в CSV."""
+    query = update.callback_query
+    await query.answer()
+
+    user_id = query.from_user.id
+    try:
+        csv_content = await utils.export_user_stats_csv(user_id)
+        from io import BytesIO
+        file_data = BytesIO(csv_content.encode("utf-8-sig"))
+        file_data.name = f"statistics_{user_id}.csv"
+
+        await query.message.reply_document(
+            document=file_data,
+            filename=file_data.name,
+            caption="📊 Ваша статистика"
+        )
+    except Exception as e:
+        logger.error(f"Ошибка экспорта статистики для user {user_id}: {e}")
+        await query.answer("Не удалось экспортировать", show_alert=True)
+
+    return ConversationHandler.END
+
+
+async def handle_work_mistakes(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Callback: переход в режим работы над ошибками."""
+    return await select_mistakes_mode(update, context)
+
+
+async def handle_check_subscription(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Callback для повторной проверки подписки."""
+    query = update.callback_query
+    await query.answer()
+
+    if await utils.check_subscription(query.from_user.id, context.bot, REQUIRED_CHANNEL):
+        kb = keyboards.get_initial_choice_keyboard()
+        await query.edit_message_text(
+            "📚 <b>Тестовая часть ЕГЭ</b>\n\nВыберите режим работы:",
+            reply_markup=kb,
+            parse_mode=ParseMode.HTML,
+        )
+        return states.CHOOSING_MODE
+
+    await query.answer("Подписка не обнаружена", show_alert=True)
+    return ConversationHandler.END

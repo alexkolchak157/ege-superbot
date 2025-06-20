@@ -325,10 +325,23 @@ async def show_achievement_notification(update: Update, context: ContextTypes.DE
     
     # Удаляем через 10 секунд
     context.job_queue.run_once(
-        lambda ctx: msg.delete(), 
-        when=10, 
+        lambda ctx: msg.delete(),
+        when=10,
         name=f"delete_achievement_{msg.message_id}"
     )
+
+
+async def handle_achievement_ok(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Просто удаляет сообщение о достижении."""
+    query = update.callback_query
+    await query.answer()
+
+    try:
+        await query.message.delete()
+    except Exception:
+        pass
+
+    return ConversationHandler.END
 
 async def practice_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Режим практики с улучшенным UX."""
