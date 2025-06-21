@@ -136,24 +136,24 @@ def get_after_answer_keyboard(last_mode: str = "random") -> InlineKeyboardMarkup
     """Клавиатура после проверки ответа."""
     
     if last_mode == "topic":
-        main_button = InlineKeyboardButton("➡️ Ещё вопрос по теме", callback_data=CallbackData.NEXT_TOPIC)
+        main_button = InlineKeyboardButton("➡️ Ещё вопрос по теме", callback_data=CallbackData.TEST_NEXT_TOPIC)
     elif last_mode == "exam_num":
-        main_button = InlineKeyboardButton("➡️ Следующий номер", callback_data=CallbackData.NEXT_RANDOM)
+        main_button = InlineKeyboardButton("➡️ Следующий номер", callback_data=CallbackData.TEST_NEXT_RANDOM)
     else:  # random
-        main_button = InlineKeyboardButton("➡️ Ещё случайный", callback_data=CallbackData.NEXT_RANDOM)
+        main_button = InlineKeyboardButton("➡️ Ещё случайный", callback_data=CallbackData.TEST_NEXT_RANDOM)
 
     return InlineKeyboardMarkup([
         [main_button],
-        [InlineKeyboardButton("🔄 Сменить тему / режим", callback_data=CallbackData.CHANGE_TOPIC)],
-        [InlineKeyboardButton("🏠 Главное меню", callback_data=CallbackData.TO_MAIN_MENU)],
+        [InlineKeyboardButton("🔄 Сменить тему / режим", callback_data=CallbackData.TEST_CHANGE_TOPIC)],
+        [InlineKeyboardButton("🏠 Главное меню", callback_data=CallbackData.TEST_TO_MAIN_MENU)],
     ])
 
 def get_mistakes_nav_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("➡️ Следующая ошибка", callback_data=CallbackData.NEXT_MISTAKE)],
-        [InlineKeyboardButton("⏩ Пропустить", callback_data=CallbackData.SKIP_MISTAKE)],
-        [InlineKeyboardButton("🚪 Закончить разбор", callback_data=CallbackData.EXIT_MISTAKES)],
-        [InlineKeyboardButton("🏠 Главное меню", callback_data=CallbackData.TO_MAIN_MENU)],
+        [InlineKeyboardButton("➡️ Следующая ошибка", callback_data=CallbackData.TEST_NEXT_MISTAKE)],
+        [InlineKeyboardButton("⏩ Пропустить", callback_data=CallbackData.TEST_SKIP_MISTAKE)],
+        [InlineKeyboardButton("🚪 Закончить разбор", callback_data=CallbackData.TEST_EXIT_MISTAKES)],
+        [InlineKeyboardButton("🏠 Главное меню", callback_data=CallbackData.TEST_TO_MAIN_MENU)],
     ])
 
 def get_next_action_keyboard(last_mode: str, has_explanation: bool = False) -> InlineKeyboardMarkup:

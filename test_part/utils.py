@@ -642,25 +642,25 @@ class TestPartCallbackData:
     """Стандартные callback_data для test_part плагина."""
     
     # Основные действия
-    TO_MAIN_MENU = "to_main_menu"
-    TO_MENU = "to_menu" 
-    CANCEL = "cancel"
+    TEST_TO_MAIN_MENU = "to_main_menu"
+    TEST_TO_MENU = "to_menu"
+    TEST_CANCEL = "cancel"
     
     # Навигация по режимам
-    MODE_RANDOM = "mode:random"
-    MODE_TOPIC = "mode:choose_topic"
-    MODE_EXAM_NUM = "mode:choose_exam_num"
+    TEST_MODE_RANDOM = "mode:random"
+    TEST_MODE_TOPIC = "mode:choose_topic"
+    TEST_MODE_EXAM_NUM = "mode:choose_exam_num"
     
     # Действия после ответа
-    NEXT_RANDOM = "next_random"
-    NEXT_TOPIC = "next_topic" 
-    CHANGE_TOPIC = "change_topic"
+    TEST_NEXT_RANDOM = "next_random"
+    TEST_NEXT_TOPIC = "next_topic"
+    TEST_CHANGE_TOPIC = "change_topic"
     
     # Работа с ошибками
-    SHOW_EXPLANATION = "show_explanation"
-    NEXT_MISTAKE = "next_mistake"
-    SKIP_MISTAKE = "skip_mistake"
-    EXIT_MISTAKES = "exit_mistakes"
+    TEST_SHOW_EXPLANATION = "show_explanation"
+    TEST_NEXT_MISTAKE = "next_mistake"
+    TEST_SKIP_MISTAKE = "skip_mistake"
+    TEST_EXIT_MISTAKES = "exit_mistakes"
     
     @classmethod
     def get_plugin_entry(cls, plugin_code: str) -> str:
