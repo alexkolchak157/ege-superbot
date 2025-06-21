@@ -59,7 +59,7 @@ class Task25Plugin(BotPlugin):
                     
                     # Обработчики для выбора тем
                     CallbackQueryHandler(handlers.select_block, pattern="^t25_select_block$"),
-                    CallbackQueryHandler(handlers.handle_result_action, pattern="^t25_(new_topic|retry)$"),
+                    CallbackQueryHandler(handlers.handle_result_action, pattern="^t25_(new|retry)$"),
                     CallbackQueryHandler(handlers.another_topic_from_current, pattern="^t25_another_topic$"),
                     CallbackQueryHandler(handlers.return_to_menu, pattern="^t25_menu$"),
                     
