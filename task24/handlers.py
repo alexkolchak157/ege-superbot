@@ -416,13 +416,18 @@ async def select_topic(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     
-    parts = query.data.split(":")
-    if len(parts) < 3:
+    data = query.data
+    if not data.startswith("t24_topic_"):
         logger.error(f"Неправильный формат callback_data: {query.data}")
         return
-    
-    mode = parts[1]
-    topic_idx = int(parts[2])
+
+    parts = data[len("t24_topic_"):].split(":")
+    if len(parts) < 2:
+        logger.error(f"Неправильный формат callback_data: {query.data}")
+        return
+
+    mode = parts[0]
+    topic_idx = int(parts[1])
     
     # Получаем тему по индексу
     topic_name = plan_bot_data.topic_index_map.get(topic_idx)
@@ -502,8 +507,8 @@ async def show_etalon_plan(query, context, topic_idx):
         text += f"\n⭐ <i>Обязательных пунктов: {obligatory_count}</i>"
     
     kb = InlineKeyboardMarkup([
-        [InlineKeyboardButton("📝 Потренироваться", callback_data=f"topic:train:{topic_idx}")],
-        [InlineKeyboardButton("⬅️ К выбору темы", callback_data=f"nav:t24_back_to_choice:{context.user_data.get('mode')}")],
+        [InlineKeyboardButton("📝 Потренироваться", callback_data=f"t24_topic_train:{topic_idx}")],
+        [InlineKeyboardButton("⬅️ К выбору темы", callback_data=f"t24_nav_back_to_choice:{context.user_data.get('mode')}")],
         [InlineKeyboardButton("🏠 В меню", callback_data="t24_menu")]
     ])
     
@@ -525,11 +530,16 @@ async def navigate_topics(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return ConversationHandler.END
     
-    parts = query.data.split(":")
-    action = parts[1]
+    data = query.data
+    if not data.startswith("t24_nav_"):
+        logger.error(f"Неправильный формат callback_data: {query.data}")
+        return states.CHOOSING_TOPIC
+
+    parts = data[len("t24_nav_"):].split(":")
+    action = parts[0]
     
     if action == "choose_block":
-        mode = parts[2]
+        mode = parts[1]
         kb = keyboards.build_block_selection_keyboard(mode)
         await query.edit_message_text(
             "📚 Выберите блок тем:",
@@ -538,7 +548,7 @@ async def navigate_topics(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
     
     elif action == "show_all":
-        mode = parts[2]
+        mode = parts[1]
         page = 0
         practiced = context.user_data.get('practiced_topics', set())
         text, kb = keyboards.build_topic_page_keyboard(
@@ -547,7 +557,7 @@ async def navigate_topics(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text(text, reply_markup=kb, parse_mode=ParseMode.HTML)
     
     elif action == "random":
-        mode = parts[2]
+        mode = parts[1]
         import random
         all_topics = plan_bot_data.get_all_topics_list()
         practiced = context.user_data.get('practiced_topics', set())
@@ -589,9 +599,9 @@ async def navigate_topics(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.answer("Нет доступных тем", show_alert=True)
     
     elif action in ["all", "block"]:
-        mode = parts[2]
-        page = int(parts[3])
-        block_name = parts[4] if len(parts) > 4 else None
+        mode = parts[1]
+        page = int(parts[2])
+        block_name = parts[3] if len(parts) > 3 else None
         
         practiced = context.user_data.get('practiced_topics', set())
         text, kb = keyboards.build_topic_page_keyboard(
@@ -600,8 +610,8 @@ async def navigate_topics(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text(text, reply_markup=kb, parse_mode=ParseMode.HTML)
     
     elif action == "select_block":
-        mode = parts[2]
-        block_name = ":".join(parts[3:])
+        mode = parts[1]
+        block_name = ":".join(parts[2:])
         
         practiced = context.user_data.get('practiced_topics', set())
         text, kb = keyboards.build_topic_page_keyboard(
@@ -610,7 +620,7 @@ async def navigate_topics(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text(text, reply_markup=kb, parse_mode=ParseMode.HTML)
     
     elif action == "back_to_main":
-        mode = parts[2] if len(parts) > 2 else 'train'
+        mode = parts[1] if len(parts) > 1 else 'train'
         kb = keyboards.build_initial_choice_keyboard(mode)
         await query.edit_message_text(
             f"🎯 <b>Режим {'тренировки' if mode == 'train' else 'просмотра'}</b>\n\n"
@@ -1281,7 +1291,7 @@ async def handle_search_query(update: Update, context: ContextTypes.DEFAULT_TYPE
             kb_buttons.append([
                 InlineKeyboardButton(
                     f"📄 {topic[:50]}{'...' if len(topic) > 50 else ''}",
-                    callback_data=f"topic:{context.user_data.get('mode', 'train')}:{idx}"
+                    callback_data=f"t24_topic_{context.user_data.get('mode', 'train')}:{idx}"
                 )
             ])
     
@@ -1294,7 +1304,7 @@ async def handle_search_query(update: Update, context: ContextTypes.DEFAULT_TYPE
             kb_buttons.append([
                 InlineKeyboardButton(
                     f"📄 {topic[:50]}{'...' if len(topic) > 50 else ''}",
-                    callback_data=f"topic:{context.user_data.get('mode', 'train')}:{idx}"
+                    callback_data=f"t24_topic_{context.user_data.get('mode', 'train')}:{idx}"
                 )
             ])
     
