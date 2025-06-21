@@ -1284,8 +1284,8 @@ async def evaluate_plan_with_ai(
 # Inline-клавиатура для фидбека
 FEEDBACK_KB = InlineKeyboardMarkup([
     [
-        InlineKeyboardButton("🔄 Ещё тема", callback_data="next_topic"),
-        InlineKeyboardButton("📝 Меню планов", callback_data="back_main")
+        InlineKeyboardButton("🔄 Ещё тема", callback_data="t24_next_topic"),
+        InlineKeyboardButton("📝 Меню планов", callback_data="t24_back_main")
     ],
     [
         InlineKeyboardButton("🏠 Главное меню", callback_data="to_main_menu")

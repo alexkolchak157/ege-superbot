@@ -307,7 +307,7 @@ async def exam_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text(
             "❌ Нет доступных тем для экзамена.",
             reply_markup=InlineKeyboardMarkup([[
-                InlineKeyboardButton("⬅️ Назад", callback_data="start_button")
+                InlineKeyboardButton("⬅️ Назад", callback_data="t24_menu")
             ]])
         )
         return states.CHOOSING_MODE
@@ -374,7 +374,7 @@ async def list_topics(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text += f"\n📊 Пройдено: {completed}/{total} ({int(completed/total*100) if total > 0 else 0}%)"
     
     kb = InlineKeyboardMarkup([[
-        InlineKeyboardButton("⬅️ Назад в меню", callback_data="start_button")
+        InlineKeyboardButton("⬅️ Назад в меню", callback_data="t24_menu")
     ]])
     
     # Отправляем или редактируем
@@ -504,7 +504,7 @@ async def show_etalon_plan(query, context, topic_idx):
     kb = InlineKeyboardMarkup([
         [InlineKeyboardButton("📝 Потренироваться", callback_data=f"topic:train:{topic_idx}")],
         [InlineKeyboardButton("⬅️ К выбору темы", callback_data=f"nav:back_to_choice:{context.user_data.get('mode')}")],
-        [InlineKeyboardButton("🏠 В меню", callback_data="start_button")]
+        [InlineKeyboardButton("🏠 В меню", callback_data="t24_menu")]
     ])
     
     await query.edit_message_text(text, reply_markup=kb, parse_mode=ParseMode.HTML)
@@ -752,10 +752,12 @@ async def handle_plan_enhanced(update: Update, context: ContextTypes.DEFAULT_TYP
         
         await update.message.reply_text(
             "❌ Произошла ошибка при проверке плана. Попробуйте еще раз.",
-            reply_markup=InlineKeyboardMarkup([[
-                InlineKeyboardButton("🔄 Попробовать снова", callback_data="retry_plan"),
-                InlineKeyboardButton("📋 К темам", callback_data="back_to_choice")
-            ]])
+            reply_markup=InlineKeyboardMarkup([
+                [
+                    InlineKeyboardButton("🔄 Попробовать снова", callback_data="t24_retry_plan"),
+                    InlineKeyboardButton("📋 К темам", callback_data="t24_back_to_choice")
+                ]
+            ])
         )
         
         return states.AWAITING_FEEDBACK
@@ -854,7 +856,7 @@ async def show_criteria(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if query:
         await query.answer()
         kb = InlineKeyboardMarkup([[
-            InlineKeyboardButton("⬅️ Назад", callback_data="back_main")
+            InlineKeyboardButton("⬅️ Назад", callback_data="t24_back_main")
         ]])
         await query.edit_message_text(
             criteria_text,
@@ -865,6 +867,13 @@ async def show_criteria(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(criteria_text, parse_mode=ParseMode.HTML)
     
     return states.CHOOSING_MODE
+
+async def back_to_choice_shortcut(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Возврат к выбору темы после оценки."""
+    if context.user_data.get('mode') == 'train':
+        return await train_mode(update, context)
+    else:
+        return await show_mode(update, context)
 
 async def show_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Показ помощи."""
@@ -911,7 +920,7 @@ async def show_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
     
     kb = InlineKeyboardMarkup([[
-        InlineKeyboardButton("⬅️ Назад", callback_data="start_button")
+        InlineKeyboardButton("⬅️ Назад", callback_data="t24_menu")
     ]])
     
     await safe_edit_or_reply(query, help_text, kb, ParseMode.HTML)
@@ -983,7 +992,7 @@ async def show_detailed_progress(update: Update, context: ContextTypes.DEFAULT_T
         lines.append(f"{mark} {name}")
 
     text = "📋 <b>Детальный прогресс</b>\n\n" + "\n".join(lines)
-    kb = InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ Назад", callback_data="show_progress")]])
+    kb = InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ Назад", callback_data="t24_progress")]])
     await query.edit_message_text(text, reply_markup=kb, parse_mode=ParseMode.HTML)
     return states.CHOOSING_MODE
 
@@ -1011,7 +1020,7 @@ async def show_completed(update: Update, context: ContextTypes.DEFAULT_TYPE):
             text += f"{color} {topic}: {score_visual}\n"
     
     kb = InlineKeyboardMarkup([[
-        InlineKeyboardButton("⬅️ Назад", callback_data="show_progress")
+        InlineKeyboardButton("⬅️ Назад", callback_data="t24_progress")
     ]])
     
     await query.edit_message_text(text, reply_markup=kb, parse_mode=ParseMode.HTML)
@@ -1026,7 +1035,7 @@ async def show_remaining(update: Update, context: ContextTypes.DEFAULT_TYPE):
     practiced = context.user_data.get('practiced_topics', set())
     remaining = [name for idx, name in plan_bot_data.get_all_topics_list() if idx not in practiced]
     text = "📝 <b>Оставшиеся темы</b>\n\n" + ("\n".join(remaining) if remaining else "Все темы изучены!")
-    kb = InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ Назад", callback_data="show_progress")]])
+    kb = InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ Назад", callback_data="t24_progress")]])
     await query.edit_message_text(text, reply_markup=kb, parse_mode=ParseMode.HTML)
     return states.CHOOSING_MODE
 
@@ -1067,8 +1076,8 @@ async def reset_progress(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         kb = InlineKeyboardMarkup([
             [
-                InlineKeyboardButton("❌ Да, сбросить", callback_data="reset_progress"),
-                InlineKeyboardButton("✅ Отмена", callback_data="cancel_reset")
+                InlineKeyboardButton("❌ Да, сбросить", callback_data="t24_reset"),
+                InlineKeyboardButton("✅ Отмена", callback_data="t24_cancel_reset")
             ]
         ])
         
@@ -1258,10 +1267,12 @@ async def handle_search_query(update: Update, context: ContextTypes.DEFAULT_TYPE
             "• Использовать другие ключевые слова\n"
             "• Проверить правописание\n"
             "• Использовать более общие термины",
-            reply_markup=InlineKeyboardMarkup([[
-                InlineKeyboardButton("🔍 Искать снова", callback_data="search_topics"),
-                InlineKeyboardButton("⬅️ Назад", callback_data="start_button")
-            ]]),
+            reply_markup=InlineKeyboardMarkup([
+                [
+                    InlineKeyboardButton("🔍 Искать снова", callback_data="t24_search"),
+                    InlineKeyboardButton("⬅️ Назад", callback_data="t24_menu")
+                ]
+            ]),
             parse_mode=ParseMode.HTML
         )
         return states.CHOOSING_MODE
@@ -1299,8 +1310,8 @@ async def handle_search_query(update: Update, context: ContextTypes.DEFAULT_TYPE
             ])
     
     kb_buttons.extend([
-        [InlineKeyboardButton("🔍 Искать снова", callback_data="search_topics")],
-        [InlineKeyboardButton("⬅️ Назад", callback_data="start_button")]
+        [InlineKeyboardButton("🔍 Искать снова", callback_data="t24_search")],
+        [InlineKeyboardButton("⬅️ Назад", callback_data="t24_menu")]
     ])
     
     await update.message.reply_text(
