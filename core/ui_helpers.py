@@ -8,6 +8,9 @@ from typing import Dict, Optional
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, Message
 from telegram.constants import ParseMode
 from telegram.ext import ContextTypes
+import logging
+
+logger = logging.getLogger(__name__)
 
 async def show_thinking_animation(message: Message, text: str = "Анализирую") -> Message:
     """
@@ -28,9 +31,9 @@ async def show_thinking_animation(message: Message, text: str = "Анализи�
         for i in range(1, min(4, len(animations))):
             await asyncio.sleep(0.5)
             await thinking_msg.edit_text(f"{animations[i]} {text}...")
-    except:
-        # Игнорируем ошибки редактирования
-        pass
+    except Exception as e:
+        # Игнорируем ошибки редактирования, но логируем их
+        logger.error("Animation update failed: %s", e)
     
     return thinking_msg
 
@@ -256,7 +259,8 @@ def format_time_difference(timestamp: str) -> str:
             return f"{minutes} мин. назад"
         else:
             return "только что"
-    except:
+    except Exception as e:
+        logger.error("Failed to format timestamp: %s", e)
         return "недавно"
 
 def get_achievement_emoji(achievement_type: str) -> str:

@@ -91,8 +91,8 @@ class AdminManager:
                 with open(config_file, 'w') as f:
                     json.dump(example_config, f, indent=4)
                 logger.info(f"Created example admin config: {config_file}")
-            except:
-                pass
+            except Exception as e:
+                logger.error("Failed to create example admin config: %s", e)
     
     def is_admin(self, user_id: int) -> bool:
         """Проверка, является ли пользователь администратором."""
@@ -187,8 +187,8 @@ class AdminStats:
                                 dt = datetime.fromisoformat(timestamp)
                                 stats['daily_activity'][dt.date()] += 1
                                 stats['hourly_activity'][dt.hour] += 1
-                            except:
-                                pass
+                            except Exception as e:
+                                logger.error("Failed to parse timestamp in stats: %s", e)
             
             # Test Part статистика
             if 'mistakes' in user_data or 'correct_answers' in user_data:
@@ -439,8 +439,8 @@ async def export_all_data(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Удаляем старое сообщение
     try:
         await query.message.delete()
-    except:
-        pass
+    except Exception as e:
+        logger.error("Failed to delete export prompt message: %s", e)
     
     # Отправляем файл
     await query.message.reply_document(
