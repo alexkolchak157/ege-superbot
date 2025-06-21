@@ -16,6 +16,13 @@ from datetime import datetime
 import io
 from .evaluator import StrictnessLevel, Task19AIEvaluator
 from core.universal_ui import UniversalUIComponents, AdaptiveKeyboards, MessageFormatter
+from core.ui_helpers import (
+    show_thinking_animation,
+    show_streak_notification,
+    get_personalized_greeting,
+    get_motivational_message,
+    create_visual_progress,
+)
 
 TASK19_STRICTNESS = os.getenv('TASK19_STRICTNESS', 'STRICT').upper()
 
@@ -188,11 +195,19 @@ async def entry_from_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     
-    text = (
-        "📝 <b>Задание 19</b>\n\n"
-        "В этом задании нужно привести примеры, иллюстрирующих "
-        "различные обществоведческие понятия и явления.\n\n"
-        "Выберите режим работы:"
+    results = context.user_data.get('task19_results', [])
+    user_stats = {
+        'total_attempts': len(results),
+        'average_score': sum(r['score'] for r in results) / len(results) if results else 0,
+        'streak': context.user_data.get('correct_streak', 0),
+        'weak_topics_count': 0,
+        'progress_percent': int(len(set(r['topic'] for r in results)) / 50 * 100) if results else 0,
+    }
+
+    greeting = get_personalized_greeting(user_stats)
+    text = greeting + MessageFormatter.format_welcome_message(
+        "задание 19",
+        is_new_user=user_stats['total_attempts'] == 0
     )
     
     kb = InlineKeyboardMarkup([
@@ -239,7 +254,8 @@ async def cmd_task19(update: Update, context: ContextTypes.DEFAULT_TYPE):
         'progress_percent': int(len(set(r['topic'] for r in results)) / 50 * 100) if results else 0
     }
     
-    text = MessageFormatter.format_welcome_message(
+    greeting = get_personalized_greeting(user_stats)
+    text = greeting + MessageFormatter.format_welcome_message(
         "задание 19",
         is_new_user=user_stats['total_attempts'] == 0
     )
@@ -432,7 +448,11 @@ async def list_topics(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "⬅️", callback_data=f"t19_list_topics:page:{page-1}"
             )
         )
-    nav.append(InlineKeyboardButton(f"{page+1}/{total_pages}", callback_data="noop"))
+    nav.append(
+        InlineKeyboardButton(
+            create_visual_progress(page + 1, total_pages), callback_data="noop"
+        )
+    )
     if page < total_pages - 1:
         nav.append(
             InlineKeyboardButton(
@@ -644,9 +664,7 @@ async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return states.CHOOSING_MODE
     
     # Показываем сообщение о проверке
-    thinking_msg = await update.message.reply_text(
-        "🤔 Анализирую ваш ответ..."
-    )
+    thinking_msg = await show_thinking_animation(update.message, "Проверяю ваш ответ")
     
     # Сохраняем ID сообщения "Анализирую..."
     context.user_data['task19_thinking_msg_id'] = thinking_msg.message_id
@@ -706,6 +724,11 @@ async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 topic=topic['title'],
                 details={"Статус": "Требуется проверка преподавателем"}
             )
+
+        score_val = result.total_score if result else 0
+        max_score_val = result.max_score if result else 3
+        motivation = get_motivational_message(score_val, max_score_val)
+        feedback += f"\n\n💬 {motivation}"
         
         # Адаптивная клавиатура на основе результата
         kb = AdaptiveKeyboards.create_result_keyboard(
@@ -738,6 +761,17 @@ async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
             'max_score': 3,
             'timestamp': datetime.now().isoformat()
         })
+
+        # Обновляем стрик правильных ответов
+        score_val = result.total_score if result else 0
+        max_score_val = result.max_score if result else 3
+        if score_val == max_score_val:
+            context.user_data['correct_streak'] = context.user_data.get('correct_streak', 0) + 1
+        else:
+            context.user_data['correct_streak'] = 0
+
+        if context.user_data['correct_streak'] in [3, 5, 10, 20, 50, 100]:
+            await show_streak_notification(update, context, 'correct', context.user_data['correct_streak'])
         
         return states.CHOOSING_MODE
             
@@ -893,7 +927,11 @@ async def bank_navigation(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if current_idx > 0:
         nav_row.append(InlineKeyboardButton("⬅️", callback_data=f"t19_bank_nav:{current_idx-1}"))
     
-    nav_row.append(InlineKeyboardButton(f"{current_idx+1}/{len(topics)}", callback_data="noop"))
+    nav_row.append(
+        InlineKeyboardButton(
+            create_visual_progress(current_idx + 1, len(topics)), callback_data="noop"
+        )
+    )
     
     if current_idx < len(topics) - 1:
         nav_row.append(InlineKeyboardButton("➡️", callback_data=f"t19_bank_nav:{current_idx+1}"))
@@ -1002,12 +1040,13 @@ async def return_to_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_stats = {
         'total_attempts': len(results),
         'average_score': sum(r['score'] for r in results) / len(results) if results else 0,
-        'streak': 0,  # Можно добавить подсчет стриков
+        'streak': context.user_data.get('correct_streak', 0),
         'weak_topics_count': 0,
         'progress_percent': int(len(set(r['topic'] for r in results)) / 50 * 100) if results else 0
     }
     
-    text = MessageFormatter.format_welcome_message(
+    greeting = get_personalized_greeting(user_stats)
+    text = greeting + MessageFormatter.format_welcome_message(
         "задание 19",
         is_new_user=user_stats['total_attempts'] == 0
     )
@@ -1298,7 +1337,11 @@ async def show_examples_for_topic_message(message, context: ContextTypes.DEFAULT
     if topic_idx > 0:
         nav_row.append(InlineKeyboardButton("⬅️", callback_data=f"t19_bank_nav:{topic_idx-1}"))
     
-    nav_row.append(InlineKeyboardButton(f"{topic_idx+1}/{len(topics)}", callback_data="noop"))
+    nav_row.append(
+        InlineKeyboardButton(
+            create_visual_progress(topic_idx + 1, len(topics)), callback_data="noop"
+        )
+    )
     
     if topic_idx < len(topics) - 1:
         nav_row.append(InlineKeyboardButton("➡️", callback_data=f"t19_bank_nav:{topic_idx+1}"))
