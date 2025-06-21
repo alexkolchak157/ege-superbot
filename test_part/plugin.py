@@ -111,8 +111,8 @@ class TestPartPlugin(BotPlugin):
                     
                     # Навигация назад
                     CallbackQueryHandler(
-                        handlers.back_to_mode, 
-                        pattern="^to_test_part_menu$"
+                        handlers.back_to_mode,
+                        pattern=f"^{handlers.utils.TestPartCallbackData.TEST_TO_MENU}$"
                     ),
                     CallbackQueryHandler(
                         handlers.back_to_mode, 
@@ -130,8 +130,8 @@ class TestPartPlugin(BotPlugin):
                         pattern="^to_mode$"
                     ),
                     CallbackQueryHandler(
-                        handlers.back_to_mode, 
-                        pattern="^to_test_part_menu$"
+                        handlers.back_to_mode,
+                        pattern=f"^{handlers.utils.TestPartCallbackData.TEST_TO_MENU}$"
                     ),
                 ],
                 
@@ -166,8 +166,8 @@ class TestPartPlugin(BotPlugin):
                 
                 states.CHOOSING_NEXT_ACTION: [
                     CallbackQueryHandler(
-                        handlers.handle_next_action, 
-                        pattern="^next:"
+                        handlers.handle_next_action,
+                        pattern="^test_next_"
                     ),
                 ],
                 
@@ -177,8 +177,8 @@ class TestPartPlugin(BotPlugin):
                         handlers.handle_mistake_answer
                     ),
                     CallbackQueryHandler(
-                        handlers.mistake_nav, 
-                        pattern="^mistake_nav:"
+                        handlers.mistake_nav,
+                        pattern="^test_mistake_"
                     ),
                 ],
             },
@@ -186,7 +186,7 @@ class TestPartPlugin(BotPlugin):
                 CommandHandler("cancel", handlers.cmd_cancel),
                 CallbackQueryHandler(
                     handlers.back_to_mode, 
-                    pattern="^start_button$"
+                    pattern="^test_start_button$"
                 ),
                 # Обработка возврата в главное меню
                 CallbackQueryHandler(
@@ -211,12 +211,12 @@ class TestPartPlugin(BotPlugin):
                         handlers.handle_mistake_answer
                     ),
                     CallbackQueryHandler(
-                        handlers.mistake_nav, 
-                        pattern="^mistake_nav:"
+                        handlers.mistake_nav,
+                        pattern="^test_mistake_"
                     ),
                     CallbackQueryHandler(
-                        handlers.handle_next_action, 
-                        pattern="^next:"
+                        handlers.handle_next_action,
+                        pattern="^test_next_"
                     ),
                 ],
             },

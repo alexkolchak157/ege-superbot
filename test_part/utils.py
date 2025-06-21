@@ -661,6 +661,15 @@ class TestPartCallbackData:
     NEXT_MISTAKE = "next_mistake"
     SKIP_MISTAKE = "skip_mistake"
     EXIT_MISTAKES = "exit_mistakes"
+
+    # Стандартизированные callback_data
+    TEST_NEXT_CONTINUE = "test_next_continue"
+    TEST_NEXT_SHOW_EXPLANATION = "test_next_show_explanation"
+    TEST_NEXT_CHANGE_TOPIC = "test_next_change_topic"
+    TEST_NEXT_CHANGE_BLOCK = "test_next_change_block"
+    TEST_MISTAKE_SKIP = "test_mistake_skip"
+    TEST_MISTAKE_FINISH = "test_mistake_finish"
+    TEST_TO_MENU = "test_to_menu"
     
     @classmethod
     def get_plugin_entry(cls, plugin_code: str) -> str:
