@@ -54,9 +54,9 @@ def build_progress_keyboard(practiced_indices: Set[int], total: int) -> InlineKe
 def build_initial_choice_keyboard(mode: str) -> InlineKeyboardMarkup:
     """Создает клавиатуру для начального выбора способа поиска темы."""
     keyboard = [
-        [InlineKeyboardButton("📚 По блокам", callback_data=f"nav:choose_block:{mode}")],
-        [InlineKeyboardButton("🗂️ Все темы списком", callback_data=f"nav:show_all:{mode}")],
-        [InlineKeyboardButton("🎲 Случайная тема", callback_data=f"nav:random:{mode}")],
+        [InlineKeyboardButton("📚 По блокам", callback_data=f"t24_nav_choose_block:{mode}")],
+        [InlineKeyboardButton("🗂️ Все темы списком", callback_data=f"t24_nav_show_all:{mode}")],
+        [InlineKeyboardButton("🎲 Случайная тема", callback_data=f"t24_nav_random:{mode}")],
         [InlineKeyboardButton("⬅️ Назад", callback_data="t24_menu")]
     ]
     return InlineKeyboardMarkup(keyboard)
@@ -76,10 +76,10 @@ def build_block_selection_keyboard(mode: str) -> InlineKeyboardMarkup:
     for block_name in THEORY_BLOCKS:
         keyboard.append([InlineKeyboardButton(
             f"📁 {block_name}", 
-            callback_data=f"nav:select_block:{mode}:{block_name}"
+            callback_data=f"t24_nav_select_block:{mode}:{block_name}"
         )])
     
-    keyboard.append([InlineKeyboardButton("⬅️ Назад", callback_data=f"nav:back_to_main:{mode}")])
+    keyboard.append([InlineKeyboardButton("⬅️ Назад", callback_data=f"t24_nav_back_to_main:{mode}")])
     return InlineKeyboardMarkup(keyboard)
 
 def build_topic_page_keyboard(
@@ -135,7 +135,7 @@ def build_topic_page_keyboard(
         
         keyboard_rows.append([InlineKeyboardButton(
             f"{marker} {display_name}", 
-            callback_data=f"topic:{mode}:{index}"
+            callback_data=f"t24_topic_{mode}:{index}"
         )])
     
     # Навигация по страницам
@@ -143,7 +143,7 @@ def build_topic_page_keyboard(
     if page > 0:
         nav_buttons.append(InlineKeyboardButton(
             "⬅️", 
-            callback_data=f"nav:{list_source}:{mode}:{page-1}" + (f":{block_name}" if block_name else "")
+            callback_data=f"t24_nav_{list_source}:{mode}:{page-1}" + (f":{block_name}" if block_name else "")
         ))
     
     nav_buttons.append(InlineKeyboardButton(
@@ -154,7 +154,7 @@ def build_topic_page_keyboard(
     if page < total_pages - 1:
         nav_buttons.append(InlineKeyboardButton(
             "➡️", 
-            callback_data=f"nav:{list_source}:{mode}:{page+1}" + (f":{block_name}" if block_name else "")
+            callback_data=f"t24_nav_{list_source}:{mode}:{page+1}" + (f":{block_name}" if block_name else "")
         ))
     
     if nav_buttons and len(nav_buttons) > 1:
@@ -164,12 +164,12 @@ def build_topic_page_keyboard(
     if block_name:
         keyboard_rows.append([InlineKeyboardButton(
             "⬅️ К выбору блока", 
-            callback_data=f"nav:choose_block:{mode}"
+            callback_data=f"t24_nav_choose_block:{mode}"
         )])
     else:
         keyboard_rows.append([InlineKeyboardButton(
             "⬅️ Назад", 
-            callback_data=f"nav:back_to_main:{mode}"
+            callback_data=f"t24_nav_back_to_main:{mode}"
         )])
     
     if not page_items:
