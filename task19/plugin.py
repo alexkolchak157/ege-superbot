@@ -57,7 +57,7 @@ class Task19Plugin(BotPlugin):
                     
                     # Обработчики для выбора тем
                     CallbackQueryHandler(handlers.select_block, pattern="^t19_select_block$"),
-                    CallbackQueryHandler(handlers.handle_result_action, pattern="^t19_(new_topic|retry)$"),
+                    CallbackQueryHandler(handlers.handle_result_action, pattern="^t19_(new|retry)$"),
                     CallbackQueryHandler(handlers.return_to_menu, pattern="^t19_menu$"),
                     
                     # Навигация по темам
