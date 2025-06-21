@@ -14,6 +14,14 @@ from . import keyboards
 from core.document_processor import DocumentProcessor, DocumentHandlerMixin
 from core.admin_tools import admin_manager, admin_only, get_admin_keyboard_extension
 from core.universal_ui import UniversalUIComponents, AdaptiveKeyboards, MessageFormatter
+# В начало каждого файла handlers.py
+from core.ui_helpers import (
+    show_thinking_animation,
+    show_streak_notification,
+    get_personalized_greeting,
+    get_motivational_message,
+    create_visual_progress
+)
 
 logger = logging.getLogger(__name__)
 
@@ -666,7 +674,7 @@ async def handle_plan_enhanced(update: Update, context: ContextTypes.DEFAULT_TYP
         return ConversationHandler.END
     
     # Отправляем сообщение "Анализирую..."
-    thinking_msg = await update.message.reply_text("🧠 Анализирую ваш план...")
+    thinking_msg = await show_thinking_animation(update.message, "Проверяю ваш ответ")
     context.user_data['task24_thinking_msg_id'] = thinking_msg.message_id
     
     # НЕ УДАЛЯЕМ сообщения здесь! Удаление будет происходить при выборе следующего действия

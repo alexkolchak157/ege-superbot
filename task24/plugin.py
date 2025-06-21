@@ -68,6 +68,7 @@ class Task24Plugin(BotPlugin):
         )
         
         app.add_handler(conv_handler)
+        app.add_handler(CallbackQueryHandler(lambda u, c: u.callback_query.answer() if u.callback_query else None,pattern="^streak_ok$"))
         app.add_handler(CommandHandler("criteria", handlers.cmd_criteria))
 
 plugin = Task24Plugin()
