@@ -249,7 +249,7 @@ class TestPartPlugin(BotPlugin):
         
         # Команда отладки (только для разработки)
         app.add_handler(CommandHandler("debug_streaks", handlers.cmd_debug_streaks), group=3)
-        
+        app.add_handler(CallbackQueryHandler(lambda u, c: u.callback_query.answer() if u.callback_query else None,pattern="^streak_ok$"))
         logger.info(f"Registered all handlers for {self.title} plugin")
     
     async def _handle_to_main_menu(self, update, context):
