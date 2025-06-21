@@ -60,7 +60,7 @@ class Task20Plugin(BotPlugin):
                     
                     # Навигация по темам
                     CallbackQueryHandler(handlers.block_menu, pattern="^t20_block:"),
-                    CallbackQueryHandler(handlers.list_topics, pattern="^t20_list_topics($|:page:\d+)"),
+                    CallbackQueryHandler(handlers.list_topics, pattern=r"^t20_list_topics($|:page:\d+)"),
                     CallbackQueryHandler(handlers.random_topic_all, pattern="^t20_random_all$"),
                     CallbackQueryHandler(handlers.random_topic_block, pattern="^t20_random_block$"),
                     
@@ -98,7 +98,7 @@ class Task20Plugin(BotPlugin):
                     CallbackQueryHandler(handlers.choose_topic, pattern="^t20_topic:"),
                     CallbackQueryHandler(handlers.block_menu, pattern="^t20_block:"),
                     CallbackQueryHandler(handlers.select_block, pattern="^t20_select_block$"),
-                    CallbackQueryHandler(handlers.list_topics, pattern="^t20_list_topics:page:"),
+                    CallbackQueryHandler(handlers.list_topics, pattern=r"^t20_list_topics:page:\d+"),
                 ],
                 
                 states.ANSWERING: [
