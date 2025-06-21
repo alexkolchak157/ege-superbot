@@ -522,15 +522,9 @@ async def handle_next_action(update: Update, context: ContextTypes.DEFAULT_TYPE)
     query = update.callback_query
     await query.answer()
     
-    # Разбираем callback_data
-    parts = query.data.split(":")
-    if len(parts) < 2:
-        logger.error(f"Неправильный формат callback_data: {query.data}")
-        return states.CHOOSING_NEXT_ACTION
+    action = query.data
     
-    action = parts[1]
-    
-    if action == "show_explanation":
+    if action == "test_next_show_explanation":
         # Показываем пояснение для последнего отвеченного вопроса
         current_question_id = context.user_data.get('current_question_id')
         if current_question_id:
@@ -559,7 +553,7 @@ async def handle_next_action(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 await query.answer("К этому вопросу нет пояснения", show_alert=True)
         return states.CHOOSING_NEXT_ACTION
     
-    elif action == "continue":
+    elif action == "test_next_continue":
         # Сначала отправляем сообщение "Загружаю..."
         try:
             loading_msg = await query.message.reply_text("⏳ Загружаю следующий вопрос...")
@@ -663,7 +657,7 @@ async def handle_next_action(update: Update, context: ContextTypes.DEFAULT_TYPE)
             await send_mistake_question(loading_msg, context)
             return states.REVIEWING_MISTAKES
         
-    elif action == "change_topic":
+    elif action == "test_next_change_topic":
         # Возврат к выбору режима
         # Сначала удаляем старые сообщения
         await utils.purge_old_messages(context, query.message.chat_id)
@@ -677,7 +671,7 @@ async def handle_next_action(update: Update, context: ContextTypes.DEFAULT_TYPE)
         )
         return states.CHOOSING_MODE
     
-    elif action == "change_block":
+    elif action == "test_next_change_block":
         # В главное меню
         # Сначала удаляем старые сообщения
         await utils.purge_old_messages(context, query.message.chat_id)
@@ -1065,21 +1059,33 @@ async def handle_mistake_answer(update: Update, context: ContextTypes.DEFAULT_TY
     # Кнопка пояснения если есть
     if question_data.get('explanation'):
         kb_buttons.append([
-            InlineKeyboardButton("💡 Пояснение", callback_data="next:show_explanation")
+            InlineKeyboardButton(
+                "💡 Пояснение",
+                callback_data="test_next_show_explanation",
+            )
         ])
     
     # Кнопки навигации
     if current_index < len(mistake_ids):
         kb_buttons.append([
-            InlineKeyboardButton("➡️ Следующая ошибка", callback_data="next:continue")
+            InlineKeyboardButton(
+                "➡️ Следующая ошибка",
+                callback_data="test_next_continue",
+            )
         ])
     else:
         kb_buttons.append([
-            InlineKeyboardButton("✅ Завершить", callback_data="mistake_nav:finish")
+            InlineKeyboardButton(
+                "✅ Завершить",
+                callback_data="test_mistake_finish",
+            )
         ])
     
     kb_buttons.append([
-        InlineKeyboardButton("🔙 К выбору режима", callback_data="next:change_topic")
+        InlineKeyboardButton(
+            "🔙 К выбору режима",
+            callback_data="test_next_change_topic",
+        )
     ])
     
     kb = InlineKeyboardMarkup(kb_buttons)
@@ -1100,9 +1106,9 @@ async def mistake_nav(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     
-    action = query.data.split(":")[1]
-    
-    if action == "finish":
+    action = query.data
+
+    if action == "test_mistake_finish":
         kb = keyboards.get_initial_choice_keyboard()
         await query.edit_message_text(
             "✅ Работа над ошибками завершена!\n\n"
@@ -1343,9 +1349,14 @@ async def handle_detailed_report(update: Update, context: ContextTypes.DEFAULT_T
         text += f"   {progress_bar}\n"
         text += f"   Правильно: {data['correct']}/{data['total']}\n\n"
     
-    kb = InlineKeyboardMarkup([[
-        InlineKeyboardButton("⬅️ Назад", callback_data="back_to_stat_menu")
-    ]])
+    kb = InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton(
+                "⬅️ Назад",
+                callback_data="test_back_to_stat_menu",
+            )
+        ]
+    ])
     
     await query.edit_message_text(text, reply_markup=kb, parse_mode=ParseMode.HTML)
     return ConversationHandler.END
