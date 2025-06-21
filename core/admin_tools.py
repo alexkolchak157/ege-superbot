@@ -478,7 +478,6 @@ async def handle_admin_callback(update: Update, context: ContextTypes.DEFAULT_TY
         text = "📊 <b>Выберите тип статистики</b>"
         kb = AdminKeyboards.stats_menu()
         await query.edit_message_text(text, reply_markup=kb, parse_mode=ParseMode.HTML)
-    # Добавьте другие обработчики по необходимости
 
 
 # Функции для интеграции с модулями

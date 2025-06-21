@@ -14,7 +14,6 @@ from . import keyboards
 from core.document_processor import DocumentProcessor, DocumentHandlerMixin
 from core.admin_tools import admin_manager, admin_only, get_admin_keyboard_extension
 from core.universal_ui import UniversalUIComponents, AdaptiveKeyboards, MessageFormatter
-# В начало каждого файла handlers.py
 from core.ui_helpers import (
     show_thinking_animation,
     show_streak_notification,
