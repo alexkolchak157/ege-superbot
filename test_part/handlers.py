@@ -1,24 +1,23 @@
 import logging
 import random
-import aiosqlite
-from core.config import DATABASE_FILE
 from datetime import datetime
-from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton
-from telegram.ext import ContextTypes, ConversationHandler
+
+import aiosqlite
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.constants import ParseMode
+from telegram.ext import ContextTypes, ConversationHandler
+
+from core import db, states
 from core.admin_tools import admin_manager
-from core import states, db
-from core.config import REQUIRED_CHANNEL
-from . import keyboards
-from . import utils
-from .loader import QUESTIONS_DATA, AVAILABLE_BLOCKS, QUESTIONS_DICT_FLAT
-from core.ui_helpers import (
-    show_thinking_animation,
-    show_streak_notification,
-    get_personalized_greeting,
-    get_motivational_message,
-    create_visual_progress,
-)
+from core.config import DATABASE_FILE, REQUIRED_CHANNEL
+from core.ui_helpers import (create_visual_progress, get_motivational_message,
+                             get_personalized_greeting,
+                             show_streak_notification, show_thinking_animation)
+from core.universal_ui import (AdaptiveKeyboards, MessageFormatter,
+                               UniversalUIComponents)
+
+from . import keyboards, utils
+from .loader import AVAILABLE_BLOCKS, QUESTIONS_DATA, QUESTIONS_DICT_FLAT
 
 try:
     from .cache import questions_cache
