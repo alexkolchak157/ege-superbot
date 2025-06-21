@@ -243,8 +243,8 @@ class DocumentHandlerMixin:
         # Удаляем сообщение о обработке
         try:
             await processing_msg.delete()
-        except:
-            pass
+        except Exception as e:
+            logger.error("Failed to delete processing message: %s", e)
         
         if not success:
             await update.message.reply_text(
