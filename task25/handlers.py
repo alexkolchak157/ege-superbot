@@ -199,8 +199,18 @@ async def entry_from_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Вход в задание 25 из главного меню."""
     query = update.callback_query
     await query.answer()
-    
-    text = (
+
+    results = context.user_data.get('task25_results', [])
+    user_stats = {
+        'total_attempts': len(results),
+        'average_score': sum(r['score'] for r in results) / len(results) if results else 0,
+        'streak': context.user_data.get('correct_streak', 0),
+        'weak_topics_count': 0,
+        'progress_percent': int(len(set(r.get('topic_id') for r in results)) / 100 * 100) if results else 0
+    }
+
+    greeting = get_personalized_greeting(user_stats)
+    text = greeting + (
         "📝 <b>Задание 25 - Развёрнутый ответ</b>\n\n"
         "Задание проверяет умение:\n"
         "• Обосновывать теоретические положения\n"
@@ -626,15 +636,19 @@ async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if evaluator and AI_EVALUATOR_AVAILABLE:
         try:
             result = await evaluator.evaluate(topic, user_answer)
-            feedback = _format_evaluation_result(result, topic)
             score = result.total_score
+            max_score = getattr(result, 'max_score', 6)
+            feedback = _format_evaluation_result(result, topic)
+            feedback += f"\n\n💬 {get_motivational_message(score, max_score)}"
         except Exception as e:
             logger.error(f"Evaluation error: {e}")
             feedback = _get_fallback_feedback(user_answer, topic)
             score = _estimate_score(user_answer)
+            max_score = 6
     else:
         feedback = _get_fallback_feedback(user_answer, topic)
         score = _estimate_score(user_answer)
+        max_score = 6
     
     # Сохраняем результат
     context.user_data.setdefault('task25_results', []).append({
@@ -644,10 +658,10 @@ async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
         'timestamp': datetime.now().isoformat()
     })
     if score == max_score:
-    streak = context.user_data.get('correct_streak', 0) + 1
-    context.user_data['correct_streak'] = streak
-    if streak in [3, 5, 10, 20, 50, 100]:
-        await show_streak_notification(update, context, 'correct', streak)
+        streak = context.user_data.get('correct_streak', 0) + 1
+        context.user_data['correct_streak'] = streak
+        if streak in [3, 5, 10, 20, 50, 100]:
+            await show_streak_notification(update, context, 'correct', streak)
         
     try:
         await thinking_msg.delete()
@@ -1394,12 +1408,13 @@ async def return_to_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_stats = {
         'total_attempts': len(results),
         'average_score': sum(r['score'] for r in results) / len(results) if results else 0,
-        'streak': 0,
+        'streak': context.user_data.get('correct_streak', 0),
         'weak_topics_count': 0,
         'progress_percent': int(len(set(r.get('topic_id') for r in results)) / 100 * 100) if results else 0
     }
-    
-    text = MessageFormatter.format_welcome_message(
+
+    greeting = get_personalized_greeting(user_stats)
+    text = greeting + MessageFormatter.format_welcome_message(
         "задание 25",
         is_new_user=user_stats['total_attempts'] == 0
     )
