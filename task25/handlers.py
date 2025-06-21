@@ -12,9 +12,7 @@ from core.admin_tools import admin_manager
 from core import states
 from core.plugin_loader import build_main_menu
 from core.universal_ui import UniversalUIComponents, AdaptiveKeyboards, MessageFormatter
-# Добавьте этот импорт для состояния ANSWERING_PARTS
 from core.states import ANSWERING_PARTS, CHOOSING_BLOCK_T25
-# В начало каждого файла handlers.py
 from core.ui_helpers import (
     show_thinking_animation,
     show_streak_notification,
@@ -701,8 +699,6 @@ def _estimate_score(user_answer: str) -> int:
     else:
         return 1
         
-# Добавьте эту новую функцию ПОСЛЕ handle_answer:
-
 async def handle_answer_parts(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработка ответа по частям."""
     user_answer = update.message.text

@@ -50,7 +50,7 @@ class Task24Plugin(BotPlugin):
                     CallbackQueryHandler(handlers.next_topic, pattern="^next_topic$"),
                     CallbackQueryHandler(handlers.back_to_menu, pattern="^back_main$"),
                     CallbackQueryHandler(handlers.back_to_main_menu, pattern="^to_main_menu$"),
-                    CallbackQueryHandler(handlers.noop, pattern="^noop$"),  # ← Добавьте эту строку
+                    CallbackQueryHandler(handlers.noop, pattern="^noop$")
                 ],
                 states.AWAITING_PLAN: [
                     MessageHandler(filters.TEXT & ~filters.COMMAND, handlers.handle_plan_enhanced),
