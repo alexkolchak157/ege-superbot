@@ -779,7 +779,12 @@ async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await show_streak_notification(update, context, 'correct', context.user_data['correct_streak'])
         
         return states.CHOOSING_MODE
-            
+
+    except Exception as e:
+        logger.error(f"Task19 evaluation error: {e}")
+        await update.message.reply_text("❌ Произошла ошибка при проверке. Попробуйте ещё раз.")
+        return states.CHOOSING_MODE
+
 
 async def handle_answer_document_task19(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработка примеров из документа для task19."""
