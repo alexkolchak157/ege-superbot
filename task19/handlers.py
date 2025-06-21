@@ -16,6 +16,13 @@ from datetime import datetime
 import io
 from .evaluator import StrictnessLevel, Task19AIEvaluator
 from core.universal_ui import UniversalUIComponents, AdaptiveKeyboards, MessageFormatter
+from core.ui_helpers import (
+    show_thinking_animation,
+    get_motivational_message,
+    show_streak_notification,
+    get_personalized_greeting,
+    create_visual_progress,
+)
 
 TASK19_STRICTNESS = os.getenv('TASK19_STRICTNESS', 'STRICT').upper()
 
@@ -188,6 +195,16 @@ async def entry_from_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     
+    results = context.user_data.get('task19_results', [])
+    user_stats = {
+        'total_attempts': len(results),
+        'streak': context.user_data.get('correct_streak', 0),
+        'weak_topics_count': 0,
+        'progress_percent': int(len(set(r['topic'] for r in results)) / 50 * 100) if results else 0
+    }
+
+    greeting = get_personalized_greeting(user_stats)
+
     text = (
         "📝 <b>Задание 19</b>\n\n"
         "В этом задании нужно привести примеры, иллюстрирующих "
@@ -204,6 +221,8 @@ async def entry_from_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("🏠 Главное меню", callback_data="to_main_menu")]
     ])
     
+    text = f"{greeting}{text}"
+
     await query.edit_message_text(
         text,
         reply_markup=kb,
@@ -644,9 +663,7 @@ async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return states.CHOOSING_MODE
     
     # Показываем сообщение о проверке
-    thinking_msg = await update.message.reply_text(
-        "🤔 Анализирую ваш ответ..."
-    )
+    thinking_msg = await show_thinking_animation(update.message, "Проверяю ваш ответ")
     
     # Сохраняем ID сообщения "Анализирую..."
     context.user_data['task19_thinking_msg_id'] = thinking_msg.message_id
@@ -708,9 +725,11 @@ async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
         
         # Адаптивная клавиатура на основе результата
+        score_value = result.total_score if evaluator else score
+        max_score_value = result.max_score if evaluator else 3
         kb = AdaptiveKeyboards.create_result_keyboard(
-            score=total_score if evaluator else 1,
-            max_score=3,
+            score=score_value,
+            max_score=max_score_value,
             module_code="t19"
         )
         
@@ -720,14 +739,23 @@ async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception:
             pass
         
+        # Добавляем прогресс и мотивацию
+        feedback += f"\n\n{create_visual_progress(score_value, max_score_value)}"
+        feedback += f"\n{get_motivational_message(score_value, max_score_value)}"
+
+        streak = context.user_data.get('correct_streak', 0)
+        if score_value == max_score_value:
+            streak += 1
+        else:
+            streak = 0
+        context.user_data['correct_streak'] = streak
+        if streak in [3, 5, 10, 20, 50, 100]:
+            await show_streak_notification(update, context, 'correct', streak)
+
         # Отправляем результат
         result_msg = await update.message.reply_text(
             feedback,
-            kb = AdaptiveKeyboards.create_result_keyboard(
-                score=total_score if evaluator else 1,
-                max_score=3,
-                module_code="t19"
-            )
+            reply_markup=kb,
             parse_mode=ParseMode.HTML
         )
         
@@ -1002,7 +1030,7 @@ async def return_to_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_stats = {
         'total_attempts': len(results),
         'average_score': sum(r['score'] for r in results) / len(results) if results else 0,
-        'streak': 0,  # Можно добавить подсчет стриков
+        'streak': context.user_data.get('correct_streak', 0),
         'weak_topics_count': 0,
         'progress_percent': int(len(set(r['topic'] for r in results)) / 50 * 100) if results else 0
     }
@@ -1011,6 +1039,9 @@ async def return_to_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "задание 19",
         is_new_user=user_stats['total_attempts'] == 0
     )
+
+    greeting = get_personalized_greeting(user_stats)
+    text = f"{greeting}{text}"
     
     kb = AdaptiveKeyboards.create_menu_keyboard(user_stats, module_code="t19")
     

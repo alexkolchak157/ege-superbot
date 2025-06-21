@@ -12,6 +12,13 @@ from core.admin_tools import admin_manager
 from core import states
 from core.plugin_loader import build_main_menu
 from core.universal_ui import UniversalUIComponents, AdaptiveKeyboards, MessageFormatter
+from core.ui_helpers import (
+    show_thinking_animation,
+    get_motivational_message,
+    show_streak_notification,
+    get_personalized_greeting,
+    create_visual_progress,
+)
 # Добавьте этот импорт для состояния ANSWERING_PARTS
 from core.states import ANSWERING_PARTS, CHOOSING_BLOCK_T25
 
@@ -194,6 +201,16 @@ async def entry_from_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     
+    results = context.user_data.get('task25_results', [])
+    user_stats = {
+        'total_attempts': len(results),
+        'streak': context.user_data.get('correct_streak', 0),
+        'weak_topics_count': 0,
+        'progress_percent': int(len(set(r.get('topic_id') for r in results)) / 100 * 100) if results else 0
+    }
+
+    greeting = get_personalized_greeting(user_stats)
+
     text = (
         "📝 <b>Задание 25 - Развёрнутый ответ</b>\n\n"
         "Задание проверяет умение:\n"
@@ -213,6 +230,8 @@ async def entry_from_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("🏠 Главное меню", callback_data="to_main_menu")]
     ])
     
+    text = f"{greeting}{text}"
+
     await query.edit_message_text(
         text,
         reply_markup=kb,
@@ -614,7 +633,7 @@ async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return states.CHOOSING_MODE
     
     # Показываем индикатор обработки
-    thinking_msg = await update.message.reply_text("🤔 Анализирую ваш ответ...")
+    thinking_msg = await show_thinking_animation(update.message, "Проверяю ваш ответ")
     
     # Проверяем ответ
     if evaluator and AI_EVALUATOR_AVAILABLE:
@@ -649,7 +668,19 @@ async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
         max_score=6,
         module_code="t25"
     )
-    
+
+    feedback += f"\n\n{create_visual_progress(score, 6)}"
+    feedback += f"\n{get_motivational_message(score, 6)}"
+
+    streak = context.user_data.get('correct_streak', 0)
+    if score == 6:
+        streak += 1
+    else:
+        streak = 0
+    context.user_data['correct_streak'] = streak
+    if streak in [3, 5, 10, 20, 50, 100]:
+        await show_streak_notification(update, context, 'correct', streak)
+
     await update.message.reply_text(
         feedback,
         reply_markup=kb,  # Используем kb вместо InlineKeyboardMarkup(kb_buttons)
@@ -1385,7 +1416,7 @@ async def return_to_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_stats = {
         'total_attempts': len(results),
         'average_score': sum(r['score'] for r in results) / len(results) if results else 0,
-        'streak': 0,
+        'streak': context.user_data.get('correct_streak', 0),
         'weak_topics_count': 0,
         'progress_percent': int(len(set(r.get('topic_id') for r in results)) / 100 * 100) if results else 0
     }
@@ -1394,6 +1425,9 @@ async def return_to_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "задание 25",
         is_new_user=user_stats['total_attempts'] == 0
     )
+
+    greeting = get_personalized_greeting(user_stats)
+    text = f"{greeting}{text}"
     
     kb = AdaptiveKeyboards.create_menu_keyboard(user_stats, module_code="t25")
     

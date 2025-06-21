@@ -13,6 +13,13 @@ from telegram.ext import ContextTypes, ConversationHandler
 from core.admin_tools import admin_manager
 from core import states
 from core.universal_ui import UniversalUIComponents, AdaptiveKeyboards, MessageFormatter
+from core.ui_helpers import (
+    show_thinking_animation,
+    get_motivational_message,
+    show_streak_notification,
+    get_personalized_greeting,
+    create_visual_progress,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -247,6 +254,10 @@ async def entry_from_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Используем универсальное приветствие
     is_new_user = user_stats.get('total_attempts', 0) == 0
     text = MessageFormatter.format_welcome_message("задание 20", is_new_user)
+
+    # Персонализированное приветствие
+    greeting = get_personalized_greeting(user_stats)
+    text = f"{greeting}{text}"
     
     # Создаем адаптивное меню
     kb = AdaptiveKeyboards.create_menu_keyboard(user_stats, module_code="t20")
@@ -1719,9 +1730,7 @@ async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return states.CHOOSING_MODE
     
     # Показываем сообщение о проверке
-    thinking_msg = await update.message.reply_text(
-        "🤔 Анализирую ваши суждения..."
-    )
+    thinking_msg = await show_thinking_animation(update.message, "Проверяю ваш ответ")
     
     result: Optional[EvaluationResult] = None
     
@@ -1732,6 +1741,8 @@ async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
             # Простая проверка без AI
             arguments = [arg.strip() for arg in user_answer.split('\n') if arg.strip()]
             score = min(len(arguments), 3) if len(arguments) <= 3 else 0
+            score_value = score
+            max_score_value = 3
             
             feedback = f"📊 <b>Результаты проверки</b>\n\n"
             feedback += f"<b>Тема:</b> {topic['title']}\n"
@@ -1783,6 +1794,8 @@ async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if result.total_score < result.max_score:
                 feedback += "\n💡 <i>Для улучшения результата обратите внимание на рекомендации выше.</i>"
             
+            score_value = result.total_score
+            max_score_value = result.max_score
             # Данные для сохранения
             result_data = {
                 'topic_id': topic['id'],
@@ -1816,11 +1829,25 @@ async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 feedback += f"{ach['name']} - {ach['desc']}\n"
         
         kb = AdaptiveKeyboards.create_result_keyboard(
-            score=score,
-            max_score=3,
+            score=score_value,
+            max_score=max_score_value,
             module_code="t20"
         )
         
+        # Добавляем прогресс и мотивационное сообщение
+        feedback += f"\n\n{create_visual_progress(score_value, max_score_value)}"
+        feedback += f"\n{get_motivational_message(score_value, max_score_value)}"
+
+        # Обновляем стрик правильных ответов
+        streak = context.user_data.get('correct_streak', 0)
+        if score_value == max_score_value:
+            streak += 1
+        else:
+            streak = 0
+        context.user_data['correct_streak'] = streak
+        if streak in [3, 5, 10, 20, 50, 100]:
+            await show_streak_notification(update, context, 'correct', streak)
+
         await update.message.reply_text(
             feedback,
             reply_markup=kb,
