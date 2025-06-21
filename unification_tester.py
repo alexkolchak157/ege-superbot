@@ -151,11 +151,12 @@ class UnificationTester:
             
             # За стандартные callbacks
             if results['callbacks']:
-                std_ratio = len(results['callbacks']['standard']) / (
-                    len(results['callbacks']['standard']) + 
-                    len(results['callbacks']['non_standard']) + 0.1
-                )
-                score += int(std_ratio * 20)
+                total_callbacks = len(results['callbacks']['standard']) + len(results['callbacks']['non_standard'])
+                if total_callbacks:
+                    std_ratio = len(results['callbacks']['standard']) / total_callbacks
+                else:
+                    std_ratio = 1.0
+                score += round(std_ratio * 20)
             
             results['score'] = min(100, score)
         
