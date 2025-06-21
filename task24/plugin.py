@@ -1,3 +1,6 @@
+"""Плагин для задания 24."""
+
+import logging
 from telegram.ext import (
     ConversationHandler, CommandHandler, CallbackQueryHandler,
     MessageHandler, filters
@@ -5,6 +8,8 @@ from telegram.ext import (
 from core.plugin_base import BotPlugin
 from core import states
 from . import handlers
+
+logger = logging.getLogger(__name__)
 
 class Task24Plugin(BotPlugin):
     code = "task24"
@@ -14,6 +19,14 @@ class Task24Plugin(BotPlugin):
     async def post_init(self, app):
         """Загрузка данных планов."""
         handlers.init_data()
+        logger.info("Task24 plugin initialized successfully")
+    
+    def entry_handler(self):
+        """Возвращает обработчик для входа из главного меню."""
+        return CallbackQueryHandler(
+            handlers.entry_from_menu,
+            pattern=f"^choose_{self.code}$"
+        )
     
     def register(self, app):
         """Регистрация обработчиков."""
@@ -70,5 +83,6 @@ class Task24Plugin(BotPlugin):
         app.add_handler(conv_handler)
         app.add_handler(CallbackQueryHandler(lambda u, c: u.callback_query.answer() if u.callback_query else None,pattern="^streak_ok$"))
         app.add_handler(CommandHandler("criteria", handlers.cmd_criteria))
+        logger.info(f"Registered handlers for {self.title} plugin")
 
 plugin = Task24Plugin()
