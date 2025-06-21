@@ -12,6 +12,13 @@ from core.config import REQUIRED_CHANNEL
 from . import keyboards
 from . import utils
 from .loader import QUESTIONS_DATA, AVAILABLE_BLOCKS, QUESTIONS_DICT_FLAT
+from core.ui_helpers import (
+    show_thinking_animation,
+    show_streak_notification,
+    get_personalized_greeting,
+    get_motivational_message,
+    create_visual_progress,
+)
 
 try:
     from .cache import questions_cache
@@ -208,7 +215,8 @@ async def show_progress_enhanced(update: Update, context: ContextTypes.DEFAULT_T
     streaks = await db.get_user_streaks(user_id)
     
     if not stats:
-        text = MessageFormatter.format_welcome_message(
+        greeting = get_personalized_greeting({'total_attempts': 0, 'streak': streaks.get('current_daily', 0)})
+        text = greeting + MessageFormatter.format_welcome_message(
             "тестовую часть ЕГЭ",
             is_new_user=True
         )
@@ -229,8 +237,8 @@ async def show_progress_enhanced(update: Update, context: ContextTypes.DEFAULT_T
                 'max_score': total
             })
         
-        # Форматируем сообщение
-        text = MessageFormatter.format_progress_message({
+        greeting = get_personalized_greeting({'total_attempts': total_answered, 'streak': streaks.get('current_daily', 0)})
+        text = greeting + MessageFormatter.format_progress_message({
             'total_attempts': total_answered,
             'average_score': overall_percentage / 100 * 3,  # Преобразуем в шкалу 0-3
             'completed': len(stats),
@@ -271,6 +279,10 @@ async def check_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     # Сохраняем ID сообщения с ответом для удаления
     context.user_data['answer_message_id'] = update.message.message_id
+
+    # Показываем анимацию ожидания проверки
+    thinking_msg = await show_thinking_animation(update.message, "Проверяю ваш ответ")
+    context.user_data['thinking_message_id'] = thinking_msg.message_id
     
     # Получаем ID текущего вопроса
     current_question_id = context.user_data.get('current_question_id')
@@ -322,6 +334,8 @@ async def check_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
             correct_current, correct_max = await db.update_correct_streak(user_id)
             # Сохраняем для следующего раза
             context.user_data['last_correct_streak'] = correct_current
+            context.user_data['correct_streak'] = context.user_data.get('correct_streak', 0) + 1
+            await show_streak_notification(update, context, 'correct', context.user_data['correct_streak'])
         else:
             await db.reset_correct_streak(user_id)
             correct_current = 0
@@ -330,6 +344,7 @@ async def check_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
             correct_max = streaks.get('max_correct', 0)
             await db.record_mistake(user_id, question_id)
             context.user_data['last_correct_streak'] = 0
+            context.user_data['correct_streak'] = 0
     
     except Exception as e:
         logger.error(f"Failed to update progress for user {user_id}: {e}")
@@ -360,7 +375,7 @@ async def check_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         # Добавляем правильные ответы по этой теме
                         correct_count += correct
                 
-                progress_bar = utils.format_progress_bar(correct_count, total_questions)
+                progress_bar = create_visual_progress(correct_count, total_questions)
                 progress_text = f"✅ Решено правильно по заданию №{exam_number}: {progress_bar}"
         
         elif last_mode == 'topic':
@@ -379,7 +394,7 @@ async def check_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         correct_count = correct
                         break
                 
-                progress_bar = utils.format_progress_bar(correct_count, total_questions)
+                progress_bar = create_visual_progress(correct_count, total_questions)
                 topic_name = utils.TOPIC_NAMES.get(selected_topic, selected_topic)
                 progress_text = f"✅ Решено правильно по теме \"{topic_name}\": {progress_bar}"
         
@@ -399,12 +414,18 @@ async def check_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     if selected_block in QUESTIONS_DATA and topic_stat in QUESTIONS_DATA[selected_block]:
                         correct_count += correct
                 
-                progress_bar = utils.format_progress_bar(correct_count, total_questions)
+                progress_bar = create_visual_progress(correct_count, total_questions)
                 progress_text = f"✅ Решено правильно по блоку \"{selected_block}\": {progress_bar}"
     
     except Exception as e:
         logger.error(f"Error calculating progress for user {user_id}: {e}")
         progress_text = ""
+
+    motivational_phrase = ""
+    try:
+        motivational_phrase = get_motivational_message(correct_count, total_questions)
+    except Exception:
+        pass
     
     # Формируем ответ с улучшенной обратной связью
     if is_correct:
@@ -424,11 +445,14 @@ async def check_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
         milestone_phrase = utils.get_streak_milestone_phrase(correct_current)
         if milestone_phrase and correct_current > old_correct_streak:
             feedback += f"\n\n{milestone_phrase}"
-        
+
         # Новый рекорд
         if correct_current > old_correct_streak and correct_current == correct_max and correct_max > 1:
             feedback += f"\n\n🎉 <b>НОВЫЙ РЕКОРД!</b>"
-            
+
+        if motivational_phrase:
+            feedback += f"\n\n{motivational_phrase}"
+
     else:
         # Случайная фраза для неправильного ответа
         feedback = f"<b>{utils.get_random_incorrect_phrase()}</b>\n\n"
@@ -451,6 +475,9 @@ async def check_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 feedback += f"\n📈 Ваш рекорд: {correct_max}"
         else:
             feedback += f"✨ Правильных подряд: 0"
+
+    if motivational_phrase and not is_correct:
+        feedback += f"\n\n{motivational_phrase}"
     
     # Показываем кнопки "что дальше"
     has_explanation = bool(question_data.get('explanation'))
@@ -462,6 +489,14 @@ async def check_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=kb,
             parse_mode=ParseMode.HTML
         )
+
+        # Удаляем сообщение с индикатором ожидания
+        thinking_id = context.user_data.pop('thinking_message_id', None)
+        if thinking_id:
+            try:
+                await update.message.bot.delete_message(update.message.chat_id, thinking_id)
+            except Exception:
+                pass
         
         # Сохраняем ID сообщения с фидбеком для удаления
         context.user_data['feedback_message_id'] = sent_msg.message_id
@@ -474,6 +509,12 @@ async def check_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         logger.error(f"Error sending feedback to user {user_id}: {e}")
         await update.message.reply_text("Произошла ошибка при отправке ответа")
+        thinking_id = context.user_data.pop('thinking_message_id', None)
+        if thinking_id:
+            try:
+                await update.message.bot.delete_message(update.message.chat_id, thinking_id)
+            except Exception:
+                pass
         return ConversationHandler.END
 
 async def handle_next_action(update: Update, context: ContextTypes.DEFAULT_TYPE):
