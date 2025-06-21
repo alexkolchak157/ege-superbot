@@ -714,7 +714,7 @@ async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 details={
                     f"Пример {i+1}": f"{'✅' if score > 0 else '❌'} {feedback}"
                     for i, (score, feedback) in enumerate(detailed_scores)
-                }
+                }   
             )
         else:
             # Простая оценка
