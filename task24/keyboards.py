@@ -9,12 +9,12 @@ def build_main_menu_keyboard() -> InlineKeyboardMarkup:
         [InlineKeyboardButton("💪 Тренироваться", callback_data="start_train")],
         [InlineKeyboardButton("👀 Посмотреть эталоны", callback_data="start_show")],
         [InlineKeyboardButton("🎯 Режим экзамена", callback_data="start_exam")],
-        [InlineKeyboardButton("🔍 Поиск темы", callback_data="search_topics")],
+        [InlineKeyboardButton("🔍 Поиск темы", callback_data="t24_search")],
         [InlineKeyboardButton("📜 Список всех тем", callback_data="show_list")],
-        [InlineKeyboardButton("📊 Мой прогресс", callback_data="show_progress")],
+        [InlineKeyboardButton("📊 Мой прогресс", callback_data="t24_progress")],
         [InlineKeyboardButton("📋 Критерии оценки", callback_data="show_criteria")],
         [InlineKeyboardButton("❓ Помощь", callback_data="show_help")],
-        [InlineKeyboardButton("🔄 Сбросить прогресс", callback_data="reset_progress")],
+        [InlineKeyboardButton("🔄 Сбросить прогресс", callback_data="t24_reset_progress")],
         [InlineKeyboardButton("📤 Экспорт прогресса", callback_data="export_progress")],
         [InlineKeyboardButton("🏠 Главное меню", callback_data="to_main_menu")]
     ]
@@ -46,7 +46,7 @@ def build_progress_keyboard(practiced_indices: Set[int], total: int) -> InlineKe
             )
         ],
         [InlineKeyboardButton("📤 Экспорт прогресса", callback_data="export_progress")],
-        [InlineKeyboardButton("⬅️ Назад", callback_data="start_button")]
+        [InlineKeyboardButton("⬅️ Назад", callback_data="t24_menu")]
     ]
     
     return InlineKeyboardMarkup(keyboard)
@@ -57,7 +57,7 @@ def build_initial_choice_keyboard(mode: str) -> InlineKeyboardMarkup:
         [InlineKeyboardButton("📚 По блокам", callback_data=f"nav:choose_block:{mode}")],
         [InlineKeyboardButton("🗂️ Все темы списком", callback_data=f"nav:show_all:{mode}")],
         [InlineKeyboardButton("🎲 Случайная тема", callback_data=f"nav:random:{mode}")],
-        [InlineKeyboardButton("⬅️ Назад", callback_data="start_button")]
+        [InlineKeyboardButton("⬅️ Назад", callback_data="t24_menu")]
     ]
     return InlineKeyboardMarkup(keyboard)
 
@@ -180,7 +180,7 @@ def build_topic_page_keyboard(
 def build_search_keyboard() -> InlineKeyboardMarkup:
     """Создает клавиатуру для поиска."""
     keyboard = [
-        [InlineKeyboardButton("❌ Отмена", callback_data="start_button")]
+        [InlineKeyboardButton("❌ Отмена", callback_data="t24_menu")]
     ]
     return InlineKeyboardMarkup(keyboard)
 
