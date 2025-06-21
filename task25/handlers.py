@@ -14,6 +14,14 @@ from core.plugin_loader import build_main_menu
 from core.universal_ui import UniversalUIComponents, AdaptiveKeyboards, MessageFormatter
 # Добавьте этот импорт для состояния ANSWERING_PARTS
 from core.states import ANSWERING_PARTS, CHOOSING_BLOCK_T25
+# В начало каждого файла handlers.py
+from core.ui_helpers import (
+    show_thinking_animation,
+    show_streak_notification,
+    get_personalized_greeting,
+    get_motivational_message,
+    create_visual_progress
+)
 
 logger = logging.getLogger(__name__)
 
@@ -614,7 +622,7 @@ async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return states.CHOOSING_MODE
     
     # Показываем индикатор обработки
-    thinking_msg = await update.message.reply_text("🤔 Анализирую ваш ответ...")
+    thinking_msg = await show_thinking_animation(update.message, "Проверяю ваш ответ")
     
     # Проверяем ответ
     if evaluator and AI_EVALUATOR_AVAILABLE:
@@ -637,7 +645,12 @@ async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
         'score': score,
         'timestamp': datetime.now().isoformat()
     })
-    
+    if score == max_score:
+    streak = context.user_data.get('correct_streak', 0) + 1
+    context.user_data['correct_streak'] = streak
+    if streak in [3, 5, 10, 20, 50, 100]:
+        await show_streak_notification(update, context, 'correct', streak)
+        
     try:
         await thinking_msg.delete()
     except Exception:

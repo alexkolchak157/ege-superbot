@@ -146,6 +146,7 @@ class Task25Plugin(BotPlugin):
         
         # Регистрируем обработчики в приложении
         app.add_handler(conv_handler)
+        app.add_handler(CallbackQueryHandler(lambda u, c: u.callback_query.answer() if u.callback_query else None,pattern="^streak_ok$"))
         logger.info(f"Registered handlers for {self.title} plugin")
 
 # Экспортируем плагин
