@@ -252,9 +252,10 @@ async def entry_from_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
             'progress_percent': 0
         }
     
-    # Используем универсальное приветствие
+    # Используем персонализированное приветствие
+    greeting = get_personalized_greeting(user_stats)
     is_new_user = user_stats.get('total_attempts', 0) == 0
-    text = MessageFormatter.format_welcome_message("задание 20", is_new_user)
+    text = greeting + MessageFormatter.format_welcome_message("задание 20", is_new_user)
     
     # Создаем адаптивное меню
     kb = AdaptiveKeyboards.create_menu_keyboard(user_stats, module_code="t20")
@@ -358,7 +359,8 @@ async def practice_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     # Показываем мини-статистику
     if stats['total_attempts'] > 0:
-        text += f"📊 Ваш прогресс: {stats['total_attempts']} попыток, средний балл {stats['average_score']:.1f}/3\n"
+        avg_visual = create_visual_progress(round(stats['average_score']), 3)
+        text += f"📊 Ваш прогресс: {stats['total_attempts']} попыток, средний балл {avg_visual}\n"
         
         if stats['streak'] > 0:
             text += f"🔥 Серия правильных ответов: {stats['streak']}\n"
@@ -898,7 +900,30 @@ async def return_to_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     for key in keys_to_clear:
         context.user_data.pop(key, None)
     
-    return await entry_from_menu(update, context)
+    # Получаем статистику пользователя
+    if UserProgress:
+        user_stats = UserProgress(context.user_data).get_stats()
+    else:
+        user_stats = {
+            'total_attempts': 0,
+            'streak': 0,
+            'weak_topics_count': 0,
+            'progress_percent': 0
+        }
+
+    greeting = get_personalized_greeting(user_stats)
+    is_new_user = user_stats.get('total_attempts', 0) == 0
+    text = greeting + MessageFormatter.format_welcome_message("задание 20", is_new_user)
+
+    kb = AdaptiveKeyboards.create_menu_keyboard(user_stats, module_code="t20")
+
+    await query.edit_message_text(
+        text,
+        reply_markup=kb,
+        parse_mode=ParseMode.HTML
+    )
+
+    return states.CHOOSING_MODE
 
 async def back_to_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Возврат в главное меню."""
@@ -1072,7 +1097,8 @@ async def list_topics(update: Update, context: ContextTypes.DEFAULT_TYPE):
     end_idx = min(start_idx + topics_per_page, len(topics))
     
     text = f"📚 <b>{block_name}</b>\n"
-    text += f"Страница {page + 1} из {total_pages}\n\n"
+    page_visual = create_visual_progress(page + 1, total_pages)
+    text += f"{page_visual}\n\n"
     text += "Выберите тему:\n"
     
     kb_buttons = []
@@ -1090,7 +1116,8 @@ async def list_topics(update: Update, context: ContextTypes.DEFAULT_TYPE):
     nav_buttons = []
     if page > 0:
         nav_buttons.append(InlineKeyboardButton("⬅️", callback_data=f"t20_list_topics:page:{page-1}"))
-    nav_buttons.append(InlineKeyboardButton(f"{page+1}/{total_pages}", callback_data="noop"))
+    progress_display = create_visual_progress(page + 1, total_pages)
+    nav_buttons.append(InlineKeyboardButton(progress_display, callback_data="noop"))
     if page < total_pages - 1:
         nav_buttons.append(InlineKeyboardButton("➡️", callback_data=f"t20_list_topics:page:{page+1}"))
     
@@ -1222,7 +1249,8 @@ async def bank_navigation(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if topic_idx > 0:
         nav_row.append(InlineKeyboardButton("⬅️", callback_data=f"t20_bank_nav:{topic_idx-1}"))
     
-    nav_row.append(InlineKeyboardButton(f"{topic_idx+1}/{len(topics)}", callback_data="noop"))
+    progress_display = create_visual_progress(topic_idx + 1, len(topics))
+    nav_row.append(InlineKeyboardButton(progress_display, callback_data="noop"))
     
     if topic_idx < len(topics) - 1:
         nav_row.append(InlineKeyboardButton("➡️", callback_data=f"t20_bank_nav:{topic_idx+1}"))
@@ -1535,7 +1563,8 @@ async def show_achievements(update: Update, context: ContextTypes.DEFAULT_TYPE):
             text += f"❓ {name[2:]} - {desc}\n"
     
     # Прогресс
-    text += f"\n<b>Прогресс:</b> {len(achievements)}/{len(all_achievements)}"
+    progress_display = create_visual_progress(len(achievements), len(all_achievements))
+    text += f"\n<b>Прогресс:</b> {progress_display}"
     
     kb = InlineKeyboardMarkup([[
         InlineKeyboardButton("⬅️ Назад", callback_data="t20_progress")
@@ -1574,7 +1603,8 @@ async def mistakes_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text += "Темы для повторения:\n"
     
     for i, result in enumerate(low_score_topics[:5]):  # Показываем до 5 тем
-        text += f"• {result['topic_title']} ({result['score']}/3)\n"
+        progress_display = create_visual_progress(result['score'], 3)
+        text += f"• {result['topic_title']} ({progress_display})\n"
     
     text += "\n<i>Выберите тему для повторения или начните со случайной.</i>"
     
@@ -1749,6 +1779,10 @@ async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 feedback += "❌ Необходимо привести три суждения.\n"
             
             feedback += "\n⚠️ <i>AI-проверка недоступна. Обратитесь к преподавателю для детальной оценки.</i>"
+
+            max_score = 3
+            motivation = get_motivational_message(score, max_score)
+            feedback += f"\n\n💬 {motivation}"
             
             # НЕ показываем эталонные суждения!
             
@@ -1788,6 +1822,11 @@ async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
             # Вместо этого добавляем совет если оценка не максимальная
             if result.total_score < result.max_score:
                 feedback += "\n💡 <i>Для улучшения результата обратите внимание на рекомендации выше.</i>"
+
+            score = result.total_score
+            max_score = result.max_score
+            motivation = get_motivational_message(score, max_score)
+            feedback += f"\n\n💬 {motivation}"
             
             # Данные для сохранения
             result_data = {
@@ -1811,6 +1850,13 @@ async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if 'task20_results' not in context.user_data:
             context.user_data['task20_results'] = []
         context.user_data['task20_results'].append(result_data)
+
+        if result_data['score'] == result_data['max_score']:
+            streak = context.user_data.get('correct_streak', 0) + 1
+            context.user_data['correct_streak'] = streak
+            if streak in [3, 5, 10, 20, 50, 100]:
+                await show_streak_notification(update, context, 'correct', streak)
+
         await save_stats_by_level(context, user_id, result_data['score'])
                 # Проверяем достижения
         new_achievements = await achievements_check(context, user_id)
