@@ -661,6 +661,15 @@ class TestPartCallbackData:
     TEST_NEXT_MISTAKE = "next_mistake"
     TEST_SKIP_MISTAKE = "skip_mistake"
     TEST_EXIT_MISTAKES = "exit_mistakes"
+
+    # Префиксы и дополнительные действия
+    TEST_NEXT_CONTINUE = "test_next_continue"
+    TEST_NEXT_SHOW_EXPLANATION = "test_next_show_explanation"
+    TEST_NEXT_CHANGE_TOPIC = "test_next_change_topic"
+    TEST_NEXT_CHANGE_BLOCK = "test_next_change_block"
+    TEST_MISTAKE_FINISH = "test_mistake_finish"
+    TEST_MISTAKE_SKIP = "test_mistake_skip"
+    TEST_BACK_TO_STAT_MENU = "test_back_to_stat_menu"
     
     @classmethod
     def get_plugin_entry(cls, plugin_code: str) -> str:

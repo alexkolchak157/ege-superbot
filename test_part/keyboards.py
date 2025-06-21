@@ -150,10 +150,29 @@ def get_after_answer_keyboard(last_mode: str = "random") -> InlineKeyboardMarkup
 
 def get_mistakes_nav_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("➡️ Следующая ошибка", callback_data=CallbackData.TEST_NEXT_MISTAKE)],
-        [InlineKeyboardButton("⏩ Пропустить", callback_data=CallbackData.TEST_SKIP_MISTAKE)],
-        [InlineKeyboardButton("🚪 Закончить разбор", callback_data=CallbackData.TEST_EXIT_MISTAKES)],
-        [InlineKeyboardButton("🏠 Главное меню", callback_data=CallbackData.TEST_TO_MAIN_MENU)],
+        [
+            InlineKeyboardButton(
+                "➡️ Следующая ошибка",
+                callback_data="test_next_continue",
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                "⏩ Пропустить",
+                callback_data="test_mistake_skip",
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                "🚪 Закончить разбор",
+                callback_data="test_mistake_finish",
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                "🏠 Главное меню", callback_data="test_next_change_block"
+            )
+        ],
     ])
 
 def get_next_action_keyboard(last_mode: str, has_explanation: bool = False) -> InlineKeyboardMarkup:
@@ -175,7 +194,11 @@ def get_next_action_keyboard(last_mode: str, has_explanation: bool = False) -> I
     else:  # random_all
         next_text = "➡️ Следующий случайный"
     
-    first_row.append(InlineKeyboardButton(next_text, callback_data="next:continue"))
+    first_row.append(
+        InlineKeyboardButton(
+            next_text, callback_data=CallbackData.TEST_NEXT_CONTINUE
+        )
+    )
     
     # Добавляем кнопку пояснения если есть (во второй ряд для лучшего размещения)
     keyboard.append(first_row)
@@ -183,22 +206,35 @@ def get_next_action_keyboard(last_mode: str, has_explanation: bool = False) -> I
     # Второй ряд - пояснение (если есть)
     if has_explanation:
         keyboard.append([
-            InlineKeyboardButton("💡 Показать пояснение", callback_data="next:show_explanation")
+            InlineKeyboardButton(
+                "💡 Показать пояснение",
+                callback_data=CallbackData.TEST_NEXT_SHOW_EXPLANATION,
+            )
         ])
     
     # Третий ряд - навигация
     nav_row = []
     
     if last_mode in ["topic", "exam_num", "block"]:
-        nav_row.append(InlineKeyboardButton("🔄 Сменить тему", callback_data="next:change_topic"))
+        nav_row.append(
+            InlineKeyboardButton(
+                "🔄 Сменить тему", callback_data=CallbackData.TEST_NEXT_CHANGE_TOPIC
+            )
+        )
     else:
-        nav_row.append(InlineKeyboardButton("🔄 Сменить режим", callback_data="next:change_topic"))
+        nav_row.append(
+            InlineKeyboardButton(
+                "🔄 Сменить режим", callback_data=CallbackData.TEST_NEXT_CHANGE_TOPIC
+            )
+        )
     
     keyboard.append(nav_row)
     
     # Четвертый ряд - главное меню
     keyboard.append([
-        InlineKeyboardButton("🏠 Главное меню", callback_data="next:change_block")
+        InlineKeyboardButton(
+            "🏠 Главное меню", callback_data=CallbackData.TEST_NEXT_CHANGE_BLOCK
+        )
     ])
     
     return InlineKeyboardMarkup(keyboard)
@@ -232,8 +268,28 @@ def get_stats_keyboard() -> InlineKeyboardMarkup:
 def get_mistakes_nav_keyboard() -> InlineKeyboardMarkup:
     """Клавиатура навигации по ошибкам."""
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("➡️ Следующая ошибка", callback_data="next:continue")],
-        [InlineKeyboardButton("⏩ Пропустить", callback_data="mistake_nav:skip")],
-        [InlineKeyboardButton("🚪 Закончить разбор", callback_data="mistake_nav:finish")],
-        [InlineKeyboardButton("🏠 Главное меню", callback_data="next:change_block")],
+        [
+            InlineKeyboardButton(
+                "➡️ Следующая ошибка",
+                callback_data="test_next_continue",
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                "⏩ Пропустить",
+                callback_data="test_mistake_skip",
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                "🚪 Закончить разбор",
+                callback_data="test_mistake_finish",
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                "🏠 Главное меню",
+                callback_data="test_next_change_block",
+            )
+        ],
     ])

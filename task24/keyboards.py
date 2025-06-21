@@ -6,14 +6,14 @@ from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 def build_main_menu_keyboard() -> InlineKeyboardMarkup:
     """Создает клавиатуру главного меню task24."""
     keyboard = [
-        [InlineKeyboardButton("💪 Тренироваться", callback_data="start_train")],
-        [InlineKeyboardButton("👀 Посмотреть эталоны", callback_data="start_show")],
-        [InlineKeyboardButton("🎯 Режим экзамена", callback_data="start_exam")],
+        [InlineKeyboardButton("💪 Тренироваться", callback_data="t24_train")],
+        [InlineKeyboardButton("👀 Посмотреть эталоны", callback_data="t24_show")],
+        [InlineKeyboardButton("🎯 Режим экзамена", callback_data="t24_exam")],
         [InlineKeyboardButton("🔍 Поиск темы", callback_data="t24_search")],
-        [InlineKeyboardButton("📜 Список всех тем", callback_data="show_list")],
+        [InlineKeyboardButton("📜 Список всех тем", callback_data="t24_show_list")],
         [InlineKeyboardButton("📊 Мой прогресс", callback_data="t24_progress")],
-        [InlineKeyboardButton("📋 Критерии оценки", callback_data="show_criteria")],
-        [InlineKeyboardButton("❓ Помощь", callback_data="show_help")],
+        [InlineKeyboardButton("📋 Критерии оценки", callback_data="t24_criteria")],
+        [InlineKeyboardButton("❓ Помощь", callback_data="t24_help")],
         [InlineKeyboardButton("🔄 Сбросить прогресс", callback_data="t24_reset_progress")],
         [InlineKeyboardButton("📤 Экспорт прогресса", callback_data="export_progress")],
         [InlineKeyboardButton("🏠 Главное меню", callback_data="to_main_menu")]
