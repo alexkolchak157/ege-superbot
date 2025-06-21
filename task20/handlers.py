@@ -13,6 +13,14 @@ from telegram.ext import ContextTypes, ConversationHandler
 from core.admin_tools import admin_manager
 from core import states
 from core.universal_ui import UniversalUIComponents, AdaptiveKeyboards, MessageFormatter
+# В начало каждого файла handlers.py
+from core.ui_helpers import (
+    show_thinking_animation,
+    show_streak_notification,
+    get_personalized_greeting,
+    get_motivational_message,
+    create_visual_progress
+)
 
 logger = logging.getLogger(__name__)
 
@@ -1703,7 +1711,7 @@ async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработка ответа пользователя с AI-проверкой."""
     user_answer = update.message.text
     topic = context.user_data.get('current_topic')
-    user_id = update.effective_user.id
+    user_id = update.effective_user.id  # ← ДОБАВИТЬ ЭТУ СТРОКУ ЗДЕСЬ
     
     # Отладочное логирование
     logger.info(f"handle_answer called, evaluator = {evaluator}")
@@ -1719,9 +1727,7 @@ async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return states.CHOOSING_MODE
     
     # Показываем сообщение о проверке
-    thinking_msg = await update.message.reply_text(
-        "🤔 Анализирую ваши суждения..."
-    )
+    thinking_msg = await show_thinking_animation(update.message, "Проверяю ваш ответ")
     
     result: Optional[EvaluationResult] = None
     
