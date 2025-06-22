@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 
 from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton
 from telegram.ext import ContextTypes, ConversationHandler
+from core import states
 from telegram.error import BadRequest, NetworkError, TimedOut
 
 logger = logging.getLogger(__name__)
