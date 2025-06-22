@@ -31,6 +31,13 @@ async def get_db() -> aiosqlite.Connection:
         _db = await aiosqlite.connect(DATABASE_FILE)
     return _db
 
+async def close_db() -> None:
+    """Закрывает глобальное подключение к базе данных, если оно открыто."""
+    global _db
+    if _db is not None:
+        await _db.close()
+        _db = None
+
 async def update_daily_streak(user_id: int) -> Tuple[int, int]:
     """
     Обновляет ДНЕВНОЙ стрик пользователя на основе последней активности.

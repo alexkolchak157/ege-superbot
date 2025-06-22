@@ -26,6 +26,10 @@ async def post_init(application: Application) -> None:
     
     logger.info("Инициализация завершена")
 
+async def post_shutdown(application: Application) -> None:
+    """Выполняется при завершении приложения."""
+    await db.close_db()
+
 async def start(update, context):
     """Главная команда /start."""
     await update.message.reply_text(
@@ -45,6 +49,7 @@ def main():
         Application.builder()
         .token(BOT_TOKEN)
         .post_init(post_init)
+        .post_shutdown(post_shutdown)
         .build()
     )
 
