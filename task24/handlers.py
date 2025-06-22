@@ -24,6 +24,7 @@ from core.ui_helpers import (
 )
 
 logger = logging.getLogger(__name__)
+from core.error_handler import safe_handler, auto_answer_callback
 
 # Глобальные данные
 plan_bot_data = None
@@ -168,10 +169,10 @@ def init_data():
     
     return data_loaded  # Возвращаем статус загрузки
 
+@safe_handler()
 async def entry_from_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Вход из главного меню."""
     query = update.callback_query
-    await query.answer()
     
     # Проверка наличия данных планов
     if not plan_bot_data or not plan_bot_data.topic_list_for_pagination:
@@ -232,10 +233,10 @@ async def cmd_start_plan(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     return states.CHOOSING_MODE
 
+@safe_handler()
 async def train_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Режим тренировки."""
     query = update.callback_query
-    await query.answer()
     
     if not plan_bot_data or not plan_bot_data.topic_list_for_pagination:
         await query.edit_message_text(
@@ -258,10 +259,10 @@ async def train_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return states.CHOOSING_TOPIC  # ← Исправлено: возвращаем правильное состояние
 
 
+@safe_handler()
 async def show_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Режим просмотра эталонов."""
     query = update.callback_query
-    await query.answer()
     
     if not plan_bot_data or not plan_bot_data.topic_list_for_pagination:
         await query.edit_message_text(
@@ -283,10 +284,10 @@ async def show_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     return states.CHOOSING_TOPIC  # ← Исправлено: возвращаем правильное состояние
 
+@safe_handler()
 async def exam_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Режим экзамена - случайная тема без возможности выбора."""
     query = update.callback_query
-    await query.answer()
     
     if not plan_bot_data or not plan_bot_data.topic_list_for_pagination:
         await query.edit_message_text(
@@ -337,13 +338,12 @@ async def exam_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     return states.AWAITING_PLAN
 
+@safe_handler()
 async def list_topics(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Показ списка всех тем."""
     query = update.callback_query
-    await query.answer()
     
     if not plan_bot_data:
-        await query.answer("Данные не загружены", show_alert=True)
         return states.CHOOSING_MODE
     
     all_topics = plan_bot_data.get_all_topics_list()
@@ -412,10 +412,10 @@ async def list_topics(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     return states.CHOOSING_MODE
 
+@safe_handler()
 async def select_topic(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Выбор конкретной темы."""
     query = update.callback_query
-    await query.answer()
     
     data = query.data
     if not data.startswith("t24_topic_"):
@@ -433,7 +433,6 @@ async def select_topic(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Получаем тему по индексу
     topic_name = plan_bot_data.topic_index_map.get(topic_idx)
     if not topic_name:
-        await query.answer("Тема не найдена", show_alert=True)
         return
     
     # Сохраняем в контекст
@@ -467,16 +466,15 @@ async def select_topic(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Режим просмотра - показываем эталон
         return await show_etalon_plan(query, context, topic_idx)
 
+@safe_handler()
 async def show_etalon_plan(query, context, topic_idx):
     """Показ эталонного плана."""
     topic_name = plan_bot_data.topic_index_map.get(topic_idx)
     if not topic_name:
-        await query.answer("Тема не найдена", show_alert=True)
         return
     
     plan_data = plan_bot_data.get_plan_data(topic_name)
     if not plan_data:
-        await query.answer("Данные плана не найдены", show_alert=True)
         return
     
     # Формируем текст эталона
@@ -516,10 +514,10 @@ async def show_etalon_plan(query, context, topic_idx):
     await query.edit_message_text(text, reply_markup=kb, parse_mode=ParseMode.HTML)
     return states.CHOOSING_TOPIC
 
+@safe_handler()
 async def navigate_topics(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Навигация по темам."""
     query = update.callback_query
-    await query.answer()
     
     # Проверка загрузки данных
     if not plan_bot_data or not hasattr(plan_bot_data, 'topic_list_for_pagination'):
@@ -597,7 +595,6 @@ async def navigate_topics(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 # Режим просмотра - показываем эталон
                 return await show_etalon_plan(query, context, idx)
         else:
-            await query.answer("Нет доступных тем", show_alert=True)
     
     elif action in ["all", "block"]:
         mode = parts[1]
@@ -636,7 +633,7 @@ async def navigate_topics(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return states.CHOOSING_TOPIC
 
 
-
+@safe_handler()
 async def handle_plan_enhanced(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработка плана пользователя (текст или документ)."""
     
@@ -775,6 +772,7 @@ async def handle_plan_enhanced(update: Update, context: ContextTypes.DEFAULT_TYP
         
         return states.AWAITING_FEEDBACK
 
+@safe_handler()
 async def handle_plan_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработка плана, присланного документом."""
     
@@ -814,10 +812,10 @@ async def handle_plan_document(update: Update, context: ContextTypes.DEFAULT_TYP
     # Вызываем стандартный обработчик планов
     return await handle_plan(update, context)
 
+@safe_handler()
 async def next_topic(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Переход к следующей теме."""
     query = update.callback_query
-    await query.answer()
     
     # Удаляем все предыдущие сообщения перед показом выбора новой темы
     await delete_previous_messages(context, query.message.chat_id)
@@ -836,6 +834,7 @@ async def next_topic(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     return states.CHOOSING_TOPIC
 
+@safe_handler()
 async def show_criteria(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Показ критериев оценки."""
     criteria_text = """<b>📋 Критерии оценивания задания 24 (ЕГЭ 2025)</b>
@@ -867,7 +866,6 @@ async def show_criteria(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     query = update.callback_query
     if query:
-        await query.answer()
         kb = InlineKeyboardMarkup([[
             InlineKeyboardButton("⬅️ Назад", callback_data="t24_menu")
         ]])
@@ -881,6 +879,7 @@ async def show_criteria(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     return states.CHOOSING_MODE
 
+@safe_handler()
 async def show_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Показ помощи."""
     help_text = """<b>❓ Помощь по заданию 24</b>
@@ -923,7 +922,6 @@ async def show_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
 /cancel - отменить действие"""
     
     query = update.callback_query
-    await query.answer()
     
     kb = InlineKeyboardMarkup([[
         InlineKeyboardButton("⬅️ Назад", callback_data="t24_menu")
@@ -932,10 +930,10 @@ async def show_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await safe_edit_or_reply(query, help_text, kb, ParseMode.HTML)
     return states.CHOOSING_MODE
 
+@safe_handler()
 async def show_block_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Показ статистики по блокам с улучшенным UI."""
     query = update.callback_query
-    await query.answer()
     
     stats = get_user_stats(context)
     practiced = context.user_data.get('practiced_topics', set())
@@ -986,10 +984,10 @@ async def show_block_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return states.CHOOSING_MODE
 
 
+@safe_handler()
 async def show_detailed_progress(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Показывает детальную статистику по всем темам."""
     query = update.callback_query
-    await query.answer()
 
     practiced = context.user_data.get('practiced_topics', set())
     lines = []
@@ -1003,10 +1001,10 @@ async def show_detailed_progress(update: Update, context: ContextTypes.DEFAULT_T
     return states.CHOOSING_MODE
 
 
+@safe_handler()
 async def show_completed(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Показывает список пройденных тем."""
     query = update.callback_query
-    await query.answer()
     
     scores_history = context.user_data.get('scores_history', [])
     
@@ -1033,10 +1031,10 @@ async def show_completed(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return states.CHOOSING_MODE
 
 
+@safe_handler()
 async def show_remaining(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Показывает список оставшихся тем."""
     query = update.callback_query
-    await query.answer()
 
     practiced = context.user_data.get('practiced_topics', set())
     remaining = [name for idx, name in plan_bot_data.get_all_topics_list() if idx not in practiced]
@@ -1045,10 +1043,10 @@ async def show_remaining(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.edit_message_text(text, reply_markup=kb, parse_mode=ParseMode.HTML)
     return states.CHOOSING_MODE
 
+@safe_handler()
 async def reset_progress(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Сброс прогресса с подтверждением."""
     query = update.callback_query
-    await query.answer()
     
     # Проверяем, есть ли флаг подтверждения
     if context.user_data.get('confirm_reset'):
@@ -1058,7 +1056,6 @@ async def reset_progress(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data['total_time_minutes'] = 0
         context.user_data.pop('confirm_reset', None)
         
-        await query.answer("✅ Прогресс сброшен!", show_alert=True)
         
         # Возвращаемся в меню
         kb = keyboards.build_main_menu_keyboard()
@@ -1095,10 +1092,10 @@ async def reset_progress(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     return states.CHOOSING_MODE
 
+@safe_handler()
 async def cancel_reset(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Отмена сброса прогресса."""
     query = update.callback_query
-    await query.answer("Сброс отменен")
     
     context.user_data.pop('confirm_reset', None)
     
@@ -1133,10 +1130,10 @@ async def cancel_reset(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     return states.CHOOSING_MODE
 
+@safe_handler()
 async def export_progress(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Экспорт прогресса пользователя."""
     query = update.callback_query
-    await query.answer()
     
     user_id = query.from_user.id
     username = query.from_user.username or "Unknown"
@@ -1207,10 +1204,10 @@ async def export_progress(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     return states.CHOOSING_MODE
 
+@safe_handler()
 async def search_topics(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Поиск тем по ключевым словам."""
     query = update.callback_query
-    await query.answer()
     
     await query.edit_message_text(
         "🔍 <b>Поиск темы</b>\n\n"
@@ -1244,6 +1241,7 @@ def _format_evaluation_feedback(k1: int, k2: int, missing: list, topic_name: str
     
     return text
 
+@safe_handler()
 async def handle_search_query(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработка поискового запроса."""
     search_text = update.message.text.lower()
@@ -1325,10 +1323,10 @@ async def handle_search_query(update: Update, context: ContextTypes.DEFAULT_TYPE
     )
     return states.CHOOSING_TOPIC
     
+@safe_handler()
 async def back_to_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Возврат в меню плагина."""
     query = update.callback_query
-    await query.answer()
     
     # Удаляем все предыдущие сообщения перед показом меню
     await delete_previous_messages(context, query.message.chat_id)
@@ -1355,10 +1353,10 @@ async def back_to_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     return states.CHOOSING_MODE
 
+@safe_handler()
 async def back_to_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Возврат в главное меню бота."""
     query = update.callback_query
-    await query.answer()
     
     try:
         # Удаляем все сообщения task24 перед переходом в главное меню
@@ -1399,7 +1397,6 @@ async def back_to_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def t24_retry(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Повторить попытку составления плана для той же темы."""
     query = update.callback_query
-    await query.answer()
     
     # Удаляем все предыдущие сообщения
     await delete_previous_messages(context, query.message.chat_id)
@@ -1494,7 +1491,6 @@ async def force_reset_user_progress(update: Update, context: ContextTypes.DEFAUL
 async def export_progress(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Экспорт прогресса."""
     query = update.callback_query
-    await query.answer()
     
     user_id = query.from_user.id
     
@@ -1594,9 +1590,9 @@ async def safe_edit_or_reply(query, text: str, reply_markup=None, parse_mode=Par
             # Если другая ошибка - пробрасываем её дальше
             raise
 # Вспомогательная функция для обработки noop
+@safe_handler()
 async def noop(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Пустой обработчик для неактивных кнопок."""
     query = update.callback_query
-    await query.answer()
     # Не меняем состояние, просто отвечаем на callback
     return None
