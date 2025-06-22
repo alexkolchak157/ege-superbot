@@ -173,96 +173,95 @@ class Task19AIEvaluator(BaseAIEvaluator if AI_EVALUATOR_AVAILABLE else object):
         
         return base_prompt
     
-    async def evaluate(self, answer: str, topic: str, **kwargs) -> EvaluationResult:
-        """Оценка ответа через YandexGPT."""
-        task_text = kwargs.get('task_text', '')
-        
-        # Если AI недоступен, используем базовую оценку
-        if not AI_EVALUATOR_AVAILABLE or not self.config:
-            return self._basic_evaluation(answer, topic)
-        
-        # Формируем промпт для проверки
-        evaluation_prompt = f"""Проверь ответ на задание 19 ЕГЭ.
-
-ЗАДАНИЕ: {task_text}
-
-ТЕМА: {topic}
-
-ОТВЕТ УЧЕНИКА:
-{answer}
-
-ПОШАГОВЫЙ АЛГОРИТМ:
-1. Определи, сколько всего суждений привёл ученик
-2. Если больше 3 - проверь ВСЕ на ошибки (любая серьёзная ошибка = 0 баллов за всё)
-3. Для каждого суждения оцени:
-   - Абстрактность (нет конкретных примеров)
-   - Наличие обобщения
-   - Соответствие заданию
-   - Логичность и корректность
-   - Распространённость (не менее 5 слов)
-
-УЧИТЫВАЙ:
-- Суждения должны быть теоретическими
-- НЕ должно быть конкретных дат, имён, названий
-- Должны использоваться обобщающие конструкции
-
-Ответь в формате JSON:
-```json
-{{
-    "score": число от 0 до 3,
-    "valid_arguments_count": количество засчитанных суждений,
-    "total_arguments": общее количество суждений в ответе,
-    "penalty_applied": true/false,
-    "penalty_reason": "причина штрафа" или null,
-    "valid_arguments": [
-        {{
-            "number": номер суждения,
-            "text": "краткое описание сути суждения (до 50 слов)",
-            "has_generalization": true/false,
-            "comment": "почему засчитано"
-        }}
-    ],
-    "invalid_arguments": [
-        {{
-            "number": номер суждения,
-            "text": "краткое описание сути суждения (до 50 слов)",
-            "reason": "конкретная причина, почему не засчитано",
-            "is_concrete_example": true/false,
-            "improvement": "конкретный совет, как исправить именно это суждение"
-        }}
-    ],
-    "feedback": "краткий общий комментарий (2-3 предложения)",
-    "suggestions": ["конкретная рекомендация по улучшению ответа", "ещё одна конкретная рекомендация"],
-    "factual_errors": ["ошибка 1", "ошибка 2"] или []
-}}
-```
-
-ВАЖНЫЕ ТРЕБОВАНИЯ К ОТВЕТУ:
-1. В "feedback" пиши кратко, только самое важное
-2. В "suggestions" давай КОНКРЕТНЫЕ советы, а не общие фразы
-3. Для каждого незасчитанного суждения в "improvement" напиши, КАК ИМЕННО его улучшить
-4. Не повторяй одни и те же фразы
-
-ВАЖНО: Верни ТОЛЬКО валидный JSON в блоке кода, без дополнительного текста."""
-
+    def evaluate_answer(self, question: str, answer: str, sample_answer: str) -> Dict[str, Any]:
+        """Оценивает ответ на задание 19 через YandexGPT."""
         try:
-            # Используем сервис YandexGPT
-            async with YandexGPTService(self.config) as service:
-                result = await service.get_json_completion(
-                    prompt=evaluation_prompt,
-                    system_prompt=self.get_system_prompt(),
-                    temperature=self.config.temperature
-                )
-                
-                if result:
-                    return self._parse_response(result, answer, topic)
-                else:
-                    logger.error("Failed to get JSON response from YandexGPT")
-                    return self._basic_evaluation(answer, topic)
-                    
+            # Инициализация переменных в самом начале
+            total_score = 0
+            max_score = 3
+            
+            prompt = f"""Оцени ответ ученика на задание 19 ЕГЭ по обществознанию.
+            
+    Задание: {question}
+
+    Ответ ученика:
+    {answer}
+
+    Критерии оценивания (максимум 3 балла):
+    - Правильно приведены три примера (1 балл за каждый пример)
+    - Примеры должны быть конкретными, а не абстрактными
+    - Примеры должны четко иллюстрировать теоретическое положение из задания
+
+    Уровень строгости проверки: {self.strictness.value}
+
+    {self._get_strictness_instructions()}
+
+    Проанализируй каждый пример и верни результат в формате JSON:
+    {{
+        "example1": {{
+            "score": 0 или 1,
+            "comment": "краткий комментарий"
+        }},
+        "example2": {{
+            "score": 0 или 1,
+            "comment": "краткий комментарий"
+        }},
+        "example3": {{
+            "score": 0 или 1,
+            "comment": "краткий комментарий"
+        }},
+        "total_score": сумма баллов (0-3),
+        "feedback": "общий комментарий к ответу",
+        "suggestions": ["рекомендация 1", "рекомендация 2"],
+        "factual_errors": ["ошибка 1", "ошибка 2"] (если есть)
+    }}"""
+
+            # Вызов AI
+            response = self.ai_service.generate_response(prompt)
+            
+            # Парсинг ответа
+            result = self._parse_ai_response(response)
+            
+            # Подсчет баллов (с защитой от ошибок)
+            if 'example1' in result and isinstance(result['example1'], dict):
+                total_score += result['example1'].get('score', 0)
+            if 'example2' in result and isinstance(result['example2'], dict):
+                total_score += result['example2'].get('score', 0)
+            if 'example3' in result and isinstance(result['example3'], dict):
+                total_score += result['example3'].get('score', 0)
+            
+            # Создание детального анализа
+            detailed_analysis = {}
+            for i in range(1, 4):
+                key = f'example{i}'
+                if key in result and isinstance(result[key], dict):
+                    detailed_analysis[f'Пример {i}'] = result[key]
+            
+            # Формирование результата
+            return {
+                'scores': {
+                    'К1': total_score  # Используем инициализированную переменную
+                },
+                'total_score': total_score,
+                'max_score': max_score,
+                'feedback': result.get('feedback', 'Проверка завершена'),
+                'detailed_analysis': detailed_analysis,
+                'suggestions': result.get('suggestions', []),
+                'factual_errors': result.get('factual_errors', [])
+            }
+            
         except Exception as e:
-            logger.error(f"Error in Task19 evaluation: {e}")
-            return self._basic_evaluation(answer, topic)
+            logger.error(f"Evaluation error: {e}")
+            # Возвращаем базовый результат при ошибке
+            return {
+                'scores': {'К1': 0},
+                'total_score': 0,
+                'max_score': 3,
+                'feedback': 'Не удалось выполнить автоматическую проверку',
+                'detailed_analysis': {},
+                'suggestions': ['Попробуйте отправить ответ позже'],
+                'factual_errors': []
+            }
     
     def _basic_evaluation(self, answer: str, topic: str) -> EvaluationResult:
         """Базовая оценка без AI."""

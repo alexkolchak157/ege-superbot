@@ -1,5 +1,5 @@
 """Обработчики для задания 19."""
-
+import asyncio
 import logging
 import os
 import json
@@ -18,6 +18,7 @@ from .evaluator import StrictnessLevel, Task19AIEvaluator
 from core.universal_ui import UniversalUIComponents, AdaptiveKeyboards, MessageFormatter
 from core.ui_helpers import (
     show_thinking_animation,
+    show_extended_thinking_animation,  # Добавить этот импорт
     show_streak_notification,
     get_personalized_greeting,
     get_motivational_message,
@@ -271,12 +272,20 @@ async def cmd_task19(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return states.CHOOSING_MODE
 
 async def practice_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Режим практики - выбор темы."""
+    """Режим практики."""
     query = update.callback_query
     await query.answer()
     
-    # Удаляем предыдущие сообщения диалога
-    await delete_previous_messages(context, query.message.chat_id)
+    # Удаляем сообщение о проверке, если оно есть
+    if 'checking_message_id' in context.user_data:
+        try:
+            await context.bot.delete_message(
+                chat_id=query.message.chat_id,
+                message_id=context.user_data['checking_message_id']
+            )
+            del context.user_data['checking_message_id']
+        except:
+            pass
     
     if not task19_data.get("topics"):
         await query.edit_message_text(
@@ -485,6 +494,20 @@ async def select_topic(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     
+    # Удаляем сообщение о проверке, если оно есть
+    if 'checking_message_id' in context.user_data:
+        try:
+            await context.bot.delete_message(
+                chat_id=query.message.chat_id,
+                message_id=context.user_data['checking_message_id']
+            )
+            del context.user_data['checking_message_id']
+        except:
+            pass
+    
+    # Удаляем все предыдущие сообщения перед показом нового задания
+    await delete_previous_messages(context, query.message.chat_id)
+    
     if query.data == "t19_random":
         topic = random.choice(task19_data['topics'])
     else:
@@ -663,11 +686,15 @@ async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return states.CHOOSING_MODE
     
-    # Показываем сообщение о проверке
-    thinking_msg = await show_thinking_animation(update.message, "Проверяю ваш ответ")
+    # Используем расширенную анимацию для длительной проверки
+    checking_msg = await show_extended_thinking_animation(
+        update.message, 
+        "Проверяю ваш ответ",
+        duration=60  # 60 секунд анимации
+    )
     
-    # Сохраняем ID сообщения "Анализирую..."
-    context.user_data['task19_thinking_msg_id'] = thinking_msg.message_id
+    # Сохраняем ID сообщения о проверке
+    context.user_data['checking_message_id'] = checking_msg.message_id
     
     result: Optional[EvaluationResult] = None
 
@@ -735,41 +762,32 @@ async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
         motivation = get_motivational_message(score_val, max_score_val)
         feedback += f"\n\n💬 {motivation}"
         
-        # Адаптивная клавиатура на основе результата
-        kb = AdaptiveKeyboards.create_result_keyboard(
-            score=total_score if evaluator else 1,
-            max_score=3,
-            module_code="t19"
-        )
-        
-        # Удаляем сообщение "Анализирую..."
+        # Удаляем сообщение "Проверяю..."
         try:
-            await thinking_msg.delete()
+            await checking_msg.delete()
         except Exception:
             pass
         
         # Отправляем результат
-        result_msg = await update.message.reply_text(
+        await update.message.reply_text(
             feedback,
-            reply_markup=AdaptiveKeyboards.create_result_keyboard(  # ✅ reply_markup
-                score=result.total_score if result else 1,          # ✅ result.total_score
+            reply_markup=AdaptiveKeyboards.create_result_keyboard(
+                score=result.total_score if result else 1,
                 max_score=3,
                 module_code="t19"
-            ),                                                      # ✅ запятая добавлена
+            ),
             parse_mode=ParseMode.HTML
         )
         
         # Сохраняем результат
         context.user_data.setdefault('task19_results', []).append({
             'topic': topic['title'],
-            'score': total_score if evaluator else 1,
+            'score': result.total_score if result else 1,
             'max_score': 3,
             'timestamp': datetime.now().isoformat()
         })
 
         # Обновляем стрик правильных ответов
-        score_val = result.total_score if result else 0
-        max_score_val = result.max_score if result else 3
         if score_val == max_score_val:
             context.user_data['correct_streak'] = context.user_data.get('correct_streak', 0) + 1
         else:
@@ -782,7 +800,23 @@ async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     except Exception as e:
         logger.error(f"Task19 evaluation error: {e}")
-        await update.message.reply_text("❌ Произошла ошибка при проверке. Попробуйте ещё раз.")
+        
+        # Удаляем сообщение о проверке
+        try:
+            await checking_msg.delete()
+        except Exception:
+            pass
+        
+        # Используем адаптивную клавиатуру для ошибки (score=0)
+        await update.message.reply_text(
+            "❌ Произошла ошибка при проверке. Попробуйте ещё раз.",
+            reply_markup=AdaptiveKeyboards.create_result_keyboard(
+                score=0,
+                max_score=3,
+                module_code="t19"
+            ),
+            parse_mode=ParseMode.HTML
+        )
         return states.CHOOSING_MODE
 
 
