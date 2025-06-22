@@ -594,8 +594,7 @@ async def navigate_topics(update: Update, context: ContextTypes.DEFAULT_TYPE):
             elif mode == 'show':
                 # Режим просмотра - показываем эталон
                 return await show_etalon_plan(query, context, idx)
-        else:
-    
+
     elif action in ["all", "block"]:
         mode = parts[1]
         page = int(parts[2])
@@ -1486,10 +1485,8 @@ async def force_reset_user_progress(update: Update, context: ContextTypes.DEFAUL
     else:
         await update.callback_query.answer("❌ Пользователь не найден", show_alert=True)
 
-
-# Пример функции, которая проверяет админские права внутри
+@safe_handler()
 async def export_progress(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Экспорт прогресса."""
     query = update.callback_query
     
     user_id = query.from_user.id
