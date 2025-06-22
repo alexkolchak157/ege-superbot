@@ -54,17 +54,23 @@ class AdminManager:
             except ValueError as e:
                 logger.warning(f"Invalid admin IDs in environment: {e}")
         
-        # 2. Загрузка из общего конфига
-        try:
-            config_file = os.path.join(os.path.dirname(__file__), 'admin_config.json')
-            if os.path.exists(config_file):
-                with open(config_file, 'r') as f:
-                    config = json.load(f)
-                    for admin_id in config.get('admin_ids', []):
-                        admin_ids.add(int(admin_id))
-                logger.info(f"Loaded admins from config file")
-        except Exception as e:
-            logger.error(f"Error loading admin config: {e}")
+        # 2. Загрузка из JSON-файлов конфигурации
+        config_files = [
+            os.path.join(os.path.dirname(__file__), 'admin_config.json'),
+            os.path.join(os.path.dirname(os.path.dirname(__file__)), 'task24', 'admin_config.json'),
+        ]
+        config_file = config_files[0]
+
+        for cfg in config_files:
+            if os.path.exists(cfg):
+                try:
+                    with open(cfg, 'r', encoding='utf-8') as f:
+                        config = json.load(f)
+                        for admin_id in config.get('admin_ids', []):
+                            admin_ids.add(int(admin_id))
+                    logger.info(f"Loaded admins from {cfg}")
+                except Exception as e:
+                    logger.error(f"Error loading admin config {cfg}: {e}")
         
         # 3. Загрузка специфичных админов для модулей
         for env_var in ['TASK24_ADMIN_IDS', 'TASK19_ADMIN_IDS', 'TASK20_ADMIN_IDS']:
