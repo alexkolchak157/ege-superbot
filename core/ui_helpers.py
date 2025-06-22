@@ -8,9 +8,6 @@ from typing import Dict, Optional
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, Message
 from telegram.constants import ParseMode
 from telegram.ext import ContextTypes
-import logging
-
-logger = logging.getLogger(__name__)
 
 async def show_thinking_animation(message: Message, text: str = "Анализирую") -> Message:
     """
@@ -31,9 +28,48 @@ async def show_thinking_animation(message: Message, text: str = "Анализи�
         for i in range(1, min(4, len(animations))):
             await asyncio.sleep(0.5)
             await thinking_msg.edit_text(f"{animations[i]} {text}...")
-    except Exception as e:
-        # Игнорируем ошибки редактирования, но логируем их
-        logger.error("Animation update failed: %s", e)
+    except:
+        # Игнорируем ошибки редактирования
+        pass
+    
+    return thinking_msg
+
+async def show_extended_thinking_animation(message: Message, text: str = "Проверяю ваш ответ", 
+                                         duration: int = 60) -> Message:
+    """
+    Показывает длительную анимированную проверку для AI-оценки.
+    
+    Args:
+        message: Сообщение для ответа
+        text: Текст анимации
+        duration: Длительность анимации в секундах (по умолчанию 60)
+        
+    Returns:
+        Message: Отправленное сообщение с анимацией
+    """
+    emojis = ["✨", "🔍", "📝", "💭", "🤔", "📊"]
+    dots = [".", "..", "..."]
+    
+    # Отправляем начальное сообщение
+    thinking_msg = await message.reply_text(f"{emojis[0]} {text}{dots[0]}")
+    
+    # Создаем фоновую задачу для анимации
+    async def animate():
+        iterations = duration // 3  # Обновление каждые 3 секунды
+        for i in range(iterations):
+            emoji = emojis[i % len(emojis)]
+            dot = dots[i % len(dots)]
+            
+            try:
+                await thinking_msg.edit_text(f"{emoji} {text}{dot}")
+                await asyncio.sleep(3)
+            except Exception as e:
+                # Сообщение было удалено или произошла ошибка
+                logger.debug(f"Animation stopped: {e}")
+                break
+    
+    # Запускаем анимацию в фоне
+    asyncio.create_task(animate())
     
     return thinking_msg
 
@@ -259,8 +295,7 @@ def format_time_difference(timestamp: str) -> str:
             return f"{minutes} мин. назад"
         else:
             return "только что"
-    except Exception as e:
-        logger.error("Failed to format timestamp: %s", e)
+    except:
         return "недавно"
 
 def get_achievement_emoji(achievement_type: str) -> str:
@@ -291,6 +326,7 @@ def get_achievement_emoji(achievement_type: str) -> str:
 # Экспорт всех функций
 __all__ = [
     'show_thinking_animation',
+    'show_extended_thinking_animation',  # Добавить эту строку
     'show_streak_notification',
     'get_personalized_greeting',
     'get_motivational_message',
