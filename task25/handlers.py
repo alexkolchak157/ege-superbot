@@ -2188,11 +2188,9 @@ async def handle_strictness_change(update: Update, context: ContextTypes.DEFAULT
             evaluator = Task25AIEvaluator(strictness=new_level)
             
             logger.info(f"Changed strictness level to {new_level.value}")
-        else:
             
     except Exception as e:
         logger.error(f"Error changing strictness: {e}")
-    
     # Возвращаемся в меню настроек
     return await show_settings(update, context)
 
