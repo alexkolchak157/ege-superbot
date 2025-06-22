@@ -15,7 +15,7 @@ from core.ui_helpers import (create_visual_progress, get_motivational_message,
                              show_streak_notification, show_thinking_animation)
 from core.universal_ui import (AdaptiveKeyboards, MessageFormatter,
                                UniversalUIComponents)
-
+from core.error_handler import safe_handler, auto_answer_callback
 from . import keyboards, utils
 from .loader import AVAILABLE_BLOCKS, QUESTIONS_DATA, QUESTIONS_DICT_FLAT
 
@@ -89,9 +89,9 @@ def init_data():
     QUESTIONS_DATA = get_questions_data()
     AVAILABLE_BLOCKS = list(QUESTIONS_DATA.keys()) if QUESTIONS_DATA else []
 
+@safe_handler()
 async def entry_from_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    await query.answer()
     
     # Используем utils из локального модуля для проверки подписки
     if not await utils.check_subscription(query.from_user.id, context.bot):
@@ -122,16 +122,15 @@ async def cmd_quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     return states.CHOOSING_MODE
 
+@safe_handler()
 async def select_exam_num_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Выбор режима по номеру ЕГЭ."""
     query = update.callback_query
-    await query.answer()
     
     # Используем безопасную функцию для получения номеров
     all_nums = safe_cache_get_all_exam_numbers()
     
     if not all_nums:
-        await query.answer("В базе нет вопросов с номерами ЕГЭ", show_alert=True)
         return states.CHOOSING_MODE
     
     kb = keyboards.get_exam_number_keyboard(all_nums)
@@ -142,10 +141,10 @@ async def select_exam_num_mode(update: Update, context: ContextTypes.DEFAULT_TYP
     context.user_data['mode'] = 'exam_num'
     return states.CHOOSING_EXAM_NUMBER
 
+@safe_handler()
 async def select_block_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Выбор режима по блокам."""
     query = update.callback_query
-    await query.answer()
     
     kb = keyboards.get_blocks_keyboard(AVAILABLE_BLOCKS)
     await query.edit_message_text(
@@ -155,10 +154,10 @@ async def select_block_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data['mode'] = 'block'
     return states.CHOOSING_BLOCK
 
+@safe_handler()
 async def select_random_all(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Случайный вопрос из всей базы."""
     query = update.callback_query
-    await query.answer()
     
     # Собираем все вопросы
     all_questions = []
@@ -167,7 +166,6 @@ async def select_random_all(update: Update, context: ContextTypes.DEFAULT_TYPE):
             all_questions.extend(topic_questions)
     
     if not all_questions:
-        await query.answer("В базе нет вопросов!", show_alert=True)
         return states.CHOOSING_MODE
     
     await query.edit_message_text("⏳ Загружаю случайный вопрос...")
@@ -185,14 +183,13 @@ async def select_random_all(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return states.CHOOSING_MODE
 
+@safe_handler()
 async def select_block(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Выбор конкретного блока."""
     query = update.callback_query
-    await query.answer()
     
     block_name = query.data.split(":", 2)[2]
     if block_name not in AVAILABLE_BLOCKS:
-        await query.answer("Некорректный блок", show_alert=True)
         return states.CHOOSING_BLOCK
     
     context.user_data['selected_block'] = block_name
@@ -205,6 +202,7 @@ async def select_block(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     return states.CHOOSING_MODE
 
+@safe_handler()
 async def show_progress_enhanced(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Показ прогресса с улучшенным UI."""
     user_id = update.effective_user.id
@@ -516,10 +514,10 @@ async def check_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 pass
         return ConversationHandler.END
 
+@safe_handler()
 async def handle_next_action(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработка действий после ответа (ИСПРАВЛЕННАЯ ВЕРСИЯ)."""
     query = update.callback_query
-    await query.answer()
     
     action = query.data
     
@@ -547,9 +545,7 @@ async def handle_next_action(update: Update, context: ContextTypes.DEFAULT_TYPE)
                     context.user_data.setdefault('extra_messages_to_delete', []).append(sent_msg.message_id)
                 except Exception as e:
                     logger.error(f"Error sending explanation: {e}")
-                    await query.answer("Ошибка при отправке пояснения", show_alert=True)
             else:
-                await query.answer("К этому вопросу нет пояснения", show_alert=True)
         return states.CHOOSING_NEXT_ACTION
     
     elif action == "test_next_continue":
@@ -766,10 +762,10 @@ async def cmd_score(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     await update.message.reply_text(text, parse_mode=ParseMode.HTML)
 
+@safe_handler()
 async def back_to_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Возврат к выбору режима тестовой части."""
     query = update.callback_query
-    await query.answer()
     
     kb = keyboards.get_initial_choice_keyboard()
     await query.edit_message_text(
@@ -780,10 +776,10 @@ async def back_to_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     return states.CHOOSING_MODE
 
+@safe_handler()
 async def back_to_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Возврат к выбору режима тестовой части из подменю."""
     query = update.callback_query
-    await query.answer()
     
     kb = keyboards.get_initial_choice_keyboard()
     await query.edit_message_text(
@@ -997,6 +993,7 @@ async def send_mistake_question(message, context: ContextTypes.DEFAULT_TYPE):
     
     return states.REVIEWING_MISTAKES
 
+@safe_handler()
 async def handle_mistake_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработка ответа в режиме ошибок."""
     user_id = update.effective_user.id
@@ -1100,10 +1097,10 @@ async def handle_mistake_answer(update: Update, context: ContextTypes.DEFAULT_TY
     
     return states.CHOOSING_NEXT_ACTION
 
+@safe_handler()
 async def mistake_nav(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Навигация по ошибкам."""
     query = update.callback_query
-    await query.answer()
     
     action = query.data
 
@@ -1119,15 +1116,14 @@ async def mistake_nav(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     return states.REVIEWING_MISTAKES
     
+@safe_handler()
 async def select_exam_num(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Выбор конкретного номера задания."""
     query = update.callback_query
-    await query.answer()
     
     try:
         exam_number = int(query.data.split(":", 2)[2])
     except (ValueError, IndexError):
-        await query.answer("Некорректный номер", show_alert=True)
         return states.CHOOSING_EXAM_NUMBER
     
     # Сохраняем выбранный номер
@@ -1137,7 +1133,6 @@ async def select_exam_num(update: Update, context: ContextTypes.DEFAULT_TYPE):
     questions_with_num = safe_cache_get_by_exam_num(exam_number)
     
     if not questions_with_num:
-        await query.answer(f"Нет вопросов для задания №{exam_number}", show_alert=True)
         return states.CHOOSING_EXAM_NUMBER
     
     await query.edit_message_text(f"⏳ Загружаю вопрос задания №{exam_number}...")
@@ -1155,20 +1150,18 @@ async def select_exam_num(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return states.CHOOSING_MODE
         
+@safe_handler()
 async def select_mode_random_in_block(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Случайный вопрос из выбранного блока."""
     query = update.callback_query
-    await query.answer()
     
     selected_block = context.user_data.get('selected_block')
     if not selected_block or selected_block not in QUESTIONS_DATA:
-        await query.answer("Ошибка: блок не выбран", show_alert=True)
         return states.CHOOSING_BLOCK
     
     questions_in_block = safe_cache_get_by_block(selected_block)
     
     if not questions_in_block:
-        await query.answer("В этом блоке нет вопросов", show_alert=True)
         return states.CHOOSING_MODE
     
     await query.edit_message_text("⏳ Загружаю случайный вопрос из блока...")
@@ -1185,19 +1178,17 @@ async def select_mode_random_in_block(update: Update, context: ContextTypes.DEFA
         )
         return states.CHOOSING_BLOCK
 
+@safe_handler()
 async def select_mode_topic_in_block(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Выбор темы в блоке."""
     query = update.callback_query
-    await query.answer()
     
     selected_block = context.user_data.get('selected_block')
     if not selected_block or selected_block not in QUESTIONS_DATA:
-        await query.answer("Ошибка: блок не выбран", show_alert=True)
         return states.CHOOSING_BLOCK
     
     topics = list(QUESTIONS_DATA[selected_block].keys())
     if not topics:
-        await query.answer("В этом блоке нет тем", show_alert=True)
         return states.CHOOSING_MODE
     
     kb = keyboards.get_topics_keyboard(selected_block, topics)
@@ -1207,21 +1198,19 @@ async def select_mode_topic_in_block(update: Update, context: ContextTypes.DEFAU
     )
     return states.CHOOSING_TOPIC
 
+@safe_handler()
 async def select_topic(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Выбор конкретной темы."""
     query = update.callback_query
-    await query.answer()
     
     selected_topic = query.data.replace("topic:", "")
     selected_block = context.user_data.get('selected_block')
     
     if not selected_block or not selected_topic:
-        await query.answer("Ошибка выбора темы", show_alert=True)
         return states.CHOOSING_TOPIC
     
     questions_in_topic = safe_cache_get_by_topic(selected_topic)
     if not questions_in_topic:
-        await query.answer("В этой теме нет вопросов", show_alert=True)
         return states.CHOOSING_TOPIC
     
     context.user_data['selected_topic'] = selected_topic
@@ -1241,16 +1230,15 @@ async def select_topic(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return states.CHOOSING_TOPIC
 
+@safe_handler()
 async def select_mistakes_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Вход в режим работы над ошибками из меню."""
     query = update.callback_query
-    await query.answer()
     
     user_id = query.from_user.id
     mistake_ids = await db.get_mistake_ids(user_id)
     
     if not mistake_ids:
-        await query.answer("👍 У вас нет ошибок для повторения!", show_alert=True)
         return states.CHOOSING_MODE
     
     context.user_data['mistake_ids'] = list(mistake_ids)
@@ -1310,16 +1298,15 @@ async def cmd_debug_streaks(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(text, parse_mode=ParseMode.HTML)
 
 
+@safe_handler()
 async def handle_detailed_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Детальный отчет по темам."""
     query = update.callback_query
-    await query.answer()
     
     user_id = update.effective_user.id
     stats = await db.get_user_stats(user_id)
     
     if not stats:
-        await query.answer("Нет данных для отчета", show_alert=True)
         return ConversationHandler.END
     
     # Группируем по темам
@@ -1361,10 +1348,10 @@ async def handle_detailed_report(update: Update, context: ContextTypes.DEFAULT_T
     return ConversationHandler.END
 
 
+@safe_handler()
 async def handle_export_csv(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Callback: экспорт статистики в CSV."""
     query = update.callback_query
-    await query.answer()
 
     user_id = query.from_user.id
     try:
@@ -1380,20 +1367,20 @@ async def handle_export_csv(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
     except Exception as e:
         logger.error(f"Ошибка экспорта статистики для user {user_id}: {e}")
-        await query.answer("Не удалось экспортировать", show_alert=True)
 
     return ConversationHandler.END
 
 
+@safe_handler()
 async def handle_work_mistakes(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Callback: переход в режим работы над ошибками."""
     return await select_mistakes_mode(update, context)
 
 
+@safe_handler()
 async def handle_check_subscription(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Callback для повторной проверки подписки."""
     query = update.callback_query
-    await query.answer()
 
     if await utils.check_subscription(query.from_user.id, context.bot, REQUIRED_CHANNEL):
         kb = keyboards.get_initial_choice_keyboard()
@@ -1404,5 +1391,4 @@ async def handle_check_subscription(update: Update, context: ContextTypes.DEFAUL
         )
         return states.CHOOSING_MODE
 
-    await query.answer("Подписка не обнаружена", show_alert=True)
     return ConversationHandler.END
