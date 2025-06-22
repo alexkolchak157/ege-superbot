@@ -1,6 +1,7 @@
 import os
 import json
 import logging
+import asyncio
 import aiohttp
 from typing import Dict, Any, Optional, List
 from dataclasses import dataclass
@@ -23,6 +24,9 @@ class YandexGPTConfig:
     model: YandexGPTModel = YandexGPTModel.LITE
     temperature: float = 0.3  # Для образовательных задач лучше низкая
     max_tokens: int = 2000
+    retries: int = 3
+    retry_delay: float = 2.0
+    timeout: int = 60
     
     @classmethod
     def from_env(cls):
@@ -35,8 +39,17 @@ class YandexGPTConfig:
                 "Необходимо установить переменные окружения: "
                 "YANDEX_GPT_API_KEY и YANDEX_GPT_FOLDER_ID"
             )
-        
-        return cls(api_key=api_key, folder_id=folder_id)
+        retries = int(os.getenv('YANDEX_GPT_RETRIES', '3'))
+        retry_delay = float(os.getenv('YANDEX_GPT_RETRY_DELAY', '2'))
+        timeout = int(os.getenv('YANDEX_GPT_TIMEOUT', '60'))
+
+        return cls(
+            api_key=api_key,
+            folder_id=folder_id,
+            retries=retries,
+            retry_delay=retry_delay,
+            timeout=timeout,
+        )
 
 
 class YandexGPTService:
@@ -110,42 +123,49 @@ class YandexGPTService:
             "Content-Type": "application/json"
         }
         
-        try:
-            async with self._session.post(
-                self.BASE_URL,
-                json=payload,
-                headers=headers
-            ) as response:
-                response_data = await response.json()
-                
-                if response.status != 200:
-                    logger.error(f"YandexGPT API error: {response_data}")
+        for attempt in range(self.config.retries):
+            try:
+                async with self._session.post(
+                    self.BASE_URL,
+                    json=payload,
+                    headers=headers,
+                    timeout=self.config.timeout,
+                ) as response:
+                    response_data = await response.json()
+
+                    if response.status != 200:
+                        logger.error(f"YandexGPT API error: {response_data}")
+                        if attempt == self.config.retries - 1:
+                            return {
+                                "success": False,
+                                "error": response_data.get("message", "Unknown error"),
+                                "status_code": response.status,
+                            }
+                        await asyncio.sleep(self.config.retry_delay)
+                        continue
+
+                    # Извлекаем текст ответа
+                    alternatives = response_data.get("result", {}).get("alternatives", [])
+                    if alternatives:
+                        text = alternatives[0].get("message", {}).get("text", "")
+                    else:
+                        text = ""
+
+                    return {
+                        "success": True,
+                        "text": text,
+                        "usage": response_data.get("result", {}).get("usage", {}),
+                        "model_version": response_data.get("result", {}).get("modelVersion", ""),
+                    }
+
+            except Exception as e:
+                logger.error(f"Ошибка при запросе к YandexGPT: {e}")
+                if attempt == self.config.retries - 1:
                     return {
                         "success": False,
-                        "error": response_data.get("message", "Unknown error"),
-                        "status_code": response.status
+                        "error": str(e),
                     }
-                
-                # Извлекаем текст ответа
-                alternatives = response_data.get("result", {}).get("alternatives", [])
-                if alternatives:
-                    text = alternatives[0].get("message", {}).get("text", "")
-                else:
-                    text = ""
-                
-                return {
-                    "success": True,
-                    "text": text,
-                    "usage": response_data.get("result", {}).get("usage", {}),
-                    "model_version": response_data.get("result", {}).get("modelVersion", "")
-                }
-                
-        except Exception as e:
-            logger.error(f"Ошибка при запросе к YandexGPT: {e}")
-            return {
-                "success": False,
-                "error": str(e)
-            }
+                await asyncio.sleep(self.config.retry_delay)
     
     async def get_json_completion(
         self, 
