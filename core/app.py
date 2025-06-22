@@ -7,6 +7,7 @@ from core.menu_handlers import register_global_handlers
 from core.admin_tools import register_admin_handlers
 from core.config import BOT_TOKEN
 from core import db
+from core.error_handler import register_error_handler
 
 logging.basicConfig(
     level=logging.INFO,
@@ -65,7 +66,9 @@ def main():
     print("🔌 Регистрируем плагины...")
     for plugin in PLUGINS:
         plugin.register(app)
-
+    
+    register_error_handler(app)
+    
     print("🚀 Бот запущен! Нажмите Ctrl+C для остановки.")
     app.run_polling(drop_pending_updates=True)
 
