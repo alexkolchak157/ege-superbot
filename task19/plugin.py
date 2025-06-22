@@ -71,7 +71,7 @@ class Task19Plugin(BotPlugin):
                     CallbackQueryHandler(handlers.bank_search, pattern="^t19_bank_search$"),
                     
                     # Настройки
-                    CallbackQueryHandler(handlers.set_strictness, pattern="^t19_set_strictness:"),
+                    CallbackQueryHandler(handlers.apply_strictness, pattern="^t19_set_strictness:"),
                     
                     # Статистика
                     CallbackQueryHandler(handlers.detailed_progress, pattern="^t19_detailed_progress$"),

@@ -50,14 +50,14 @@ if not evaluator:
         evaluator = None
 
 
-# Добавить команду для изменения уровня строгости (опционально)
-async def set_strictness(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Установка уровня строгости проверки (только для админов)."""
+# Меню выбора уровня строгости (только для админов)
+async def strictness_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Показывает меню выбора уровня строгости проверки."""
     query = update.callback_query
     await query.answer()
-    
+
     # Проверка прав (добавьте свою логику проверки админов)
-    if not admin_manager.is_admin(user_id):
+    if not admin_manager.is_admin(query.from_user.id):
         await query.answer("⛔ Только для администраторов", show_alert=True)
         return
     
@@ -82,27 +82,6 @@ async def set_strictness(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
-async def apply_strictness(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Применение выбранного уровня строгости."""
-    global evaluator
-    
-    query = update.callback_query
-    await query.answer()
-    
-    level_str = query.data.split(":")[1].upper()
-    
-    try:
-        new_level = StrictnessLevel[level_str]
-        evaluator = Task19AIEvaluator(strictness=new_level)
-        
-        await query.answer(f"✅ Установлен уровень: {new_level.value}", show_alert=True)
-        
-        # Возвращаемся в меню
-        return await return_to_menu(update, context)
-        
-    except Exception as e:
-        logger.error(f"Error setting strictness: {e}")
-        await query.answer("❌ Ошибка изменения настроек", show_alert=True)
 
 async def delete_previous_messages(context: ContextTypes.DEFAULT_TYPE, chat_id: int, keep_message_id: Optional[int] = None):
     """Удаляет предыдущие сообщения диалога (включая сообщения пользователя)."""
@@ -1713,8 +1692,8 @@ async def settings_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return states.CHOOSING_MODE
 
 
-async def set_strictness(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Установка уровня строгости."""
+async def apply_strictness(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Установка выбранного уровня строгости."""
     global evaluator
     
     query = update.callback_query
