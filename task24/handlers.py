@@ -16,6 +16,7 @@ from core.admin_tools import admin_manager, admin_only, get_admin_keyboard_exten
 from core.universal_ui import UniversalUIComponents, AdaptiveKeyboards, MessageFormatter
 from core.ui_helpers import (
     show_thinking_animation,
+    show_extended_thinking_animation,  # Добавить
     show_streak_notification,
     get_personalized_greeting,
     get_motivational_message,
@@ -683,7 +684,11 @@ async def handle_plan_enhanced(update: Update, context: ContextTypes.DEFAULT_TYP
         return ConversationHandler.END
     
     # Отправляем сообщение "Анализирую..."
-    thinking_msg = await show_thinking_animation(update.message, "Проверяю ваш ответ")
+    thinking_msg = await show_extended_thinking_animation(
+    user_message, 
+    "Анализирую план",
+    duration=45  # Планы проверяются быстрее
+)
     context.user_data['task24_thinking_msg_id'] = thinking_msg.message_id
     
     # НЕ УДАЛЯЕМ сообщения здесь! Удаление будет происходить при выборе следующего действия
