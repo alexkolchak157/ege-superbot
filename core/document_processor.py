@@ -198,8 +198,17 @@ class DocumentProcessor:
         text = re.sub(r'[\x00-\x08\x0B-\x0C\x0E-\x1F\x7F]', '', text)
         
         # Нормализуем кавычки
-        text = text.replace('"', '"').replace('"', '"')
-        text = text.replace(''', "'").replace(''', "'")
+        quote_map = {
+            "“": '"',
+            "”": '"',
+            "„": '"',
+            "«": '"',
+            "»": '"',
+            "‘": "'",
+            "’": "'",
+            "‚": "'",
+        }
+        text = text.translate(str.maketrans(quote_map))
         
         return text.strip()
 
