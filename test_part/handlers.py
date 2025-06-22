@@ -545,7 +545,6 @@ async def handle_next_action(update: Update, context: ContextTypes.DEFAULT_TYPE)
                     context.user_data.setdefault('extra_messages_to_delete', []).append(sent_msg.message_id)
                 except Exception as e:
                     logger.error(f"Error sending explanation: {e}")
-            else:
         return states.CHOOSING_NEXT_ACTION
     
     elif action == "test_next_continue":
