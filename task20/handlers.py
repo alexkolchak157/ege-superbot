@@ -949,17 +949,9 @@ async def select_block(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     
-    blocks = list(task20_data.get("blocks", {}).keys())
+    # Исправленный порядок блоков
+    blocks = ["🧠 Человек и общество", "💰 Экономика", "👥 Социальные отношения", "🏛️ Политика", "⚖️ Право"]
     
-    if not blocks:
-        await query.edit_message_text(
-            "❌ Блоки тем не найдены",
-            reply_markup=InlineKeyboardMarkup([[
-                InlineKeyboardButton("⬅️ Назад", callback_data="t20_practice")
-            ]])
-        )
-        return states.CHOOSING_MODE
-
     text = "📚 <b>Выберите блок тем:</b>"
     
     kb_buttons = []
@@ -1013,9 +1005,12 @@ async def handle_result_action(update: Update, context: ContextTypes.DEFAULT_TYP
                 parse_mode=ParseMode.HTML
             )
             return states.ANSWERING
-    elif action == 'new':  # Изменено с 'new_topic'
-        # Новая случайная тема
-        return await random_topic(update, context)
+    elif action == 'new':  # Обработка новой темы
+        return await handle_new_task(update, context)
+    elif action == 'menu':
+        return await return_to_menu(update, context)
+    elif action == 'progress':
+        return await my_progress(update, context)
     
     return states.CHOOSING_MODE
 
@@ -1096,9 +1091,7 @@ async def list_topics(update: Update, context: ContextTypes.DEFAULT_TYPE):
     end_idx = min(start_idx + topics_per_page, len(topics))
     
     text = f"📚 <b>{block_name}</b>\n"
-    page_visual = create_visual_progress(page + 1, total_pages)
-    text += f"{page_visual}\n\n"
-    text += "Выберите тему:\n"
+    text += f"Выберите тему (стр. {page + 1} из {total_pages}):\n\n"
     
     kb_buttons = []
     
@@ -1111,16 +1104,15 @@ async def list_topics(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
         ])
     
-    # Навигация по страницам
-    nav_buttons = []
-    if page > 0:
-        nav_buttons.append(InlineKeyboardButton("⬅️", callback_data=f"t20_list_topics:page:{page-1}"))
-    progress_display = create_visual_progress(page + 1, total_pages)
-    nav_buttons.append(InlineKeyboardButton(progress_display, callback_data="noop"))
-    if page < total_pages - 1:
-        nav_buttons.append(InlineKeyboardButton("➡️", callback_data=f"t20_list_topics:page:{page+1}"))
-    
-    if nav_buttons:
+    # Навигация по страницам (только если больше 1 страницы)
+    if total_pages > 1:
+        nav_buttons = []
+        if page > 0:
+            nav_buttons.append(InlineKeyboardButton("⬅️", callback_data=f"t20_list_topics:page:{page-1}"))
+        nav_buttons.append(InlineKeyboardButton(f"{page + 1}/{total_pages}", callback_data="noop"))
+        if page < total_pages - 1:
+            nav_buttons.append(InlineKeyboardButton("➡️", callback_data=f"t20_list_topics:page:{page+1}"))
+        
         kb_buttons.append(nav_buttons)
     
     kb_buttons.append([InlineKeyboardButton("⬅️ Назад", callback_data=f"t20_block:{block_name}")])
@@ -1756,7 +1748,11 @@ async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return states.CHOOSING_MODE
     
     # Показываем сообщение о проверке
-    thinking_msg = await show_thinking_animation(update.message, "Проверяю ваш ответ")
+    thinking_msg = await show_extended_thinking_animation(
+    update.message, 
+    "Проверяю ваш ответ",
+    duration=60
+)
     
     result: Optional[EvaluationResult] = None
     
