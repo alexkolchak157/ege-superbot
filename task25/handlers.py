@@ -15,6 +15,7 @@ from core.universal_ui import UniversalUIComponents, AdaptiveKeyboards, MessageF
 from core.states import ANSWERING_PARTS, CHOOSING_BLOCK_T25
 from core.ui_helpers import (
     show_thinking_animation,
+    show_extended_thinking_animation,  # Добавить
     show_streak_notification,
     get_personalized_greeting,
     get_motivational_message,
@@ -630,7 +631,11 @@ async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return states.CHOOSING_MODE
     
     # Показываем индикатор обработки
-    thinking_msg = await show_thinking_animation(update.message, "Проверяю ваш ответ")
+    thinking_msg = await show_extended_thinking_animation(
+    update.message,
+    "Проверяю ваш ответ",
+    duration=60
+)
     
     # Проверяем ответ
     if evaluator and AI_EVALUATOR_AVAILABLE:
