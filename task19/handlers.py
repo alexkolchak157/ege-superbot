@@ -1038,9 +1038,9 @@ async def reset_results(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return states.CHOOSING_MODE
 
 
-# Добавить в меню "Мой прогресс" кнопку сброса:
+
+@safe_handler()
 async def my_progress(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Показ прогресса пользователя."""
     query = update.callback_query
     
     results = context.user_data.get('task19_results', [])
