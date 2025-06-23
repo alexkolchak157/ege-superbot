@@ -1,5 +1,3 @@
-import sys
-import os
 import logging
 from telegram.ext import Application, CommandHandler
 from core.plugin_loader import discover_plugins, build_main_menu, PLUGINS
@@ -31,6 +29,7 @@ async def post_init(application: Application) -> None:
 async def post_shutdown(application: Application) -> None:
     """Выполняется при завершении приложения."""
     await db.close_db()
+    logger.info("State transition stats: %s", state_validator.get_stats())
 
 async def start(update, context):
     """Главная команда /start."""

@@ -1,5 +1,4 @@
 import logging
-import random
 from datetime import datetime
 
 import aiosqlite
@@ -8,17 +7,17 @@ from telegram.constants import ParseMode
 from telegram.ext import ContextTypes, ConversationHandler
 
 from core import db, states
-from core.admin_tools import admin_manager
 from core.config import DATABASE_FILE, REQUIRED_CHANNEL
 from core.ui_helpers import (create_visual_progress, get_motivational_message,
                              get_personalized_greeting,
                              show_streak_notification, show_thinking_animation)
 from core.universal_ui import (AdaptiveKeyboards, MessageFormatter,
                                UniversalUIComponents)
-from core.error_handler import safe_handler, auto_answer_callback
-from core.state_validator import validate_state_transition, state_validator
+from core.error_handler import safe_handler
+from core.state_validator import validate_state_transition
 from . import keyboards, utils
 from .loader import AVAILABLE_BLOCKS, QUESTIONS_DATA, QUESTIONS_DICT_FLAT
+from .topic_data import TOPIC_NAMES
 
 try:
     from .cache import questions_cache
@@ -91,6 +90,7 @@ def init_data():
     AVAILABLE_BLOCKS = list(QUESTIONS_DATA.keys()) if QUESTIONS_DATA else []
 
 @safe_handler()
+@validate_state_transition({ConversationHandler.END, states.CHOOSING_SECTION})
 async def entry_from_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     
@@ -108,6 +108,8 @@ async def entry_from_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     return states.CHOOSING_MODE
 
+@safe_handler()
+@validate_state_transition({ConversationHandler.END})
 async def cmd_quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Используем локальный utils
     if not await utils.check_subscription(update.effective_user.id, context.bot, REQUIRED_CHANNEL):
@@ -231,8 +233,9 @@ async def show_progress_enhanced(update: Update, context: ContextTypes.DEFAULT_T
         
         # Топ темы
         top_results = []
-        for topic, correct, total in sorted(stats, key=lambda x: x[1]/x[2] if x[2] > 0 else 0, reverse=True)[:3]:
-            percentage = (correct / total * 100) if total > 0 else 0
+        for topic, correct, total in sorted(
+            stats, key=lambda x: x[1] / x[2] if x[2] > 0 else 0, reverse=True
+        )[:3]:
             topic_name = TOPIC_NAMES.get(topic, topic)
             top_results.append({
                 'topic': topic_name,
@@ -254,7 +257,7 @@ async def show_progress_enhanced(update: Update, context: ContextTypes.DEFAULT_T
         
         # Добавляем стрики
         if streaks:
-            text += f"\n\n<b>🔥 Серии:</b>\n"
+            text += "\n\n<b>🔥 Серии:</b>\n"
             text += UniversalUIComponents.format_statistics_tree({
                 'Дней подряд': streaks.get('current_daily', 0),
                 'Рекорд дней': streaks.get('max_daily', 0),
@@ -440,7 +443,7 @@ async def check_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
             feedback += f"{progress_text}\n\n"
         
         # Стрики
-        feedback += f"🔥 <b>Стрики:</b>\n"
+        feedback += "🔥 <b>Стрики:</b>\n"
         feedback += f"📅 Дней подряд: {daily_current}\n"
         feedback += f"✨ Правильных подряд: {correct_current}"
         
@@ -451,7 +454,7 @@ async def check_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         # Новый рекорд
         if correct_current > old_correct_streak and correct_current == correct_max and correct_max > 1:
-            feedback += f"\n\n🎉 <b>НОВЫЙ РЕКОРД!</b>"
+            feedback += "\n\n🎉 <b>НОВЫЙ РЕКОРД!</b>"
 
         if motivational_phrase:
             feedback += f"\n\n{motivational_phrase}"
@@ -467,17 +470,17 @@ async def check_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
             feedback += f"{progress_text}\n\n"
         
         # Стрики
-        feedback += f"🔥 <b>Стрики:</b>\n"
+        feedback += "🔥 <b>Стрики:</b>\n"
         feedback += f"📅 Дней подряд: {daily_current}\n"
         
         # При сбросе стрика показываем рекорд
         if old_correct_streak > 0:
-            feedback += f"✨ Правильных подряд: 0\n"
+            feedback += "✨ Правильных подряд: 0\n"
             feedback += f"\n💔 Серия из {old_correct_streak} правильных ответов прервана!"
             if correct_max > 0:
                 feedback += f"\n📈 Ваш рекорд: {correct_max}"
         else:
-            feedback += f"✨ Правильных подряд: 0"
+            feedback += "✨ Правильных подряд: 0"
 
     if motivational_phrase and not is_correct:
         feedback += f"\n\n{motivational_phrase}"
@@ -539,7 +542,7 @@ async def handle_next_action(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 explanation_text = utils.md_to_html(explanation_text)
                 
                 # Используем HTML для пояснений
-                formatted_text = f"💡 <b>Пояснение к вопросу</b>\n\n"
+                formatted_text = "💡 <b>Пояснение к вопросу</b>\n\n"
                 formatted_text += explanation_text
                 
                 try:
@@ -646,7 +649,7 @@ async def handle_next_action(update: Update, context: ContextTypes.DEFAULT_TYPE)
                     topics = list(QUESTIONS_DATA.get(selected_block, {}).keys())
                     kb = keyboards.get_topics_keyboard(selected_block, topics)
                     await loading_msg.edit_text(
-                        f"Вы ответили на все вопросы по теме! 🎉\n\nВыберите другую тему:",
+                        "Вы ответили на все вопросы по теме! 🎉\n\nВыберите другую тему:",
                         reply_markup=kb
                     )
                     return states.CHOOSING_TOPIC
@@ -1045,9 +1048,9 @@ async def handle_mistake_answer(update: Update, context: ContextTypes.DEFAULT_TY
     
     # Формируем ответ
     if is_correct:
-        feedback = f"✅ <b>Правильно!</b> Ошибка исправлена."
+        feedback = "✅ <b>Правильно!</b> Ошибка исправлена."
     else:
-        feedback = f"❌ <b>Неправильно!</b>\n\n"
+        feedback = "❌ <b>Неправильно!</b>\n\n"
         feedback += f"Ваш ответ: {user_answer}\n"
         feedback += f"Правильный ответ: <b>{correct_answer}</b>"
     
@@ -1230,7 +1233,7 @@ async def select_topic(update: Update, context: ContextTypes.DEFAULT_TYPE):
         topics = list(QUESTIONS_DATA[selected_block].keys())
         kb = keyboards.get_topics_keyboard(selected_block, topics)
         await query.message.edit_text(
-            f"Вы ответили на все вопросы по теме! 🎉\n\nВыберите другую тему:",
+            "Вы ответили на все вопросы по теме! 🎉\n\nВыберите другую тему:",
             reply_markup=kb
         )
         return states.CHOOSING_TOPIC
@@ -1282,13 +1285,13 @@ async def cmd_debug_streaks(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
             if row:
                 text = f"🔍 <b>Отладка стриков для user {user_id}:</b>\n\n"
-                text += f"<b>Из функции get_user_streaks:</b>\n"
+                text += "<b>Из функции get_user_streaks:</b>\n"
                 text += f"  current_daily: {streaks.get('current_daily', 'None')}\n"
                 text += f"  max_daily: {streaks.get('max_daily', 'None')}\n"
                 text += f"  current_correct: {streaks.get('current_correct', 'None')}\n"
                 text += f"  max_correct: {streaks.get('max_correct', 'None')}\n\n"
                 
-                text += f"<b>Прямо из БД:</b>\n"
+                text += "<b>Прямо из БД:</b>\n"
                 text += f"  current_daily_streak: {row[0]}\n"
                 text += f"  max_daily_streak: {row[1]}\n"
                 text += f"  current_correct_streak: {row[2]}\n"

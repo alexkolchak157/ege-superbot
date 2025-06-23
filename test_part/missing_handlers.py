@@ -7,7 +7,6 @@ import logging
 import io
 import csv
 from datetime import datetime
-from typing import Dict, List, Optional
 
 from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton
 from telegram.constants import ParseMode
@@ -16,7 +15,7 @@ from telegram.ext import ContextTypes
 from core import states
 from core.error_handler import safe_handler
 from core import db
-from .utils import get_user_mistakes, format_mistake_stats
+from .utils import get_user_mistakes
 
 logger = logging.getLogger(__name__)
 
@@ -255,24 +254,3 @@ async def check_subscription(update: Update, context: ContextTypes.DEFAULT_TYPE)
     )
     
     return states.CHOOSING_MODE
-
-
-# Вспомогательные функции
-
-async def get_user_mistakes(user_id: int) -> List[Dict]:
-    """Получает детальную информацию об ошибках пользователя."""
-    mistake_ids = await db.get_mistake_ids(user_id)
-    mistakes = []
-    
-    # Здесь нужно загрузить информацию о каждом вопросе
-    # Это зависит от структуры хранения вопросов
-    # Пример заглушки:
-    for q_id in mistake_ids:
-        mistakes.append({
-            'question_id': q_id,
-            'topic': 'Тема вопроса',  # Нужно получить из базы вопросов
-            'error_type': 'Неверный ответ',
-            'timestamp': datetime.now().isoformat()
-        })
-    
-    return mistakes

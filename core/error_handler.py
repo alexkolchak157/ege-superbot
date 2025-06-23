@@ -6,7 +6,7 @@ core/error_handler.py
 import logging
 import traceback
 from functools import wraps
-from typing import Callable, Optional, Any, Dict
+from typing import Callable, Optional, Any
 from datetime import datetime, timezone
 
 from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton
