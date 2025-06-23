@@ -1481,9 +1481,7 @@ async def force_reset_user_progress(update: Update, context: ContextTypes.DEFAUL
     # Сброс данных пользователя
     if user_id in context.application.user_data:
         context.application.user_data[user_id].clear()
-        await update.callback_query.answer("✅ Прогресс пользователя сброшен", show_alert=True)
-    else:
-        await update.callback_query.answer("❌ Пользователь не найден", show_alert=True)
+    pass  # или можно добавить логирование
 
 @safe_handler()
 async def export_progress(update: Update, context: ContextTypes.DEFAULT_TYPE):
