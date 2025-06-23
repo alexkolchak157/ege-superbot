@@ -157,8 +157,69 @@ class Task19AIEvaluator(BaseAIEvaluator if AI_EVALUATOR_AVAILABLE else object):
             base_prompt += "\n\nУРОВЕНЬ: СТРОГИЙ - требуй полного соответствия критериям ФИПИ."
         elif self.strictness == StrictnessLevel.EXPERT:
             base_prompt += "\n\nУРОВЕНЬ: ЭКСПЕРТНЫЙ - максимальная строгость, как на реальном экзамене."
-        
+
         return base_prompt
+
+    async def evaluate(self, answer: str, topic: str, **kwargs) -> EvaluationResult:
+        """Оценка ответа через YandexGPT."""
+        task_text = kwargs.get('task_text', '')
+
+        # Если AI недоступен или нет конфигурации, используем базовую оценку
+        if not AI_EVALUATOR_AVAILABLE or not self.config:
+            return self._basic_evaluation(answer, topic)
+
+        evaluation_prompt = f"""Проверь ответ на задание 19 ЕГЭ.
+
+ЗАДАНИЕ: {task_text}
+
+ТЕМА: {topic}
+
+ОТВЕТ УЧЕНИКА:
+{answer}
+
+ПОШАГОВЫЙ АЛГОРИТМ:
+1. Определи, сколько всего примеров привёл ученик
+2. Если больше 3, проверь каждый и при наличии серьёзной ошибки поставь 0 баллов
+3. Для каждого примера оцени:
+   - Конкретность и соответствие теме
+   - Иллюстрирует ли он требуемое положение
+   - Развёрнутость (не менее 5 слов)
+
+Ответь в формате JSON:
+```json
+{{
+    "score": число от 0 до 3,
+    "valid_examples_count": количество засчитанных примеров,
+    "total_examples": общее количество примеров,
+    "penalty_applied": true/false,
+    "penalty_reason": "причина" или null,
+    "valid_examples": [{{"number": 1, "comment": "почему засчитан"}}],
+    "invalid_examples": [{{"number": 2, "reason": "почему не засчитан", "improvement": "как исправить"}}],
+    "feedback": "краткий общий комментарий",
+    "suggestions": ["совет 1", "совет 2"],
+    "factual_errors": ["ошибка 1"]
+}}
+```
+
+ВАЖНО: верни ТОЛЬКО валидный JSON в блоке кода без дополнительного текста."""
+
+        try:
+            async with YandexGPTService(self.config) as service:
+                result = await service.get_json_completion(
+                    prompt=evaluation_prompt,
+                    system_prompt=self.get_system_prompt(),
+                    temperature=self.config.temperature,
+                )
+
+                if result:
+                    return self._parse_response(result, answer, topic)
+
+                logger.error("Failed to get JSON response from YandexGPT")
+                return self._basic_evaluation(answer, topic)
+
+        except Exception as e:
+            logger.error(f"Error in Task19 evaluation: {e}")
+            return self._basic_evaluation(answer, topic)
     
     def evaluate_answer(self, question: str, answer: str, sample_answer: str) -> Dict[str, Any]:
         """Оценивает ответ на задание 19 через YandexGPT."""
