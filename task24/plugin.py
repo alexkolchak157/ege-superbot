@@ -69,6 +69,12 @@ class Task24Plugin(BotPlugin):
                     MessageHandler(filters.TEXT & ~filters.COMMAND, handlers.handle_plan_enhanced),
                     MessageHandler(filters.Document.ALL, handlers.handle_plan_document),
                 ],
+                states.AWAITING_FEEDBACK: [
+                    CallbackQueryHandler(handlers.t24_retry, pattern="^t24_retry$"),
+                    CallbackQueryHandler(handlers.next_topic, pattern="^next_topic$"),
+                    CallbackQueryHandler(handlers.back_to_menu, pattern="^t24_menu$"),
+                    CallbackQueryHandler(handlers.back_to_main_menu, pattern="^to_main_menu$"),
+                ],
                 states.AWAITING_SEARCH: [
                     MessageHandler(filters.TEXT & ~filters.COMMAND, handlers.handle_search_query),
                 ],
