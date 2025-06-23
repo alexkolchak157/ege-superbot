@@ -689,10 +689,10 @@ async def handle_plan_enhanced(update: Update, context: ContextTypes.DEFAULT_TYP
     
     # Отправляем сообщение "Анализирую..."
     thinking_msg = await show_extended_thinking_animation(
-    user_message, 
-    "Анализирую план",
-    duration=45  # Планы проверяются быстрее
-)
+        update.message,  # ИСПРАВЛЕНО: было user_message 
+        "Анализирую план",
+        duration=45  # Планы проверяются быстрее
+    )
     context.user_data['task24_thinking_msg_id'] = thinking_msg.message_id
     
     # НЕ УДАЛЯЕМ сообщения здесь! Удаление будет происходить при выборе следующего действия
