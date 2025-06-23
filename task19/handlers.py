@@ -8,7 +8,7 @@ from typing import Optional, Dict, List
 from core.document_processor import DocumentHandlerMixin
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.constants import ParseMode
-from telegram.ext import ContextTypes
+from telegram.ext import ContextTypes, ConversationHandler
 from core.admin_tools import admin_manager
 from core import states
 from core.ai_evaluator import Task19Evaluator, EvaluationResult
@@ -26,6 +26,8 @@ from core.ui_helpers import (
 )
 from core.safe_evaluator import safe_handle_answer_task19
 from core.error_handler import safe_handler, auto_answer_callback
+from core.plugin_loader import build_main_menu
+from core.state_validator import validate_state_transition, state_validator
 
 TASK19_STRICTNESS = os.getenv('TASK19_STRICTNESS', 'STRICT').upper()
 
@@ -780,9 +782,6 @@ async def bank_navigation(update: Update, context: ContextTypes.DEFAULT_TYPE):
 @validate_state_transition({states.CHOOSING_MODE, states.CHOOSING_BLOCK, states.CHOOSING_TOPIC, states.ANSWERING, states.ANSWERING_PARTS})
 async def back_to_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Возврат в главное меню."""
-    from core.plugin_loader import build_main_menu
-from core.state_validator import validate_state_transition, state_validator
-from telegram.ext import ConversationHandler
     
     query = update.callback_query
     
