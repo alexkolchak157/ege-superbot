@@ -23,6 +23,8 @@ from core.ui_helpers import (
 )
 from core.safe_evaluator import safe_handle_answer_task25
 from core.error_handler import safe_handler, auto_answer_callback
+from core.state_validator import validate_state_transition, state_validator
+from telegram.ext import ConversationHandler
 
 logger = logging.getLogger(__name__)
 
@@ -199,6 +201,7 @@ def _determine_block(title: str) -> str:
     return "Общие темы"
 
 @safe_handler()
+@validate_state_transition({ConversationHandler.END, None})
 async def entry_from_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Вход в задание 25 из главного меню."""
     query = update.callback_query
@@ -327,6 +330,7 @@ async def list_by_difficulty(update: Update, context: ContextTypes.DEFAULT_TYPE)
     return states.CHOOSING_MODE
 
 @safe_handler()
+@validate_state_transition({states.CHOOSING_MODE})
 async def practice_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Режим практики."""
     query = update.callback_query
@@ -356,6 +360,7 @@ async def practice_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 @safe_handler()
+@validate_state_transition({states.CHOOSING_MODE})
 async def theory_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Режим теории и советов."""
     query = update.callback_query
@@ -399,6 +404,7 @@ async def theory_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return states.CHOOSING_MODE
 
 @safe_handler()
+@validate_state_transition({states.CHOOSING_BLOCK})
 async def select_block(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Выбор блока тем с улучшенным отображением."""
     query = update.callback_query
@@ -613,6 +619,7 @@ async def random_topic_all(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return states.ANSWERING
 
 @safe_handler()
+@validate_state_transition({states.ANSWERING})
 async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return await safe_handle_answer_task25(update, context)
 
@@ -647,6 +654,7 @@ def _estimate_score(user_answer: str) -> int:
         return 1
         
 @safe_handler()
+@validate_state_transition({states.ANSWERING})
 async def handle_answer_parts(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработка ответа по частям."""
     user_answer = update.message.text
@@ -938,6 +946,7 @@ async def show_example(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 @safe_handler()
+@validate_state_transition({states.ANSWERING})
 async def example_answers(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Примеры ответов в теории."""
     query = update.callback_query
@@ -1143,6 +1152,7 @@ async def show_example_topic(query, context: ContextTypes.DEFAULT_TYPE, topic_id
     )
 
 @safe_handler()
+@validate_state_transition({states.CHOOSING_MODE})
 async def handle_example_navigation(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Навигация по примерам ответов."""
     query = update.callback_query
@@ -1155,6 +1165,7 @@ async def handle_example_navigation(update: Update, context: ContextTypes.DEFAUL
     return states.CHOOSING_MODE
 
 @safe_handler()
+@validate_state_transition({states.CHOOSING_MODE})
 async def bank_navigation(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Навигация по банку примеров."""
     query = update.callback_query
@@ -1226,6 +1237,7 @@ async def my_progress(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return states.CHOOSING_MODE
 
 @safe_handler()
+@validate_state_transition({states.CHOOSING_MODE})
 async def settings_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Настройки задания 25."""
     query = update.callback_query
@@ -1363,6 +1375,7 @@ async def return_to_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 @safe_handler()
+@validate_state_transition({states.CHOOSING_MODE, states.CHOOSING_BLOCK, states.CHOOSING_TOPIC, states.ANSWERING, states.ANSWERING_PARTS})
 async def back_to_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Возврат в главное меню."""
     query = update.callback_query
@@ -2281,6 +2294,7 @@ async def handle_reset_progress(update: Update, context: ContextTypes.DEFAULT_TY
     return states.CHOOSING_MODE
 
 @safe_handler()
+@validate_state_transition({states.CHOOSING_MODE})
 async def choose_practice_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Выбор режима практики."""
     query = update.callback_query
@@ -2559,6 +2573,7 @@ async def handle_new_topic(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 @safe_handler()
+@validate_state_transition({states.CHOOSING_MODE})
 async def show_settings(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Меню настроек."""
     query = update.callback_query
@@ -2617,6 +2632,7 @@ async def confirm_reset_progress(update: Update, context: ContextTypes.DEFAULT_T
 
 
 @safe_handler()
+@validate_state_transition({states.ANSWERING})
 async def show_example_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Показывает эталонный ответ для выбранной темы."""
     query = update.callback_query
@@ -2671,6 +2687,7 @@ async def show_example_answer(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 
 @safe_handler()
+@validate_state_transition({states.CHOOSING_MODE})
 async def handle_select_topic(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Выбор конкретной темы из списка."""
     query = update.callback_query
@@ -2725,6 +2742,7 @@ async def handle_try_topic(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return states.AWAITING_ANSWER
 
 @safe_handler()
+@validate_state_transition({states.ANSWERING})
 async def handle_answer_document_task25(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработка развернутого ответа из документа для task25."""
     
