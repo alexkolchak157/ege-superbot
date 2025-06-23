@@ -6,14 +6,14 @@ import json
 from enum import Enum
 from typing import Dict, List, Any, Optional
 from dataclasses import dataclass
-
+# Вместо импорта типов из других модулей
+from core.types import UserID, TaskType, EvaluationResult, CallbackData
 logger = logging.getLogger(__name__)
 
 # Безопасный импорт
 try:
     from core.ai_evaluator import (
         BaseAIEvaluator,
-        EvaluationResult,
         TaskRequirements,
     )
     from core.ai_service import YandexGPTService, YandexGPTConfig, YandexGPTModel
