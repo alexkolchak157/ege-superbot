@@ -9,7 +9,8 @@ from datetime import datetime, date, timezone
 from typing import Dict, Any, List, Tuple, Optional, Set
 import aiosqlite
 from core.config import DATABASE_FILE
-
+# Вместо импорта типов из других модулей
+from core.types import UserID, TaskType, EvaluationResult, CallbackData
 logger = logging.getLogger(__name__)
 
 # Имена таблиц - константы для предотвращения injection через имена таблиц
@@ -46,7 +47,7 @@ async def execute_with_retry(query: str, params: tuple = (), max_retries: int = 
     for attempt in range(max_retries):
         try:
             db = await get_db()
-            result = await db.execute(query, params)
+            result = await execute_with_retry(query, params)
             await db.commit()
             return result
         except aiosqlite.OperationalError as e:

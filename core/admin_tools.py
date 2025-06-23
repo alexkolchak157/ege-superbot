@@ -12,7 +12,7 @@ from datetime import datetime, timedelta, timezone
 from collections import defaultdict
 from functools import wraps
 import io
-
+from core.types import UserID, TaskType, EvaluationResult, CallbackData
 from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton
 from telegram.ext import ContextTypes, ConversationHandler, CallbackQueryHandler
 from telegram.constants import ParseMode
