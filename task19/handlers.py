@@ -590,62 +590,6 @@ async def show_progress_enhanced(update: Update, context: ContextTypes.DEFAULT_T
     return states.CHOOSING_MODE
 
 @safe_handler()
-async def choose_topic(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обработка выбора темы."""
-    query = update.callback_query
-    
-    # Удаляем все предыдущие сообщения перед показом нового задания
-    await delete_previous_messages(context, query.message.chat_id)
-    
-    if query.data == "t19_random":
-        topic = random.choice(task19_data['topics'])
-    else:
-        topic_id = int(query.data.split(':')[1])
-        topic = next((t for t in task19_data['topics'] if t['id'] == topic_id), None)
-    
-    if not topic:
-        await query.message.chat.send_message(
-            "❌ Тема не найдена",
-            reply_markup=InlineKeyboardMarkup([[
-                InlineKeyboardButton("⬅️ Назад", callback_data="t19_practice")
-            ]])
-        )
-        return states.CHOOSING_MODE
-    
-    # Сохраняем текущую тему
-    context.user_data['current_topic'] = topic
-    
-    text = f"""📝 <b>Задание 19</b>
-
-<b>Тема:</b> {topic['title']}
-
-<b>Задание:</b> {topic['task_text']}
-
-<b>Требования:</b>
-• Приведите три примера
-• Каждый пример должен быть конкретным
-• Избегайте абстрактных формулировок
-• Указывайте детали (имена, даты, места)
-
-💡 <i>Отправьте ваш ответ одним сообщением</i>"""
-    
-    kb = InlineKeyboardMarkup([[
-        InlineKeyboardButton("⬅️ Выбрать другую тему", callback_data="t19_practice")
-    ]])
-    
-    # Отправляем новое сообщение
-    sent_msg = await query.message.chat.send_message(
-        text,
-        reply_markup=kb,
-        parse_mode=ParseMode.HTML
-    )
-    
-    # Сохраняем ID сообщения с заданием
-    context.user_data['task19_question_msg_id'] = sent_msg.message_id
-    
-    return states.ANSWERING
-
-@safe_handler()
 async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return await safe_handle_answer_task19(update, context)
 
@@ -822,73 +766,6 @@ async def bank_navigation(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return states.CHOOSING_MODE
 
 
-@safe_handler()
-async def my_progress(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Показ прогресса пользователя."""
-    query = update.callback_query
-    
-    results = context.user_data.get('task19_results', [])
-    
-    if not results:
-        text = MessageFormatter.format_welcome_message(
-            "задание 19", 
-            is_new_user=True
-        )
-        kb = InlineKeyboardMarkup([[
-            InlineKeyboardButton("💪 Начать практику", callback_data="t19_practice"),
-            InlineKeyboardButton("⬅️ Назад", callback_data="t19_menu")
-        ]])
-    else:
-        # Собираем статистику
-        total_attempts = len(results)
-        total_score = sum(r['score'] for r in results)
-        max_possible = sum(r['max_score'] for r in results)
-        avg_score = total_score / total_attempts
-        
-        # Анализ по темам для топ результатов
-        topic_stats = {}
-        for result in results:
-            topic = result['topic']
-            if topic not in topic_stats:
-                topic_stats[topic] = []
-            topic_stats[topic].append(result['score'])
-        
-        # Топ темы
-        top_results = []
-        for topic, scores in topic_stats.items():
-            avg = sum(scores) / len(scores)
-            top_results.append({
-                'topic': topic,
-                'score': avg,
-                'max_score': 3
-            })
-        top_results.sort(key=lambda x: x['score'], reverse=True)
-        
-        # Форматируем сообщение универсальным способом
-        text = MessageFormatter.format_progress_message({
-            'total_attempts': total_attempts,
-            'average_score': avg_score,
-            'completed': len(topic_stats),
-            'total': 50,  # Предполагаем 50 тем
-            'total_time': 0,  # Можно добавить подсчет времени
-            'top_results': top_results[:3],
-            'current_average': avg_score * 33.33,
-            'previous_average': (avg_score * 33.33) - 5
-        }, "заданию 19")
-        
-        # Адаптивная клавиатура
-        kb = AdaptiveKeyboards.create_progress_keyboard(
-            has_detailed_stats=True,
-            can_export=True,
-            module_code="t19"
-        )
-    
-    await query.edit_message_text(
-        text,
-        reply_markup=kb,
-        parse_mode=ParseMode.HTML
-    )
-    return states.CHOOSING_MODE
 
 
 @safe_handler()
@@ -985,7 +862,7 @@ async def handle_result_action(update: Update, context: ContextTypes.DEFAULT_TYP
     
     elif query.data == "t19_progress":
         # Показываем прогресс (не удаляем сообщения)
-        return await my_progress(update, context)
+        return await show_progress_enhanced(update, context)
 
 async def cmd_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Отмена текущего действия."""
@@ -1038,64 +915,6 @@ async def reset_results(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return states.CHOOSING_MODE
 
 
-
-@safe_handler()
-async def my_progress(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    
-    results = context.user_data.get('task19_results', [])
-    
-    if not results:
-        text = "📊 <b>Ваш прогресс</b>\n\nВы еще не решали задания."
-        kb = InlineKeyboardMarkup([[
-            InlineKeyboardButton("⬅️ Назад", callback_data="t19_menu")
-        ]])
-    else:
-        total_attempts = len(results)
-        total_score = sum(r['score'] for r in results)
-        max_possible = sum(r['max_score'] for r in results)
-        avg_score = total_score / total_attempts
-        
-        # Визуальный прогресс-бар
-        progress_percent = int(total_score / max_possible * 100) if max_possible > 0 else 0
-        filled = "█" * (progress_percent // 10)
-        empty = "░" * (10 - progress_percent // 10)
-        progress_bar = f"{filled}{empty}"
-        
-        text = f"""📊 <b>Ваш прогресс по заданию 19</b>
-
-📈 Прогресс: {progress_bar} {progress_percent}%
-📝 Решено заданий: {total_attempts}
-⭐ Средний балл: {avg_score:.1f}/3
-🏆 Общий результат: {total_score}/{max_possible}
-
-<b>Последние попытки:</b>"""
-        
-        for result in results[-5:]:
-            score_emoji = "🟢" if result['score'] == 3 else "🟡" if result['score'] >= 2 else "🔴"
-            text += f"\n{score_emoji} {result['topic']}: {result['score']}/3"
-        
-        # Рекомендации
-        if avg_score < 2:
-            text += "\n\n💡 <b>Совет:</b> Изучите теорию и примеры эталонных ответов."
-        elif avg_score < 2.5:
-            text += "\n\n💡 <b>Совет:</b> Обратите внимание на конкретизацию примеров."
-        else:
-            text += "\n\n🎉 <b>Отлично!</b> Вы хорошо справляетесь с заданием 19!"
-        
-        kb = InlineKeyboardMarkup([
-            [InlineKeyboardButton("📊 Детальная статистика", callback_data="t19_detailed_progress")],
-            [InlineKeyboardButton("📤 Экспорт результатов", callback_data="t19_export")],
-            [InlineKeyboardButton("🔄 Сбросить результаты", callback_data="t19_reset_confirm")],
-            [InlineKeyboardButton("⬅️ Назад", callback_data="t19_menu")]
-        ])
-    
-    await query.edit_message_text(
-        text,
-        reply_markup=kb,
-        parse_mode=ParseMode.HTML
-    )
-    return states.CHOOSING_MODE
 
 async def cmd_task19_settings(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Команда /task19_settings для быстрого доступа к настройкам."""
