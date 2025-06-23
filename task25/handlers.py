@@ -32,7 +32,8 @@ topic_selector = None
 
 # Импорты внутренних модулей ПОСЛЕ определения переменных
 try:
-    from .evaluator import Task25AIEvaluator, StrictnessLevel, EvaluationResult, AI_EVALUATOR_AVAILABLE
+    from .evaluator import Task25AIEvaluator, StrictnessLevel, AI_EVALUATOR_AVAILABLE
+    from core.types import EvaluationResult
 except ImportError as e:
     logger.error(f"Failed to import evaluator: {e}")
     AI_EVALUATOR_AVAILABLE = False

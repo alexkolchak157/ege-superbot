@@ -2,10 +2,22 @@ from __future__ import annotations
 """AI evaluator for task 20 using unified base class."""
 
 import logging
+import os
 from typing import Dict, Any
 
 from core.base_evaluator import BaseAIEvaluator, StrictnessLevel
-from core.types import TaskRequirements, EvaluationCriteria
+from core.types import TaskRequirements, EvaluationCriteria, EvaluationResult
+
+AI_EVALUATOR_AVAILABLE = bool(
+    os.getenv("YANDEX_GPT_API_KEY") and os.getenv("YANDEX_GPT_FOLDER_ID")
+)
+
+__all__ = [
+    "Task20AIEvaluator",
+    "StrictnessLevel",
+    "EvaluationResult",
+    "AI_EVALUATOR_AVAILABLE",
+]
 
 logger = logging.getLogger(__name__)
 

@@ -548,6 +548,13 @@ async def security_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.edit_message_text(text, reply_markup=kb, parse_mode=ParseMode.HTML)
 
 
+def get_admin_keyboard_extension(user_id: int) -> List[List[InlineKeyboardButton]]:
+    """Возвращает дополнительные кнопки для админов."""
+    if admin_manager.is_admin(user_id):
+        return [[InlineKeyboardButton("🛠 Админ", callback_data="admin:main")]]
+    return []
+
+
 def register_admin_handlers(app):
     """Регистрация админских обработчиков."""
     # Команда /admin

@@ -71,7 +71,8 @@ def safe_handler(
     def decorator(func: Callable) -> Callable:
         @wraps(func)
         async def wrapper(update: Update, context: ContextTypes.DEFAULT_TYPE, *args, **kwargs):
-            user_id = update.effective_user.id if update.effective_user else "Unknown"
+            effective_user = getattr(update, "effective_user", None)
+            user_id = effective_user.id if effective_user else "Unknown"
             handler_name = func.__name__
             
             try:
@@ -240,7 +241,7 @@ async def global_error_handler(update: Update, context: ContextTypes.DEFAULT_TYP
     
     # Определяем user_id
     user_id = None
-    if update and update.effective_user:
+    if update and getattr(update, "effective_user", None):
         user_id = update.effective_user.id
     
     # Сохраняем информацию об ошибке
