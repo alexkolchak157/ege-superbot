@@ -22,6 +22,8 @@ from core.ui_helpers import (
 )
 from core.safe_evaluator import safe_handle_answer_task20
 from core.error_handler import safe_handler, auto_answer_callback
+from core.plugin_loader import build_main_menu
+from core.state_validator import validate_state_transition, state_validator
 
 logger = logging.getLogger(__name__)
 
@@ -932,10 +934,7 @@ async def return_to_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
 @validate_state_transition({states.CHOOSING_MODE, states.CHOOSING_BLOCK, states.CHOOSING_TOPIC, states.ANSWERING, states.ANSWERING_PARTS})
 async def back_to_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Возврат в главное меню."""
-    from core.plugin_loader import build_main_menu
-from core.state_validator import validate_state_transition, state_validator
-from telegram.ext import ConversationHandler
-    
+
     query = update.callback_query
     
     await query.edit_message_text(
