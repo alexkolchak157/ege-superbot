@@ -124,9 +124,9 @@ def safe_handler(
             except Exception as e:
                 # Неизвестные ошибки
                 if log_errors:
+                    # logger.exception already logs the traceback
                     logger.exception(
-                        f"Unexpected error in {handler_name} for user {user_id}: {e}\n"
-                        f"Traceback: {traceback.format_exc()}"
+                        f"Unexpected error in {handler_name} for user {user_id}: {e}"
                     )
                 
                 # Сохраняем информацию об ошибке для админов
