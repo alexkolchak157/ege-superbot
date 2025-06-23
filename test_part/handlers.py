@@ -13,11 +13,17 @@ from core.ui_helpers import (create_visual_progress, get_motivational_message,
                              show_streak_notification, show_thinking_animation)
 from core.universal_ui import (AdaptiveKeyboards, MessageFormatter,
                                UniversalUIComponents)
-from core.error_handler import safe_handler
+from core.error_handler import safe_handler, auto_answer_callback
 from core.state_validator import validate_state_transition
 from . import keyboards, utils
 from .loader import AVAILABLE_BLOCKS, QUESTIONS_DATA, QUESTIONS_DICT_FLAT
 from .topic_data import TOPIC_NAMES
+from .missing_handlers import (
+    detailed_report as handle_detailed_report,
+    export_csv as handle_export_csv,
+    work_mistakes as handle_work_mistakes,
+    check_subscription as handle_check_subscription,
+)
 
 try:
     from .cache import questions_cache
@@ -1306,97 +1312,3 @@ async def cmd_debug_streaks(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(text, parse_mode=ParseMode.HTML)
 
 
-@safe_handler()
-async def handle_detailed_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Детальный отчет по темам."""
-    query = update.callback_query
-    
-    user_id = update.effective_user.id
-    stats = await db.get_user_stats(user_id)
-    
-    if not stats:
-        return ConversationHandler.END
-    
-    # Группируем по темам
-    by_topic = {}
-    for topic, correct, total in stats:
-        topic_name = TOPIC_NAMES.get(topic, topic)
-        percentage = (correct / total * 100) if total > 0 else 0
-        by_topic[topic_name] = {
-            'correct': correct,
-            'total': total,
-            'percentage': percentage
-        }
-    
-    # Сортируем по проценту
-    sorted_topics = sorted(by_topic.items(), key=lambda x: x[1]['percentage'], reverse=True)
-    
-    text = "📊 <b>Детальный отчет по темам</b>\n\n"
-    
-    for topic, data in sorted_topics[:10]:  # Топ 10
-        progress_bar = UniversalUIComponents.create_progress_bar(
-            data['correct'], data['total'], width=10
-        )
-        color = UniversalUIComponents.get_color_for_score(data['correct'], data['total'])
-        
-        text += f"{color} <b>{topic}</b>\n"
-        text += f"   {progress_bar}\n"
-        text += f"   Правильно: {data['correct']}/{data['total']}\n\n"
-    
-    kb = InlineKeyboardMarkup([
-        [
-            InlineKeyboardButton(
-                "⬅️ Назад",
-                callback_data="test_back_to_stat_menu",
-            )
-        ]
-    ])
-    
-    await query.edit_message_text(text, reply_markup=kb, parse_mode=ParseMode.HTML)
-    return ConversationHandler.END
-
-
-@safe_handler()
-async def handle_export_csv(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Callback: экспорт статистики в CSV."""
-    query = update.callback_query
-
-    user_id = query.from_user.id
-    try:
-        csv_content = await utils.export_user_stats_csv(user_id)
-        from io import BytesIO
-        file_data = BytesIO(csv_content.encode("utf-8-sig"))
-        file_data.name = f"statistics_{user_id}.csv"
-
-        await query.message.reply_document(
-            document=file_data,
-            filename=file_data.name,
-            caption="📊 Ваша статистика"
-        )
-    except Exception as e:
-        logger.error(f"Ошибка экспорта статистики для user {user_id}: {e}")
-
-    return ConversationHandler.END
-
-
-@safe_handler()
-async def handle_work_mistakes(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Callback: переход в режим работы над ошибками."""
-    return await select_mistakes_mode(update, context)
-
-
-@safe_handler()
-async def handle_check_subscription(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Callback для повторной проверки подписки."""
-    query = update.callback_query
-
-    if await utils.check_subscription(query.from_user.id, context.bot, REQUIRED_CHANNEL):
-        kb = keyboards.get_initial_choice_keyboard()
-        await query.edit_message_text(
-            "📚 <b>Тестовая часть ЕГЭ</b>\n\nВыберите режим работы:",
-            reply_markup=kb,
-            parse_mode=ParseMode.HTML,
-        )
-        return states.CHOOSING_MODE
-
-    return ConversationHandler.END

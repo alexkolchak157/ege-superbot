@@ -15,9 +15,25 @@ from telegram.ext import ContextTypes
 from core import states
 from core.error_handler import safe_handler
 from core import db
-from .utils import get_user_mistakes
+
 
 logger = logging.getLogger(__name__)
+
+
+async def get_user_mistakes(user_id: int):
+    """Возвращает список ошибок пользователя."""
+    mistake_ids = await db.get_mistake_ids(user_id)
+    mistakes = []
+    for q_id in mistake_ids:
+        mistakes.append(
+            {
+                "question_id": q_id,
+                "topic": "Тема вопроса",
+                "error_type": "Неверный ответ",
+                "timestamp": datetime.now().isoformat(),
+            }
+        )
+    return mistakes
 
 
 @safe_handler()

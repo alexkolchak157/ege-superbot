@@ -72,8 +72,14 @@ def safe_handler(
     def decorator(func: Callable) -> Callable:
         @wraps(func)
         async def wrapper(update: Update, context: ContextTypes.DEFAULT_TYPE, *args, **kwargs):
-            user = getattr(update, "effective_user", None)
-            user_id = user.id if user else "Unknown"
+            user_id = None
+            if getattr(update, "effective_user", None):
+                user_id = update.effective_user.id
+            elif getattr(update, "message", None) and getattr(update.message, "from_user", None):
+                user_id = update.message.from_user.id
+            elif getattr(update, "callback_query", None) and getattr(update.callback_query, "from_user", None):
+                user_id = update.callback_query.from_user.id
+            user_id = user_id or "Unknown"
             handler_name = func.__name__
             
             try:
