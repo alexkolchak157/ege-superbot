@@ -18,6 +18,12 @@ from core.universal_ui import (AdaptiveKeyboards, MessageFormatter,
 from core.error_handler import safe_handler, auto_answer_callback
 from . import keyboards, utils
 from .loader import AVAILABLE_BLOCKS, QUESTIONS_DATA, QUESTIONS_DICT_FLAT
+from .missing_handlers import (
+    detailed_report,
+    export_csv,
+    work_mistakes,
+    check_subscription,
+)
 
 try:
     from .cache import questions_cache
