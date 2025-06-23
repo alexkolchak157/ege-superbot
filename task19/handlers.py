@@ -171,6 +171,7 @@ async def init_task19_data():
 
 
 @safe_handler()
+@validate_state_transition({ConversationHandler.END, None})
 async def entry_from_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Вход в задание 19 из главного меню."""
     query = update.callback_query
@@ -251,6 +252,7 @@ async def cmd_task19(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return states.CHOOSING_MODE
 
 @safe_handler()
+@validate_state_transition({states.CHOOSING_MODE})
 async def practice_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Режим практики."""
     query = update.callback_query
@@ -297,6 +299,7 @@ async def practice_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 @safe_handler()
+@validate_state_transition({states.CHOOSING_BLOCK})
 async def select_block(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Выбор блока тем."""
     query = update.callback_query
@@ -466,6 +469,7 @@ async def list_topics(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 @safe_handler()
+@validate_state_transition({states.CHOOSING_TOPIC})
 async def select_topic(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Выбор конкретной темы."""
     query = update.callback_query
@@ -590,11 +594,13 @@ async def show_progress_enhanced(update: Update, context: ContextTypes.DEFAULT_T
     return states.CHOOSING_MODE
 
 @safe_handler()
+@validate_state_transition({states.ANSWERING})
 async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return await safe_handle_answer_task19(update, context)
 
 
 @safe_handler()
+@validate_state_transition({states.ANSWERING})
 async def handle_answer_document_task19(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработка примеров из документа для task19."""
     
@@ -631,6 +637,7 @@ async def handle_answer_document_task19(update: Update, context: ContextTypes.DE
     return await handle_answer(update, context)
 
 @safe_handler()
+@validate_state_transition({states.CHOOSING_MODE})
 async def theory_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Показ теории и советов."""
     query = update.callback_query
@@ -711,6 +718,7 @@ async def examples_bank(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return states.CHOOSING_MODE
 
 @safe_handler()
+@validate_state_transition({states.CHOOSING_MODE})
 async def bank_navigation(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Навигация по банку примеров."""
     query = update.callback_query
@@ -769,9 +777,12 @@ async def bank_navigation(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 @safe_handler()
+@validate_state_transition({states.CHOOSING_MODE, states.CHOOSING_BLOCK, states.CHOOSING_TOPIC, states.ANSWERING, states.ANSWERING_PARTS})
 async def back_to_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Возврат в главное меню."""
     from core.plugin_loader import build_main_menu
+from core.state_validator import validate_state_transition, state_validator
+from telegram.ext import ConversationHandler
     
     query = update.callback_query
     
@@ -1310,6 +1321,7 @@ async def detailed_progress(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return states.CHOOSING_MODE
 
 @safe_handler()
+@validate_state_transition({states.CHOOSING_MODE})
 async def settings_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Настройки проверки."""
     query = update.callback_query
@@ -1363,6 +1375,7 @@ async def settings_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 @safe_handler()
+@validate_state_transition({states.CHOOSING_MODE})
 async def apply_strictness(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Установка выбранного уровня строгости."""
     global evaluator
@@ -1416,6 +1429,7 @@ async def handle_settings_actions(update: Update, context: ContextTypes.DEFAULT_
 
 
 @safe_handler()
+@validate_state_transition({states.CHOOSING_MODE})
 async def mistakes_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Placeholder for mistakes training mode."""
     query = update.callback_query
