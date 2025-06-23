@@ -1563,3 +1563,58 @@ async def apply_strictness(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         logger.error(f"Error setting strictness: {e}")
         return states.CHOOSING_MODE
+
+
+@safe_handler()
+async def handle_theory_sections(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Placeholder for handling detailed theory subsections."""
+    query = update.callback_query
+    section = query.data.replace("t19_", "")
+    text = f"📚 Раздел <b>{section}</b> пока в разработке."
+    kb = InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ Назад", callback_data="t19_theory")]])
+    await query.edit_message_text(text, reply_markup=kb, parse_mode=ParseMode.HTML)
+    return states.CHOOSING_MODE
+
+
+@safe_handler()
+async def handle_settings_actions(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Placeholder for settings related callbacks."""
+    query = update.callback_query
+    action = query.data.replace("t19_", "")
+    if action == "reset_progress":
+        await query.edit_message_text(
+            "⚠️ Действие сброса прогресса недоступно в этой версии.",
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ Назад", callback_data="t19_settings")]]),
+            parse_mode=ParseMode.HTML,
+        )
+    else:
+        await query.edit_message_text(
+            "✅ Прогресс не сброшен.",
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ Назад", callback_data="t19_settings")]]),
+            parse_mode=ParseMode.HTML,
+        )
+    return states.CHOOSING_MODE
+
+
+@safe_handler()
+async def mistakes_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Placeholder for mistakes training mode."""
+    query = update.callback_query
+    await query.edit_message_text(
+        "🛠️ Режим работы над ошибками пока недоступен.",
+        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ Назад", callback_data="t19_menu")]]),
+        parse_mode=ParseMode.HTML,
+    )
+    return states.CHOOSING_MODE
+
+
+@safe_handler()
+async def show_achievements(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Placeholder for achievements display."""
+    query = update.callback_query
+    await query.edit_message_text(
+        "🏆 Раздел достижений находится в разработке.",
+        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ Назад", callback_data="t19_menu")]]),
+        parse_mode=ParseMode.HTML,
+    )
+    return states.CHOOSING_MODE
