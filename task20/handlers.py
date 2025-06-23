@@ -235,6 +235,7 @@ async def init_task20_data():
     logger.info(f"Final evaluator status: {'initialized' if evaluator else 'not initialized'}")
 
 @safe_handler()
+@validate_state_transition({ConversationHandler.END, None})
 async def entry_from_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Вход в задание 20 из главного меню."""
     query = update.callback_query
@@ -340,6 +341,7 @@ async def handle_achievement_ok(update: Update, context: ContextTypes.DEFAULT_TY
     return ConversationHandler.END
 
 @safe_handler()
+@validate_state_transition({states.CHOOSING_MODE})
 async def practice_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Режим практики с улучшенным UX."""
     query = update.callback_query
@@ -416,6 +418,7 @@ async def practice_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return states.CHOOSING_MODE
 
 @safe_handler()
+@validate_state_transition({states.CHOOSING_MODE})
 async def theory_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Режим теории и советов."""
     query = update.callback_query
@@ -793,6 +796,7 @@ def _format_evaluation_result(result: EvaluationResult, topic: Dict) -> str:
     return text
 
 @safe_handler()
+@validate_state_transition({states.CHOOSING_MODE})
 async def settings_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Настройки проверки."""
     query = update.callback_query
@@ -925,9 +929,12 @@ async def return_to_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return states.CHOOSING_MODE
 
 @safe_handler()
+@validate_state_transition({states.CHOOSING_MODE, states.CHOOSING_BLOCK, states.CHOOSING_TOPIC, states.ANSWERING, states.ANSWERING_PARTS})
 async def back_to_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Возврат в главное меню."""
     from core.plugin_loader import build_main_menu
+from core.state_validator import validate_state_transition, state_validator
+from telegram.ext import ConversationHandler
     
     query = update.callback_query
     
@@ -945,6 +952,7 @@ async def noop(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return None
 
 @safe_handler()
+@validate_state_transition({states.CHOOSING_BLOCK})
 async def select_block(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Выбор блока тем."""
     query = update.callback_query
@@ -1043,6 +1051,7 @@ async def block_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return states.CHOOSING_MODE
 
 @safe_handler()
+@validate_state_transition({states.ANSWERING})
 async def handle_answer_document_task20(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработка суждений из документа для task20."""
     
@@ -1199,6 +1208,7 @@ async def random_topic_block(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
 
 @safe_handler()
+@validate_state_transition({states.CHOOSING_MODE})
 async def bank_navigation(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Навигация по банку суждений."""
     query = update.callback_query
@@ -1563,6 +1573,7 @@ async def show_achievements(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return states.CHOOSING_MODE
 
 @safe_handler()
+@validate_state_transition({states.CHOOSING_MODE})
 async def mistakes_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Режим работы над ошибками."""
     query = update.callback_query
@@ -1720,6 +1731,7 @@ async def save_stats_by_level(context: ContextTypes.DEFAULT_TYPE, user_id: int, 
     stats['avg_score'] = stats['total_score'] / stats['attempts']
 
 @safe_handler()
+@validate_state_transition({states.ANSWERING})
 async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return await safe_handle_answer_task20(update, context)
 
