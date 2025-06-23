@@ -170,6 +170,7 @@ def init_data():
     return data_loaded  # Возвращаем статус загрузки
 
 @safe_handler()
+@validate_state_transition({ConversationHandler.END, None})
 async def entry_from_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Вход из главного меню."""
     query = update.callback_query
@@ -234,6 +235,7 @@ async def cmd_start_plan(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return states.CHOOSING_MODE
 
 @safe_handler()
+@validate_state_transition({states.CHOOSING_MODE})
 async def train_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Режим тренировки."""
     query = update.callback_query
@@ -260,6 +262,7 @@ async def train_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 @safe_handler()
+@validate_state_transition({states.CHOOSING_MODE})
 async def show_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Режим просмотра эталонов."""
     query = update.callback_query
@@ -285,6 +288,7 @@ async def show_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return states.CHOOSING_TOPIC  # ← Исправлено: возвращаем правильное состояние
 
 @safe_handler()
+@validate_state_transition({states.CHOOSING_MODE})
 async def exam_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Режим экзамена - случайная тема без возможности выбора."""
     query = update.callback_query
@@ -413,6 +417,7 @@ async def list_topics(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return states.CHOOSING_MODE
 
 @safe_handler()
+@validate_state_transition({states.CHOOSING_TOPIC})
 async def select_topic(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Выбор конкретной темы."""
     query = update.callback_query
@@ -515,6 +520,7 @@ async def show_etalon_plan(query, context, topic_idx):
     return states.CHOOSING_TOPIC
 
 @safe_handler()
+@validate_state_transition({states.CHOOSING_MODE})
 async def navigate_topics(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Навигация по темам."""
     query = update.callback_query
@@ -834,6 +840,7 @@ async def next_topic(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return states.CHOOSING_TOPIC
 
 @safe_handler()
+@validate_state_transition({states.CHOOSING_MODE})
 async def show_criteria(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Показ критериев оценки."""
     criteria_text = """<b>📋 Критерии оценивания задания 24 (ЕГЭ 2025)</b>
@@ -1323,6 +1330,7 @@ async def handle_search_query(update: Update, context: ContextTypes.DEFAULT_TYPE
     return states.CHOOSING_TOPIC
     
 @safe_handler()
+@validate_state_transition({states.CHOOSING_MODE, states.CHOOSING_BLOCK, states.CHOOSING_TOPIC, states.ANSWERING})
 async def back_to_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Возврат в меню плагина."""
     query = update.callback_query
@@ -1353,6 +1361,7 @@ async def back_to_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return states.CHOOSING_MODE
 
 @safe_handler()
+@validate_state_transition({states.CHOOSING_MODE, states.CHOOSING_BLOCK, states.CHOOSING_TOPIC, states.ANSWERING, states.ANSWERING_PARTS})
 async def back_to_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Возврат в главное меню бота."""
     query = update.callback_query
@@ -1363,6 +1372,8 @@ async def back_to_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         # Импортируем функцию главного меню
         from core.plugin_loader import build_main_menu
+from core.state_validator import validate_state_transition, state_validator
+from telegram.ext import ConversationHandler
         
         # Очищаем контекст пользователя от данных task24
         keys_to_remove = [
