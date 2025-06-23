@@ -16,6 +16,7 @@ from core.ui_helpers import (create_visual_progress, get_motivational_message,
 from core.universal_ui import (AdaptiveKeyboards, MessageFormatter,
                                UniversalUIComponents)
 from core.error_handler import safe_handler, auto_answer_callback
+from core.state_validator import validate_state_transition, state_validator
 from . import keyboards, utils
 from .loader import AVAILABLE_BLOCKS, QUESTIONS_DATA, QUESTIONS_DICT_FLAT
 
@@ -123,6 +124,7 @@ async def cmd_quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return states.CHOOSING_MODE
 
 @safe_handler()
+@validate_state_transition({states.CHOOSING_MODE})
 async def select_exam_num_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Выбор режима по номеру ЕГЭ."""
     query = update.callback_query
@@ -142,6 +144,7 @@ async def select_exam_num_mode(update: Update, context: ContextTypes.DEFAULT_TYP
     return states.CHOOSING_EXAM_NUMBER
 
 @safe_handler()
+@validate_state_transition({states.CHOOSING_MODE})
 async def select_block_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Выбор режима по блокам."""
     query = update.callback_query
@@ -155,6 +158,7 @@ async def select_block_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return states.CHOOSING_BLOCK
 
 @safe_handler()
+@validate_state_transition({states.CHOOSING_MODE})
 async def select_random_all(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Случайный вопрос из всей базы."""
     query = update.callback_query
@@ -184,6 +188,7 @@ async def select_random_all(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return states.CHOOSING_MODE
 
 @safe_handler()
+@validate_state_transition({states.CHOOSING_BLOCK})
 async def select_block(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Выбор конкретного блока."""
     query = update.callback_query
@@ -203,6 +208,7 @@ async def select_block(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return states.CHOOSING_MODE
 
 @safe_handler()
+@validate_state_transition({states.CHOOSING_MODE})
 async def show_progress_enhanced(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Показ прогресса с улучшенным UI."""
     user_id = update.effective_user.id

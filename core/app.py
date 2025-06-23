@@ -8,6 +8,7 @@ from core.admin_tools import register_admin_handlers
 from core.config import BOT_TOKEN
 from core import db
 from core.error_handler import register_error_handler
+from core.state_validator import state_validator
 
 logging.basicConfig(
     level=logging.INFO,
