@@ -125,38 +125,44 @@ class YandexGPTService:
         
         for attempt in range(self.config.retries):
             try:
-                async with self._session.post(
+                response = await self._session.post(
                     self.BASE_URL,
                     json=payload,
                     headers=headers,
                     timeout=self.config.timeout,
-                ) as response:
+                )
+
+                # Если ответ возвращает менеджер контекста, корректно выходим из него
+                if hasattr(response, "__aenter__"):
+                    async with response:
+                        response_data = await response.json()
+                else:
                     response_data = await response.json()
 
-                    if response.status != 200:
-                        logger.error(f"YandexGPT API error: {response_data}")
-                        if attempt == self.config.retries - 1:
-                            return {
-                                "success": False,
-                                "error": response_data.get("message", "Unknown error"),
-                                "status_code": response.status,
-                            }
-                        await asyncio.sleep(self.config.retry_delay)
-                        continue
+                if response.status != 200:
+                    logger.error(f"YandexGPT API error: {response_data}")
+                    if attempt == self.config.retries - 1:
+                        return {
+                            "success": False,
+                            "error": response_data.get("message", "Unknown error"),
+                            "status_code": response.status,
+                        }
+                    await asyncio.sleep(self.config.retry_delay)
+                    continue
 
-                    # Извлекаем текст ответа
-                    alternatives = response_data.get("result", {}).get("alternatives", [])
-                    if alternatives:
-                        text = alternatives[0].get("message", {}).get("text", "")
-                    else:
-                        text = ""
+                # Извлекаем текст ответа
+                alternatives = response_data.get("result", {}).get("alternatives", [])
+                if alternatives:
+                    text = alternatives[0].get("message", {}).get("text", "")
+                else:
+                    text = ""
 
-                    return {
-                        "success": True,
-                        "text": text,
-                        "usage": response_data.get("result", {}).get("usage", {}),
-                        "model_version": response_data.get("result", {}).get("modelVersion", ""),
-                    }
+                return {
+                    "success": True,
+                    "text": text,
+                    "usage": response_data.get("result", {}).get("usage", {}),
+                    "model_version": response_data.get("result", {}).get("modelVersion", ""),
+                }
 
             except Exception as e:
                 logger.error(f"Ошибка при запросе к YandexGPT: {e}")

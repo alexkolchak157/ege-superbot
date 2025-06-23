@@ -678,3 +678,35 @@ class TestPartCallbackData:
 
 # Алиас для совместимости (если где-то импортируется CallbackData)
 CallbackData = TestPartCallbackData
+
+
+# ---------------------------------------------------------------------------
+# Additional helper functions required by missing_handlers
+
+async def get_user_mistakes(user_id: int) -> List[Dict]:
+    """Возвращает список ошибок пользователя для режима работы над ошибками."""
+    mistake_ids = await db.get_mistake_ids(user_id)
+    mistakes = []
+    for q_id in mistake_ids:
+        mistakes.append({
+            "question_id": q_id,
+            "topic": "Тема вопроса",
+            "error_type": "Неверный ответ",
+            "timestamp": datetime.now().isoformat(),
+        })
+    return mistakes
+
+
+def format_mistake_stats(mistakes: List[Dict]) -> str:
+    """Форматирует статистику ошибок в удобочитаемый текст."""
+    if not mistakes:
+        return "Нет ошибок для отображения"
+
+    lines = []
+    for idx, item in enumerate(mistakes, start=1):
+        lines.append(
+            f"{idx}. {item.get('topic', 'N/A')} – {item.get('error_type', 'N/A')}"
+        )
+
+    return "\n".join(lines)
+
