@@ -30,6 +30,7 @@ try:
 except ImportError:
     logging.warning("Модуль cache не найден, работаем без кеширования")
     questions_cache = None
+from core.state_validator import validate_state_transition, state_validator
 
 logger = logging.getLogger(__name__)
 
@@ -96,6 +97,7 @@ def init_data():
     AVAILABLE_BLOCKS = list(QUESTIONS_DATA.keys()) if QUESTIONS_DATA else []
 
 @safe_handler()
+@validate_state_transition({ConversationHandler.END, None})  # Вход из главного меню
 async def entry_from_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     
@@ -129,6 +131,7 @@ async def cmd_quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return states.CHOOSING_MODE
 
 @safe_handler()
+@validate_state_transition({states.CHOOSING_MODE})
 async def select_exam_num_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Выбор режима по номеру ЕГЭ."""
     query = update.callback_query
@@ -148,6 +151,7 @@ async def select_exam_num_mode(update: Update, context: ContextTypes.DEFAULT_TYP
     return states.CHOOSING_EXAM_NUMBER
 
 @safe_handler()
+@validate_state_transition({states.CHOOSING_MODE})
 async def select_block_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Выбор режима по блокам."""
     query = update.callback_query
@@ -161,6 +165,7 @@ async def select_block_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return states.CHOOSING_BLOCK
 
 @safe_handler()
+@validate_state_transition({states.CHOOSING_MODE})
 async def select_random_all(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Случайный вопрос из всей базы."""
     query = update.callback_query
@@ -190,6 +195,7 @@ async def select_random_all(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return states.CHOOSING_MODE
 
 @safe_handler()
+@validate_state_transition({states.CHOOSING_BLOCK})
 async def select_block(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Выбор конкретного блока."""
     query = update.callback_query
@@ -521,6 +527,7 @@ async def check_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return ConversationHandler.END
 
 @safe_handler()
+@validate_state_transition({states.CHOOSING_NEXT_ACTION})
 async def handle_next_action(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработка действий после ответа (ИСПРАВЛЕННАЯ ВЕРСИЯ)."""
     query = update.callback_query
@@ -677,6 +684,8 @@ async def handle_next_action(update: Update, context: ContextTypes.DEFAULT_TYPE)
         await utils.purge_old_messages(context, query.message.chat_id)
         
         from core.plugin_loader import build_main_menu
+from core.state_validator import validate_state_transition, state_validator
+from telegram.ext import ConversationHandler
         kb = build_main_menu()
         
         await query.message.reply_text(
@@ -768,6 +777,7 @@ async def cmd_score(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(text, parse_mode=ParseMode.HTML)
 
 @safe_handler()
+@validate_state_transition({states.CHOOSING_MODE, states.CHOOSING_BLOCK, states.CHOOSING_TOPIC, states.CHOOSING_EXAM_NUMBER})
 async def back_to_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Возврат к выбору режима тестовой части."""
     query = update.callback_query
@@ -782,6 +792,7 @@ async def back_to_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return states.CHOOSING_MODE
 
 @safe_handler()
+@validate_state_transition({states.CHOOSING_MODE, states.CHOOSING_BLOCK, states.CHOOSING_TOPIC, states.ANSWERING})
 async def back_to_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Возврат к выбору режима тестовой части из подменю."""
     query = update.callback_query
@@ -999,6 +1010,7 @@ async def send_mistake_question(message, context: ContextTypes.DEFAULT_TYPE):
     return states.REVIEWING_MISTAKES
 
 @safe_handler()
+@validate_state_transition({states.REVIEWING_MISTAKES})
 async def handle_mistake_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработка ответа в режиме ошибок."""
     user_id = update.effective_user.id
@@ -1103,6 +1115,7 @@ async def handle_mistake_answer(update: Update, context: ContextTypes.DEFAULT_TY
     return states.CHOOSING_NEXT_ACTION
 
 @safe_handler()
+@validate_state_transition({states.REVIEWING_MISTAKES, states.CHOOSING_MODE})
 async def mistake_nav(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Навигация по ошибкам."""
     query = update.callback_query
@@ -1122,6 +1135,7 @@ async def mistake_nav(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return states.REVIEWING_MISTAKES
     
 @safe_handler()
+@validate_state_transition({states.CHOOSING_MODE})
 async def select_exam_num(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Выбор конкретного номера задания."""
     query = update.callback_query
@@ -1156,6 +1170,7 @@ async def select_exam_num(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return states.CHOOSING_MODE
         
 @safe_handler()
+@validate_state_transition({states.CHOOSING_MODE})
 async def select_mode_random_in_block(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Случайный вопрос из выбранного блока."""
     query = update.callback_query
@@ -1184,6 +1199,7 @@ async def select_mode_random_in_block(update: Update, context: ContextTypes.DEFA
         return states.CHOOSING_BLOCK
 
 @safe_handler()
+@validate_state_transition({states.CHOOSING_MODE})
 async def select_mode_topic_in_block(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Выбор темы в блоке."""
     query = update.callback_query
@@ -1204,6 +1220,7 @@ async def select_mode_topic_in_block(update: Update, context: ContextTypes.DEFAU
     return states.CHOOSING_TOPIC
 
 @safe_handler()
+@validate_state_transition({states.CHOOSING_TOPIC})
 async def select_topic(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Выбор конкретной темы."""
     query = update.callback_query
@@ -1236,6 +1253,7 @@ async def select_topic(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return states.CHOOSING_TOPIC
 
 @safe_handler()
+@validate_state_transition({states.CHOOSING_MODE})
 async def select_mistakes_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Вход в режим работы над ошибками из меню."""
     query = update.callback_query
@@ -1304,96 +1322,238 @@ async def cmd_debug_streaks(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 @safe_handler()
-async def handle_detailed_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Детальный отчет по темам."""
+@validate_state_transition({states.CHOOSING_MODE})
+async def detailed_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Показывает детальный отчет по ошибкам."""
     query = update.callback_query
+    user_id = query.from_user.id
     
-    user_id = update.effective_user.id
-    stats = await db.get_user_stats(user_id)
+    # Получаем все ошибки пользователя
+    mistakes = await get_user_mistakes(user_id)
     
-    if not stats:
-        return ConversationHandler.END
+    if not mistakes:
+        text = "📊 <b>Детальный отчет</b>\n\nУ вас пока нет ошибок для анализа!"
+        kb = InlineKeyboardMarkup([[
+            InlineKeyboardButton("⬅️ Назад", callback_data="test_progress")
+        ]])
+        await query.edit_message_text(text, reply_markup=kb, parse_mode=ParseMode.HTML)
+        return states.CHOOSING_MODE
     
-    # Группируем по темам
-    by_topic = {}
-    for topic, correct, total in stats:
-        topic_name = TOPIC_NAMES.get(topic, topic)
-        percentage = (correct / total * 100) if total > 0 else 0
-        by_topic[topic_name] = {
-            'correct': correct,
-            'total': total,
-            'percentage': percentage
-        }
+    # Группируем ошибки по темам
+    mistakes_by_topic = {}
+    for mistake in mistakes:
+        topic = mistake.get('topic', 'Без темы')
+        if topic not in mistakes_by_topic:
+            mistakes_by_topic[topic] = []
+        mistakes_by_topic[topic].append(mistake)
     
-    # Сортируем по проценту
-    sorted_topics = sorted(by_topic.items(), key=lambda x: x[1]['percentage'], reverse=True)
+    # Формируем отчет
+    text = "📊 <b>Детальный анализ ошибок</b>\n\n"
     
-    text = "📊 <b>Детальный отчет по темам</b>\n\n"
-    
-    for topic, data in sorted_topics[:10]:  # Топ 10
-        progress_bar = UniversalUIComponents.create_progress_bar(
-            data['correct'], data['total'], width=10
-        )
-        color = UniversalUIComponents.get_color_for_score(data['correct'], data['total'])
+    for topic, topic_mistakes in mistakes_by_topic.items():
+        text += f"📌 <b>{topic}</b>\n"
+        text += f"   Ошибок: {len(topic_mistakes)}\n"
         
-        text += f"{color} <b>{topic}</b>\n"
-        text += f"   {progress_bar}\n"
-        text += f"   Правильно: {data['correct']}/{data['total']}\n\n"
+        # Показываем типы ошибок
+        error_types = {}
+        for m in topic_mistakes:
+            error_type = m.get('error_type', 'Неверный ответ')
+            error_types[error_type] = error_types.get(error_type, 0) + 1
+        
+        for error_type, count in error_types.items():
+            text += f"   • {error_type}: {count}\n"
+        text += "\n"
+    
+    # Рекомендации
+    text += "💡 <b>Рекомендации:</b>\n"
+    if len(mistakes_by_topic) > 3:
+        text += "• Сосредоточьтесь на 2-3 темах с наибольшим количеством ошибок\n"
+    text += "• Используйте режим 'Работа над ошибками' для тренировки\n"
+    text += "• Изучите теорию по проблемным темам\n"
     
     kb = InlineKeyboardMarkup([
-        [
-            InlineKeyboardButton(
-                "⬅️ Назад",
-                callback_data="test_back_to_stat_menu",
-            )
-        ]
+        [InlineKeyboardButton("📥 Экспорт в CSV", callback_data="test_export_csv")],
+        [InlineKeyboardButton("🔄 Работа над ошибками", callback_data="test_work_mistakes")],
+        [InlineKeyboardButton("⬅️ Назад", callback_data="test_progress")]
     ])
     
-    await query.edit_message_text(text, reply_markup=kb, parse_mode=ParseMode.HTML)
-    return ConversationHandler.END
-
+    await query.edit_message_text(
+        text,
+        reply_markup=kb,
+        parse_mode=ParseMode.HTML
+    )
+    return states.CHOOSING_MODE
 
 @safe_handler()
-async def handle_export_csv(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Callback: экспорт статистики в CSV."""
+@validate_state_transition({states.CHOOSING_MODE})
+async def export_csv(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Экспортирует статистику и ошибки в CSV файл."""
     query = update.callback_query
-
     user_id = query.from_user.id
-    try:
-        csv_content = await utils.export_user_stats_csv(user_id)
-        from io import BytesIO
-        file_data = BytesIO(csv_content.encode("utf-8-sig"))
-        file_data.name = f"statistics_{user_id}.csv"
-
-        await query.message.reply_document(
-            document=file_data,
-            filename=file_data.name,
-            caption="📊 Ваша статистика"
-        )
-    except Exception as e:
-        logger.error(f"Ошибка экспорта статистики для user {user_id}: {e}")
-
-    return ConversationHandler.END
+    
+    await query.answer("Подготавливаю файл...")
+    
+    # Получаем данные
+    mistakes = await get_user_mistakes(user_id)
+    stats = await db.get_user_stats(user_id)
+    
+    # Создаем CSV в памяти
+    output = io.StringIO()
+    writer = csv.writer(output)
+    
+    # Заголовок с информацией
+    writer.writerow(['Отчет по тестовой части ЕГЭ'])
+    writer.writerow([f'Дата: {datetime.now().strftime("%d.%m.%Y %H:%M")}'])
+    writer.writerow([])
+    
+    # Общая статистика
+    writer.writerow(['ОБЩАЯ СТАТИСТИКА'])
+    writer.writerow(['Тема', 'Правильных ответов', 'Всего отвечено', 'Процент'])
+    
+    total_correct = 0
+    total_answered = 0
+    
+    for topic, correct, answered in stats:
+        percentage = (correct / answered * 100) if answered > 0 else 0
+        writer.writerow([topic, correct, answered, f'{percentage:.1f}%'])
+        total_correct += correct
+        total_answered += answered
+    
+    writer.writerow([])
+    writer.writerow(['ИТОГО', total_correct, total_answered, 
+                    f'{(total_correct/total_answered*100 if total_answered > 0 else 0):.1f}%'])
+    
+    # Детали ошибок
+    if mistakes:
+        writer.writerow([])
+        writer.writerow(['АНАЛИЗ ОШИБОК'])
+        writer.writerow(['ID вопроса', 'Тема', 'Тип ошибки', 'Дата'])
+        
+        for mistake in mistakes:
+            writer.writerow([
+                mistake.get('question_id', 'N/A'),
+                mistake.get('topic', 'Без темы'),
+                mistake.get('error_type', 'Неверный ответ'),
+                mistake.get('timestamp', 'N/A')
+            ])
+    
+    # Готовим файл для отправки
+    output.seek(0)
+    bio = io.BytesIO(output.getvalue().encode('utf-8-sig'))  # UTF-8 with BOM для Excel
+    bio.name = f'ege_test_report_{user_id}_{datetime.now().strftime("%Y%m%d")}.csv'
+    
+    # Отправляем файл
+    await query.message.reply_document(
+        document=bio,
+        caption="📊 Ваш отчет по тестовой части ЕГЭ\n\n"
+                "Файл можно открыть в Excel или Google Sheets",
+        filename=bio.name
+    )
+    
+    # Возвращаемся в меню прогресса
+    kb = InlineKeyboardMarkup([[
+        InlineKeyboardButton("⬅️ Назад", callback_data="test_progress")
+    ]])
+    
+    await query.message.reply_text(
+        "✅ Отчет успешно экспортирован!",
+        reply_markup=kb
+    )
+    
+    return states.CHOOSING_MODE
 
 
 @safe_handler()
-async def handle_work_mistakes(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Callback: переход в режим работы над ошибками."""
-    return await select_mistakes_mode(update, context)
-
-
-@safe_handler()
-async def handle_check_subscription(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Callback для повторной проверки подписки."""
+@validate_state_transition({states.CHOOSING_MODE})
+async def work_mistakes(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Запускает режим работы над ошибками."""
     query = update.callback_query
-
-    if await utils.check_subscription(query.from_user.id, context.bot, REQUIRED_CHANNEL):
-        kb = keyboards.get_initial_choice_keyboard()
-        await query.edit_message_text(
-            "📚 <b>Тестовая часть ЕГЭ</b>\n\nВыберите режим работы:",
-            reply_markup=kb,
-            parse_mode=ParseMode.HTML,
-        )
+    user_id = query.from_user.id
+    
+    # Получаем список ID вопросов с ошибками
+    mistake_ids = await db.get_mistake_ids(user_id)
+    
+    if not mistake_ids:
+        text = "🎉 <b>Отлично!</b>\n\nУ вас нет ошибок для проработки!"
+        kb = InlineKeyboardMarkup([[
+            InlineKeyboardButton("⬅️ В меню", callback_data="test_back_to_mode")
+        ]])
+        await query.edit_message_text(text, reply_markup=kb, parse_mode=ParseMode.HTML)
         return states.CHOOSING_MODE
+    
+    # Сохраняем режим и список ошибок
+    context.user_data['mode'] = 'mistakes'
+    context.user_data['mistake_queue'] = mistake_ids.copy()
+    context.user_data['mistakes_total'] = len(mistake_ids)
+    context.user_data['mistakes_completed'] = 0
+    
+    text = f"""🔄 <b>Работа над ошибками</b>
 
-    return ConversationHandler.END
+У вас {len(mistake_ids)} вопросов с ошибками.
+
+Сейчас вы будете проходить эти вопросы заново. 
+При правильном ответе вопрос будет удален из списка ошибок.
+
+Готовы начать?"""
+    
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("✅ Начать", callback_data="test_start_mistakes")],
+        [InlineKeyboardButton("⬅️ Назад", callback_data="test_back_to_mode")]
+    ])
+    
+    await query.edit_message_text(
+        text,
+        reply_markup=kb,
+        parse_mode=ParseMode.HTML
+    )
+    
+    return states.CHOOSING_MODE
+
+@safe_handler()
+@validate_state_transition({states.CHOOSING_MODE})
+async def check_subscription(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Проверяет подписку пользователя."""
+    query = update.callback_query
+    user_id = query.from_user.id
+    
+    # Получаем статус подписки
+    user_data = await db.get_user_status(user_id)
+    is_subscribed = user_data.get('is_subscribed', False)
+    
+    if is_subscribed:
+        text = """✅ <b>Подписка активна</b>
+
+У вас есть доступ ко всем функциям бота:
+• Неограниченное количество вопросов
+• Детальная статистика
+• Экспорт отчетов
+• Приоритетная поддержка"""
+    else:
+        text = """❌ <b>Подписка не активна</b>
+
+В бесплатной версии доступно:
+• До 50 вопросов в месяц
+• Базовая статистика
+• Основные режимы тренировки
+
+Для полного доступа оформите подписку."""
+    
+    kb_buttons = []
+    if not is_subscribed:
+        kb_buttons.append([
+            InlineKeyboardButton("💎 Оформить подписку", url="https://example.com/subscribe")
+        ])
+    
+    kb_buttons.append([
+        InlineKeyboardButton("⬅️ Назад", callback_data="test_back_to_mode")
+    ])
+    
+    kb = InlineKeyboardMarkup(kb_buttons)
+    
+    await query.edit_message_text(
+        text,
+        reply_markup=kb,
+        parse_mode=ParseMode.HTML
+    )
+    
+    return states.CHOOSING_MODE
