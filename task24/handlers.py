@@ -22,6 +22,8 @@ from core.ui_helpers import (
     get_motivational_message,
     create_visual_progress
 )
+from core.plugin_loader import build_main_menu
+from core.state_validator import validate_state_transition, state_validator
 
 logger = logging.getLogger(__name__)
 from core.error_handler import safe_handler, auto_answer_callback
@@ -1369,11 +1371,6 @@ async def back_to_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         # Удаляем все сообщения task24 перед переходом в главное меню
         await delete_previous_messages(context, query.message.chat_id)
-        
-        # Импортируем функцию главного меню
-        from core.plugin_loader import build_main_menu
-from core.state_validator import validate_state_transition, state_validator
-from telegram.ext import ConversationHandler
         
         # Очищаем контекст пользователя от данных task24
         keys_to_remove = [
