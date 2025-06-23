@@ -683,9 +683,6 @@ async def handle_next_action(update: Update, context: ContextTypes.DEFAULT_TYPE)
         # Сначала удаляем старые сообщения
         await utils.purge_old_messages(context, query.message.chat_id)
         
-        from core.plugin_loader import build_main_menu
-from core.state_validator import validate_state_transition, state_validator
-from telegram.ext import ConversationHandler
         kb = build_main_menu()
         
         await query.message.reply_text(
