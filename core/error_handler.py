@@ -13,6 +13,7 @@ from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton
 from telegram.ext import ContextTypes, ConversationHandler
 from core import states
 from telegram.error import BadRequest, NetworkError, TimedOut
+from core.state_validator import recover_user_state
 
 logger = logging.getLogger(__name__)
 
@@ -131,8 +132,13 @@ def safe_handler(
                         update,
                         "❌ Произошла непредвиденная ошибка. Мы уже работаем над решением."
                     )
-                
-                return return_on_error
+
+                # Сбрасываем состояние пользователя в безопасное значение
+                try:
+                    return await recover_user_state(update, context)
+                except Exception as recover_error:  # pragma: no cover - fail safe
+                    logger.error(f"Failed to recover state for user {user_id}: {recover_error}")
+                    return return_on_error
                 
         return wrapper
     return decorator
@@ -291,6 +297,12 @@ async def global_error_handler(update: Update, context: ContextTypes.DEFAULT_TYP
                 )
         except Exception as e:
             logger.error(f"Failed to send error message to user: {e}")
+
+        # Пытаемся восстановить состояние пользователя
+        try:
+            await recover_user_state(update, context)
+        except Exception as recover_error:  # pragma: no cover - fail safe
+            logger.error(f"Failed to recover state in global handler: {recover_error}")
     
     # Уведомляем админов о критических ошибках
     if isinstance(context.error, (AIServiceError, AttributeError, KeyError)):
