@@ -121,6 +121,13 @@ def safe_handler(
                 
                 return return_on_error
                 
+            
+                # Проверяем, не обработана ли уже эта ошибка
+                if hasattr(context, 'error_handled') and context.error_handled:
+                    return return_on_error
+                    
+                # Устанавливаем флаг
+                context.error_handled = True
             except Exception as e:
                 # Неизвестные ошибки
                 if log_errors:
