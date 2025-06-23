@@ -5,7 +5,13 @@ import os
 import json
 from enum import Enum
 from typing import Dict, List, Any, Optional
-from dataclasses import dataclass
+from core.types import (
+    UserID,
+    TaskType,
+    EvaluationResult,
+    CallbackData,
+    TaskRequirements,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -13,34 +19,15 @@ logger = logging.getLogger(__name__)
 try:
     from core.ai_evaluator import (
         BaseAIEvaluator,
-        EvaluationResult,
-        TaskRequirements,
     )
     from core.ai_service import YandexGPTService, YandexGPTConfig, YandexGPTModel
     AI_EVALUATOR_AVAILABLE = True
 except ImportError as e:
     logger.warning(f"AI evaluator components not available: {e}")
     AI_EVALUATOR_AVAILABLE = False
-    
+
     # Заглушки для работы без AI
-    @dataclass
-    class TaskRequirements:
-        task_number: int
-        task_name: str
-        max_score: int
-        criteria: List[Dict]
-        description: str
-    
-    @dataclass
-    class EvaluationResult:
-        scores: Dict[str, int]
-        total_score: int
-        max_score: int
-        feedback: str
-        detailed_analysis: Optional[Dict] = None
-        suggestions: Optional[List[str]] = None
-        factual_errors: Optional[List[str]] = None
-    
+
     class BaseAIEvaluator:
         def __init__(self, requirements: TaskRequirements):
             self.requirements = requirements
