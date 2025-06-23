@@ -2818,6 +2818,47 @@ async def handle_all_examples(update: Update, context: ContextTypes.DEFAULT_TYPE
     
     return states.CHOOSING_MODE
 
+@safe_handler()
+@validate_state_transition({states.CHOOSING_MODE})
+async def show_theory(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Показ теории по заданию 25."""
+    query = update.callback_query
+    
+    text = """📚 <b>Теория по заданию 25</b>
+
+<b>Структура развернутого ответа:</b>
+
+1️⃣ <b>Обоснование (К1 - 2 балла)</b>
+• Теоретическое обоснование тезиса
+• Опора на обществоведческие понятия
+• Логическая связь с вопросом
+
+2️⃣ <b>Ответ на вопрос (К2 - 1 балл)</b>
+• Четкий и однозначный ответ
+• Соответствие заданному вопросу
+
+3️⃣ <b>Примеры (К3 - 3 балла)</b>
+• Три развернутых примера
+• Из разных сфер общественной жизни
+• Конкретные, с деталями
+
+<b>Типичные ошибки:</b>
+❌ Отсутствие теоретического обоснования
+❌ Примеры из одной сферы
+❌ Абстрактные примеры без конкретики
+❌ Несоответствие примеров тезису"""
+    
+    kb = InlineKeyboardMarkup([[
+        InlineKeyboardButton("🎯 Попробовать", callback_data="t25_practice"),
+        InlineKeyboardButton("⬅️ Назад", callback_data="t25_menu")
+    ]])
+    
+    await query.edit_message_text(
+        text,
+        reply_markup=kb,
+        parse_mode=ParseMode.HTML
+    )
+    return states.CHOOSING_MODE
 
 # Обновлённая функция регистрации всех обработчиков
 def register_task25_handlers(app):
@@ -2883,5 +2924,4 @@ def register_task25_handlers(app):
     
     # Возврат в главное меню
     app.add_handler(CallbackQueryHandler(back_to_main_menu, pattern="^to_main_menu$"))
-    
     logger.info("All task25 handlers registered successfully")
