@@ -254,6 +254,14 @@ def admin_only(func: Callable) -> Callable:
     return wrapper
 
 
+def get_admin_keyboard_extension(user_id: int) -> List[List[InlineKeyboardButton]]:
+    """Возвращает дополнительные кнопки для админов."""
+    if not admin_manager.is_admin(user_id):
+        return []
+
+    return [[InlineKeyboardButton("🔧 Админ", callback_data="admin:main")]]
+
+
 class AdminStats:
     """Класс для сбора и анализа статистики."""
     
