@@ -6,7 +6,7 @@ import aiosqlite
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.constants import ParseMode
 from telegram.ext import ContextTypes, ConversationHandler
-
+from core.plugin_loader import build_main_menu
 from core import db, states
 from core.admin_tools import admin_manager
 from core.config import DATABASE_FILE, REQUIRED_CHANNEL
@@ -153,8 +153,8 @@ async def cmd_quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return states.CHOOSING_MODE
 
 @safe_handler()
-@validate_state_transition({states.CHOOSING_MODE})
-async def select_exam_num_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
+@validate_state_transition({states.CHOOSING_MODE, states.CHOOSING_EXAM_NUMBER})
+async def select_exam_num(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Выбор режима по номеру ЕГЭ."""
     query = update.callback_query
     
@@ -1165,7 +1165,7 @@ async def mistake_nav(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return states.REVIEWING_MISTAKES
     
 @safe_handler()
-@validate_state_transition({states.CHOOSING_MODE})
+@validate_state_transition({states.CHOOSING_MODE, states.CHOOSING_EXAM_NUMBER})
 async def select_exam_num(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Выбор конкретного номера задания."""
     query = update.callback_query

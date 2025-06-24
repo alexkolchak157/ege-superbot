@@ -709,4 +709,3 @@ def format_mistake_stats(mistakes: List[Dict]) -> str:
         )
 
     return "\n".join(lines)
-
