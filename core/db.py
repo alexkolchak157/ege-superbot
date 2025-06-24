@@ -9,8 +9,8 @@ from datetime import datetime, date, timezone
 from typing import Dict, Any, List, Tuple, Optional, Set
 import aiosqlite
 from core.config import DATABASE_FILE
-# Вместо импорта типов из других модулей
 from core.types import UserID, TaskType, EvaluationResult, CallbackData
+from core import states
 logger = logging.getLogger(__name__)
 
 # Имена таблиц - константы для предотвращения injection через имена таблиц
@@ -49,7 +49,7 @@ async def execute_with_retry(query: str, params: tuple = (), max_retries: int = 
             db = await get_db()
             cursor = await db.execute(query, params)
             await db.commit()
-            return result
+            return cursor
         except aiosqlite.OperationalError as e:
             if "database is locked" in str(e) and attempt < max_retries - 1:
                 logger.warning(f"БД заблокирована, попытка {attempt + 1}/{max_retries}")

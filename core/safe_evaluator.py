@@ -185,6 +185,9 @@ async def safe_handle_answer_task19(update: Update, context: ContextTypes.DEFAUL
         'timestamp': datetime.now().isoformat()
     })
     
+    # Сохраняем ID сообщения для удаления
+    context.user_data['checking_message_id'] = checking_msg.message_id if 'checking_msg' in locals() else None
+    
     # Показываем результат
     await update.message.reply_text(
         result['feedback'],
