@@ -11,6 +11,7 @@ import aiosqlite
 from core.config import DATABASE_FILE
 from core.types import UserID, TaskType, EvaluationResult, CallbackData
 from core import states
+import asyncio
 logger = logging.getLogger(__name__)
 
 # Имена таблиц - константы для предотвращения injection через имена таблиц
@@ -42,7 +43,6 @@ async def close_db():
 
 async def execute_with_retry(query: str, params: tuple = (), max_retries: int = 3):
     """Выполняет запрос с повторными попытками при блокировке БД."""
-    import asyncio
     
     for attempt in range(max_retries):
         try:
