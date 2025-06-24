@@ -96,6 +96,28 @@ def init_data():
     QUESTIONS_DATA = get_questions_data()
     AVAILABLE_BLOCKS = list(QUESTIONS_DATA.keys()) if QUESTIONS_DATA else []
 
+
+async def cleanup_previous_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Удаляет предыдущие сообщения бота."""
+    messages_to_delete = [
+        'thinking_message_id',      # "Ищу вопрос..."
+        'checking_message_id',      # "Проверяю ваш ответ..."
+        'question_message_id',      # Сообщение с вопросом
+        'feedback_message_id'       # Сообщение с результатом
+    ]
+    
+    for msg_key in messages_to_delete:
+        msg_id = context.user_data.pop(msg_key, None)
+        if msg_id:
+            try:
+                await update.effective_message.bot.delete_message(
+                    chat_id=update.effective_chat.id,
+                    message_id=msg_id
+                )
+            except Exception as e:
+                logger.debug(f"Failed to delete {msg_key}: {e}")
+
+
 @safe_handler()
 @validate_state_transition({ConversationHandler.END, None})  # Вход из главного меню
 async def entry_from_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -527,10 +549,21 @@ async def check_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return ConversationHandler.END
 
 @safe_handler()
-@validate_state_transition({states.CHOOSING_NEXT_ACTION})
+@validate_state_transition({states.CHOOSING_NEXT_ACTION, states.ANSWERING})
 async def handle_next_action(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработка действий после ответа (ИСПРАВЛЕННАЯ ВЕРСИЯ)."""
-    query = update.callback_query
+    query = update.callback_query    
+    # Удаляем сообщение "Проверяю ваш ответ..." если оно есть
+    checking_msg_id = context.user_data.pop('checking_message_id', None)
+    if checking_msg_id:
+        try:
+            await update.callback_query.message.bot.delete_message(
+                chat_id=update.effective_chat.id,
+                message_id=checking_msg_id
+            )
+        except Exception as e:
+            logger.debug(f"Failed to delete checking message: {e}")
+
     
     action = query.data
     
