@@ -119,7 +119,6 @@ async def cleanup_previous_messages(update: Update, context: ContextTypes.DEFAUL
 
 
 @safe_handler()
-@validate_state_transition({ConversationHandler.END, None})  # Вход из главного меню
 async def entry_from_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     
@@ -153,7 +152,7 @@ async def cmd_quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return states.CHOOSING_MODE
 
 @safe_handler()
-@validate_state_transition({states.CHOOSING_MODE, states.CHOOSING_EXAM_NUMBER})
+@validate_state_transition({states.CHOOSING_MODE})
 async def select_exam_num(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Выбор режима по номеру ЕГЭ."""
     query = update.callback_query
@@ -217,7 +216,8 @@ async def select_random_all(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return states.CHOOSING_MODE
 
 @safe_handler()
-@validate_state_transition({states.CHOOSING_BLOCK})
+@safe_handler()
+@validate_state_transition({states.CHOOSING_MODE})
 async def select_block(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Выбор конкретного блока."""
     query = update.callback_query
@@ -807,7 +807,14 @@ async def cmd_score(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(text, parse_mode=ParseMode.HTML)
 
 @safe_handler()
-@validate_state_transition({states.CHOOSING_MODE, states.CHOOSING_BLOCK, states.CHOOSING_TOPIC, states.CHOOSING_EXAM_NUMBER})
+@validate_state_transition({
+    states.CHOOSING_MODE, 
+    states.CHOOSING_BLOCK, 
+    states.CHOOSING_TOPIC, 
+    states.CHOOSING_EXAM_NUMBER,
+    states.CHOOSING_NEXT_ACTION,
+    states.ANSWERING
+})
 async def back_to_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Возврат к выбору режима тестовой части."""
     query = update.callback_query
@@ -1615,3 +1622,29 @@ async def select_mistakes(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Отправляем первый вопрос
     await send_mistake_question(query.message, context)
     return states.REVIEWING_MISTAKES
+
+
+@safe_handler()
+async def back_to_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Возврат в главное меню бота."""
+    query = update.callback_query
+    await query.answer()
+    
+    # Используем build_main_menu для создания главного меню
+    kb = build_main_menu()
+    
+    try:
+        await query.edit_message_text(
+            "🏠 <b>Главное меню</b>\n\n"
+            "Выберите раздел:",
+            reply_markup=kb,
+            parse_mode=ParseMode.HTML
+        )
+    except BadRequest as e:
+        if "message is not modified" in str(e).lower():
+            # Если сообщение не изменилось, просто отвечаем на callback
+            pass
+        else:
+            raise
+    
+    return ConversationHandler.END

@@ -133,7 +133,12 @@ class TestPartPlugin(BotPlugin):
                         handlers.back_to_mode, 
                         pattern="^to_test_part_menu$"
                     ),
-                ],
+                
+                    CallbackQueryHandler(
+                        handlers.back_to_main_menu,
+                        pattern="^to_main_menu$"
+                    ),
+],
                 
                 states.CHOOSING_BLOCK: [
                     CallbackQueryHandler(
@@ -144,7 +149,12 @@ class TestPartPlugin(BotPlugin):
                         handlers.back_to_mode, 
                         pattern="^block:back_to_initial$"
                     ),
-                ],
+                
+                    CallbackQueryHandler(
+                        handlers.back_to_main_menu,
+                        pattern="^to_main_menu$"
+                    ),
+],
                 
                 states.CHOOSING_EXAM_NUMBER: [
                     CallbackQueryHandler(
@@ -155,7 +165,12 @@ class TestPartPlugin(BotPlugin):
                         handlers.back_to_mode, 
                         pattern="^exam_number:back_to_initial$"
                     ),
-                ],
+                
+                    CallbackQueryHandler(
+                        handlers.back_to_main_menu,
+                        pattern="^to_main_menu$"
+                    ),
+],
                 
                 states.ANSWERING: [
                     MessageHandler(
@@ -169,7 +184,12 @@ class TestPartPlugin(BotPlugin):
                         handlers.handle_next_action,
                         pattern="^test_next_"
                     ),
-                ],
+                
+                    CallbackQueryHandler(
+                        handlers.back_to_main_menu,
+                        pattern="^to_main_menu$"
+                    ),
+],
                 
                 states.REVIEWING_MISTAKES: [
                     MessageHandler(
