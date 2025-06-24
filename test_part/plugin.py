@@ -83,20 +83,20 @@ class TestPartPlugin(BotPlugin):
                 states.CHOOSING_MODE: [
                     # Режимы из главного меню
                     CallbackQueryHandler(
-                        handlers.select_exam_num_mode, 
-                        pattern="^initial:select_exam_num_mode$"
+                        handlers.select_exam_num, 
+                        pattern="^initial:select_exam_num$"
                     ),
                     CallbackQueryHandler(
-                        handlers.select_block_mode, 
-                        pattern="^initial:select_block_mode$"
+                        handlers.select_block, 
+                        pattern="^initial:select_block$"
                     ),
                     CallbackQueryHandler(
                         handlers.select_random_all, 
                         pattern="^initial:select_random_all$"
                     ),
                     CallbackQueryHandler(
-                        handlers.select_mistakes_mode, 
-                        pattern="^initial:select_mistakes_mode$"
+                        handlers.select_mistakes, 
+                        pattern="^initial:select_mistakes$"
                     ),
                     
                     # Режимы внутри блока

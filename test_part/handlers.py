@@ -1587,3 +1587,31 @@ async def check_subscription(update: Update, context: ContextTypes.DEFAULT_TYPE)
     )
     
     return states.CHOOSING_MODE
+
+@safe_handler()
+@validate_state_transition({states.CHOOSING_MODE})
+async def select_mistakes(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Вход в режим работы над ошибками."""
+    query = update.callback_query
+    
+    user_id = query.from_user.id
+    mistake_ids = await db.get_mistake_ids(user_id)
+    
+    if not mistake_ids:
+        await query.answer("У вас пока нет ошибок! 🎉", show_alert=True)
+        return states.CHOOSING_MODE
+    
+    context.user_data['mistake_ids'] = list(mistake_ids)
+    context.user_data['current_mistake_index'] = 0
+    context.user_data['user_id'] = user_id
+    
+    await query.edit_message_text(
+        f"🔧 <b>Работа над ошибками</b>\n\n"
+        f"Найдено ошибок: {len(mistake_ids)}\n"
+        f"Начинаем работу...",
+        parse_mode=ParseMode.HTML
+    )
+    
+    # Отправляем первый вопрос
+    await send_mistake_question(query.message, context)
+    return states.REVIEWING_MISTAKES

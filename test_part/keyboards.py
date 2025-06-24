@@ -25,10 +25,10 @@ def get_main_menu_keyboard() -> InlineKeyboardMarkup:
 def get_initial_choice_keyboard() -> InlineKeyboardMarkup:
     """Стартовая клавиатура: выбираем, как задавать вопросы."""
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("🔢 По номеру ЕГЭ", callback_data="initial:select_exam_num_mode")],
-        [InlineKeyboardButton("📚 По блоку тем", callback_data="initial:select_block_mode")],
+        [InlineKeyboardButton("🔢 По номеру ЕГЭ", callback_data="initial:select_exam_num")],
+        [InlineKeyboardButton("📚 По блоку тем", callback_data="initial:select_block")],
         [InlineKeyboardButton("🎲 Случайные вопросы (все)", callback_data="initial:select_random_all")],
-        [InlineKeyboardButton("🔧 Работа над ошибками", callback_data="initial:select_mistakes_mode")],
+        [InlineKeyboardButton("🔧 Работа над ошибками", callback_data="initial:select_mistakes")],
         [InlineKeyboardButton("🏠 Главное меню", callback_data="to_main_menu")]
     ])
 
