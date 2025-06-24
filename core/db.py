@@ -47,7 +47,7 @@ async def execute_with_retry(query: str, params: tuple = (), max_retries: int = 
     for attempt in range(max_retries):
         try:
             db = await get_db()
-            result = await execute_with_retry(query, params)
+            cursor = await db.execute(query, params)
             await db.commit()
             return result
         except aiosqlite.OperationalError as e:
@@ -576,4 +576,126 @@ async def get_user_streaks(user_id: int) -> Dict[str, int]:
 
 
 # Добавляем импорт для совместимости
+
+
+async def update_daily_streak(user_id: int) -> tuple[int, int]:
+    """
+    Обновляет дневной стрик пользователя.
+    Возвращает (текущий_стрик, максимальный_стрик).
+    """
+    if not isinstance(user_id, int) or user_id <= 0:
+        return (0, 0)
+    
+    try:
+        async with aiosqlite.connect(DATABASE_FILE) as db:
+            # Вставляем запись если не существует
+            await db.execute(
+                f"INSERT OR IGNORE INTO {TABLE_USERS} (user_id) VALUES (?)",
+                (user_id,)
+            )
+            
+            # Получаем текущую дату и последнюю активность
+            today = date.today()
+            cursor = await db.execute(
+                f"SELECT last_activity_date, current_daily_streak, max_daily_streak FROM {TABLE_USERS} WHERE user_id = ?",
+                (user_id,)
+            )
+            row = await cursor.fetchone()
+            
+            if row and row[0]:
+                last_activity = date.fromisoformat(row[0])
+                current_streak = row[1] or 0
+                max_streak = row[2] or 0
+                
+                # Проверяем, нужно ли обновить стрик
+                if last_activity == today:
+                    # Уже были сегодня
+                    return (current_streak, max_streak)
+                elif (today - last_activity).days == 1:
+                    # Вчера были - продолжаем стрик
+                    current_streak += 1
+                    max_streak = max(max_streak, current_streak)
+                else:
+                    # Пропустили день - сбрасываем
+                    current_streak = 1
+            else:
+                # Первый раз
+                current_streak = 1
+                max_streak = 1
+            
+            # Обновляем БД
+            await db.execute(
+                f"""UPDATE {TABLE_USERS} 
+                    SET current_daily_streak = ?, 
+                        max_daily_streak = ?,
+                        last_activity_date = ?
+                    WHERE user_id = ?""",
+                (current_streak, max_streak, today.isoformat(), user_id)
+            )
+            await db.commit()
+            
+            return (current_streak, max_streak)
+            
+    except Exception as e:
+        logger.exception(f"Ошибка обновления дневного стрика: {e}")
+        return (0, 0)
+
+
+async def update_correct_streak(user_id: int) -> tuple[int, int]:
+    """
+    Увеличивает стрик правильных ответов.
+    Возвращает (текущий_стрик, максимальный_стрик).
+    """
+    if not isinstance(user_id, int) or user_id <= 0:
+        return (0, 0)
+    
+    try:
+        async with aiosqlite.connect(DATABASE_FILE) as db:
+            await db.execute(
+                f"INSERT OR IGNORE INTO {TABLE_USERS} (user_id) VALUES (?)",
+                (user_id,)
+            )
+            
+            # Увеличиваем стрик
+            await db.execute(
+                f"""UPDATE {TABLE_USERS}
+                    SET current_correct_streak = current_correct_streak + 1,
+                        max_correct_streak = MAX(max_correct_streak, current_correct_streak + 1)
+                    WHERE user_id = ?""",
+                (user_id,)
+            )
+            await db.commit()
+            
+            # Получаем значения
+            cursor = await db.execute(
+                f"SELECT current_correct_streak, max_correct_streak FROM {TABLE_USERS} WHERE user_id = ?",
+                (user_id,)
+            )
+            row = await cursor.fetchone()
+            
+            if row:
+                return (row[0] or 0, row[1] or 0)
+            return (0, 0)
+            
+    except Exception as e:
+        logger.exception(f"Ошибка обновления стрика правильных ответов: {e}")
+        return (0, 0)
+
+
+async def reset_correct_streak(user_id: int):
+    """Сбрасывает стрик правильных ответов."""
+    if not isinstance(user_id, int) or user_id <= 0:
+        return
+    
+    try:
+        async with aiosqlite.connect(DATABASE_FILE) as db:
+            await db.execute(
+                f"UPDATE {TABLE_USERS} SET current_correct_streak = 0 WHERE user_id = ?",
+                (user_id,)
+            )
+            await db.commit()
+    except Exception as e:
+        logger.exception(f"Ошибка сброса стрика правильных ответов: {e}")
+
+
 from datetime import timedelta
