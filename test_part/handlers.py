@@ -132,7 +132,8 @@ async def entry_from_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     # Получаем статистику пользователя
     user_stats = await db.get_user_stats(query.from_user.id)
-    mistake_count = await db.get_mistake_count(query.from_user.id)
+    mistake_ids = await db.get_mistake_ids(query.from_user.id)
+    mistake_count = len(mistake_ids)
 
     # Формируем статистику для адаптивного меню
     stats_for_menu = {
@@ -485,6 +486,9 @@ async def check_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if milestone_phrase:
             feedback += f"\n\n{milestone_phrase}"
     else:
+        # Получаем мотивационную фразу
+        motivational_phrase = utils.get_motivational_message()  # Предполагается, что функция определена в utils
+        
         # Для неправильного ответа
         feedback = MessageFormatter.format_result_message(
             score=0,
@@ -496,28 +500,12 @@ async def check_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
             }
         )
         
-        if motivational_phrase:
-            feedback += f"\n\n{motivational_phrase}"
-            
-            # Если побит рекорд
-            if correct_streak > correct_max:
-                feedback += f"\n🏆 Новый рекорд!"
-        else:
-            feedback += "✨ Правильных подряд: 1"
-        else:
-            feedback = f"{utils.get_random_incorrect_phrase()}\n\n"
-            feedback += f"Ваш ответ: {user_answer}\n"
-            feedback += f"Правильный ответ: <b>{correct_answer}</b>\n\n"
-            
-            # Добавляем мотивационную фразу
-            motivational_phrase = get_motivational_message()
-            if correct_streak > 0:
-                feedback += f"💔 Серия из {correct_streak} правильных ответов прервана\n"
-                if correct_max > 0:
-                    feedback += f"📈 Ваш рекорд: {correct_max}\n"
-            
-            if motivational_phrase:
-                feedback += f"\n{motivational_phrase}"
+        feedback += f"\n\n{motivational_phrase}"
+        
+        if correct_streak > 0:
+            feedback += f"\n💔 Серия из {correct_streak} правильных ответов прервана"
+        if correct_max > 0:
+            feedback += f"\n📈 Ваш рекорд: {correct_max}"
     
     # Адаптивная клавиатура на основе результата
     kb = AdaptiveKeyboards.create_result_keyboard(
@@ -525,39 +513,11 @@ async def check_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
         max_score=1,
         module_code="test"
     )
-
-    # Если есть пояснение, добавляем кнопку
-    if question_data.get('explanation'):
-        kb_list = kb.inline_keyboard
-        kb_list.insert(1, [InlineKeyboardButton(
-            "💡 Показать пояснение",
-            callback_data="test_next_show_explanation"
-        )])
-        kb = InlineKeyboardMarkup(kb_list)
     
-    try:
-        sent_msg = await update.message.reply_text(
-            feedback,
-            reply_markup=kb,
-            parse_mode=ParseMode.HTML
-        )
-
-        # Удаляем сообщение с индикатором ожидания
-        await thinking_msg.delete()
-        
-        # Сохраняем ID сообщения с фидбеком для удаления
-        context.user_data['feedback_message_id'] = sent_msg.message_id
-        
-        # Сохраняем данные о правильности ответа для пояснения
-        context.user_data['last_answer_correct'] = is_correct
-        
-        return states.CHOOSING_NEXT_ACTION
+    # Отправляем ответ пользователю
+    await thinking_msg.edit_text(feedback, reply_markup=kb, parse_mode='HTML')
     
-    except Exception as e:
-        logger.error(f"Error sending feedback to user {user_id}: {e}")
-        await update.message.reply_text("Произошла ошибка при отправке ответа")
-        await thinking_msg.delete()
-        return ConversationHandler.END
+    return states.ANSWERING
 
 @safe_handler()
 @validate_state_transition({states.CHOOSING_NEXT_ACTION})
@@ -917,16 +877,17 @@ async def cmd_score(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     
     stats = await db.get_user_stats(user_id)
-    mistake_count = await db.get_mistake_count(user_id)
+    mistake_ids = await db.get_mistake_ids(user_id)
+    mistake_count = len(mistake_ids)
     
     # Используем универсальное форматирование прогресса
     text = MessageFormatter.format_progress_message(
         stats={
             'completed': stats.get('correct', 0),
             'total': stats.get('total', 0),
-            'average_score': stats.get('correct', 0) / stats.get('total', 1),
+            'average_score': stats.get('correct', 0) / max(stats.get('total', 1), 1),
             'total_attempts': stats.get('total', 0),
-            'current_average': accuracy / 100 if 'accuracy' in locals() else 0,
+            'current_average': accuracy / 100,  # Теперь accuracy определена
             'streak': stats.get('streak', 0),
             'max_streak': stats.get('max_streak', 0),
             'mistakes_count': mistake_count
