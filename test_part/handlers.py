@@ -87,13 +87,23 @@ def safe_cache_get_all_exam_numbers():
                     exam_numbers.add(exam_num)
     return sorted(list(exam_numbers))
 
-# Инициализация данных
 def init_data():
-    """Вызывается после загрузки вопросов."""
-    global QUESTIONS_DATA, AVAILABLE_BLOCKS
-    from .loader import get_questions_data
-    QUESTIONS_DATA = get_questions_data()
-    AVAILABLE_BLOCKS = list(QUESTIONS_DATA.keys()) if QUESTIONS_DATA else []
+    """Инициализирует данные вопросов."""
+    global QUESTIONS_DATA, AVAILABLE_BLOCKS, QUESTIONS_LIST
+    try:
+        from .loader import get_questions_data, QUESTIONS_LIST as q_list
+        QUESTIONS_DATA = get_questions_data()
+        AVAILABLE_BLOCKS = list(QUESTIONS_DATA.keys()) if QUESTIONS_DATA else []
+        QUESTIONS_LIST = q_list if q_list else []
+        logger.info(f"Loaded {len(AVAILABLE_BLOCKS)} blocks with questions")
+    except Exception as e:
+        logger.error(f"Error loading questions data: {e}")
+        QUESTIONS_DATA = {}
+        AVAILABLE_BLOCKS = []
+        QUESTIONS_LIST = []
+
+# Вызываем инициализацию при импорте модуля
+init_data()
 
 
 async def cleanup_previous_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -354,12 +364,15 @@ async def show_progress_enhanced(update: Update, context: ContextTypes.DEFAULT_T
 @safe_handler()
 @validate_state_transition({states.ANSWERING})
 async def check_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Проверка ответа пользователя с прогрессом только правильных ответов."""
+    """Проверка ответа пользователя с правильными вызовами БД."""
+    
+    # Проверяем активный модуль
+    if context.user_data.get('active_module') != 'test_part':
+        # Не наш модуль, игнорируем
+        return states.ANSWERING
     
     # Отправляем индикатор ожидания
-    thinking_msg = await update.message.reply_text(
-        "⏳ Проверяю ваш ответ..."
-    )
+    thinking_msg = await update.message.reply_text("🤔 Проверяю ваш ответ...")
     
     # Сохраняем ID для удаления
     context.user_data['checking_message_id'] = thinking_msg.message_id
@@ -398,26 +411,38 @@ async def check_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
         correct_answer = question_data.get('answer', '').strip()
         is_correct = user_answer.lower() == correct_answer.lower()
         
-        # Обновляем статистику
+        # Получаем информацию о вопросе
         question_id = question_data.get('id')
         topic = question_data.get('topic')
-        await db.update_user_answer(user_id, question_id, topic, is_correct)
         
-        # Получаем стрики
-        streaks = await db.get_user_streaks(user_id)
-        daily_current = streaks.get('current_daily', 0)
-        correct_current = streaks.get('current_correct', 0)
-        correct_max = streaks.get('max_correct', 0)
-        old_correct_streak = correct_current
+        # ПРАВИЛЬНЫЕ ВЫЗОВЫ БД:
         
-        # Обновляем стрики
+        # 1. Обновляем прогресс по теме
+        if topic and topic != "N/A":
+            await db.update_progress(user_id, topic, is_correct)
+        
+        # 2. Записываем отвеченный вопрос
+        if question_id:
+            await db.record_answered_question(user_id, question_id)
+        
+        # 3. Если неправильно - записываем ошибку
+        if not is_correct and question_id:
+            await db.record_mistake(user_id, question_id)
+        
+        # 4. Обновляем дневной стрик
+        daily_current, daily_max = await db.update_daily_streak(user_id)
+        
+        # 5. Обновляем стрик правильных ответов
         if is_correct:
-            correct_current += 1
-            await db.update_streak(user_id, 'correct', correct_current)
+            correct_current, correct_max = await db.update_correct_streak(user_id)
         else:
-            if correct_current > 0:
-                await db.update_streak(user_id, 'correct', 0)
-                correct_current = 0
+            await db.reset_correct_streak(user_id)
+            correct_current = 0
+            correct_max = await db.get_user_streaks(user_id).get('max_correct', 0)
+        
+        # Сохраняем старый стрик для сравнения
+        old_correct_streak = context.user_data.get('correct_streak', 0)
+        context.user_data['correct_streak'] = correct_current
         
         # Сохраняем режим для следующего вопроса
         last_mode = context.user_data.get('last_mode', 'random')
@@ -433,9 +458,27 @@ async def check_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Получаем счетчик правильных ответов
         progress_text = None
         try:
-            correct_count = await db.get_correct_answers_count(user_id)
-            total_questions = await db.get_total_questions_count()
-            progress_text = utils.format_progress_message(correct_count, total_questions)
+            # Получаем статистику
+            stats = await db.get_user_stats(user_id)
+            if stats:
+                total_correct = sum(correct for _, correct, _ in stats)
+                total_answered = sum(total for _, _, total in stats)
+                
+                # Форматируем прогресс
+                if last_mode == 'exam_num':
+                    exam_number = context.user_data.get('current_exam_number')
+                    if exam_number:
+                        progress_text = f"📊 Задание №{exam_number}: {total_correct}/{total_answered} правильных"
+                elif last_mode == 'topic':
+                    selected_topic = context.user_data.get('selected_topic')
+                    if selected_topic:
+                        # Находим статистику по теме
+                        for t, c, total in stats:
+                            if t == selected_topic:
+                                progress_text = f"📊 Тема: {c}/{total} правильных"
+                                break
+                else:
+                    progress_text = f"📊 Всего: {total_correct}/{total_answered} правильных"
         except Exception:
             pass
         
@@ -1032,7 +1075,8 @@ async def handle_mistake_answer(update: Update, context: ContextTypes.DEFAULT_TY
     """Обработка ответа в режиме ошибок (обновленная версия)."""
     
     # Отправляем индикатор проверки
-    checking_msg = await update.message.reply_text("⏳ Проверяю ваш ответ...")
+    thinking_msg = await update.message.reply_text("🤔 Проверяю ваш ответ...")
+    context.user_data['thinking_message_id'] = thinking_msg.message_id
     
     user_answer = update.message.text.strip()
     current_question_id = context.user_data.get('current_question_id')
