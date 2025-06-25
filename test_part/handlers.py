@@ -237,6 +237,9 @@ async def select_random_all(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Случайный вопрос из всей базы."""
     query = update.callback_query
     
+    # Устанавливаем активный модуль
+    context.user_data['active_module'] = 'test_part'
+    
     # Собираем все вопросы
     all_questions = []
     for block_data in QUESTIONS_DATA.values():
@@ -348,30 +351,38 @@ async def show_progress_enhanced(update: Update, context: ContextTypes.DEFAULT_T
         parse_mode=ParseMode.HTML
     )
 
+@safe_handler()
+@validate_state_transition({states.ANSWERING})
 async def check_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Проверка ответа с прогрессом только правильных ответов."""
+    """Проверка ответа пользователя с прогрессом только правильных ответов."""
+    
+    # Отправляем индикатор ожидания
+    thinking_msg = await update.message.reply_text(
+        "⏳ Проверяю ваш ответ..."
+    )
+    
+    # Сохраняем ID для удаления
+    context.user_data['checking_message_id'] = thinking_msg.message_id
+    
     user_id = update.effective_user.id
     user_answer = update.message.text.strip()
     
-    # Сохраняем ID сообщения с ответом для удаления
-    context.user_data['answer_message_id'] = update.message.message_id
-
-    # Показываем анимацию ожидания проверки
-    thinking_msg = await show_thinking_animation(update.message, "Проверяю ваш ответ")
-    context.user_data['thinking_message_id'] = thinking_msg.message_id
-    
-    # Получаем ID текущего вопроса
+    # Получаем текущий вопрос
     current_question_id = context.user_data.get('current_question_id')
+    
     if not current_question_id:
-        logger.error(f"No current_question_id for user {user_id}")
-        await update.message.reply_text(
-            "❌ Ошибка: не найден текущий вопрос.\n"
-            "Используйте /start для начала работы."
-        )
+        # Удаляем сообщение "Проверяю..."
+        try:
+            await thinking_msg.delete()
+        except Exception:
+            pass
+            
+        await update.message.reply_text("Ошибка: вопрос не найден.")
         return ConversationHandler.END
     
-    # Получаем данные вопроса по его ID
+    # Получаем данные вопроса
     question_data = context.user_data.get(f'question_{current_question_id}')
+    
     if not question_data:
         # Удаляем сообщение "Проверяю..."
         try:
@@ -381,181 +392,105 @@ async def check_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
         await update.message.reply_text("Ошибка: данные вопроса не найдены.")
         return ConversationHandler.END
-
-    correct_answer = str(question_data.get('answer', ''))
-    question_type = question_data.get('type', 'multiple_choice')
-    topic = question_data.get('topic')
-    question_id = question_data.get('id')
     
-    # Нормализуем ответы для сравнения
-    normalized_user = utils.normalize_answer(user_answer, question_type)
-    normalized_correct = utils.normalize_answer(correct_answer, question_type)
-    is_correct = normalized_user == normalized_correct
-    
-    # Логирование для отладки
-    logger.info(f"User {user_id} answered question {question_id}: {is_correct}")
-    
+    # Обрабатываем ответ
     try:
-        # Обновляем БД
-        await db.update_progress(user_id, topic, is_correct)
-        await db.record_answered(user_id, question_id)
+        correct_answer = question_data.get('answer', '').strip()
+        is_correct = user_answer.lower() == correct_answer.lower()
         
-        # Обновляем дневной стрик (всегда при любом ответе)
-        daily_current, daily_max = await db.update_daily_streak(user_id)
+        # Обновляем статистику
+        question_id = question_data.get('id')
+        topic = question_data.get('topic')
+        await db.update_user_answer(user_id, question_id, topic, is_correct)
         
-        # Получаем стрики ДО обновления для сравнения
-        old_correct_streak = context.user_data.get('last_correct_streak', 0)
+        # Получаем стрики
+        streaks = await db.get_user_streaks(user_id)
+        daily_current = streaks.get('current_daily', 0)
+        correct_current = streaks.get('current_correct', 0)
+        correct_max = streaks.get('max_correct', 0)
+        old_correct_streak = correct_current
         
-        # Обновляем стрик правильных ответов
+        # Обновляем стрики
         if is_correct:
-            correct_current, correct_max = await db.update_correct_streak(user_id)
-            # Сохраняем для следующего раза
-            context.user_data['last_correct_streak'] = correct_current
-            context.user_data['correct_streak'] = context.user_data.get('correct_streak', 0) + 1
-            await show_streak_notification(update, context, 'correct', context.user_data['correct_streak'])
+            correct_current += 1
+            await db.update_streak(user_id, 'correct', correct_current)
         else:
-            await db.reset_correct_streak(user_id)
-            correct_current = 0
-            # Получаем максимальный стрик для отображения при сбросе
-            streaks = await db.get_user_streaks(user_id)
-            correct_max = streaks.get('max_correct', 0)
-            await db.record_mistake(user_id, question_id)
-            context.user_data['last_correct_streak'] = 0
-            context.user_data['correct_streak'] = 0
-    
-    except Exception as e:
-        logger.error(f"Failed to update progress for user {user_id}: {e}")
-        await update.message.reply_text("Произошла ошибка при сохранении прогресса")
-        return ConversationHandler.END
-    
-    # Получаем прогресс ТОЛЬКО ПРАВИЛЬНЫХ ответов
-    progress_text = ""
-    last_mode = context.user_data.get('last_mode', 'random_all')
-    
-    try:
-        if last_mode == 'exam_num':
-            exam_number = context.user_data.get('current_exam_number')
-            if exam_number:
-                # Получаем все вопросы этого задания
-                questions_with_num = safe_cache_get_by_exam_num(exam_number)
-                total_questions = len(questions_with_num)
-                
-                # Получаем статистику по темам для этого задания
-                stats = await db.get_user_stats(user_id)
-                correct_count = 0
-                
-                # Подсчитываем правильные ответы для вопросов этого задания
-                for topic_stat, correct, total in stats:
-                    # Находим вопросы этой темы в текущем задании
-                    topic_questions_in_exam = [q for q in questions_with_num if q.get('topic') == topic_stat]
-                    if topic_questions_in_exam:
-                        # Добавляем правильные ответы по этой теме
-                        correct_count += correct
-                
-                progress_bar = create_visual_progress(correct_count, total_questions)
-                progress_text = f"✅ Решено правильно по заданию №{exam_number}: {progress_bar}"
+            if correct_current > 0:
+                await db.update_streak(user_id, 'correct', 0)
+                correct_current = 0
         
-        elif last_mode == 'topic':
-            selected_topic = context.user_data.get('selected_topic')
-            if selected_topic:
-                # Получаем все вопросы темы
-                questions_in_topic = safe_cache_get_by_topic(selected_topic)
-                total_questions = len(questions_in_topic)
-                
-                # Получаем статистику по этой теме
-                stats = await db.get_user_stats(user_id)
-                correct_count = 0
-                
-                for topic_stat, correct, total in stats:
-                    if topic_stat == selected_topic:
-                        correct_count = correct
-                        break
-                
-                progress_bar = create_visual_progress(correct_count, total_questions)
-                topic_name = utils.TOPIC_NAMES.get(selected_topic, selected_topic)
-                progress_text = f"✅ Решено правильно по теме \"{topic_name}\": {progress_bar}"
+        # Сохраняем режим для следующего вопроса
+        last_mode = context.user_data.get('last_mode', 'random')
         
-        elif last_mode == 'block':
-            selected_block = context.user_data.get('selected_block')
-            if selected_block:
-                # Получаем все вопросы блока
-                questions_in_block = safe_cache_get_by_block(selected_block)
-                total_questions = len(questions_in_block)
-                
-                # Получаем статистику по всем темам блока
-                stats = await db.get_user_stats(user_id)
-                correct_count = 0
-                
-                for topic_stat, correct, total in stats:
-                    # Проверяем, относится ли тема к этому блоку
-                    if selected_block in QUESTIONS_DATA and topic_stat in QUESTIONS_DATA[selected_block]:
-                        correct_count += correct
-                
-                progress_bar = create_visual_progress(correct_count, total_questions)
-                progress_text = f"✅ Решено правильно по блоку \"{selected_block}\": {progress_bar}"
-    
-    except Exception as e:
-        logger.error(f"Error calculating progress for user {user_id}: {e}")
-        progress_text = ""
+        # Получаем мотивационную фразу
+        motivational_phrase = None
+        try:
+            if not is_correct:
+                motivational_phrase = await utils.get_random_motivational_phrase()
+        except Exception:
+            pass
+        
+        # Получаем счетчик правильных ответов
+        progress_text = None
+        try:
+            correct_count = await db.get_correct_answers_count(user_id)
+            total_questions = await db.get_total_questions_count()
+            progress_text = utils.format_progress_message(correct_count, total_questions)
+        except Exception:
+            pass
+        
+        # Формируем ответ с улучшенной обратной связью
+        if is_correct:
+            # Случайная фраза для правильного ответа
+            feedback = f"<b>{utils.get_random_correct_phrase()}</b>\n\n"
+            
+            # Добавляем прогресс правильных ответов
+            if progress_text:
+                feedback += f"{progress_text}\n\n"
+            
+            # Стрики
+            feedback += f"🔥 <b>Стрики:</b>\n"
+            feedback += f"📅 Дней подряд: {daily_current}\n"
+            feedback += f"✨ Правильных подряд: {correct_current}"
+            
+            # Специальная фраза для достижения milestone
+            milestone_phrase = utils.get_streak_milestone_phrase(correct_current)
+            if milestone_phrase and correct_current > old_correct_streak:
+                feedback += f"\n\n{milestone_phrase}"
 
-    motivational_phrase = ""
-    try:
-        motivational_phrase = get_motivational_message(correct_count, total_questions)
-    except Exception:
-        pass
-    
-    # Формируем ответ с улучшенной обратной связью
-    if is_correct:
-        # Случайная фраза для правильного ответа
-        feedback = f"<b>{utils.get_random_correct_phrase()}</b>\n\n"
-        
-        # Добавляем прогресс правильных ответов
-        if progress_text:
-            feedback += f"{progress_text}\n\n"
-        
-        # Стрики
-        feedback += f"🔥 <b>Стрики:</b>\n"
-        feedback += f"📅 Дней подряд: {daily_current}\n"
-        feedback += f"✨ Правильных подряд: {correct_current}"
-        
-        # Специальная фраза для достижения milestone
-        milestone_phrase = utils.get_streak_milestone_phrase(correct_current)
-        if milestone_phrase and correct_current > old_correct_streak:
-            feedback += f"\n\n{milestone_phrase}"
+            # Новый рекорд
+            if correct_current > old_correct_streak and correct_current == correct_max and correct_max > 1:
+                feedback += f"\n\n🎉 <b>НОВЫЙ РЕКОРД!</b>"
 
-        # Новый рекорд
-        if correct_current > old_correct_streak and correct_current == correct_max and correct_max > 1:
-            feedback += f"\n\n🎉 <b>НОВЫЙ РЕКОРД!</b>"
+            if motivational_phrase:
+                feedback += f"\n\n{motivational_phrase}"
 
-        if motivational_phrase:
-            feedback += f"\n\n{motivational_phrase}"
-
-    else:
-        # Случайная фраза для неправильного ответа
-        feedback = f"<b>{utils.get_random_incorrect_phrase()}</b>\n\n"
-        feedback += f"Ваш ответ: <code>{user_answer}</code>\n"
-        feedback += f"Правильный ответ: <b>{correct_answer}</b>\n\n"
-        
-        # Добавляем прогресс правильных ответов (не меняется при неправильном)
-        if progress_text:
-            feedback += f"{progress_text}\n\n"
-        
-        # Стрики
-        feedback += f"🔥 <b>Стрики:</b>\n"
-        feedback += f"📅 Дней подряд: {daily_current}\n"
-        
-        # При сбросе стрика показываем рекорд
-        if old_correct_streak > 0:
-            feedback += f"✨ Правильных подряд: 0\n"
-            feedback += f"\n💔 Серия из {old_correct_streak} правильных ответов прервана!"
-            if correct_max > 0:
-                feedback += f"\n📈 Ваш рекорд: {correct_max}"
         else:
-            feedback += f"✨ Правильных подряд: 0"
+            # Случайная фраза для неправильного ответа
+            feedback = f"<b>{utils.get_random_incorrect_phrase()}</b>\n\n"
+            feedback += f"Ваш ответ: <code>{user_answer}</code>\n"
+            feedback += f"Правильный ответ: <b>{correct_answer}</b>\n\n"
+            
+            # Добавляем прогресс правильных ответов (не меняется при неправильном)
+            if progress_text:
+                feedback += f"{progress_text}\n\n"
+            
+            # Стрики
+            feedback += f"🔥 <b>Стрики:</b>\n"
+            feedback += f"📅 Дней подряд: {daily_current}\n"
+            
+            # При сбросе стрика показываем рекорд
+            if old_correct_streak > 0:
+                feedback += f"✨ Правильных подряд: 0\n"
+                feedback += f"\n💔 Серия из {old_correct_streak} правильных ответов прервана!"
+                if correct_max > 0:
+                    feedback += f"\n📈 Ваш рекорд: {correct_max}"
+            else:
+                feedback += f"✨ Правильных подряд: 0"
 
-    if motivational_phrase and not is_correct:
-        feedback += f"\n\n{motivational_phrase}"
-    
+            if motivational_phrase and not is_correct:
+                feedback += f"\n\n{motivational_phrase}"
+        
         # Показываем кнопки "что дальше"
         has_explanation = bool(question_data.get('explanation'))
         kb = keyboards.get_next_action_keyboard(last_mode, has_explanation=has_explanation)
@@ -581,8 +516,8 @@ async def check_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         return states.CHOOSING_NEXT_ACTION
         
-        except Exception as e:
-            logger.error(f"Error in check_answer: {e}")
+    except Exception as e:
+        logger.error(f"Error in check_answer: {e}")
         
         # Удаляем сообщение "Проверяю..." в случае ошибки
         try:
@@ -915,6 +850,15 @@ async def send_question(message, context: ContextTypes.DEFAULT_TYPE,
                        question_data: dict, last_mode: str):
     """Отправка вопроса пользователю БЕЗ прогресс-бара."""
     
+    # Устанавливаем активный модуль
+    context.user_data['active_module'] = 'test_part'
+    
+    # Сохраняем данные о вопросе
+    question_id = question_data.get('id')
+    context.user_data['current_question_id'] = question_id
+    context.user_data[f'question_{question_id}'] = question_data
+    context.user_data['last_mode'] = last_mode
+    
     # Проверяем наличие обязательных полей
     required_fields = ['id', 'answer', 'type']
     missing_fields = [field for field in required_fields if not question_data.get(field)]
@@ -1092,6 +1036,7 @@ async def handle_mistake_answer(update: Update, context: ContextTypes.DEFAULT_TY
     
     user_answer = update.message.text.strip()
     current_question_id = context.user_data.get('current_question_id')
+    user_id = update.effective_user.id
     
     if not current_question_id:
         await checking_msg.delete()
@@ -1178,7 +1123,7 @@ async def handle_mistake_answer(update: Update, context: ContextTypes.DEFAULT_TY
     
     kb = InlineKeyboardMarkup(kb_buttons)
     
-   # ВАЖНО: Удаляем сообщение "Проверяю..." перед отправкой фидбека
+    # ВАЖНО: Удаляем сообщение "Проверяю..." перед отправкой фидбека
     try:
         await checking_msg.delete()
     except Exception:
@@ -1336,9 +1281,12 @@ async def select_topic(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 @safe_handler()
 @validate_state_transition({states.CHOOSING_MODE})
-async def select_mistakes_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Вход в режим работы над ошибками из меню."""
+async def select_mistakes(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Вход в режим работы над ошибками."""
     query = update.callback_query
+    
+    # Устанавливаем активный модуль
+    context.user_data['active_module'] = 'test_part'
     
     user_id = query.from_user.id
     mistake_ids = await db.get_mistake_ids(user_id)
@@ -1402,16 +1350,26 @@ async def cmd_debug_streaks(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     await update.message.reply_text(text, parse_mode=ParseMode.HTML)
 
+@safe_handler()
+@validate_state_transition({states.CHOOSING_MODE})
+async def test_progress(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Показывает статистику и прогресс пользователя."""
+    query = update.callback_query
+    
+    # Используем существующую функцию cmd_score
+    await cmd_score(query, context)
+    
+    return states.CHOOSING_MODE
 
 @safe_handler()
 @validate_state_transition({states.CHOOSING_MODE})
 async def detailed_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Показывает детальный отчет по ошибкам."""
+    """Показывает детальный отчет о прогрессе."""
     query = update.callback_query
     user_id = query.from_user.id
     
     # Получаем все ошибки пользователя
-    mistakes = await get_user_mistakes(user_id)
+    mistakes = await utils.get_user_mistakes(user_id)
     
     if not mistakes:
         text = "📊 <b>Детальный отчет</b>\n\nУ вас пока нет ошибок для анализа!"
@@ -1465,6 +1423,21 @@ async def detailed_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode=ParseMode.HTML
     )
     return states.CHOOSING_MODE
+
+@safe_handler()
+@validate_state_transition({states.CHOOSING_MODE})
+async def test_work_mistakes(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Запускает работу над ошибками из статистики."""
+    # Используем существующую функцию work_mistakes
+    return await work_mistakes(update, context)
+
+@safe_handler()
+@validate_state_transition({states.CHOOSING_MODE})
+async def test_export_csv(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Экспорт статистики в CSV."""
+    # Используем функцию из missing_handlers
+    from .missing_handlers import export_csv
+    return await export_csv(update, context)
 
 @safe_handler()
 @validate_state_transition({states.CHOOSING_MODE})
@@ -1593,6 +1566,31 @@ async def work_mistakes(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 @safe_handler()
 @validate_state_transition({states.CHOOSING_MODE})
+async def test_mistakes(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Переход к работе над ошибками."""
+    return await work_mistakes(update, context)
+
+@safe_handler()
+@validate_state_transition({states.CHOOSING_MODE})
+async def test_practice(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Переход в режим практики."""
+    # Запускаем случайные вопросы
+    return await select_random_all(update, context)
+
+@safe_handler()
+@validate_state_transition({states.CHOOSING_MODE})
+async def test_start_mistakes(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Начинает работу над ошибками."""
+    query = update.callback_query
+    
+    # Отправляем первый вопрос из очереди ошибок
+    await query.edit_message_text("⏳ Загружаю первый вопрос...")
+    await send_mistake_question(query.message, context)
+    
+    return states.REVIEWING_MISTAKES
+
+@safe_handler()
+@validate_state_transition({states.CHOOSING_MODE})
 async def check_subscription(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Проверяет подписку пользователя."""
     query = update.callback_query
@@ -1639,6 +1637,11 @@ async def check_subscription(update: Update, context: ContextTypes.DEFAULT_TYPE)
     )
     
     return states.CHOOSING_MODE
+
+@safe_handler()
+async def test_back_to_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Возврат к выбору режима из подменю."""
+    return await back_to_mode(update, context)
 
 @safe_handler()
 @validate_state_transition({states.CHOOSING_MODE})
@@ -1699,6 +1702,8 @@ async def reset_progress_confirm(update: Update, context: ContextTypes.DEFAULT_T
     )
     return states.CHOOSING_MODE
 
+# Добавьте эту функцию в test_part/handlers.py:
+
 @safe_handler()
 @validate_state_transition({states.CHOOSING_MODE})
 async def reset_progress_do(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1707,30 +1712,49 @@ async def reset_progress_do(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = query.from_user.id
     
     try:
-        # Сбрасываем прогресс в БД
+        # Сбрасываем все данные пользователя
         await db.reset_user_progress(user_id)
         
         # Очищаем контекст
         context.user_data.clear()
         
-        await query.answer("✅ Прогресс успешно сброшен!", show_alert=True)
+        # Устанавливаем активный модуль обратно
+        context.user_data['active_module'] = 'test_part'
         
-        # Возвращаемся в меню
         kb = keyboards.get_initial_choice_keyboard()
         await query.edit_message_text(
-            "📚 <b>Тестовая часть ЕГЭ</b>\n\n"
-            "Ваш прогресс был сброшен. Начните заново!",
+            "✅ <b>Прогресс успешно сброшен!</b>\n\n"
+            "Теперь вы можете начать заново.\n\n"
+            "Выберите режим:",
             reply_markup=kb,
             parse_mode=ParseMode.HTML
         )
+        
     except Exception as e:
         logger.error(f"Error resetting progress for user {user_id}: {e}")
-        await query.answer("❌ Ошибка при сбросе прогресса", show_alert=True)
+        await query.edit_message_text(
+            "❌ Произошла ошибка при сбросе прогресса.\n"
+            "Попробуйте позже.",
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("⬅️ Назад", callback_data="to_test_part_menu")
+            ]])
+        )
     
     return states.CHOOSING_MODE
 
 @safe_handler()
-@validate_state_transition({states.CHOOSING_MODE})
 async def back_to_test_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Возврат в меню тестовой части."""
-    return await back_to_mode(update, context)
+    query = update.callback_query
+    
+    # Устанавливаем активный модуль
+    context.user_data['active_module'] = 'test_part'
+    
+    kb = keyboards.get_initial_choice_keyboard()
+    await query.edit_message_text(
+        "📚 <b>Тестовая часть ЕГЭ</b>\n\n"
+        "Выберите режим:",
+        reply_markup=kb,
+        parse_mode=ParseMode.HTML
+    )
+    return states.CHOOSING_MODE
