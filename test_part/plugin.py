@@ -110,24 +110,12 @@ class TestPartPlugin(BotPlugin):
                         pattern="^test_practice$"
                     ),
                     CallbackQueryHandler(
-                        handlers.show_theory,
-                        pattern="^test_theory$"
-                    ),
-                    CallbackQueryHandler(
-                        handlers.show_examples_bank,
-                        pattern="^test_examples$"
-                    ),
-                    CallbackQueryHandler(
-                        handlers.select_mistakes,  # Используем существующий
+                        handlers.select_mistakes,
                         pattern="^test_mistakes$"
                     ),
                     CallbackQueryHandler(
-                        handlers.detailed_report,  # Используем существующий из missing_handlers
+                        handlers.detailed_report,
                         pattern="^test_progress$"
-                    ),
-                    CallbackQueryHandler(
-                        handlers.show_settings,
-                        pattern="^test_settings$"
                     ),
                     CallbackQueryHandler(
                         handlers.reset_progress_confirm,

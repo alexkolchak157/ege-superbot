@@ -1,7 +1,3 @@
-# test_part/__init__.py
-"""Модуль тестовой части бота."""
+from .plugin import Task_PartPlugin
 
-# Импортируем плагин для регистрации
-from .plugin import plugin
-
-__all__ = ['plugin']
+__all__ = ['Task_PartPlugin']

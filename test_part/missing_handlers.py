@@ -8,7 +8,12 @@ import io
 import csv
 from datetime import datetime
 from typing import Dict, List, Optional
-
+from .data import QUESTIONS_DATA, TOPIC_NAMES
+# или если TOPIC_NAMES в другом файле:
+try:
+    from .topic_data import TOPIC_NAMES
+except ImportError:
+    TOPIC_NAMES = {}
 from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton
 from telegram.constants import ParseMode
 from telegram.ext import ContextTypes, ConversationHandler
@@ -26,64 +31,119 @@ logger = logging.getLogger(__name__)
 @safe_handler()
 @validate_state_transition({states.CHOOSING_MODE})
 async def detailed_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Показывает детальный отчет по ошибкам."""
+    """Показывает детальный отчет по ошибкам и слабым темам."""
     query = update.callback_query
     user_id = query.from_user.id
     
-    # Получаем все ошибки пользователя
-    mistakes = await get_user_mistakes(user_id)
+    # Получаем статистику по темам
+    user_stats_by_topic = await db.get_user_stats(user_id)
+    mistakes = await db.get_mistake_ids(user_id)
     
-    if not mistakes:
-        text = "📊 <b>Детальный отчет</b>\n\nУ вас пока нет ошибок для анализа!"
+    if not user_stats_by_topic:
+        text = "📊 <b>Детальный отчет</b>\n\nВы пока не решали задания!"
         kb = InlineKeyboardMarkup([[
-            InlineKeyboardButton("⬅️ Назад", callback_data="test_progress")
+            InlineKeyboardButton("💪 Начать практику", callback_data="test_practice"),
+            InlineKeyboardButton("⬅️ Назад", callback_data="to_test_part_menu")
         ]])
         await query.edit_message_text(text, reply_markup=kb, parse_mode=ParseMode.HTML)
         return states.CHOOSING_MODE
     
-    # Группируем ошибки по темам
-    mistakes_by_topic = {}
-    for mistake in mistakes:
-        topic = mistake.get('topic', 'Без темы')
-        if topic not in mistakes_by_topic:
-            mistakes_by_topic[topic] = []
-        mistakes_by_topic[topic].append(mistake)
+    # Анализируем слабые места
+    weak_topics = []
+    strong_topics = []
+    topics_by_block = {}
+    
+    for topic, correct, total in user_stats_by_topic:
+        if total > 0:
+            accuracy = (correct / total) * 100
+            topic_name = TOPIC_NAMES.get(topic, topic)
+            
+            # Определяем блок темы
+            block_name = "Другое"
+            for block, questions in QUESTIONS_DATA.items():
+                if any(q.get('topic') == topic for q in questions):
+                    block_name = block
+                    break
+            
+            if block_name not in topics_by_block:
+                topics_by_block[block_name] = []
+            
+            topic_info = {
+                'name': topic_name,
+                'accuracy': accuracy,
+                'correct': correct,
+                'total': total
+            }
+            
+            topics_by_block[block_name].append(topic_info)
+            
+            if accuracy < 50:
+                weak_topics.append(topic_info)
+            elif accuracy >= 80:
+                strong_topics.append(topic_info)
     
     # Формируем отчет
-    text = "📊 <b>Детальный анализ ошибок</b>\n\n"
+    text = "📊 <b>Детальный анализ вашего прогресса</b>\n\n"
     
-    for topic, topic_mistakes in mistakes_by_topic.items():
-        text += f"📌 <b>{topic}</b>\n"
-        text += f"   Ошибок: {len(topic_mistakes)}\n"
-        
-        # Показываем типы ошибок
-        error_types = {}
-        for m in topic_mistakes:
-            error_type = m.get('error_type', 'Неверный ответ')
-            error_types[error_type] = error_types.get(error_type, 0) + 1
-        
-        for error_type, count in error_types.items():
-            text += f"   • {error_type}: {count}\n"
+    # Общая статистика
+    total_correct = sum(correct for _, correct, _ in user_stats_by_topic)
+    total_answered = sum(total for _, _, total in user_stats_by_topic)
+    overall_accuracy = (total_correct / total_answered * 100) if total_answered > 0 else 0
+    
+    text += f"📈 <b>Общая точность:</b> {overall_accuracy:.1f}%\n"
+    text += f"✅ <b>Правильных ответов:</b> {total_correct} из {total_answered}\n"
+    text += f"❌ <b>Ошибок к исправлению:</b> {len(mistakes)}\n\n"
+    
+    # Слабые темы
+    if weak_topics:
+        text += "🔴 <b>Требуют внимания (точность < 50%):</b>\n"
+        weak_topics.sort(key=lambda x: x['accuracy'])
+        for topic in weak_topics[:5]:  # Топ-5 слабых тем
+            text += f"• {topic['name']}: {topic['accuracy']:.0f}% ({topic['correct']}/{topic['total']})\n"
         text += "\n"
     
+    # Сильные темы
+    if strong_topics:
+        text += "🟢 <b>Ваши сильные темы (точность ≥ 80%):</b>\n"
+        strong_topics.sort(key=lambda x: x['accuracy'], reverse=True)
+        for topic in strong_topics[:3]:  # Топ-3 сильных темы
+            text += f"• {topic['name']}: {topic['accuracy']:.0f}%\n"
+        text += "\n"
+    
+    # Статистика по блокам
+    text += "📚 <b>Прогресс по блокам:</b>\n"
+    for block_name, topics in topics_by_block.items():
+        block_correct = sum(t['correct'] for t in topics)
+        block_total = sum(t['total'] for t in topics)
+        block_accuracy = (block_correct / block_total * 100) if block_total > 0 else 0
+        
+        # Цветовой индикатор
+        if block_accuracy >= 80:
+            indicator = "🟢"
+        elif block_accuracy >= 60:
+            indicator = "🟡"
+        else:
+            indicator = "🔴"
+        
+        text += f"{indicator} {block_name}: {block_accuracy:.0f}% ({block_correct}/{block_total})\n"
+    
     # Рекомендации
-    text += "💡 <b>Рекомендации:</b>\n"
-    if len(mistakes_by_topic) > 3:
-        text += "• Сосредоточьтесь на 2-3 темах с наибольшим количеством ошибок\n"
-    text += "• Используйте режим 'Работа над ошибками' для тренировки\n"
-    text += "• Изучите теорию по проблемным темам\n"
+    text += "\n💡 <b>Рекомендации:</b>\n"
+    if weak_topics:
+        text += "• Сосредоточьтесь на темах с низкой точностью\n"
+        text += "• Используйте режим работы над ошибками\n"
+    if overall_accuracy < 70:
+        text += "• Изучите теорию по проблемным темам\n"
+    else:
+        text += "• Отличная работа! Поддерживайте результат\n"
     
     kb = InlineKeyboardMarkup([
         [InlineKeyboardButton("📥 Экспорт в CSV", callback_data="export_csv")],
-        [InlineKeyboardButton("🔄 Работа над ошибками", callback_data="work_mistakes")],
-        [InlineKeyboardButton("⬅️ Назад", callback_data="test_progress")]
+        [InlineKeyboardButton("🔧 Работа над ошибками", callback_data="test_mistakes")],
+        [InlineKeyboardButton("⬅️ Назад", callback_data="to_test_part_menu")]
     ])
     
-    await query.edit_message_text(
-        text,
-        reply_markup=kb,
-        parse_mode=ParseMode.HTML
-    )
+    await query.edit_message_text(text, reply_markup=kb, parse_mode=ParseMode.HTML)
     return states.CHOOSING_MODE
 
 

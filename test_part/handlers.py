@@ -35,6 +35,29 @@ except ImportError:
 
 logger = logging.getLogger(__name__)
 
+# Глобальные переменные для кэширования
+QUESTIONS_DICT_FLAT = None
+AVAILABLE_BLOCKS = []
+
+# Инициализация данных
+def init_module_data():
+    """Инициализирует данные модуля."""
+    global QUESTIONS_DICT_FLAT, AVAILABLE_BLOCKS
+    
+    if QUESTIONS_DICT_FLAT is None:
+        QUESTIONS_DICT_FLAT = {}
+        AVAILABLE_BLOCKS = list(QUESTIONS_DATA.keys())
+        
+        for block, questions in QUESTIONS_DATA.items():
+            for q in questions:
+                if 'id' in q:
+                    QUESTIONS_DICT_FLAT[q['id']] = q
+    
+    return QUESTIONS_DICT_FLAT, AVAILABLE_BLOCKS
+
+# Вызываем инициализацию при загрузке модуля
+init_module_data()
+
 # Безопасные функции для работы с кешем
 def safe_cache_get_by_exam_num(exam_number):
     """Безопасное получение вопросов по номеру ЕГЭ."""
@@ -120,7 +143,7 @@ async def cleanup_previous_messages(update: Update, context: ContextTypes.DEFAUL
 
 
 @safe_handler()
-@validate_state_transition({ConversationHandler.END, None})
+@validate_state_transition({ConversationHandler.END, None, states.CHOOSING_MODE})
 async def entry_from_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Вход в тестовую часть из главного меню."""
     query = update.callback_query
@@ -1037,6 +1060,10 @@ async def send_mistake_question(message, context: ContextTypes.DEFAULT_TYPE):
     # Получаем ID вопроса
     question_id = mistake_queue[current_index]
     
+    # Убедимся, что QUESTIONS_DICT_FLAT инициализирован
+    if not QUESTIONS_DICT_FLAT:
+        init_questions_data()
+    
     # Ищем вопрос в QUESTIONS_DICT_FLAT
     question_data = QUESTIONS_DICT_FLAT.get(question_id)
     
@@ -1044,11 +1071,11 @@ async def send_mistake_question(message, context: ContextTypes.DEFAULT_TYPE):
         logger.error(f"Question {question_id} not found in QUESTIONS_DICT_FLAT")
         # Пропускаем этот вопрос
         context.user_data['current_mistake_index'] = current_index + 1
-        await send_mistake_question(message, context)
-        return
+        return await send_mistake_question(message, context)
     
     # Отправляем вопрос
     await send_question(message, context, question_data, "mistakes")
+    return states.ANSWERING
 
 @safe_handler()
 @validate_state_transition({
@@ -1082,79 +1109,15 @@ async def back_to_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
 @validate_state_transition({states.CHOOSING_MODE})
 async def select_practice_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Выбор режима практики из адаптивного меню."""
-    # Перенаправляем на случайные вопросы
-    return await select_random_all(update, context)
-
-@safe_handler()
-@validate_state_transition({states.CHOOSING_MODE})
-async def show_theory(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Показ теории и советов."""
     query = update.callback_query
     
-    text = """📚 <b>Теория и советы по тестовой части</b>
-
-<b>Основные рекомендации:</b>
-
-1️⃣ <b>Внимательно читайте вопрос</b>
-   • Обращайте внимание на ключевые слова
-   • Определите, что именно спрашивается
-
-2️⃣ <b>Анализируйте варианты ответов</b>
-   • Исключите заведомо неверные
-   • Ищите подвохи в формулировках
-
-3️⃣ <b>Используйте метод исключения</b>
-   • Начните с очевидно неправильных ответов
-   • Сужайте выбор постепенно
-
-4️⃣ <b>Проверяйте свой ответ</b>
-   • Перечитайте вопрос после выбора
-   • Убедитесь, что ответ логичен
-
-💡 <b>Совет:</b> Регулярная практика - ключ к успеху!"""
+    # Показываем меню выбора режима практики
+    text = "📚 <b>Выберите режим практики:</b>"
     
     kb = InlineKeyboardMarkup([
-        [InlineKeyboardButton("💪 Начать практику", callback_data="test_practice")],
-        [InlineKeyboardButton("⬅️ Назад", callback_data="to_test_part_menu")]
-    ])
-    
-    await query.edit_message_text(text, reply_markup=kb, parse_mode=ParseMode.HTML)
-    return states.CHOOSING_MODE
-
-@safe_handler()
-@validate_state_transition({states.CHOOSING_MODE})
-async def show_examples_bank(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Показ банка примеров/эталонов."""
-    query = update.callback_query
-    
-    text = """🏦 <b>Банк эталонных ответов</b>
-
-Здесь собраны примеры правильных ответов с пояснениями.
-
-Выберите тип заданий:"""
-    
-    kb = InlineKeyboardMarkup([
-        [InlineKeyboardButton("📚 По блокам", callback_data="initial:select_block")],
-        [InlineKeyboardButton("🔢 По номерам ЕГЭ", callback_data="initial:select_exam_num")],
-        [InlineKeyboardButton("⬅️ Назад", callback_data="to_test_part_menu")]
-    ])
-    
-    await query.edit_message_text(text, reply_markup=kb, parse_mode=ParseMode.HTML)
-    return states.CHOOSING_MODE
-
-@safe_handler()
-@validate_state_transition({states.CHOOSING_MODE})
-async def show_settings(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Настройки модуля."""
-    query = update.callback_query
-    
-    text = """⚙️ <b>Настройки тестовой части</b>
-
-Выберите действие:"""
-    
-    kb = InlineKeyboardMarkup([
-        [InlineKeyboardButton("🔄 Сбросить прогресс", callback_data="test_reset_confirm")],
-        [InlineKeyboardButton("📊 Экспорт статистики", callback_data="export_csv")],
+        [InlineKeyboardButton("🔢 По номеру ЕГЭ", callback_data="initial:select_exam_num")],
+        [InlineKeyboardButton("📚 По блоку тем", callback_data="initial:select_block")],
+        [InlineKeyboardButton("🎲 Случайные вопросы", callback_data="initial:select_random_all")],
         [InlineKeyboardButton("⬅️ Назад", callback_data="to_test_part_menu")]
     ])
     
