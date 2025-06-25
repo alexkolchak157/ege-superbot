@@ -62,9 +62,6 @@ def init_module_data():
     
     return QUESTIONS_DICT_FLAT, AVAILABLE_BLOCKS
 
-# Вызываем инициализацию при загрузке модуля
-init_module_data()
-
 def safe_cache_get_by_exam_num(exam_number):
     """Безопасное получение вопросов по номеру ЕГЭ."""
     if questions_cache:
@@ -136,11 +133,32 @@ def safe_cache_get_all_exam_numbers():
 
 # Инициализация данных
 def init_data():
-    """Вызывается после загрузки вопросов."""
-    global QUESTIONS_DATA, AVAILABLE_BLOCKS
-    from .loader import get_questions_data
-    QUESTIONS_DATA = get_questions_data()
-    AVAILABLE_BLOCKS = list(QUESTIONS_DATA.keys()) if QUESTIONS_DATA else []
+    """Вызывается после загрузки вопросов из plugin.py."""
+    global QUESTIONS_DATA, AVAILABLE_BLOCKS, QUESTIONS_DICT_FLAT
+    
+    # Импортируем данные из loader
+    from .loader import QUESTIONS_DATA as loaded_data, AVAILABLE_BLOCKS as loaded_blocks
+    
+    # Обновляем глобальные переменные
+    QUESTIONS_DATA = loaded_data
+    AVAILABLE_BLOCKS = loaded_blocks if loaded_blocks else []
+    
+    # Теперь безопасно инициализируем словарь
+    if QUESTIONS_DATA and QUESTIONS_DICT_FLAT is None:
+        QUESTIONS_DICT_FLAT = {}
+        for block, topics in QUESTIONS_DATA.items():
+            if isinstance(topics, dict):  # topics - это словарь тем
+                for topic, questions in topics.items():
+                    if isinstance(questions, list):
+                        for q in questions:
+                            if isinstance(q, dict) and 'id' in q:
+                                QUESTIONS_DICT_FLAT[q['id']] = q
+            elif isinstance(topics, list):  # topics - это список вопросов
+                for q in topics:
+                    if isinstance(q, dict) and 'id' in q:
+                        QUESTIONS_DICT_FLAT[q['id']] = q
+    
+    logger.info(f"Initialized test_part data: {len(AVAILABLE_BLOCKS)} blocks, {len(QUESTIONS_DICT_FLAT)} questions")
 
 
 async def cleanup_previous_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1030,12 +1048,28 @@ async def send_question(message, context: ContextTypes.DEFAULT_TYPE,
     full_text = fancy_header + "\n\n" + question_text
 
     # Добавляем индикатор сложности если есть
-    if question_data.get('difficulty'):
-        difficulty_indicator = UniversalUIComponents.get_color_for_score(
-            score=question_data['difficulty'],
-            max_score=5
-        )
-        full_text += f"\n\nСложность: {difficulty_indicator}"
+    difficulty_value = question_data.get('difficulty')
+    if difficulty_value is not None:
+        try:
+            # Пытаемся преобразовать в число
+            if isinstance(difficulty_value, str):
+                difficulty = int(difficulty_value)
+            else:
+                difficulty = difficulty_value
+                
+            # Проверяем диапазон
+            if 0 <= difficulty <= 5:
+                difficulty_indicator = UniversalUIComponents.get_color_for_score(
+                    score=difficulty,
+                    max_score=5
+                )
+                full_text += f"\n\nСложность: {difficulty_indicator}"
+            else:
+                full_text += f"\n\nСложность: {difficulty}/5"
+        except (ValueError, TypeError) as e:
+            logger.debug(f"Could not convert difficulty to number: {difficulty_value}")
+            # Если не удалось преобразовать в число, просто показываем текст
+            full_text += f"\n\nСложность: {question_data['difficulty']}"
     
     # Добавляем информацию о номере задания если есть
     exam_number = question_data.get('exam_number')
@@ -1090,7 +1124,7 @@ async def send_mistake_question(message, context: ContextTypes.DEFAULT_TYPE):
     
     # Убедимся, что QUESTIONS_DICT_FLAT инициализирован
     if not QUESTIONS_DICT_FLAT:
-        init_questions_data()
+        init_module_data_data()
     
     # Ищем вопрос в QUESTIONS_DICT_FLAT
     question_data = QUESTIONS_DICT_FLAT.get(question_id)
