@@ -561,18 +561,6 @@ async def handle_next_action(update: Update, context: ContextTypes.DEFAULT_TYPE)
     
     # Всегда отвечаем на callback query в начале
     await query.answer()
-    
-    # Удаляем сообщение "Проверяю ваш ответ..." если оно есть
-    thinking_msg_id = context.user_data.pop('thinking_message_id', None)
-    if thinking_msg_id:
-        try:
-            await query.message.bot.delete_message(
-                chat_id=query.message.chat_id,
-                message_id=thinking_msg_id
-            )
-        except Exception as e:
-            logger.debug(f"Failed to delete thinking message: {e}")
-    
     action = query.data
     
     # Проверяем, что action начинается с правильного префикса

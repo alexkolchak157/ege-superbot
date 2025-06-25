@@ -107,23 +107,23 @@ class TestPartPlugin(BotPlugin):
                     ),
                     CallbackQueryHandler(
                         handlers.select_practice_mode,
-                        pattern="^test_practice$"
+                        pattern="^test_part_practice$"
                     ),
                     CallbackQueryHandler(
                         handlers.select_mistakes,
-                        pattern="^test_mistakes$"
+                        pattern="^test_part_mistakes$"
                     ),
                     CallbackQueryHandler(
                         handlers.detailed_report,
-                        pattern="^test_progress$"
+                        pattern="^test_part_progress$"
                     ),
                     CallbackQueryHandler(
                         handlers.reset_progress_confirm,
-                        pattern="^test_reset_confirm$"
+                        pattern="^test_part_reset_confirm$"
                     ),
                     CallbackQueryHandler(
                         handlers.reset_progress_do,
-                        pattern="^test_reset_do$"
+                        pattern="^test_part_reset_do$"
                     ),
                     CallbackQueryHandler(
                         handlers.back_to_test_menu,
