@@ -1,3 +1,3 @@
-from .plugin import Task_PartPlugin
+from .plugin import TestPartPlugin
 
-__all__ = ['Task_PartPlugin']
+__all__ = ['TestPartPlugin']

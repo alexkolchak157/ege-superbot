@@ -8,12 +8,7 @@ import io
 import csv
 from datetime import datetime
 from typing import Dict, List, Optional
-from .data import QUESTIONS_DATA, TOPIC_NAMES
-# или если TOPIC_NAMES в другом файле:
-try:
-    from .topic_data import TOPIC_NAMES
-except ImportError:
-    TOPIC_NAMES = {}
+
 from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton
 from telegram.constants import ParseMode
 from telegram.ext import ContextTypes, ConversationHandler
@@ -24,6 +19,14 @@ from core.state_validator import validate_state_transition
 from core import db
 from core.universal_ui import UniversalUIComponents, AdaptiveKeyboards, MessageFormatter
 from .utils import get_user_mistakes, format_mistake_stats
+
+# Импортируем данные из правильных модулей
+from .loader import QUESTIONS_DATA
+try:
+    from .topic_data import TOPIC_NAMES
+except ImportError:
+    logger.warning("Не удалось импортировать TOPIC_NAMES из topic_data.py")
+    TOPIC_NAMES = {}
 
 logger = logging.getLogger(__name__)
 

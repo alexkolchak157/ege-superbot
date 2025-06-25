@@ -44,6 +44,13 @@ def init_module_data():
     """Инициализирует данные модуля."""
     global QUESTIONS_DICT_FLAT, AVAILABLE_BLOCKS
     
+    # Проверяем, что QUESTIONS_DATA загружен
+    if QUESTIONS_DATA is None:
+        logger.warning("QUESTIONS_DATA is None, skipping initialization")
+        QUESTIONS_DICT_FLAT = {}
+        AVAILABLE_BLOCKS = []
+        return QUESTIONS_DICT_FLAT, AVAILABLE_BLOCKS
+    
     if QUESTIONS_DICT_FLAT is None:
         QUESTIONS_DICT_FLAT = {}
         AVAILABLE_BLOCKS = list(QUESTIONS_DATA.keys())
@@ -58,11 +65,14 @@ def init_module_data():
 # Вызываем инициализацию при загрузке модуля
 init_module_data()
 
-# Безопасные функции для работы с кешем
 def safe_cache_get_by_exam_num(exam_number):
     """Безопасное получение вопросов по номеру ЕГЭ."""
     if questions_cache:
         return questions_cache.get_by_exam_num(exam_number)
+    
+    # Проверка на None
+    if QUESTIONS_DATA is None:
+        return []
     
     # Fallback через QUESTIONS_DATA
     questions_with_num = []
@@ -78,6 +88,10 @@ def safe_cache_get_by_topic(topic):
     if questions_cache:
         return questions_cache.get_by_topic(topic)
     
+    # Проверка на None
+    if QUESTIONS_DATA is None:
+        return []
+    
     # Fallback через QUESTIONS_DATA
     questions_in_topic = []
     for block_data in QUESTIONS_DATA.values():
@@ -91,6 +105,10 @@ def safe_cache_get_by_block(block):
     if questions_cache:
         return questions_cache.get_by_block(block)
     
+    # Проверка на None
+    if QUESTIONS_DATA is None:
+        return []
+    
     # Fallback через QUESTIONS_DATA
     questions_in_block = []
     for topic_questions in QUESTIONS_DATA.get(block, {}).values():
@@ -101,6 +119,10 @@ def safe_cache_get_all_exam_numbers():
     """Безопасное получение всех номеров ЕГЭ."""
     if questions_cache:
         return questions_cache.get_all_exam_numbers()
+    
+    # Проверка на None
+    if QUESTIONS_DATA is None:
+        return []
     
     # Fallback через QUESTIONS_DATA
     exam_numbers = set()
@@ -241,6 +263,10 @@ async def select_block_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Выбор блока тем."""
     query = update.callback_query
     
+        # Проверка инициализации
+    if not AVAILABLE_BLOCKS:
+        init_module_data()  # Попытка инициализации
+    
     if not AVAILABLE_BLOCKS:
         await query.answer("Нет доступных блоков", show_alert=True)
         return states.CHOOSING_MODE
@@ -317,7 +343,9 @@ async def select_block(update: Update, context: ContextTypes.DEFAULT_TYPE):
         selected_block = query.data.split(":", 2)[2]
     except IndexError:
         return states.CHOOSING_BLOCK
-    
+        # Проверка инициализации
+    if not AVAILABLE_BLOCKS:
+        init_module_data()  # Попытка инициализации
     if selected_block not in QUESTIONS_DATA:
         await query.answer("Блок не найден", show_alert=True)
         return states.CHOOSING_BLOCK
