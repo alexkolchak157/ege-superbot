@@ -233,8 +233,11 @@ class TestPartPlugin(BotPlugin):
                 ],
                 
                 states.ANSWERING: [
+                    # ВАЖНО: Добавляем фильтр для активного модуля
                     MessageHandler(
-                        filters.TEXT & ~filters.COMMAND, 
+                        filters.TEXT & ~filters.COMMAND & filters.create(
+                            lambda _, context: context.user_data.get('active_module') == 'test_part'
+                        ),
                         handlers.check_answer
                     ),
                     CallbackQueryHandler(
@@ -278,6 +281,11 @@ class TestPartPlugin(BotPlugin):
                 CallbackQueryHandler(
                     handlers.back_to_main_menu,
                     pattern="^to_main_menu$"
+                ),
+                # Добавляем обработчик для всех callback_data, которые не подходят под другие паттерны
+                CallbackQueryHandler(
+                    handlers.handle_unknown_callback,
+                    pattern="^(?!choose_test_part|initial:|block:|topic:|exam_number:|mode:|test_).*$"
                 ),
             ],
             allow_reentry=True,

@@ -118,10 +118,27 @@ async def cleanup_previous_messages(update: Update, context: ContextTypes.DEFAUL
 
 
 @safe_handler()
+@validate_state_transition({states.CHOOSING_MODE})
 async def entry_from_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Вход в тестовую часть из главного меню (обновленная версия)."""
     query = update.callback_query
     
-    # Используем utils из локального модуля для проверки подписки
+    # Очищаем контекст от данных других модулей
+    keys_to_remove = [
+        'current_topic',
+        'task19_current_topic', 
+        'task20_current_topic',
+        'task25_current_topic',
+        'task24_current_topic'
+    ]
+    
+    for key in keys_to_remove:
+        context.user_data.pop(key, None)
+    
+    # Устанавливаем флаг активного модуля
+    context.user_data['active_module'] = 'test_part'
+    
+    # Проверка подписки
     if not await utils.check_subscription(query.from_user.id, context.bot):
         await utils.send_subscription_required(query, REQUIRED_CHANNEL)
         return ConversationHandler.END
@@ -136,7 +153,24 @@ async def entry_from_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return states.CHOOSING_MODE
 
 async def cmd_quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # Используем локальный utils
+    """Команда /quiz - вход в тестовую часть."""
+    
+    # Очищаем контекст от других модулей
+    keys_to_remove = [
+        'current_topic',
+        'task19_current_topic', 
+        'task20_current_topic',
+        'task25_current_topic',
+        'task24_current_topic'
+    ]
+    
+    for key in keys_to_remove:
+        context.user_data.pop(key, None)
+    
+    # Устанавливаем активный модуль
+    context.user_data['active_module'] = 'test_part'
+    
+    # Проверка подписки
     if not await utils.check_subscription(update.effective_user.id, context.bot, REQUIRED_CHANNEL):
         await utils.send_subscription_required(update, REQUIRED_CHANNEL)
         return ConversationHandler.END
@@ -155,6 +189,9 @@ async def cmd_quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def select_exam_num_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Выбор режима по номеру ЕГЭ."""
     query = update.callback_query
+    
+    # Устанавливаем активный модуль
+    context.user_data['active_module'] = 'test_part'
     
     # Используем безопасную функцию для получения номеров
     all_nums = safe_cache_get_all_exam_numbers()
@@ -177,6 +214,9 @@ async def select_exam_num_mode(update: Update, context: ContextTypes.DEFAULT_TYP
 async def select_block_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Выбор режима по блокам."""
     query = update.callback_query
+    
+    # Устанавливаем активный модуль
+    context.user_data['active_module'] = 'test_part'
     
     if not AVAILABLE_BLOCKS:
         await query.answer("Блоки не загружены", show_alert=True)
@@ -333,14 +373,15 @@ async def check_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Получаем данные вопроса по его ID
     question_data = context.user_data.get(f'question_{current_question_id}')
     if not question_data:
-        logger.error(f"No question data for ID {current_question_id}, user {user_id}")
-        await update.message.reply_text(
-            "❌ Ошибка: не найдены данные текущего вопроса.\n"
-            "Используйте /start для начала работы."
-        )
+        # Удаляем сообщение "Проверяю..."
+        try:
+            await thinking_msg.delete()
+        except Exception:
+            pass
+            
+        await update.message.reply_text("Ошибка: данные вопроса не найдены.")
         return ConversationHandler.END
-    
-    # Извлекаем данные из question_data
+
     correct_answer = str(question_data.get('answer', ''))
     question_type = question_data.get('type', 'multiple_choice')
     topic = question_data.get('topic')
@@ -515,24 +556,22 @@ async def check_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if motivational_phrase and not is_correct:
         feedback += f"\n\n{motivational_phrase}"
     
-    # Показываем кнопки "что дальше"
-    has_explanation = bool(question_data.get('explanation'))
-    kb = keyboards.get_next_action_keyboard(last_mode, has_explanation=has_explanation)
-    
-    try:
+        # Показываем кнопки "что дальше"
+        has_explanation = bool(question_data.get('explanation'))
+        kb = keyboards.get_next_action_keyboard(last_mode, has_explanation=has_explanation)
+        
+        # ВАЖНО: Удаляем сообщение "Проверяю..." ПЕРЕД отправкой фидбека
+        try:
+            await thinking_msg.delete()
+        except Exception as e:
+            logger.debug(f"Failed to delete checking message: {e}")
+        
+        # Отправляем фидбек
         sent_msg = await update.message.reply_text(
             feedback,
             reply_markup=kb,
             parse_mode=ParseMode.HTML
         )
-
-        # Удаляем сообщение с индикатором ожидания
-        thinking_id = context.user_data.pop('thinking_message_id', None)
-        if thinking_id:
-            try:
-                await update.message.bot.delete_message(update.message.chat_id, thinking_id)
-            except Exception:
-                pass
         
         # Сохраняем ID сообщения с фидбеком для удаления
         context.user_data['feedback_message_id'] = sent_msg.message_id
@@ -541,16 +580,17 @@ async def check_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data['last_answer_correct'] = is_correct
         
         return states.CHOOSING_NEXT_ACTION
-    
-    except Exception as e:
-        logger.error(f"Error sending feedback to user {user_id}: {e}")
-        await update.message.reply_text("Произошла ошибка при отправке ответа")
-        thinking_id = context.user_data.pop('thinking_message_id', None)
-        if thinking_id:
-            try:
-                await update.message.bot.delete_message(update.message.chat_id, thinking_id)
-            except Exception:
-                pass
+        
+        except Exception as e:
+            logger.error(f"Error in check_answer: {e}")
+        
+        # Удаляем сообщение "Проверяю..." в случае ошибки
+        try:
+            await thinking_msg.delete()
+        except Exception:
+            pass
+            
+        await update.message.reply_text("Произошла ошибка при проверке ответа")
         return ConversationHandler.END
 
 @safe_handler()
@@ -962,19 +1002,18 @@ async def send_question(message, context: ContextTypes.DEFAULT_TYPE,
 
 @safe_handler()
 async def handle_unknown_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обработчик неизвестных callback в CHOOSING_NEXT_ACTION."""
+    """Обработчик неизвестных callback_data в test_part."""
     query = update.callback_query
-    await query.answer("Неизвестное действие")
     
-    # Возвращаемся к выбору режима
-    kb = keyboards.get_initial_choice_keyboard()
-    await query.edit_message_text(
-        "📚 <b>Тестовая часть ЕГЭ</b>\n\n"
-        "Выберите режим:",
-        reply_markup=kb,
-        parse_mode=ParseMode.HTML
-    )
-    return states.CHOOSING_MODE
+    # Просто отвечаем на callback без показа сообщений об ошибке
+    await query.answer()
+    
+    # Логируем для отладки
+    logger.debug(f"Unknown callback in test_part: {query.data}")
+    
+    # Возвращаем текущее состояние без изменений
+    current_state = context.user_data.get('conversation_state', states.CHOOSING_MODE)
+    return current_state
 
 async def cmd_export_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Команда /export - экспорт статистики в CSV файл."""
@@ -1046,23 +1085,25 @@ async def send_mistake_question(message, context: ContextTypes.DEFAULT_TYPE):
 @safe_handler()
 @validate_state_transition({states.REVIEWING_MISTAKES})
 async def handle_mistake_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обработка ответа в режиме ошибок."""
-    user_id = update.effective_user.id
+    """Обработка ответа в режиме ошибок (обновленная версия)."""
+    
+    # Отправляем индикатор проверки
+    checking_msg = await update.message.reply_text("⏳ Проверяю ваш ответ...")
+    
     user_answer = update.message.text.strip()
-    
-    # Сохраняем ID сообщения с ответом
-    context.user_data['answer_message_id'] = update.message.message_id
-    
-    # Получаем ID текущего вопроса
     current_question_id = context.user_data.get('current_question_id')
+    
     if not current_question_id:
-        await update.message.reply_text("❌ Ошибка: вопрос не найден")
+        await checking_msg.delete()
+        await update.message.reply_text("Ошибка: вопрос не найден.")
         return states.CHOOSING_MODE
     
     # Получаем данные вопроса
     question_data = context.user_data.get(f'question_{current_question_id}')
+    
     if not question_data:
-        await update.message.reply_text("❌ Ошибка: данные вопроса не найдены")
+        await checking_msg.delete()
+        await update.message.reply_text("Ошибка: данные вопроса не найдены.")
         return states.CHOOSING_MODE
     
     # Проверяем ответ
@@ -1137,6 +1178,13 @@ async def handle_mistake_answer(update: Update, context: ContextTypes.DEFAULT_TY
     
     kb = InlineKeyboardMarkup(kb_buttons)
     
+   # ВАЖНО: Удаляем сообщение "Проверяю..." перед отправкой фидбека
+    try:
+        await checking_msg.delete()
+    except Exception:
+        pass
+    
+    # Отправляем фидбек
     sent_msg = await update.message.reply_text(
         feedback,
         reply_markup=kb,
