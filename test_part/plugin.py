@@ -105,6 +105,42 @@ class TestPartPlugin(BotPlugin):
                         handlers.select_mistakes, 
                         pattern="^initial:select_mistakes$"
                     ),
+                    CallbackQueryHandler(
+                        handlers.select_practice_mode,
+                        pattern="^test_practice$"
+                    ),
+                    CallbackQueryHandler(
+                        handlers.show_theory,
+                        pattern="^test_theory$"
+                    ),
+                    CallbackQueryHandler(
+                        handlers.show_examples_bank,
+                        pattern="^test_examples$"
+                    ),
+                    CallbackQueryHandler(
+                        handlers.select_mistakes,  # Используем существующий
+                        pattern="^test_mistakes$"
+                    ),
+                    CallbackQueryHandler(
+                        handlers.detailed_report,  # Используем существующий из missing_handlers
+                        pattern="^test_progress$"
+                    ),
+                    CallbackQueryHandler(
+                        handlers.show_settings,
+                        pattern="^test_settings$"
+                    ),
+                    CallbackQueryHandler(
+                        handlers.reset_progress_confirm,
+                        pattern="^test_reset_confirm$"
+                    ),
+                    CallbackQueryHandler(
+                        handlers.reset_progress_do,
+                        pattern="^test_reset_do$"
+                    ),
+                    CallbackQueryHandler(
+                        handlers.back_to_test_menu,
+                        pattern="^to_test_part_menu$"
+                    ),
                     
                     # Режимы внутри блока
                     CallbackQueryHandler(

@@ -1077,3 +1077,139 @@ async def back_to_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     
     return ConversationHandler.END
+    
+@safe_handler()
+@validate_state_transition({states.CHOOSING_MODE})
+async def select_practice_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Выбор режима практики из адаптивного меню."""
+    # Перенаправляем на случайные вопросы
+    return await select_random_all(update, context)
+
+@safe_handler()
+@validate_state_transition({states.CHOOSING_MODE})
+async def show_theory(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Показ теории и советов."""
+    query = update.callback_query
+    
+    text = """📚 <b>Теория и советы по тестовой части</b>
+
+<b>Основные рекомендации:</b>
+
+1️⃣ <b>Внимательно читайте вопрос</b>
+   • Обращайте внимание на ключевые слова
+   • Определите, что именно спрашивается
+
+2️⃣ <b>Анализируйте варианты ответов</b>
+   • Исключите заведомо неверные
+   • Ищите подвохи в формулировках
+
+3️⃣ <b>Используйте метод исключения</b>
+   • Начните с очевидно неправильных ответов
+   • Сужайте выбор постепенно
+
+4️⃣ <b>Проверяйте свой ответ</b>
+   • Перечитайте вопрос после выбора
+   • Убедитесь, что ответ логичен
+
+💡 <b>Совет:</b> Регулярная практика - ключ к успеху!"""
+    
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("💪 Начать практику", callback_data="test_practice")],
+        [InlineKeyboardButton("⬅️ Назад", callback_data="to_test_part_menu")]
+    ])
+    
+    await query.edit_message_text(text, reply_markup=kb, parse_mode=ParseMode.HTML)
+    return states.CHOOSING_MODE
+
+@safe_handler()
+@validate_state_transition({states.CHOOSING_MODE})
+async def show_examples_bank(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Показ банка примеров/эталонов."""
+    query = update.callback_query
+    
+    text = """🏦 <b>Банк эталонных ответов</b>
+
+Здесь собраны примеры правильных ответов с пояснениями.
+
+Выберите тип заданий:"""
+    
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("📚 По блокам", callback_data="initial:select_block")],
+        [InlineKeyboardButton("🔢 По номерам ЕГЭ", callback_data="initial:select_exam_num")],
+        [InlineKeyboardButton("⬅️ Назад", callback_data="to_test_part_menu")]
+    ])
+    
+    await query.edit_message_text(text, reply_markup=kb, parse_mode=ParseMode.HTML)
+    return states.CHOOSING_MODE
+
+@safe_handler()
+@validate_state_transition({states.CHOOSING_MODE})
+async def show_settings(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Настройки модуля."""
+    query = update.callback_query
+    
+    text = """⚙️ <b>Настройки тестовой части</b>
+
+Выберите действие:"""
+    
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("🔄 Сбросить прогресс", callback_data="test_reset_confirm")],
+        [InlineKeyboardButton("📊 Экспорт статистики", callback_data="export_csv")],
+        [InlineKeyboardButton("⬅️ Назад", callback_data="to_test_part_menu")]
+    ])
+    
+    await query.edit_message_text(text, reply_markup=kb, parse_mode=ParseMode.HTML)
+    return states.CHOOSING_MODE
+
+@safe_handler()
+@validate_state_transition({states.CHOOSING_MODE})
+async def back_to_test_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Возврат в меню тестовой части из любого места."""
+    # Просто вызываем entry_from_menu
+    return await entry_from_menu(update, context)
+    
+@safe_handler()
+@validate_state_transition({states.CHOOSING_MODE})
+async def reset_progress_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Подтверждение сброса прогресса."""
+    query = update.callback_query
+    
+    text = """⚠️ <b>Подтверждение сброса</b>
+
+Вы уверены, что хотите сбросить весь прогресс?
+
+Это действие удалит:
+- Всю статистику ответов
+- Историю ошибок
+- Прогресс по темам
+
+⚠️ Это действие необратимо!"""
+    
+    kb = InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("✅ Да, сбросить", callback_data="test_reset_do"),
+            InlineKeyboardButton("❌ Отмена", callback_data="test_settings")
+        ]
+    ])
+    
+    await query.edit_message_text(text, reply_markup=kb, parse_mode=ParseMode.HTML)
+    return states.CHOOSING_MODE
+
+@safe_handler()
+@validate_state_transition({states.CHOOSING_MODE})
+async def reset_progress_do(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Выполнение сброса прогресса."""
+    query = update.callback_query
+    user_id = query.from_user.id
+    
+    # Сбрасываем прогресс в БД
+    await db.reset_user_progress(user_id)
+    await db.reset_answered_questions(user_id)
+    
+    # Очищаем контекст
+    context.user_data.clear()
+    
+    await query.answer("✅ Прогресс успешно сброшен!", show_alert=True)
+    
+    # Возвращаемся в меню
+    return await entry_from_menu(update, context)
