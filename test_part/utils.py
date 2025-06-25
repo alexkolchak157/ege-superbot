@@ -5,7 +5,7 @@ import csv
 from io import StringIO, BytesIO
 from datetime import datetime
 from typing import List, Tuple, Dict, Any, Optional, Set
-
+from .loader import QUESTIONS_DATA
 from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton
 from telegram.ext import ContextTypes
 from telegram.error import BadRequest

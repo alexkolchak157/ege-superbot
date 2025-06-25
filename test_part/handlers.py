@@ -1,7 +1,7 @@
 import logging
 import random
 from datetime import datetime
-
+from core.state_validator import validate_state_transition, state_validator
 import aiosqlite
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.constants import ParseMode
@@ -30,7 +30,6 @@ try:
 except ImportError:
     logging.warning("Модуль cache не найден, работаем без кеширования")
     questions_cache = None
-from core.state_validator import validate_state_transition, state_validator
 
 logger = logging.getLogger(__name__)
 
@@ -153,7 +152,7 @@ async def cmd_quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 @safe_handler()
 @validate_state_transition({states.CHOOSING_MODE})
-async def select_exam_num(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def select_exam_num_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Выбор режима по номеру ЕГЭ."""
     query = update.callback_query
     
@@ -161,12 +160,14 @@ async def select_exam_num(update: Update, context: ContextTypes.DEFAULT_TYPE):
     all_nums = safe_cache_get_all_exam_numbers()
     
     if not all_nums:
+        await query.answer("Нет доступных заданий", show_alert=True)
         return states.CHOOSING_MODE
     
-    kb = keyboards.get_exam_number_keyboard(all_nums)
+    kb = keyboards.get_exam_num_keyboard(all_nums)
     await query.edit_message_text(
-        "Выберите номер задания ЕГЭ:",
-        reply_markup=kb
+        "📋 <b>Выберите номер задания ЕГЭ:</b>",
+        reply_markup=kb,
+        parse_mode=ParseMode.HTML
     )
     context.user_data['mode'] = 'exam_num'
     return states.CHOOSING_EXAM_NUMBER
@@ -177,10 +178,15 @@ async def select_block_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Выбор режима по блокам."""
     query = update.callback_query
     
+    if not AVAILABLE_BLOCKS:
+        await query.answer("Блоки не загружены", show_alert=True)
+        return states.CHOOSING_MODE
+    
     kb = keyboards.get_blocks_keyboard(AVAILABLE_BLOCKS)
     await query.edit_message_text(
-        "Выберите блок тем:",
-        reply_markup=kb
+        "📚 <b>Выберите блок тем:</b>",
+        reply_markup=kb,
+        parse_mode=ParseMode.HTML
     )
     context.user_data['mode'] = 'block'
     return states.CHOOSING_BLOCK
@@ -821,6 +827,24 @@ async def back_to_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return states.CHOOSING_MODE
 
 @safe_handler()
+async def back_to_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Возврат в главное меню бота."""
+    query = update.callback_query
+    
+    # Очищаем контекст
+    context.user_data.clear()
+    
+    # Используем build_main_menu из plugin_loader
+    kb = build_main_menu()
+    
+    await query.edit_message_text(
+        "👋 Что хотите потренировать?",
+        reply_markup=kb
+    )
+    
+    return ConversationHandler.END
+
+@safe_handler()
 @validate_state_transition({states.CHOOSING_MODE, states.CHOOSING_BLOCK, states.CHOOSING_TOPIC, states.ANSWERING})
 async def back_to_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Возврат к выбору режима тестовой части из подменю."""
@@ -968,74 +992,36 @@ async def cmd_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Не удалось сгенерировать отчет. Попробуйте позже.")
 
 async def send_mistake_question(message, context: ContextTypes.DEFAULT_TYPE):
-    """Отправка вопроса из списка ошибок."""
+    """Отправляет вопрос из списка ошибок."""
     mistake_ids = context.user_data.get('mistake_ids', [])
     current_index = context.user_data.get('current_mistake_index', 0)
     
     if current_index >= len(mistake_ids):
-        # Если это CallbackQuery, используем edit_message_text
+        # Все ошибки пройдены
+        kb = keyboards.get_mistakes_finish_keyboard()
+        
+        text = "✅ <b>Работа над ошибками завершена!</b>\n\n"
+        text += f"Исправлено ошибок: {context.user_data.get('mistakes_corrected', 0)}\n"
+        text += f"Осталось ошибок: {len(mistake_ids)}"
+        
         if hasattr(message, 'edit_text'):
-            await message.edit_text(
-                "🎉 Вы проработали все ошибки! Отличная работа!",
-                reply_markup=keyboards.get_initial_choice_keyboard()
-            )
+            await message.edit_text(text, reply_markup=kb, parse_mode=ParseMode.HTML)
         else:
-            await message.reply_text(
-                "🎉 Вы проработали все ошибки! Отличная работа!",
-                reply_markup=keyboards.get_initial_choice_keyboard()
-            )
-        return ConversationHandler.END
+            await message.reply_text(text, reply_markup=kb, parse_mode=ParseMode.HTML)
+        
+        return states.CHOOSING_MODE
     
+    # Получаем вопрос
     question_id = mistake_ids[current_index]
-    
-    # Используем QUESTIONS_DICT_FLAT или ищем вопрос
-    question_data = None
-    if QUESTIONS_DICT_FLAT:
-        question_data = QUESTIONS_DICT_FLAT.get(question_id)
-    
-    # Если не нашли в QUESTIONS_DICT_FLAT, ищем через cache или перебором
-    if not question_data:
-        if questions_cache:
-            question_data = questions_cache.get_by_id(question_id)
-        else:
-            # Ищем перебором
-            for block_data in QUESTIONS_DATA.values():
-                for topic_questions in block_data.values():
-                    for q in topic_questions:
-                        if q.get('id') == question_id:
-                            question_data = q
-                            break
-                    if question_data:
-                        break
-                if question_data:
-                    break
+    question_data = utils.find_question_by_id(question_id)
     
     if not question_data:
-        # Пропускаем несуществующий вопрос
-        logger.warning(f"Question {question_id} not found in mistakes mode")
-        # Удаляем эту ошибку из БД
-        await db.delete_mistake(context.user_data.get('user_id', message.from_user.id), question_id)
+        # Вопрос не найден, пропускаем
         context.user_data['current_mistake_index'] = current_index + 1
         return await send_mistake_question(message, context)
     
-    # Сохраняем данные для проверки ответа
-    context.user_data[f'question_{question_id}'] = question_data
-    context.user_data['current_question_id'] = question_id
-    context.user_data['last_mode'] = 'mistakes'
-    
-    # Форматируем
-    text = f"🔧 <b>Работа над ошибками ({current_index + 1}/{len(mistake_ids)})</b>\n\n"
-    text += utils.format_question_text(question_data)
-    
-    # Отправляем
-    if hasattr(message, 'edit_text'):
-        sent_msg = await message.edit_text(text, parse_mode=ParseMode.HTML)
-        context.user_data['current_question_message_id'] = message.message_id
-    else:
-        sent_msg = await message.reply_text(text, parse_mode=ParseMode.HTML)
-        if sent_msg:
-            context.user_data['current_question_message_id'] = sent_msg.message_id
-    
+    # Отправляем вопрос
+    await send_question(message, context, question_data, "mistakes")
     return states.REVIEWING_MISTAKES
 
 @safe_handler()
@@ -1614,3 +1600,70 @@ async def select_mistakes(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Отправляем первый вопрос
     await send_mistake_question(query.message, context)
     return states.REVIEWING_MISTAKES
+
+@safe_handler()
+@validate_state_transition({states.CHOOSING_MODE})
+async def select_practice_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Режим практики - просто запускаем случайные вопросы."""
+    return await select_random_all(update, context)
+
+@safe_handler()
+@validate_state_transition({states.CHOOSING_MODE})
+async def reset_progress_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Подтверждение сброса прогресса."""
+    query = update.callback_query
+    
+    kb = InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("✅ Да, сбросить", callback_data="test_reset_do"),
+            InlineKeyboardButton("❌ Отмена", callback_data="to_test_part_menu")
+        ]
+    ])
+    
+    await query.edit_message_text(
+        "⚠️ <b>Вы уверены?</b>\n\n"
+        "Это действие удалит весь ваш прогресс, включая:\n"
+        "• Статистику по всем темам\n"
+        "• Список ошибок\n"
+        "• Все достижения и стрики\n\n"
+        "Это действие нельзя отменить!",
+        reply_markup=kb,
+        parse_mode=ParseMode.HTML
+    )
+    return states.CHOOSING_MODE
+
+@safe_handler()
+@validate_state_transition({states.CHOOSING_MODE})
+async def reset_progress_do(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Выполнение сброса прогресса."""
+    query = update.callback_query
+    user_id = query.from_user.id
+    
+    try:
+        # Сбрасываем прогресс в БД
+        await db.reset_user_progress(user_id)
+        
+        # Очищаем контекст
+        context.user_data.clear()
+        
+        await query.answer("✅ Прогресс успешно сброшен!", show_alert=True)
+        
+        # Возвращаемся в меню
+        kb = keyboards.get_initial_choice_keyboard()
+        await query.edit_message_text(
+            "📚 <b>Тестовая часть ЕГЭ</b>\n\n"
+            "Ваш прогресс был сброшен. Начните заново!",
+            reply_markup=kb,
+            parse_mode=ParseMode.HTML
+        )
+    except Exception as e:
+        logger.error(f"Error resetting progress for user {user_id}: {e}")
+        await query.answer("❌ Ошибка при сбросе прогресса", show_alert=True)
+    
+    return states.CHOOSING_MODE
+
+@safe_handler()
+@validate_state_transition({states.CHOOSING_MODE})
+async def back_to_test_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Возврат в меню тестовой части."""
+    return await back_to_mode(update, context)
