@@ -177,6 +177,10 @@ class TestPartPlugin(BotPlugin):
                         handlers.back_to_main_menu,
                         pattern="^to_main_menu$"
                     ),
+                    CallbackQueryHandler(
+                        handlers.handle_unknown_callback,
+                        pattern=".*"
+                    ),
                 ],
                 
                 states.CHOOSING_TOPIC: [

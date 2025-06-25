@@ -556,21 +556,29 @@ async def check_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
 @safe_handler()
 @validate_state_transition({states.CHOOSING_NEXT_ACTION, states.ANSWERING})
 async def handle_next_action(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обработка действий после ответа (ИСПРАВЛЕННАЯ ВЕРСИЯ)."""
-    query = update.callback_query    
+    """Обработка действий после ответа."""
+    query = update.callback_query
+    
+    # Всегда отвечаем на callback query в начале
+    await query.answer()
+    
     # Удаляем сообщение "Проверяю ваш ответ..." если оно есть
-    checking_msg_id = context.user_data.pop('checking_message_id', None)
-    if checking_msg_id:
+    thinking_msg_id = context.user_data.pop('thinking_message_id', None)
+    if thinking_msg_id:
         try:
-            await update.callback_query.message.bot.delete_message(
-                chat_id=update.effective_chat.id,
-                message_id=checking_msg_id
+            await query.message.bot.delete_message(
+                chat_id=query.message.chat_id,
+                message_id=thinking_msg_id
             )
         except Exception as e:
-            logger.debug(f"Failed to delete checking message: {e}")
-
+            logger.debug(f"Failed to delete thinking message: {e}")
     
     action = query.data
+    
+    # Проверяем, что action начинается с правильного префикса
+    if not action.startswith("test_"):
+        logger.warning(f"Unexpected action in handle_next_action: {action}")
+        return states.CHOOSING_NEXT_ACTION
     
     if action == "test_next_show_explanation":
         # Показываем пояснение для последнего отвеченного вопроса
@@ -596,6 +604,13 @@ async def handle_next_action(update: Update, context: ContextTypes.DEFAULT_TYPE)
                     context.user_data.setdefault('extra_messages_to_delete', []).append(sent_msg.message_id)
                 except Exception as e:
                     logger.error(f"Error sending explanation: {e}")
+            else:
+                await query.answer("Пояснение отсутствует", show_alert=True)
+        else:
+            await query.answer("Ошибка: вопрос не найден", show_alert=True)
+        
+        # ВАЖНО: Отвечаем на callback query
+        await query.answer()
         return states.CHOOSING_NEXT_ACTION
     
     elif action == "test_next_continue":
@@ -956,6 +971,22 @@ async def send_question(message, context: ContextTypes.DEFAULT_TYPE,
         return ConversationHandler.END
     
     return states.ANSWERING
+
+@safe_handler()
+async def handle_unknown_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработчик неизвестных callback в CHOOSING_NEXT_ACTION."""
+    query = update.callback_query
+    await query.answer("Неизвестное действие")
+    
+    # Возвращаемся к выбору режима
+    kb = keyboards.get_initial_choice_keyboard()
+    await query.edit_message_text(
+        "📚 <b>Тестовая часть ЕГЭ</b>\n\n"
+        "Выберите режим:",
+        reply_markup=kb,
+        parse_mode=ParseMode.HTML
+    )
+    return states.CHOOSING_MODE
 
 async def cmd_export_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Команда /export - экспорт статистики в CSV файл."""
