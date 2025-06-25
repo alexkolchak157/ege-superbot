@@ -1,4 +1,4 @@
-# ПОЛНОСТЬЮ заменить содержимое plugin.py:
+# test_part/plugin.py
 import logging
 from telegram.ext import (
     ConversationHandler, CommandHandler, CallbackQueryHandler,
@@ -7,6 +7,13 @@ from telegram.ext import (
 from core.plugin_base import BotPlugin
 from core import states
 from . import handlers
+from .missing_handlers import (
+    detailed_report,
+    export_csv,
+    work_mistakes,
+    check_subscription,
+    test_start_mistakes
+)
 
 logger = logging.getLogger(__name__)
 
@@ -83,11 +90,11 @@ class TestPartPlugin(BotPlugin):
                 states.CHOOSING_MODE: [
                     # Режимы из главного меню
                     CallbackQueryHandler(
-                        handlers.select_exam_num, 
+                        handlers.select_exam_num_mode, 
                         pattern="^initial:select_exam_num$"
                     ),
                     CallbackQueryHandler(
-                        handlers.select_block, 
+                        handlers.select_block_mode, 
                         pattern="^initial:select_block$"
                     ),
                     CallbackQueryHandler(
@@ -118,6 +125,34 @@ class TestPartPlugin(BotPlugin):
                         handlers.back_to_mode, 
                         pattern="^to_blocks$"
                     ),
+                    
+                    # Дополнительные обработчики из missing_handlers
+                    CallbackQueryHandler(
+                        detailed_report,
+                        pattern="^detailed_report$"
+                    ),
+                    CallbackQueryHandler(
+                        export_csv,
+                        pattern="^export_csv$"
+                    ),
+                    CallbackQueryHandler(
+                        work_mistakes,
+                        pattern="^work_mistakes$"
+                    ),
+                    CallbackQueryHandler(
+                        check_subscription,
+                        pattern="^check_subscription$"
+                    ),
+                    CallbackQueryHandler(
+                        test_start_mistakes,
+                        pattern="^test_start_mistakes$"
+                    ),
+                    
+                    # Возврат в главное меню
+                    CallbackQueryHandler(
+                        handlers.back_to_main_menu,
+                        pattern="^to_main_menu$"
+                    ),
                 ],
                 
                 states.CHOOSING_TOPIC: [
@@ -133,12 +168,11 @@ class TestPartPlugin(BotPlugin):
                         handlers.back_to_mode, 
                         pattern="^to_test_part_menu$"
                     ),
-                
                     CallbackQueryHandler(
                         handlers.back_to_main_menu,
                         pattern="^to_main_menu$"
                     ),
-],
+                ],
                 
                 states.CHOOSING_BLOCK: [
                     CallbackQueryHandler(
@@ -149,12 +183,11 @@ class TestPartPlugin(BotPlugin):
                         handlers.back_to_mode, 
                         pattern="^block:back_to_initial$"
                     ),
-                
                     CallbackQueryHandler(
                         handlers.back_to_main_menu,
                         pattern="^to_main_menu$"
                     ),
-],
+                ],
                 
                 states.CHOOSING_EXAM_NUMBER: [
                     CallbackQueryHandler(
@@ -165,17 +198,20 @@ class TestPartPlugin(BotPlugin):
                         handlers.back_to_mode, 
                         pattern="^exam_number:back_to_initial$"
                     ),
-                
                     CallbackQueryHandler(
                         handlers.back_to_main_menu,
                         pattern="^to_main_menu$"
                     ),
-],
+                ],
                 
                 states.ANSWERING: [
                     MessageHandler(
                         filters.TEXT & ~filters.COMMAND, 
                         handlers.check_answer
+                    ),
+                    CallbackQueryHandler(
+                        handlers.back_to_main_menu,
+                        pattern="^to_main_menu$"
                     ),
                 ],
                 
@@ -184,43 +220,16 @@ class TestPartPlugin(BotPlugin):
                         handlers.handle_next_action,
                         pattern="^test_next_"
                     ),
-                
+                    CallbackQueryHandler(
+                        handlers.handle_next_action,
+                        pattern="^test_mistake_"
+                    ),
                     CallbackQueryHandler(
                         handlers.back_to_main_menu,
                         pattern="^to_main_menu$"
                     ),
-],
-                
-                states.REVIEWING_MISTAKES: [
-                    MessageHandler(
-                        filters.TEXT & ~filters.COMMAND, 
-                        handlers.handle_mistake_answer
-                    ),
-                    CallbackQueryHandler(
-                        handlers.mistake_nav,
-                        pattern="^test_mistake_"
-                    ),
                 ],
-            },
-            fallbacks=[
-                CommandHandler("cancel", handlers.cmd_cancel),
-                # Обработка возврата в главное меню
-                CallbackQueryHandler(
-                    self._handle_to_main_menu,
-                    pattern="^to_main_menu$"
-                ),
-            ],
-            allow_reentry=True,
-            name=f"{self.code}_main_conversation",
-            persistent=False,
-        )
-        
-        # Отдельный ConversationHandler для работы над ошибками
-        mistakes_conv_handler = ConversationHandler(
-            entry_points=[
-                CommandHandler("mistakes", handlers.cmd_mistakes),
-            ],
-            states={
+                
                 states.REVIEWING_MISTAKES: [
                     MessageHandler(
                         filters.TEXT & ~filters.COMMAND, 
@@ -239,72 +248,33 @@ class TestPartPlugin(BotPlugin):
             fallbacks=[
                 CommandHandler("cancel", handlers.cmd_cancel),
                 CallbackQueryHandler(
-                    self._handle_to_main_menu,
+                    handlers.back_to_main_menu,
                     pattern="^to_main_menu$"
                 ),
             ],
             allow_reentry=True,
-            name=f"{self.code}_mistakes_conversation",
+            name=f"{self.code}_main_conversation",
             persistent=False,
         )
         
-        # Добавляем обработчики в приложение
-        app.add_handler(main_conv_handler, group=1)
-        app.add_handler(mistakes_conv_handler, group=2)
+        # Отдельные команды вне ConversationHandler
+        app.add_handler(CommandHandler("mistakes", handlers.cmd_mistakes))
+        app.add_handler(CommandHandler("score", handlers.cmd_score))
         
-        # Отдельные команды (не входящие в ConversationHandler)
-        app.add_handler(CommandHandler("score", handlers.cmd_score), group=3)
-        app.add_handler(CommandHandler("export", handlers.cmd_export_stats), group=3)
-        app.add_handler(CommandHandler("report", handlers.cmd_report), group=3)
-
-        # Callback handlers for статистика и подписка
-        app.add_handler(
-            CallbackQueryHandler(
-                handlers.detailed_report, pattern="^detailed_report$"
-            ),
-            group=3,
-        )
-        app.add_handler(
-            CallbackQueryHandler(handlers.export_csv, pattern="^export_csv$"),
-            group=3,
-        )
-        app.add_handler(
-            CallbackQueryHandler(handlers.work_mistakes, pattern="^work_mistakes$"),
-            group=3,
-        )
-        app.add_handler(
-            CallbackQueryHandler(
-                handlers.check_subscription, pattern="^check_subscription$"
-            ),
-            group=3,
-        )
+        # Регистрируем основной ConversationHandler
+        app.add_handler(main_conv_handler)
         
-        # Команда отладки (только для разработки)
-        app.add_handler(CommandHandler("debug_streaks", handlers.cmd_debug_streaks), group=3)
-        app.add_handler(CallbackQueryHandler(lambda u, c: u.callback_query.answer() if u.callback_query else None,pattern="^streak_ok$"))
-        logger.info(f"Registered all handlers for {self.title} plugin")
+        logger.info(f"TestPart plugin registered successfully")
     
     async def _handle_to_main_menu(self, update, context):
-        """Обработчик возврата в главное меню."""
+        """Вспомогательный метод для обработки возврата в главное меню."""
+        from core.plugin_loader import build_main_menu
+        
         try:
-            from core.plugin_loader import build_main_menu
-            
-            # Очищаем контекст пользователя
-            context.user_data.clear()
-            
-            # Удаляем старые сообщения если возможно
-            try:
-                await handlers.utils.purge_old_messages(
-                    context, 
-                    update.effective_chat.id
-                )
-            except Exception as e:
-                logger.warning(f"Failed to purge old messages: {e}")
-            
-            # Показываем главное меню
             kb = build_main_menu()
             
             if update.callback_query:
+                await update.callback_query.answer()
                 await update.callback_query.edit_message_text(
                     "👋 Что хотите потренировать?",
                     reply_markup=kb
@@ -320,7 +290,6 @@ class TestPartPlugin(BotPlugin):
         except Exception as e:
             logger.error(f"Error in _handle_to_main_menu: {e}")
             
-            # Fallback - простое завершение диалога
             if update.callback_query:
                 await update.callback_query.answer("Возврат в главное меню...")
             

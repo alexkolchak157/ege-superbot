@@ -1,5 +1,5 @@
+# test_part/missing_handlers.py
 """
-test_part/missing_handlers.py
 Реализация недостающих callback обработчиков для тестовой части.
 """
 
@@ -11,17 +11,20 @@ from typing import Dict, List, Optional
 
 from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton
 from telegram.constants import ParseMode
-from telegram.ext import ContextTypes
+from telegram.ext import ContextTypes, ConversationHandler
 
 from core import states
 from core.error_handler import safe_handler
+from core.state_validator import validate_state_transition
 from core import db
+from core.universal_ui import UniversalUIComponents, AdaptiveKeyboards, MessageFormatter
 from .utils import get_user_mistakes, format_mistake_stats
 
 logger = logging.getLogger(__name__)
 
 
 @safe_handler()
+@validate_state_transition({states.CHOOSING_MODE})
 async def detailed_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Показывает детальный отчет по ошибкам."""
     query = update.callback_query
@@ -71,8 +74,8 @@ async def detailed_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text += "• Изучите теорию по проблемным темам\n"
     
     kb = InlineKeyboardMarkup([
-        [InlineKeyboardButton("📥 Экспорт в CSV", callback_data="test_export_csv")],
-        [InlineKeyboardButton("🔄 Работа над ошибками", callback_data="test_work_mistakes")],
+        [InlineKeyboardButton("📥 Экспорт в CSV", callback_data="export_csv")],
+        [InlineKeyboardButton("🔄 Работа над ошибками", callback_data="work_mistakes")],
         [InlineKeyboardButton("⬅️ Назад", callback_data="test_progress")]
     ])
     
@@ -85,12 +88,13 @@ async def detailed_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 @safe_handler()
+@validate_state_transition({states.CHOOSING_MODE})
 async def export_csv(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Экспортирует статистику и ошибки в CSV файл."""
     query = update.callback_query
     user_id = query.from_user.id
     
-    await query.answer("Подготавливаю файл...")
+    await query.answer("Генерирую отчет...")
     
     # Получаем данные
     mistakes = await get_user_mistakes(user_id)
@@ -100,69 +104,68 @@ async def export_csv(update: Update, context: ContextTypes.DEFAULT_TYPE):
     output = io.StringIO()
     writer = csv.writer(output)
     
-    # Заголовок с информацией
-    writer.writerow(['Отчет по тестовой части ЕГЭ'])
-    writer.writerow([f'Дата: {datetime.now().strftime("%d.%m.%Y %H:%M")}'])
+    # Заголовок
+    writer.writerow(['Экспорт статистики', f'Пользователь ID: {user_id}', f'Дата: {datetime.now().strftime("%Y-%m-%d %H:%M")}'])
     writer.writerow([])
     
     # Общая статистика
-    writer.writerow(['ОБЩАЯ СТАТИСТИКА'])
-    writer.writerow(['Тема', 'Правильных ответов', 'Всего отвечено', 'Процент'])
+    writer.writerow(['Общая статистика'])
+    writer.writerow(['Показатель', 'Значение'])
+    writer.writerow(['Всего вопросов', stats.get('total', 0)])
+    writer.writerow(['Правильных ответов', stats.get('correct', 0)])
+    writer.writerow(['Неправильных ответов', stats.get('incorrect', 0)])
     
-    total_correct = 0
-    total_answered = 0
+    if stats.get('total', 0) > 0:
+        accuracy = (stats.get('correct', 0) / stats['total']) * 100
+        writer.writerow(['Точность (%)', f'{accuracy:.1f}'])
     
-    for topic, correct, answered in stats:
-        percentage = (correct / answered * 100) if answered > 0 else 0
-        writer.writerow([topic, correct, answered, f'{percentage:.1f}%'])
-        total_correct += correct
-        total_answered += answered
-    
+    writer.writerow(['Текущая серия', stats.get('streak', 0)])
+    writer.writerow(['Рекорд серии', stats.get('max_streak', 0)])
     writer.writerow([])
-    writer.writerow(['ИТОГО', total_correct, total_answered, 
-                    f'{(total_correct/total_answered*100 if total_answered > 0 else 0):.1f}%'])
     
-    # Детали ошибок
+    # Ошибки по темам
     if mistakes:
-        writer.writerow([])
-        writer.writerow(['АНАЛИЗ ОШИБОК'])
-        writer.writerow(['ID вопроса', 'Тема', 'Тип ошибки', 'Дата'])
+        writer.writerow(['Анализ ошибок'])
+        writer.writerow(['Тема', 'Количество ошибок', 'Тип ошибки'])
         
+        mistakes_by_topic = {}
         for mistake in mistakes:
-            writer.writerow([
-                mistake.get('question_id', 'N/A'),
-                mistake.get('topic', 'Без темы'),
-                mistake.get('error_type', 'Неверный ответ'),
-                mistake.get('timestamp', 'N/A')
-            ])
+            topic = mistake.get('topic', 'Без темы')
+            if topic not in mistakes_by_topic:
+                mistakes_by_topic[topic] = []
+            mistakes_by_topic[topic].append(mistake)
+        
+        for topic, topic_mistakes in mistakes_by_topic.items():
+            error_types = {}
+            for m in topic_mistakes:
+                error_type = m.get('error_type', 'Неверный ответ')
+                error_types[error_type] = error_types.get(error_type, 0) + 1
+            
+            for error_type, count in error_types.items():
+                writer.writerow([topic, count, error_type])
     
-    # Готовим файл для отправки
+    # Получаем содержимое
     output.seek(0)
-    bio = io.BytesIO(output.getvalue().encode('utf-8-sig'))  # UTF-8 with BOM для Excel
-    bio.name = f'ege_test_report_{user_id}_{datetime.now().strftime("%Y%m%d")}.csv'
+    csv_content = output.getvalue()
+    
+    # Создаем файл для отправки
+    bio = io.BytesIO()
+    bio.write(csv_content.encode('utf-8-sig'))  # UTF-8 with BOM для Excel
+    bio.seek(0)
+    bio.name = f'statistics_{user_id}_{datetime.now().strftime("%Y%m%d_%H%M%S")}.csv'
     
     # Отправляем файл
     await query.message.reply_document(
-        document=bio,
-        caption="📊 Ваш отчет по тестовой части ЕГЭ\n\n"
-                "Файл можно открыть в Excel или Google Sheets",
+        bio,
+        caption="📊 Ваша статистика экспортирована в CSV файл",
         filename=bio.name
-    )
-    
-    # Возвращаемся в меню прогресса
-    kb = InlineKeyboardMarkup([[
-        InlineKeyboardButton("⬅️ Назад", callback_data="test_progress")
-    ]])
-    
-    await query.message.reply_text(
-        "✅ Отчет успешно экспортирован!",
-        reply_markup=kb
     )
     
     return states.CHOOSING_MODE
 
 
 @safe_handler()
+@validate_state_transition({states.CHOOSING_MODE})
 async def work_mistakes(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Запускает режим работы над ошибками."""
     query = update.callback_query
@@ -174,16 +177,17 @@ async def work_mistakes(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not mistake_ids:
         text = "🎉 <b>Отлично!</b>\n\nУ вас нет ошибок для проработки!"
         kb = InlineKeyboardMarkup([[
-            InlineKeyboardButton("⬅️ В меню", callback_data="test_back_to_mode")
+            InlineKeyboardButton("⬅️ В меню", callback_data="to_test_part_menu")
         ]])
         await query.edit_message_text(text, reply_markup=kb, parse_mode=ParseMode.HTML)
         return states.CHOOSING_MODE
     
     # Сохраняем режим и список ошибок
     context.user_data['mode'] = 'mistakes'
-    context.user_data['mistake_queue'] = mistake_ids.copy()
+    context.user_data['mistake_queue'] = list(mistake_ids)
     context.user_data['mistakes_total'] = len(mistake_ids)
     context.user_data['mistakes_completed'] = 0
+    context.user_data['current_mistake_index'] = 0
     
     text = f"""🔄 <b>Работа над ошибками</b>
 
@@ -196,7 +200,7 @@ async def work_mistakes(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     kb = InlineKeyboardMarkup([
         [InlineKeyboardButton("✅ Начать", callback_data="test_start_mistakes")],
-        [InlineKeyboardButton("⬅️ Назад", callback_data="test_back_to_mode")]
+        [InlineKeyboardButton("⬅️ Назад", callback_data="to_test_part_menu")]
     ])
     
     await query.edit_message_text(
@@ -209,6 +213,7 @@ async def work_mistakes(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 @safe_handler()
+@validate_state_transition({states.CHOOSING_MODE})
 async def check_subscription(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Проверяет подписку пользователя."""
     query = update.callback_query
@@ -236,17 +241,10 @@ async def check_subscription(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
 Для полного доступа оформите подписку."""
     
-    kb_buttons = []
-    if not is_subscribed:
-        kb_buttons.append([
-            InlineKeyboardButton("💎 Оформить подписку", url="https://example.com/subscribe")
-        ])
-    
-    kb_buttons.append([
-        InlineKeyboardButton("⬅️ Назад", callback_data="test_back_to_mode")
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("💎 Оформить подписку", callback_data="subscribe")],
+        [InlineKeyboardButton("⬅️ Назад", callback_data="to_test_part_menu")]
     ])
-    
-    kb = InlineKeyboardMarkup(kb_buttons)
     
     await query.edit_message_text(
         text,
@@ -257,22 +255,16 @@ async def check_subscription(update: Update, context: ContextTypes.DEFAULT_TYPE)
     return states.CHOOSING_MODE
 
 
-# Вспомогательные функции
-
-async def get_user_mistakes(user_id: int) -> List[Dict]:
-    """Получает детальную информацию об ошибках пользователя."""
-    mistake_ids = await db.get_mistake_ids(user_id)
-    mistakes = []
+@safe_handler()
+@validate_state_transition({states.CHOOSING_MODE})
+async def test_start_mistakes(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Начинает работу над ошибками."""
+    query = update.callback_query
     
-    # Здесь нужно загрузить информацию о каждом вопросе
-    # Это зависит от структуры хранения вопросов
-    # Пример заглушки:
-    for q_id in mistake_ids:
-        mistakes.append({
-            'question_id': q_id,
-            'topic': 'Тема вопроса',  # Нужно получить из базы вопросов
-            'error_type': 'Неверный ответ',
-            'timestamp': datetime.now().isoformat()
-        })
+    # Отправляем первый вопрос из очереди ошибок
+    from .handlers import send_mistake_question
     
-    return mistakes
+    await query.edit_message_text("⏳ Загружаю первый вопрос...")
+    await send_mistake_question(query.message, context)
+    
+    return states.REVIEWING_MISTAKES
