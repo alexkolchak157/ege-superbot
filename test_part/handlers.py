@@ -131,17 +131,28 @@ async def entry_from_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return ConversationHandler.END
     
     # Получаем статистику пользователя
-    user_stats = await db.get_user_stats(query.from_user.id)
+    user_stats_by_topic = await db.get_user_stats(query.from_user.id)
     mistake_ids = await db.get_mistake_ids(query.from_user.id)
     mistake_count = len(mistake_ids)
+    streaks = await db.get_user_streaks(query.from_user.id)
+
+    # Агрегируем статистику из списка тем
+    total_correct = 0
+    total_answered = 0
+    for topic, correct, total in user_stats_by_topic:
+        total_correct += correct
+        total_answered += total
 
     # Формируем статистику для адаптивного меню
     stats_for_menu = {
-        'streak': user_stats.get('streak', 0),
-        'total_attempts': user_stats.get('total', 0),
-        'progress_percent': int((user_stats.get('correct', 0) / user_stats.get('total', 1)) * 100) if user_stats.get('total', 0) > 0 else 0,
+        'streak': streaks.get('current_correct', 0),
+        'total_attempts': total_answered,
+        'progress_percent': int((total_correct / total_answered) * 100) if total_answered > 0 else 0,
         'mistakes_count': mistake_count
     }
+
+    # Приветственное сообщение
+    is_new = total_answered == 0
 
     # Создаем адаптивное меню
     kb = AdaptiveKeyboards.create_menu_keyboard(
@@ -150,7 +161,7 @@ async def entry_from_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
     # Приветственное сообщение
-    is_new = user_stats.get('total', 0) == 0
+    is_new = total_answered == 0
     welcome_text = MessageFormatter.format_welcome_message(
         module_name="Тестовая часть ЕГЭ",
         is_new_user=is_new
@@ -876,20 +887,26 @@ async def cmd_score(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Команда /score - показ статистики."""
     user_id = update.effective_user.id
     
-    stats = await db.get_user_stats(user_id)
-    mistake_ids = await db.get_mistake_ids(user_id)
-    mistake_count = len(mistake_ids)
-    
-    # Используем универсальное форматирование прогресса
+    user_stats_by_topic = await db.get_user_stats(user_id)
+    streaks = await db.get_user_streaks(user_id)
+
+    # Агрегируем статистику
+    total_correct = 0
+    total_answered = 0
+    for topic, correct, total in user_stats_by_topic:
+        total_correct += correct
+        total_answered += total
+
+    # Используем в тексте
     text = MessageFormatter.format_progress_message(
         stats={
-            'completed': stats.get('correct', 0),
-            'total': stats.get('total', 0),
-            'average_score': stats.get('correct', 0) / max(stats.get('total', 1), 1),
-            'total_attempts': stats.get('total', 0),
-            'current_average': accuracy / 100,  # Теперь accuracy определена
-            'streak': stats.get('streak', 0),
-            'max_streak': stats.get('max_streak', 0),
+            'completed': total_correct,
+            'total': total_answered,
+            'average_score': total_correct / max(total_answered, 1),
+            'total_attempts': total_answered,
+            'current_average': (total_correct / max(total_answered, 1)) * 100,
+            'streak': streaks.get('current_correct', 0),
+            'max_streak': streaks.get('max_correct', 0),
             'mistakes_count': mistake_count
         },
         module_name="Тестовая часть"
