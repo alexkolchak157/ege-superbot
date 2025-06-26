@@ -133,16 +133,28 @@ async def delete_previous_messages(context: ContextTypes.DEFAULT_TYPE, chat_id: 
     
     logger.info(f"Task19: Deleted {deleted_count}/{len(messages_to_delete)} messages")
 
+# Оптимизированная загрузка данных с кэшированием
+_topics_cache = None
+_topics_cache_time = None
+
 async def init_task19_data():
-    """Инициализация данных для задания 19."""
-    global task19_data
-
+    """Инициализация данных для задания 19 с кэшированием."""
+    global task19_data, _topics_cache, _topics_cache_time
+    
+    # Проверяем кэш (обновляем раз в час)
+    if _topics_cache and _topics_cache_time:
+        if (datetime.now() - _topics_cache_time).seconds < 3600:
+            task19_data = _topics_cache
+            logger.info("Loaded task19 data from cache")
+            return
+    
     data_file = os.path.join(os.path.dirname(__file__), "task19_topics.json")
-
+    
     try:
         with open(data_file, "r", encoding="utf-8") as f:
             raw = json.load(f)
 
+        # Поддержка двух форматов данных: список тем или словарь блоков
         if isinstance(raw, list):
             topics_list = raw
         else:
@@ -153,23 +165,29 @@ async def init_task19_data():
                     topics_list.append(topic)
 
         all_topics = []
-        topic_by_id: Dict[int, Dict] = {}
-        blocks = {}
+        topic_by_id = {}
+        topics_by_block = {}
+
         for topic in topics_list:
-            block = topic.get("block", "Без категории")
+            block_name = topic.get("block", "Без категории")
             all_topics.append(topic)
             topic_by_id[topic["id"]] = topic
-            blocks.setdefault(block, {"topics": []})["topics"].append(topic)
+            topics_by_block.setdefault(block_name, []).append(topic)
 
         task19_data = {
             "topics": all_topics,
             "topic_by_id": topic_by_id,
-            "blocks": blocks,
+            "topics_by_block": topics_by_block,
+            "blocks": {b: {"topics": t} for b, t in topics_by_block.items()},
         }
+
+        _topics_cache = raw
+        _topics_cache_time = datetime.now()
+        
         logger.info(f"Loaded {len(all_topics)} topics for task19")
     except Exception as e:
         logger.error(f"Failed to load task19 data: {e}")
-        task19_data = {"topics": [], "blocks": {}}
+        task19_data = {"topics": [], "blocks": {}, "topics_by_block": {}}
 
 
 @safe_handler()
@@ -366,6 +384,10 @@ async def random_topic_all(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["current_topic"] = topic
     await query.edit_message_text(text, reply_markup=kb, parse_mode=ParseMode.HTML)
 
+    # ВАЖНО: Явно устанавливаем состояние пользователя
+    from core.state_validator import state_validator
+    state_validator.set_state(query.from_user.id, states.ANSWERING)
+    
     return states.ANSWERING
 
 
@@ -389,6 +411,10 @@ async def random_topic_block(update: Update, context: ContextTypes.DEFAULT_TYPE)
     )
     context.user_data["current_topic"] = topic
     await query.edit_message_text(text, reply_markup=kb, parse_mode=ParseMode.HTML)
+
+    # ВАЖНО: Явно устанавливаем состояние пользователя
+    from core.state_validator import state_validator
+    state_validator.set_state(query.from_user.id, states.ANSWERING)
 
     return states.ANSWERING
 
@@ -476,25 +502,9 @@ async def select_topic(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Выбор конкретной темы."""
     query = update.callback_query
     
-    # Удаляем сообщение о проверке, если оно есть
-    if 'checking_message_id' in context.user_data:
-        try:
-            await context.bot.delete_message(
-                chat_id=query.message.chat_id,
-                message_id=context.user_data['checking_message_id']
-            )
-            del context.user_data['checking_message_id']
-        except:
-            pass
-    
-    # Удаляем все предыдущие сообщения перед показом нового задания
-    await delete_previous_messages(context, query.message.chat_id)
-    
-    if query.data == "t19_random":
-        topic = random.choice(task19_data['topics'])
-    else:
-        topic_id = int(query.data.split(':')[1])
-        topic = next((t for t in task19_data['topics'] if t['id'] == topic_id), None)
+    # Извлекаем topic_id из callback_data
+    topic_id = int(query.data.split(':')[1])
+    topic = next((t for t in task19_data['topics'] if t['id'] == topic_id), None)
     
     if not topic:
         await query.edit_message_text("❌ Тема не найдена")
@@ -503,20 +513,7 @@ async def select_topic(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Сохраняем текущую тему
     context.user_data['current_topic'] = topic
     
-    text = f"""📝 <b>Задание 19</b>
-
-<b>Тема:</b> {topic['title']}
-
-<b>Задание:</b> {topic['task_text']}
-
-<b>Требования:</b>
-• Приведите три примера
-• Каждый пример должен быть конкретным
-• Избегайте абстрактных формулировок
-• Указывайте детали (имена, даты, места)
-
-💡 <i>Отправьте ваш ответ одним сообщением</i>"""
-    
+    text = _build_topic_message(topic)
     kb = InlineKeyboardMarkup([[
         InlineKeyboardButton("⬅️ Выбрать другую тему", callback_data="t19_practice")
     ]])
@@ -526,6 +523,10 @@ async def select_topic(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=kb,
         parse_mode=ParseMode.HTML
     )
+    
+    # ВАЖНО: Явно устанавливаем состояние пользователя
+    from core.state_validator import state_validator
+    state_validator.set_state(query.from_user.id, states.ANSWERING)
     
     return states.ANSWERING
 
@@ -1095,63 +1096,6 @@ def generate_examples_for_topic(topic: Dict) -> str:
 
 3️⃣ <b>Пример из культуры:</b>
 Фильм "Челюсти" режиссера А. Учителя собрал в российском прокате 1,2 млрд рублей за первый месяц, став самым кассовым российским фильмом 2023 года."""
-
-
-# Оптимизированная загрузка данных с кэшированием
-_topics_cache = None
-_topics_cache_time = None
-
-async def init_task19_data():
-    """Инициализация данных для задания 19 с кэшированием."""
-    global task19_data, _topics_cache, _topics_cache_time
-    
-    # Проверяем кэш (обновляем раз в час)
-    if _topics_cache and _topics_cache_time:
-        if (datetime.now() - _topics_cache_time).seconds < 3600:
-            task19_data = _topics_cache
-            logger.info("Loaded task19 data from cache")
-            return
-    
-    data_file = os.path.join(os.path.dirname(__file__), "task19_topics.json")
-    
-    try:
-        with open(data_file, "r", encoding="utf-8") as f:
-            raw = json.load(f)
-
-        # Поддержка двух форматов данных: список тем или словарь блоков
-        if isinstance(raw, list):
-            topics_list = raw
-        else:
-            topics_list = []
-            for block_name, block in raw.get("blocks", {}).items():
-                for topic in block.get("topics", []):
-                    topic["block"] = block_name
-                    topics_list.append(topic)
-
-        all_topics = []
-        topic_by_id = {}
-        topics_by_block = {}
-
-        for topic in topics_list:
-            block_name = topic.get("block", "Без категории")
-            all_topics.append(topic)
-            topic_by_id[topic["id"]] = topic
-            topics_by_block.setdefault(block_name, []).append(topic)
-
-        task19_data = {
-            "topics": all_topics,
-            "topic_by_id": topic_by_id,
-            "topics_by_block": topics_by_block,
-            "blocks": {b: {"topics": t} for b, t in topics_by_block.items()},
-        }
-
-        _topics_cache = raw
-        _topics_cache_time = datetime.now()
-        
-        logger.info(f"Loaded {len(all_topics)} topics for task19")
-    except Exception as e:
-        logger.error(f"Failed to load task19 data: {e}")
-        task19_data = {"topics": [], "blocks": {}, "topics_by_block": {}}
 
 
 @safe_handler()
