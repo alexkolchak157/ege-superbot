@@ -383,10 +383,6 @@ async def random_topic_all(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     context.user_data["current_topic"] = topic
     await query.edit_message_text(text, reply_markup=kb, parse_mode=ParseMode.HTML)
-
-    # ВАЖНО: Явно устанавливаем состояние пользователя
-    from core.state_validator import state_validator
-    state_validator.set_state(query.from_user.id, states.ANSWERING)
     
     return states.ANSWERING
 
@@ -411,10 +407,6 @@ async def random_topic_block(update: Update, context: ContextTypes.DEFAULT_TYPE)
     )
     context.user_data["current_topic"] = topic
     await query.edit_message_text(text, reply_markup=kb, parse_mode=ParseMode.HTML)
-
-    # ВАЖНО: Явно устанавливаем состояние пользователя
-    from core.state_validator import state_validator
-    state_validator.set_state(query.from_user.id, states.ANSWERING)
 
     return states.ANSWERING
 
@@ -523,11 +515,7 @@ async def select_topic(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=kb,
         parse_mode=ParseMode.HTML
     )
-    
-    # ВАЖНО: Явно устанавливаем состояние пользователя
-    from core.state_validator import state_validator
-    state_validator.set_state(query.from_user.id, states.ANSWERING)
-    
+
     return states.ANSWERING
 
 @safe_handler()
@@ -599,6 +587,22 @@ async def show_progress_enhanced(update: Update, context: ContextTypes.DEFAULT_T
 @safe_handler()
 @validate_state_transition({states.ANSWERING})
 async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработка ответа пользователя."""
+    # Добавить логирование
+    logger.info(f"handle_answer called for user {update.effective_user.id}")
+    logger.info(f"Current topic: {context.user_data.get('current_topic')}")
+    
+    # Проверка наличия темы
+    if not context.user_data.get('current_topic'):
+        logger.error("No current topic found in context")
+        await update.message.reply_text(
+            "❌ Ошибка: тема не выбрана. Пожалуйста, выберите тему заново.",
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("📝 К заданиям", callback_data="t19_practice")
+            ]])
+        )
+        return states.CHOOSING_MODE
+    
     return await safe_handle_answer_task19(update, context)
 
 
