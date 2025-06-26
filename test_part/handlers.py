@@ -18,6 +18,7 @@ from core.ui_helpers import (create_visual_progress, get_motivational_message,
 from core.universal_ui import (AdaptiveKeyboards, MessageFormatter,
                                UniversalUIComponents)
 from core.error_handler import safe_handler, auto_answer_callback
+from core.utils import check_subscription, send_subscription_required
 from . import keyboards, utils
 from .loader import AVAILABLE_BLOCKS, QUESTIONS_DATA, QUESTIONS_DICT_FLAT
 from .missing_handlers import (
@@ -191,7 +192,7 @@ async def cleanup_previous_messages(update: Update, context: ContextTypes.DEFAUL
 @safe_handler()
 @validate_state_transition({states.CHOOSING_MODE})
 async def entry_from_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Вход в тестовую часть из главного меню (обновленная версия)."""
+    """Вход в тестовую часть из главного меню."""
     query = update.callback_query
     
     # Очищаем контекст от данных других модулей
@@ -209,10 +210,7 @@ async def entry_from_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Устанавливаем флаг активного модуля
     context.user_data['active_module'] = 'test_part'
     
-    # Проверка подписки
-    if not await utils.check_subscription(query.from_user.id, context.bot):
-        await utils.send_subscription_required(query, REQUIRED_CHANNEL)
-        return ConversationHandler.END
+    # Убрана проверка подписки - она должна быть на уровне всего бота
     
     kb = keyboards.get_initial_choice_keyboard()
     await query.edit_message_text(
@@ -241,10 +239,7 @@ async def cmd_quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Устанавливаем активный модуль
     context.user_data['active_module'] = 'test_part'
     
-    # Проверка подписки
-    if not await utils.check_subscription(update.effective_user.id, context.bot, REQUIRED_CHANNEL):
-        await utils.send_subscription_required(update, REQUIRED_CHANNEL)
-        return ConversationHandler.END
+    # Убрана проверка подписки - она должна быть на уровне всего бота
     
     kb = keyboards.get_initial_choice_keyboard()
     await update.message.reply_text(
@@ -1638,85 +1633,6 @@ async def test_export_csv(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Используем функцию из missing_handlers
     from .missing_handlers import export_csv
     return await export_csv(update, context)
-
-@safe_handler()
-@validate_state_transition({states.CHOOSING_MODE})
-async def export_csv(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Экспортирует статистику и ошибки в CSV файл."""
-    query = update.callback_query
-    user_id = query.from_user.id
-    
-    await query.answer("Подготавливаю файл...")
-    
-    # Получаем данные
-    mistakes = await get_user_mistakes(user_id)
-    stats = await db.get_user_stats(user_id)
-    
-    # Создаем CSV в памяти
-    output = io.StringIO()
-    writer = csv.writer(output)
-    
-    # Заголовок с информацией
-    writer.writerow(['Отчет по тестовой части ЕГЭ'])
-    writer.writerow([f'Дата: {datetime.now().strftime("%d.%m.%Y %H:%M")}'])
-    writer.writerow([])
-    
-    # Общая статистика
-    writer.writerow(['ОБЩАЯ СТАТИСТИКА'])
-    writer.writerow(['Тема', 'Правильных ответов', 'Всего отвечено', 'Процент'])
-    
-    total_correct = 0
-    total_answered = 0
-    
-    for topic, correct, answered in stats:
-        percentage = (correct / answered * 100) if answered > 0 else 0
-        writer.writerow([topic, correct, answered, f'{percentage:.1f}%'])
-        total_correct += correct
-        total_answered += answered
-    
-    writer.writerow([])
-    writer.writerow(['ИТОГО', total_correct, total_answered, 
-                    f'{(total_correct/total_answered*100 if total_answered > 0 else 0):.1f}%'])
-    
-    # Детали ошибок
-    if mistakes:
-        writer.writerow([])
-        writer.writerow(['АНАЛИЗ ОШИБОК'])
-        writer.writerow(['ID вопроса', 'Тема', 'Тип ошибки', 'Дата'])
-        
-        for mistake in mistakes:
-            writer.writerow([
-                mistake.get('question_id', 'N/A'),
-                mistake.get('topic', 'Без темы'),
-                mistake.get('error_type', 'Неверный ответ'),
-                mistake.get('timestamp', 'N/A')
-            ])
-    
-    # Готовим файл для отправки
-    output.seek(0)
-    bio = io.BytesIO(output.getvalue().encode('utf-8-sig'))  # UTF-8 with BOM для Excel
-    bio.name = f'ege_test_report_{user_id}_{datetime.now().strftime("%Y%m%d")}.csv'
-    
-    # Отправляем файл
-    await query.message.reply_document(
-        document=bio,
-        caption="📊 Ваш отчет по тестовой части ЕГЭ\n\n"
-                "Файл можно открыть в Excel или Google Sheets",
-        filename=bio.name
-    )
-    
-    # Возвращаемся в меню прогресса
-    kb = InlineKeyboardMarkup([[
-        InlineKeyboardButton("⬅️ Назад", callback_data="test_progress")
-    ]])
-    
-    await query.message.reply_text(
-        "✅ Отчет успешно экспортирован!",
-        reply_markup=kb
-    )
-    
-    return states.CHOOSING_MODE
-
 
 @safe_handler()
 @validate_state_transition({states.CHOOSING_MODE})

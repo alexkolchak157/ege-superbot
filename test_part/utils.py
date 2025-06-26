@@ -153,65 +153,6 @@ def create_back_to_menu_keyboard() -> InlineKeyboardMarkup:
         [InlineKeyboardButton("🏠 Главное меню", callback_data="to_main_menu")]
     ])
 
-async def check_subscription(user_id: int, bot, channel: str = None) -> bool:
-    """Проверка подписки на канал."""
-    # Временно отключаем проверку для тестирования
-    return True
-    
-    # Когда будете готовы включить проверку, раскомментируйте код ниже:
-    """
-    if not channel:
-        channel = REQUIRED_CHANNEL
-        
-    if not channel:
-        logger.warning("Канал для проверки подписки не указан")
-        return True
-    
-    try:
-        from telegram.constants import ChatMemberStatus
-        
-        member = await bot.get_chat_member(chat_id=channel, user_id=user_id)
-        
-        # Проверяем статус
-        if hasattr(member, 'status'):
-            return member.status in [
-                ChatMemberStatus.MEMBER,
-                ChatMemberStatus.ADMINISTRATOR,
-                ChatMemberStatus.OWNER,
-                ChatMemberStatus.CREATOR
-            ]
-        
-        # Старый способ для совместимости
-        status = getattr(member, 'status', None)
-        if status:
-            return status.lower() in ['member', 'administrator', 'creator', 'owner']
-            
-        return False
-        
-    except Exception as e:
-        logger.error(f"Ошибка проверки подписки: {e}")
-        return True  # В случае ошибки пропускаем
-    """
-
-async def send_subscription_required(update_or_query, channel: str):
-    """Отправка сообщения о необходимости подписки."""
-    kb = InlineKeyboardMarkup([
-        [InlineKeyboardButton("✅ Подписаться", url=f"https://t.me/{channel.lstrip('@')}")],
-        [InlineKeyboardButton("🔄 Я подписался", callback_data="check_subscription")]
-    ])
-    
-    text = f"Для доступа к боту необходимо подписаться на канал {channel}"
-    
-    try:
-        if hasattr(update_or_query, 'message'):
-            # Это Update
-            await update_or_query.message.reply_text(text, reply_markup=kb)
-        else:
-            # Это CallbackQuery
-            await update_or_query.edit_message_text(text, reply_markup=kb)
-    except Exception as e:
-        logger.error(f"Error sending subscription required message: {e}")
-
 def normalize_answer(answer: str, question_type: str) -> str:
     """Нормализация ответа для сравнения."""
     if not answer:
@@ -368,31 +309,46 @@ def format_progress_bar(current: int, total: int, width: int = 10) -> str:
     return f"[{bar}] {percentage}% ({current}/{total})"
 
 def find_question_by_id(question_id: str) -> Optional[Dict[str, Any]]:
-    """Ищет вопрос по ID используя кеш если доступен."""
+    """
+    Ищет вопрос по ID используя кеш если доступен.
+    
+    Args:
+        question_id: ID вопроса для поиска
+        
+    Returns:
+        Словарь с данными вопроса или None если не найден
+    """
     if not question_id:
         return None
     
-    # Используем кеш для быстрого поиска если он доступен
+    # Пробуем использовать кеш
     try:
         from .cache import questions_cache
-        if questions_cache:
-            cached_question = questions_cache.get_by_id(question_id)
-            if cached_question:
-                return cached_question
+        if questions_cache and questions_cache._is_built:
+            question = questions_cache.get_by_id(question_id)
+            if question:
+                return question
     except ImportError:
         pass
     
-    # Если кеш не доступен или не построен, ищем по-старому
-    if not QUESTIONS_DATA:
-        return None
-        
-    for block_data in QUESTIONS_DATA.values():
-        for topic_questions in block_data.values():
-            for question in topic_questions:
-                if isinstance(question, dict) and question.get("id") == question_id:
-                    return question
+    # Fallback: поиск в QUESTIONS_DATA
+    from .handlers import QUESTIONS_DATA
     
-    logging.warning(f"Вопрос с ID {question_id} не найден.")
+    if QUESTIONS_DATA:
+        for block_data in QUESTIONS_DATA.values():
+            for topic_questions in block_data.values():
+                for question in topic_questions:
+                    if question.get('id') == question_id:
+                        return question
+    
+    # Последняя попытка через loader
+    try:
+        from .loader import QUESTIONS_DICT_FLAT
+        if QUESTIONS_DICT_FLAT:
+            return QUESTIONS_DICT_FLAT.get(question_id)
+    except ImportError:
+        pass
+    
     return None
 
 async def export_user_stats_csv(user_id: int) -> str:
@@ -694,16 +650,52 @@ CallbackData = TestPartCallbackData
 # Additional helper functions required by missing_handlers
 
 async def get_user_mistakes(user_id: int) -> List[Dict]:
-    """Возвращает список ошибок пользователя для режима работы над ошибками."""
+    """
+    Возвращает список ошибок пользователя для режима работы над ошибками.
+    
+    Args:
+        user_id: ID пользователя
+        
+    Returns:
+        Список словарей с информацией об ошибках
+    """
     mistake_ids = await db.get_mistake_ids(user_id)
     mistakes = []
+    
     for q_id in mistake_ids:
-        mistakes.append({
-            "question_id": q_id,
-            "topic": "Тема вопроса",
-            "error_type": "Неверный ответ",
-            "timestamp": datetime.now().isoformat(),
-        })
+        # Находим данные вопроса
+        question_data = find_question_by_id(q_id)
+        
+        if question_data:
+            topic = question_data.get('topic', 'Неизвестная тема')
+            topic_name = TOPIC_NAMES.get(topic, topic)
+            q_type = question_data.get('type', 'unknown')
+            
+            # Определяем тип ошибки по типу вопроса
+            error_type_map = {
+                'single_choice': 'Неверный выбор',
+                'multiple_choice': 'Неполный/неверный выбор',
+                'matching': 'Неверное соответствие',
+                'sequence': 'Неверная последовательность',
+                'text_input': 'Неверный ответ'
+            }
+            
+            mistakes.append({
+                "question_id": q_id,
+                "topic": topic_name,
+                "error_type": error_type_map.get(q_type, "Неверный ответ"),
+                "timestamp": datetime.now().isoformat(),
+                "exam_number": question_data.get('exam_number')
+            })
+        else:
+            # Если вопрос не найден, добавляем с базовой информацией
+            mistakes.append({
+                "question_id": q_id,
+                "topic": "Вопрос не найден",
+                "error_type": "Неверный ответ",
+                "timestamp": datetime.now().isoformat()
+            })
+    
     return mistakes
 
 
@@ -719,3 +711,66 @@ def format_mistake_stats(mistakes: List[Dict]) -> str:
         )
 
     return "\n".join(lines)
+
+async def export_user_stats_csv(user_id: int) -> str:
+    """
+    Генерирует CSV со статистикой пользователя.
+    
+    Args:
+        user_id: ID пользователя
+        
+    Returns:
+        Строка с CSV данными
+    """
+    import csv
+    import io
+    from datetime import datetime
+    
+    # Получаем статистику
+    stats = await db.get_user_stats(user_id)
+    mistakes = await db.get_mistake_ids(user_id)
+    streaks = await db.get_user_streaks(user_id)
+    
+    # Создаем CSV в памяти
+    output = io.StringIO()
+    writer = csv.writer(output)
+    
+    # Заголовок
+    writer.writerow(['Статистика пользователя', f'ID: {user_id}'])
+    writer.writerow(['Дата экспорта', datetime.now().strftime('%d.%m.%Y %H:%M')])
+    writer.writerow([])
+    
+    # Общая статистика
+    writer.writerow(['РЕЗУЛЬТАТЫ ПО ТЕМАМ'])
+    writer.writerow(['Тема', 'Правильных', 'Всего', 'Процент'])
+    
+    total_correct = 0
+    total_answered = 0
+    
+    for topic, correct, answered in stats:
+        if answered > 0:
+            percentage = (correct / answered) * 100
+            topic_name = TOPIC_NAMES.get(topic, topic)
+            writer.writerow([topic_name, correct, answered, f'{percentage:.1f}%'])
+            total_correct += correct
+            total_answered += answered
+    
+    writer.writerow([])
+    writer.writerow(['ИТОГО', total_correct, total_answered, 
+                    f'{(total_correct/total_answered*100 if total_answered > 0 else 0):.1f}%'])
+    
+    # Стрики
+    writer.writerow([])
+    writer.writerow(['ДОСТИЖЕНИЯ'])
+    writer.writerow(['Показатель', 'Значение'])
+    writer.writerow(['Дней подряд', streaks.get('current_daily', 0)])
+    writer.writerow(['Рекорд дней', streaks.get('max_daily', 0)])
+    writer.writerow(['Правильных подряд', streaks.get('current_correct', 0)])
+    writer.writerow(['Рекорд правильных', streaks.get('max_correct', 0)])
+    
+    # Ошибки
+    writer.writerow([])
+    writer.writerow(['ОШИБКИ'])
+    writer.writerow([f'Всего ошибок: {len(mistakes)}'])
+    
+    return output.getvalue()

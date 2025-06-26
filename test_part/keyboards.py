@@ -29,6 +29,7 @@ def get_initial_choice_keyboard() -> InlineKeyboardMarkup:
         [InlineKeyboardButton("📚 По блоку тем", callback_data="initial:select_block")],
         [InlineKeyboardButton("🎲 Случайные вопросы (все)", callback_data="initial:select_random_all")],
         [InlineKeyboardButton("🔧 Работа над ошибками", callback_data="initial:select_mistakes")],
+        [InlineKeyboardButton("📊 Мой прогресс", callback_data="test_part_progress")],  # НОВАЯ КНОПКА
         [InlineKeyboardButton("🏠 Главное меню", callback_data="to_main_menu")]
     ])
 
