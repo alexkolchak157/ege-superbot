@@ -7,13 +7,6 @@ from telegram.ext import (
 from core.plugin_base import BotPlugin
 from core import states
 from . import handlers
-from .missing_handlers import (
-    detailed_report,
-    export_csv,
-    work_mistakes,
-    check_subscription,
-    test_start_mistakes
-)
 
 logger = logging.getLogger(__name__)
 
@@ -122,10 +115,6 @@ class TestPartPlugin(BotPlugin):
                         pattern="^test_detailed_analysis$"
                     ),
                     CallbackQueryHandler(
-                        handlers.test_detailed_analysis,
-                        pattern="^test_detailed_analysis$"
-                    ),
-                    CallbackQueryHandler(
                         handlers.reset_progress_confirm,
                         pattern="^test_part_reset_confirm$"
                     ),
@@ -163,10 +152,6 @@ class TestPartPlugin(BotPlugin):
                         pattern="^to_main_menu$"
                     ),
                     CallbackQueryHandler(
-                        handlers.handle_unknown_callback,
-                        pattern=".*"
-                    ),
-                    CallbackQueryHandler(
                         handlers.test_mistakes,
                         pattern="^test_mistakes$"
                     ),
@@ -181,6 +166,10 @@ class TestPartPlugin(BotPlugin):
                     CallbackQueryHandler(
                         handlers.test_work_mistakes,
                         pattern="^test_work_mistakes$"
+                    ),
+                    CallbackQueryHandler(
+                        handlers.handle_unknown_callback,
+                        pattern=".*"
                     ),                    
                 ],
                 

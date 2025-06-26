@@ -249,6 +249,7 @@ async def cmd_quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
 @validate_state_transition({states.CHOOSING_MODE})
 async def test_detailed_analysis(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Показывает детальный анализ ошибок."""
+    context.user_data['conversation_state'] = states.CHOOSING_MODE
     query = update.callback_query
     user_id = query.from_user.id
     
@@ -1173,15 +1174,17 @@ async def handle_unknown_callback(update: Update, context: ContextTypes.DEFAULT_
     """Обработчик неизвестных callback_data в test_part."""
     query = update.callback_query
     
-    # Просто отвечаем на callback без показа сообщений об ошибке
-    await query.answer()
+    # Логируем неизвестный callback
+    logger.warning(f"Неизвестный callback в test_part: {query.data}")
     
-    # Логируем для отладки
-    logger.debug(f"Unknown callback in test_part: {query.data}")
+    # Проверяем, не наши ли это кнопки
+    if query.data in ["test_export_csv", "test_work_mistakes"]:
+        logger.error(f"ВНИМАНИЕ: callback {query.data} попал в handle_unknown_callback!")
     
-    # Возвращаем текущее состояние без изменений
-    current_state = context.user_data.get('conversation_state', states.CHOOSING_MODE)
-    return current_state
+    await query.answer("Функция временно недоступна", show_alert=True)
+    
+    # Возвращаем текущее состояние
+    return states.CHOOSING_MODE
 
 async def cmd_export_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Команда /export - экспорт статистики в CSV файл."""
@@ -1711,6 +1714,8 @@ async def test_detailed_analysis(update: Update, context: ContextTypes.DEFAULT_T
 @validate_state_transition({states.CHOOSING_MODE})
 async def detailed_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Показывает простую наглядную статистику пользователя."""
+    # Устанавливаем правильное состояние
+    context.user_data['conversation_state'] = states.CHOOSING_MODE
     query = update.callback_query
     user_id = query.from_user.id
     
@@ -1799,7 +1804,8 @@ async def detailed_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
 @validate_state_transition({states.CHOOSING_MODE})
 async def test_work_mistakes(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Запускает работу над ошибками из статистики."""
-    # Просто вызываем основную функцию work_mistakes
+    query = update.callback_query
+    logger.info(f"test_work_mistakes вызван с callback_data: {query.data}")
     return await work_mistakes(update, context)
 
 @safe_handler()
@@ -1807,76 +1813,87 @@ async def test_work_mistakes(update: Update, context: ContextTypes.DEFAULT_TYPE)
 async def test_export_csv(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Экспорт статистики в CSV."""
     query = update.callback_query
+    logger.info(f"test_export_csv вызван с callback_data: {query.data}")
+    # ... остальной код
     user_id = query.from_user.id
     
     await query.answer("Подготавливаю файл...")
     
-    # Получаем данные
-    mistakes = await utils.get_user_mistakes(user_id)
-    stats = await db.get_user_stats(user_id)
-    
-    # Создаем CSV в памяти
-    output = io.StringIO()
-    writer = csv.writer(output)
-    
-    # Заголовок
-    writer.writerow(['Отчет по тестовой части ЕГЭ'])
-    writer.writerow([f'Дата: {datetime.now().strftime("%d.%m.%Y %H:%M")}'])
-    writer.writerow([])
-    
-    # Общая статистика
-    writer.writerow(['ОБЩАЯ СТАТИСТИКА'])
-    writer.writerow(['Тема', 'Правильных ответов', 'Всего отвечено', 'Процент'])
-    
-    total_correct = 0
-    total_answered = 0
-    
-    for topic, correct, answered in stats:
-        percentage = (correct / answered * 100) if answered > 0 else 0
-        topic_name = TOPIC_NAMES.get(topic, topic)
-        writer.writerow([topic_name, correct, answered, f'{percentage:.1f}%'])
-        total_correct += correct
-        total_answered += answered
-    
-    writer.writerow([])
-    writer.writerow(['ИТОГО', total_correct, total_answered, 
-                    f'{(total_correct/total_answered*100 if total_answered > 0 else 0):.1f}%'])
-    
-    # Детали ошибок
-    if mistakes:
-        writer.writerow([])
-        writer.writerow(['АНАЛИЗ ОШИБОК'])
-        writer.writerow(['ID вопроса', 'Тема', 'Тип ошибки'])
+    try:
+        # Получаем данные
+        mistakes = await utils.get_user_mistakes(user_id)
+        stats = await db.get_user_stats(user_id)
         
-        for mistake in mistakes:
-            writer.writerow([
-                mistake.get('question_id', 'N/A'),
-                mistake.get('topic', 'Без темы'),
-                mistake.get('error_type', 'Неверный ответ')
-            ])
-    
-    # Готовим файл для отправки
-    output.seek(0)
-    bio = io.BytesIO(output.getvalue().encode('utf-8-sig'))
-    bio.name = f'test_statistics_{user_id}_{datetime.now().strftime("%Y%m%d")}.csv'
-    
-    # Отправляем файл
-    await query.message.reply_document(
-        document=bio,
-        caption="📊 Ваша статистика по тестовой части ЕГЭ\n\n"
-                "Файл можно открыть в Excel или Google Sheets",
-        filename=bio.name
-    )
-    
-    # Возвращаемся в меню прогресса
-    kb = InlineKeyboardMarkup([[
-        InlineKeyboardButton("⬅️ Назад", callback_data="test_part_progress")
-    ]])
-    
-    await query.message.reply_text(
-        "✅ Отчет успешно экспортирован!",
-        reply_markup=kb
-    )
+        if not stats:
+            await query.answer("У вас пока нет статистики для экспорта", show_alert=True)
+            return states.CHOOSING_MODE
+        
+        # Создаем CSV в памяти
+        output = io.StringIO()
+        writer = csv.writer(output)
+        
+        # Заголовок
+        writer.writerow(['Отчет по тестовой части ЕГЭ'])
+        writer.writerow([f'Дата: {datetime.now().strftime("%d.%m.%Y %H:%M")}'])
+        writer.writerow([])
+        
+        # Общая статистика
+        writer.writerow(['ОБЩАЯ СТАТИСТИКА'])
+        writer.writerow(['Тема', 'Правильных ответов', 'Всего отвечено', 'Процент'])
+        
+        total_correct = 0
+        total_answered = 0
+        
+        for topic, correct, answered in stats:
+            percentage = (correct / answered * 100) if answered > 0 else 0
+            topic_name = TOPIC_NAMES.get(topic, topic)
+            writer.writerow([topic_name, correct, answered, f'{percentage:.1f}%'])
+            total_correct += correct
+            total_answered += answered
+        
+        writer.writerow([])
+        writer.writerow(['ИТОГО', total_correct, total_answered, 
+                        f'{(total_correct/total_answered*100 if total_answered > 0 else 0):.1f}%'])
+        
+        # Детали ошибок
+        if mistakes:
+            writer.writerow([])
+            writer.writerow(['АНАЛИЗ ОШИБОК'])
+            writer.writerow(['ID вопроса', 'Тема', 'Тип ошибки'])
+            
+            for mistake in mistakes:
+                writer.writerow([
+                    mistake.get('question_id', 'N/A'),
+                    mistake.get('topic', 'Без темы'),
+                    mistake.get('error_type', 'Неверный ответ')
+                ])
+        
+        # Готовим файл для отправки
+        output.seek(0)
+        bio = io.BytesIO(output.getvalue().encode('utf-8-sig'))
+        bio.name = f'test_statistics_{user_id}_{datetime.now().strftime("%Y%m%d")}.csv'
+        
+        # Отправляем файл
+        await query.message.reply_document(
+            document=bio,
+            caption="📊 Ваша статистика по тестовой части ЕГЭ\n\n"
+                    "Файл можно открыть в Excel или Google Sheets",
+            filename=bio.name
+        )
+        
+        # Показываем сообщение об успехе
+        kb = InlineKeyboardMarkup([[
+            InlineKeyboardButton("⬅️ Назад", callback_data="test_part_progress")
+        ]])
+        
+        await query.message.reply_text(
+            "✅ Отчет успешно экспортирован!",
+            reply_markup=kb
+        )
+        
+    except Exception as e:
+        logger.error(f"Ошибка экспорта для пользователя {user_id}: {e}")
+        await query.answer("Произошла ошибка при экспорте", show_alert=True)
     
     return states.CHOOSING_MODE
 
