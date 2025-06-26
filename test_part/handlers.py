@@ -4,6 +4,7 @@ from datetime import datetime
 from core.state_validator import validate_state_transition, state_validator
 import aiosqlite
 import os
+import csv
 import io
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.constants import ParseMode
@@ -1805,16 +1806,58 @@ async def detailed_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def test_work_mistakes(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Запускает работу над ошибками из статистики."""
     query = update.callback_query
-    logger.info(f"test_work_mistakes вызван с callback_data: {query.data}")
-    return await work_mistakes(update, context)
+    user_id = query.from_user.id
+    
+    # Получаем ошибки через utils (как в статистике)
+    mistakes = await utils.get_user_mistakes(user_id)
+    
+    if not mistakes:
+        text = "🎉 <b>Отлично!</b>\n\nУ вас нет ошибок для проработки!"
+        kb = InlineKeyboardMarkup([[
+            InlineKeyboardButton("⬅️ Назад", callback_data="test_part_progress")
+        ]])
+        await query.edit_message_text(text, reply_markup=kb, parse_mode=ParseMode.HTML)
+        return states.CHOOSING_MODE
+    
+    # Извлекаем ID вопросов из ошибок
+    mistake_ids = [m['question_id'] for m in mistakes]
+    
+    # Сохраняем данные для работы
+    context.user_data['mode'] = 'mistakes'
+    context.user_data['mistake_ids'] = mistake_ids
+    context.user_data['mistake_queue'] = mistake_ids.copy()
+    context.user_data['mistakes_total'] = len(mistake_ids)
+    context.user_data['mistakes_completed'] = 0
+    context.user_data['current_mistake_index'] = 0
+    context.user_data['user_id'] = user_id
+    
+    text = f"""🔄 <b>Работа над ошибками</b>
+
+У вас {len(mistake_ids)} вопросов с ошибками.
+
+Сейчас вы будете проходить эти вопросы заново. 
+При правильном ответе вопрос будет удален из списка ошибок.
+
+Готовы начать?"""
+    
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("✅ Начать", callback_data="test_start_mistakes")],
+        [InlineKeyboardButton("⬅️ Назад", callback_data="test_part_progress")]
+    ])
+    
+    await query.edit_message_text(
+        text,
+        reply_markup=kb,
+        parse_mode=ParseMode.HTML
+    )
+    
+    return states.CHOOSING_MODE
 
 @safe_handler()
 @validate_state_transition({states.CHOOSING_MODE})
 async def test_export_csv(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Экспорт статистики в CSV."""
     query = update.callback_query
-    logger.info(f"test_export_csv вызван с callback_data: {query.data}")
-    # ... остальной код
     user_id = query.from_user.id
     
     await query.answer("Подготавливаю файл...")
@@ -1828,57 +1871,109 @@ async def test_export_csv(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.answer("У вас пока нет статистики для экспорта", show_alert=True)
             return states.CHOOSING_MODE
         
-        # Создаем CSV в памяти
+        # Создаем CSV в памяти с правильной кодировкой для Excel
         output = io.StringIO()
-        writer = csv.writer(output)
+        writer = csv.writer(output, delimiter=';')  # Используем ; для лучшей совместимости с Excel
         
-        # Заголовок
-        writer.writerow(['Отчет по тестовой части ЕГЭ'])
-        writer.writerow([f'Дата: {datetime.now().strftime("%d.%m.%Y %H:%M")}'])
+        # Заголовок документа
+        writer.writerow(['ОТЧЕТ ПО ТЕСТОВОЙ ЧАСТИ ЕГЭ ПО ОБЩЕСТВОЗНАНИЮ'])
+        writer.writerow([f'Дата формирования: {datetime.now().strftime("%d.%m.%Y %H:%M")}'])
+        writer.writerow([f'ID пользователя: {user_id}'])
+        writer.writerow([])  # Пустая строка
+        
+        # Общая статистика - заголовок раздела
+        writer.writerow(['=' * 20 + ' ОБЩАЯ СТАТИСТИКА ' + '=' * 20])
         writer.writerow([])
         
-        # Общая статистика
-        writer.writerow(['ОБЩАЯ СТАТИСТИКА'])
-        writer.writerow(['Тема', 'Правильных ответов', 'Всего отвечено', 'Процент'])
+        # Заголовки таблицы статистики
+        writer.writerow(['Тема', 'Правильных ответов', 'Всего вопросов', 'Процент правильных', 'Оценка'])
         
         total_correct = 0
         total_answered = 0
         
+        # Данные по темам с оценкой
         for topic, correct, answered in stats:
             percentage = (correct / answered * 100) if answered > 0 else 0
             topic_name = TOPIC_NAMES.get(topic, topic)
-            writer.writerow([topic_name, correct, answered, f'{percentage:.1f}%'])
+            
+            # Определяем оценку
+            if percentage >= 90:
+                grade = 'Отлично'
+            elif percentage >= 70:
+                grade = 'Хорошо'
+            elif percentage >= 50:
+                grade = 'Удовлетворительно'
+            else:
+                grade = 'Требует внимания'
+            
+            writer.writerow([topic_name, correct, answered, f'{percentage:.1f}%', grade])
             total_correct += correct
             total_answered += answered
         
+        # Итоговая строка
         writer.writerow([])
-        writer.writerow(['ИТОГО', total_correct, total_answered, 
-                        f'{(total_correct/total_answered*100 if total_answered > 0 else 0):.1f}%'])
+        total_percentage = (total_correct/total_answered*100 if total_answered > 0 else 0)
+        writer.writerow(['ИТОГО:', total_correct, total_answered, f'{total_percentage:.1f}%', ''])
+        writer.writerow([])
         
-        # Детали ошибок
+        # Детальный анализ ошибок
         if mistakes:
+            writer.writerow(['=' * 20 + ' АНАЛИЗ ОШИБОК ' + '=' * 20])
             writer.writerow([])
-            writer.writerow(['АНАЛИЗ ОШИБОК'])
-            writer.writerow(['ID вопроса', 'Тема', 'Тип ошибки'])
+            writer.writerow(['№', 'ID вопроса', 'Тема', 'Тип ошибки', 'Номер в ЕГЭ'])
             
-            for mistake in mistakes:
+            for idx, mistake in enumerate(mistakes, 1):
                 writer.writerow([
+                    idx,
                     mistake.get('question_id', 'N/A'),
                     mistake.get('topic', 'Без темы'),
-                    mistake.get('error_type', 'Неверный ответ')
+                    mistake.get('error_type', 'Неверный ответ'),
+                    mistake.get('exam_number', 'N/A')
                 ])
+        
+        # Рекомендации
+        writer.writerow([])
+        writer.writerow(['=' * 20 + ' РЕКОМЕНДАЦИИ ' + '=' * 20])
+        writer.writerow([])
+        
+        # Анализируем слабые темы
+        weak_topics = []
+        for topic, correct, answered in stats:
+            if answered > 0 and (correct / answered) < 0.6:
+                topic_name = TOPIC_NAMES.get(topic, topic)
+                percentage = (correct / answered * 100)
+                weak_topics.append((topic_name, percentage))
+        
+        if weak_topics:
+            writer.writerow(['Темы, требующие особого внимания:'])
+            for topic_name, percentage in sorted(weak_topics, key=lambda x: x[1]):
+                writer.writerow([f'- {topic_name} ({percentage:.0f}% правильных ответов)'])
+        
+        if len(mistakes) > 10:
+            writer.writerow(['- Рекомендуется использовать режим "Работа над ошибками"'])
+        
+        if total_percentage > 80:
+            writer.writerow(['- Отличный результат! Попробуйте более сложные задания'])
+        elif total_percentage < 60:
+            writer.writerow(['- Уделите больше времени изучению теории'])
         
         # Готовим файл для отправки
         output.seek(0)
-        bio = io.BytesIO(output.getvalue().encode('utf-8-sig'))
-        bio.name = f'test_statistics_{user_id}_{datetime.now().strftime("%Y%m%d")}.csv'
+        # Используем UTF-8 BOM для корректного отображения в Excel
+        bio = io.BytesIO()
+        bio.write('\ufeff'.encode('utf-8'))  # BOM для Excel
+        bio.write(output.getvalue().encode('utf-8'))
+        bio.seek(0)
+        bio.name = f'test_statistics_{user_id}_{datetime.now().strftime("%Y%m%d_%H%M%S")}.csv'
         
         # Отправляем файл
         await query.message.reply_document(
             document=bio,
-            caption="📊 Ваша статистика по тестовой части ЕГЭ\n\n"
-                    "Файл можно открыть в Excel или Google Sheets",
-            filename=bio.name
+            caption="📊 <b>Ваша статистика экспортирована!</b>\n\n"
+                    "💡 Совет: Откройте файл в Excel, выделите все ячейки (Ctrl+A) "
+                    "и дважды кликните на границе между заголовками колонок для автоподбора ширины.",
+            filename=bio.name,
+            parse_mode=ParseMode.HTML
         )
         
         # Показываем сообщение об успехе
@@ -1887,7 +1982,7 @@ async def test_export_csv(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ]])
         
         await query.message.reply_text(
-            "✅ Отчет успешно экспортирован!",
+            "✅ Отчет успешно создан и отправлен!",
             reply_markup=kb
         )
         
@@ -1962,8 +2057,18 @@ async def test_start_mistakes(update: Update, context: ContextTypes.DEFAULT_TYPE
     """Начинает работу над ошибками."""
     query = update.callback_query
     
+    # Проверяем наличие очереди ошибок
+    if 'mistake_queue' not in context.user_data:
+        await query.answer("Ошибка: список вопросов не найден", show_alert=True)
+        return states.CHOOSING_MODE
+    
     # Отправляем первый вопрос из очереди ошибок
     await query.edit_message_text("⏳ Загружаю первый вопрос...")
+    
+    # Устанавливаем индекс текущей ошибки
+    context.user_data['current_mistake_index'] = 0
+    
+    # Отправляем вопрос
     await send_mistake_question(query.message, context)
     
     return states.REVIEWING_MISTAKES

@@ -143,6 +143,10 @@ class TestPartPlugin(BotPlugin):
                         pattern="^to_test_part_menu$"
                     ),
                     CallbackQueryHandler(
+                        handlers.test_start_mistakes,
+                        pattern="^test_start_mistakes$"
+                    ),
+                    CallbackQueryHandler(
                         handlers.back_to_mode, 
                         pattern="^to_blocks$"
                     ),                    
