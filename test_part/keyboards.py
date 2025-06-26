@@ -272,10 +272,10 @@ def get_progress_keyboard() -> InlineKeyboardMarkup:
     """Клавиатура для экрана прогресса."""
     return InlineKeyboardMarkup([
         [
-            InlineKeyboardButton("📊 Подробнее", callback_data="detailed_report"),
-            InlineKeyboardButton("📥 Экспорт", callback_data="export_csv")
+            InlineKeyboardButton("📊 Подробнее", callback_data="test_detailed_analysis"),  # ← Новое имя
+            InlineKeyboardButton("📥 Экспорт", callback_data="test_export_csv")
         ],
-        [InlineKeyboardButton("🔧 Работа над ошибками", callback_data="work_mistakes")],
+        [InlineKeyboardButton("🔧 Работа над ошибками", callback_data="test_work_mistakes")],
         [InlineKeyboardButton("⬅️ Назад", callback_data="to_test_part_menu")]
     ])
 

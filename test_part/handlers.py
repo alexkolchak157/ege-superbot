@@ -252,6 +252,68 @@ async def cmd_quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 @safe_handler()
 @validate_state_transition({states.CHOOSING_MODE})
+async def test_detailed_analysis(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Показывает детальный анализ ошибок."""
+    query = update.callback_query
+    user_id = query.from_user.id
+    
+    # Получаем все ошибки пользователя
+    mistakes = await utils.get_user_mistakes(user_id)
+    
+    if not mistakes:
+        text = "📊 <b>Детальный анализ</b>\n\nУ вас пока нет ошибок для анализа!"
+        kb = InlineKeyboardMarkup([[
+            InlineKeyboardButton("⬅️ Назад", callback_data="test_part_progress")
+        ]])
+        await query.edit_message_text(text, reply_markup=kb, parse_mode=ParseMode.HTML)
+        return states.CHOOSING_MODE
+    
+    # Группируем ошибки по темам
+    mistakes_by_topic = {}
+    for mistake in mistakes:
+        topic = mistake.get('topic', 'Без темы')
+        if topic not in mistakes_by_topic:
+            mistakes_by_topic[topic] = []
+        mistakes_by_topic[topic].append(mistake)
+    
+    # Формируем отчет
+    text = "📊 <b>Детальный анализ ошибок</b>\n\n"
+    
+    for topic, topic_mistakes in mistakes_by_topic.items():
+        text += f"📌 <b>{topic}</b>\n"
+        text += f"   Ошибок: {len(topic_mistakes)}\n"
+        
+        # Показываем типы ошибок
+        error_types = {}
+        for m in topic_mistakes:
+            error_type = m.get('error_type', 'Неверный ответ')
+            error_types[error_type] = error_types.get(error_type, 0) + 1
+        
+        for error_type, count in error_types.items():
+            text += f"   • {error_type}: {count}\n"
+        text += "\n"
+    
+    # Рекомендации
+    text += "💡 <b>Рекомендации:</b>\n"
+    if len(mistakes_by_topic) > 3:
+        text += "• Сосредоточьтесь на 2-3 темах с наибольшим количеством ошибок\n"
+    text += "• Используйте режим 'Работа над ошибками' для тренировки\n"
+    text += "• Изучите теорию по проблемным темам\n"
+    
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("📥 Экспорт в CSV", callback_data="test_export_csv")],
+        [InlineKeyboardButton("🔄 Работа над ошибками", callback_data="test_work_mistakes")],
+        [InlineKeyboardButton("⬅️ Назад", callback_data="test_part_progress")]
+    ])
+    
+    await query.edit_message_text(
+        text,
+        reply_markup=kb,
+        parse_mode=ParseMode.HTML
+    )
+    return states.CHOOSING_MODE
+@safe_handler()
+@validate_state_transition({states.CHOOSING_MODE})
 async def select_exam_num_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Выбор режима по номеру ЕГЭ."""
     query = update.callback_query
