@@ -196,36 +196,37 @@ async def entry_from_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Вход в задание 19 из главного меню."""
     query = update.callback_query
     
+    # Отвечаем на callback, чтобы убрать "часики"
+    await query.answer()
+    
+    # Получаем статистику пользователя
     results = context.user_data.get('task19_results', [])
     user_stats = {
         'total_attempts': len(results),
         'average_score': sum(r['score'] for r in results) / len(results) if results else 0,
         'streak': context.user_data.get('correct_streak', 0),
         'weak_topics_count': 0,
-        'progress_percent': int(len(set(r['topic'] for r in results)) / 50 * 100) if results else 0,
+        'progress_percent': int(len(set(r['topic'] for r in results)) / 50 * 100) if results else 0
     }
-
+    
+    # Формируем приветствие
     greeting = get_personalized_greeting(user_stats)
     text = greeting + MessageFormatter.format_welcome_message(
         "задание 19",
         is_new_user=user_stats['total_attempts'] == 0
     )
     
-    kb = InlineKeyboardMarkup([
-        [InlineKeyboardButton("💪 Практика", callback_data="t19_practice")],
-        [InlineKeyboardButton("📚 Теория и советы", callback_data="t19_theory")],
-        [InlineKeyboardButton("🏦 Банк примеров", callback_data="t19_examples")],
-        [InlineKeyboardButton("📊 Мой прогресс", callback_data="t19_progress")],
-        [InlineKeyboardButton("⚙️ Настройки", callback_data="t19_settings")],
-        [InlineKeyboardButton("🏠 Главное меню", callback_data="to_main_menu")]
-    ])
+    # Создаем адаптивную клавиатуру
+    kb = AdaptiveKeyboards.create_menu_keyboard(user_stats, module_code="t19")
     
+    # Показываем меню
     await query.edit_message_text(
         text,
         reply_markup=kb,
         parse_mode=ParseMode.HTML
     )
-
+    
+    # Возвращаем состояние CHOOSING_MODE для работы с меню
     return states.CHOOSING_MODE
 
 
