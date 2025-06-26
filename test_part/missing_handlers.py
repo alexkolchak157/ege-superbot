@@ -142,7 +142,7 @@ async def detailed_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     kb = InlineKeyboardMarkup([
         [InlineKeyboardButton("📥 Экспорт в CSV", callback_data="export_csv")],
-        [InlineKeyboardButton("🔧 Работа над ошибками", callback_data="test_mistakes")],
+        [InlineKeyboardButton("🔧 Работа над ошибками", callback_data="work_mistakes")],  # Изменено!
         [InlineKeyboardButton("⬅️ Назад", callback_data="to_test_part_menu")]
     ])
     
@@ -223,7 +223,15 @@ async def export_csv(update: Update, context: ContextTypes.DEFAULT_TYPE):
         caption="📊 Ваша статистика экспортирована в CSV файл",
         filename=bio.name
     )
-    
+    # Возвращаемся в меню прогресса
+    kb = InlineKeyboardMarkup([[
+        InlineKeyboardButton("⬅️ Назад", callback_data="test_part_progress")  # Изменено!
+    ]])
+
+    await query.message.reply_text(
+        "✅ Отчет успешно экспортирован!",
+        reply_markup=kb
+    )
     return states.CHOOSING_MODE
 
 

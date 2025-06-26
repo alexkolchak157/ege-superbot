@@ -181,6 +181,22 @@ class TestPartPlugin(BotPlugin):
                         handlers.handle_unknown_callback,
                         pattern=".*"
                     ),
+                    CallbackQueryHandler(
+                        handlers.test_mistakes,
+                        pattern="^test_mistakes$"
+                    ),
+                    CallbackQueryHandler(
+                        handlers.back_to_test_menu,
+                        pattern="^test_back_to_mode$"
+                    ),
+                    CallbackQueryHandler(
+                        handlers.test_export_csv,
+                        pattern="^test_export_csv$"
+                    ),
+                    CallbackQueryHandler(
+                        handlers.test_work_mistakes,
+                        pattern="^test_work_mistakes$"
+                    ),                    
                 ],
                 
                 states.CHOOSING_TOPIC: [
