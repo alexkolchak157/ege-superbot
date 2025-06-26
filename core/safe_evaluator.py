@@ -2,7 +2,6 @@
 Безопасные обработчики ответов для task19, task20, task25
 с проверкой evaluator на None и fallback логикой.
 """
-
 import logging
 from typing import Optional, Dict, Any
 from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton
@@ -148,6 +147,8 @@ class SafeEvaluatorMixin:
 
 async def safe_handle_answer_task19(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Безопасный обработчик для task19."""
+    logger.info(f"safe_handle_answer_task19 called for user {update.effective_user.id}")
+    
     # Получаем evaluator из модуля task19
     try:
         from task19.handlers import evaluator
@@ -159,51 +160,91 @@ async def safe_handle_answer_task19(update: Update, context: ContextTypes.DEFAUL
     topic = context.user_data.get('current_topic')
     
     if not topic:
+        logger.error("No topic found in context")
         await update.message.reply_text(
             "❌ Ошибка: тема не выбрана. Начните заново.",
             reply_markup=InlineKeyboardMarkup([[
-                InlineKeyboardButton("📝 К заданиям", callback_data="t19_menu")
+                InlineKeyboardButton("📝 К заданиям", callback_data="t19_practice")
             ]])
         )
         return states.CHOOSING_MODE
     
-    # Используем безопасную оценку
-    result = await SafeEvaluatorMixin.safe_evaluate(
-        evaluator=evaluator,
-        user_answer=user_answer,
-        topic=topic,
-        task_number=19,
-        update=update,
-        context=context
+    # Показываем анимацию проверки
+    checking_msg = await show_extended_thinking_animation(
+        update.message,
+        "Проверяю ваш ответ на задание 19",
+        duration=30
     )
     
-    # Сохраняем результат
-    context.user_data.setdefault('task19_results', []).append({
-        'topic': topic['title'],
-        'score': result['score'],
-        'max_score': result['max_score'],
-        'timestamp': datetime.now().isoformat()
-    })
-    
-    # Сохраняем ID сообщения для удаления
-    context.user_data['checking_message_id'] = checking_msg.message_id if 'checking_msg' in locals() else None
-    
-    # Показываем результат
-    await update.message.reply_text(
-        result['feedback'],
-        reply_markup=AdaptiveKeyboards.create_result_keyboard(
-            score=result['score'],
-            max_score=result['max_score'],
-            module_code="t19"
-        ),
-        parse_mode=ParseMode.HTML
-    )
-    
-    return states.CHOOSING_MODE
+    try:
+        # Используем безопасную оценку
+        result = await SafeEvaluatorMixin.safe_evaluate(
+            evaluator=evaluator,
+            user_answer=user_answer,
+            topic=topic,
+            task_number=19,
+            update=update,
+            context=context
+        )
+        
+        # Удаляем анимацию
+        try:
+            await checking_msg.delete()
+        except Exception as e:
+            logger.debug(f"Could not delete checking message: {e}")
+        
+        # Сохраняем результат
+        context.user_data.setdefault('task19_results', []).append({
+            'topic': topic['title'],
+            'score': result['score'],
+            'max_score': result['max_score'],
+            'timestamp': datetime.now().isoformat()
+        })
+        
+        # Показываем результат
+        await update.message.reply_text(
+            result['feedback'],
+            reply_markup=AdaptiveKeyboards.create_result_keyboard(
+                score=result['score'],
+                max_score=result['max_score'],
+                module_code="t19"
+            ),
+            parse_mode=ParseMode.HTML
+        )
+        
+        logger.info(f"Answer evaluated for user {update.effective_user.id}: {result['score']}/{result['max_score']}")
+        
+        return states.CHOOSING_MODE
+        
+    except Exception as e:
+        logger.error(f"Error in safe_handle_answer_task19: {e}")
+        
+        # Удаляем анимацию в случае ошибки
+        try:
+            await checking_msg.delete()
+        except:
+            pass
+        
+        # Показываем сообщение об ошибке
+        await update.message.reply_text(
+            "❌ Произошла ошибка при проверке ответа. Попробуйте еще раз.",
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("🔄 Попробовать снова", callback_data="t19_practice"),
+                InlineKeyboardButton("📝 В меню", callback_data="t19_menu")
+            ]])
+        )
+        
+        return states.CHOOSING_MODE
 
 
 async def safe_handle_answer_task20(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Безопасный обработчик для task20."""
+    
+    # НОВОЕ: Проверяем активный модуль
+    active_module = context.user_data.get('active_module')
+    if active_module != 'task20':
+        # Не наш модуль, игнорируем
+        return states.CHOOSING_MODE
     # Получаем evaluator из модуля task20
     try:
         from task20.handlers import evaluator
@@ -263,6 +304,11 @@ async def safe_handle_answer_task20(update: Update, context: ContextTypes.DEFAUL
 
 async def safe_handle_answer_task25(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Безопасный обработчик для task25."""
+    # НОВОЕ: Проверяем активный модуль
+    active_module = context.user_data.get('active_module')
+    if active_module != 'task25':
+        # Не наш модуль, игнорируем
+        return states.CHOOSING_MODE
     # Получаем evaluator из модуля task25
     try:
         from task25.handlers import evaluator
