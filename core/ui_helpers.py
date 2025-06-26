@@ -8,6 +8,9 @@ from typing import Dict, Optional
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, Message
 from telegram.constants import ParseMode
 from telegram.ext import ContextTypes
+import logging
+
+logger = logging.getLogger(__name__)
 
 async def show_thinking_animation(message: Message, text: str = "Анализирую") -> Message:
     """

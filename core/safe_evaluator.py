@@ -55,21 +55,45 @@ class SafeEvaluatorMixin:
             if evaluator and hasattr(evaluator, 'evaluate'):
                 try:
                     # Пытаемся использовать AI evaluator
-                    result = await evaluator.evaluate(
-                        answer=user_answer,
-                        topic=topic.get('title', ''),
-                        topic_data=topic
-                    )
+                    # Для task19 нужны специальные параметры
+                    if task_number == 19:
+                        result = await evaluator.evaluate(
+                            answer=user_answer,
+                            topic=topic.get('title', ''),
+                            task_text=topic.get('task_text', topic.get('title', '')),
+                            topic_data=topic
+                        )
+                    else:
+                        result = await evaluator.evaluate(
+                            answer=user_answer,
+                            topic=topic.get('title', '') if isinstance(topic, dict) else str(topic),
+                            topic_data=topic if isinstance(topic, dict) else {'title': str(topic)}
+                        )
                     
                     # Удаляем анимацию
                     await checking_msg.delete()
+                    
+                    # Проверяем, есть ли метод format_feedback
+                    if hasattr(result, 'format_feedback') and callable(result.format_feedback):
+                        feedback = result.format_feedback()
+                    elif hasattr(result, 'feedback'):
+                        feedback = result.feedback
+                    else:
+                        # Форматируем вручную
+                        feedback = f"<b>Результат проверки:</b>\n\n"
+                        if hasattr(result, 'criteria_scores'):
+                            feedback += f"Баллы: {result.total_score}/{result.max_score}\n"
+                        if hasattr(result, 'detailed_feedback') and result.detailed_feedback:
+                            feedback += f"\n{result.detailed_feedback}"
                     
                     return {
                         'success': True,
                         'score': result.total_score,
                         'max_score': result.max_score,
-                        'feedback': result.format_feedback(),
-                        'details': result.score_breakdown if hasattr(result, 'score_breakdown') else {}
+                        'feedback': feedback,
+                        'details': result.score_breakdown if hasattr(result, 'score_breakdown') else 
+                                  result.detailed_analysis if hasattr(result, 'detailed_analysis') else 
+                                  result.detailed_feedback if hasattr(result, 'detailed_feedback') else {}
                     }
                     
                 except Exception as e:
@@ -80,29 +104,46 @@ class SafeEvaluatorMixin:
             logger.info(f"Using fallback evaluation for task {task_number}")
             
             score = 0
-            max_score = 5
+            max_score = 3 if task_number == 19 else (6 if task_number == 25 else 5)
             feedback_parts = []
             
-            # Базовая проверка длины
-            if len(user_answer) > 100:
-                score += 2
-                feedback_parts.append("✅ Развернутый ответ")
-            else:
-                feedback_parts.append("⚠️ Ответ мог быть более развернутым")
-            
-            # Проверка ключевых слов (если есть)
-            keywords = topic.get('keywords', [])
-            if keywords:
-                found_keywords = sum(1 for kw in keywords if kw.lower() in user_answer.lower())
-                if found_keywords > 0:
-                    score += min(3, found_keywords)
-                    feedback_parts.append(f"✅ Найдено ключевых понятий: {found_keywords}")
+            # Для задания 19 специальная логика
+            if task_number == 19:
+                # Считаем количество примеров (по строкам)
+                lines = [line.strip() for line in user_answer.split('\n') if line.strip()]
+                examples_count = min(len(lines), 3)  # Максимум 3 примера
+                score = examples_count
+                
+                if examples_count > 0:
+                    feedback_parts.append(f"✅ Приведено примеров: {examples_count}")
                 else:
-                    feedback_parts.append("⚠️ Не найдены ключевые понятия темы")
+                    feedback_parts.append("⚠️ Примеры не обнаружены")
+                
+                # Проверяем конкретность примеров
+                concrete_words = ['иванов', 'петров', 'сидоров', 'году', 'гражданин', 'судом']
+                if any(word in user_answer.lower() for word in concrete_words):
+                    feedback_parts.append("✅ Примеры выглядят конкретными")
             else:
-                # Если нет ключевых слов, даем средний балл за попытку
-                score += 2
-                feedback_parts.append("📝 Ответ принят")
+                # Оставляем старую логику для других заданий
+                if len(user_answer) > 100:
+                    score += 2
+                    feedback_parts.append("✅ Развернутый ответ")
+                else:
+                    feedback_parts.append("⚠️ Ответ мог быть более развернутым")
+                
+                # Проверка ключевых слов (если есть)
+                keywords = topic.get('keywords', [])
+                if keywords:
+                    found_keywords = sum(1 for kw in keywords if kw.lower() in user_answer.lower())
+                    if found_keywords > 0:
+                        score += min(3, found_keywords)
+                        feedback_parts.append(f"✅ Найдено ключевых понятий: {found_keywords}")
+                    else:
+                        feedback_parts.append("⚠️ Не найдены ключевые понятия темы")
+                else:
+                    # Если нет ключевых слов, даем средний балл за попытку
+                    score += 2
+                    feedback_parts.append("📝 Ответ принят")
             
             # Удаляем анимацию
             await checking_msg.delete()
@@ -110,7 +151,7 @@ class SafeEvaluatorMixin:
             # Формируем финальный фидбек
             feedback = (
                 f"<b>Результат проверки (упрощенный режим):</b>\n\n"
-                f"{''.join(f'{part}<br/>' for part in feedback_parts)}\n"
+                f"{'<br>'.join(feedback_parts)}<br>\n"
                 f"<b>Итого: {score}/{max_score} баллов</b>\n\n"
                 f"<i>💡 Для более точной проверки требуется подключение AI-сервиса</i>"
             )
@@ -136,7 +177,7 @@ class SafeEvaluatorMixin:
             return {
                 'success': False,
                 'score': 0,
-                'max_score': 5,
+                'max_score': 3 if task_number == 19 else (6 if task_number == 25 else 5),
                 'feedback': (
                     "❌ Произошла ошибка при проверке ответа.\n"
                     "Пожалуйста, попробуйте еще раз или обратитесь к администратору."
