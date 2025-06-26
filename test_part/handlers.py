@@ -3,6 +3,7 @@ import random
 from datetime import datetime
 from core.state_validator import validate_state_transition, state_validator
 import aiosqlite
+import os
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.constants import ParseMode
 from telegram.ext import ContextTypes, ConversationHandler
@@ -10,6 +11,7 @@ from core.plugin_loader import build_main_menu
 from core import db, states
 from core.admin_tools import admin_manager
 from core.config import DATABASE_FILE, REQUIRED_CHANNEL
+from core.ui_helpers import show_thinking_animation
 from core.ui_helpers import (create_visual_progress, get_motivational_message,
                              get_personalized_greeting,
                              show_streak_notification, show_thinking_animation)
@@ -91,11 +93,25 @@ def init_data():
     """Инициализирует данные вопросов."""
     global QUESTIONS_DATA, AVAILABLE_BLOCKS, QUESTIONS_LIST
     try:
-        from .loader import get_questions_data, QUESTIONS_LIST as q_list
+        from .loader import get_questions_data, get_questions_list_flat, get_available_blocks
+        
         QUESTIONS_DATA = get_questions_data()
-        AVAILABLE_BLOCKS = list(QUESTIONS_DATA.keys()) if QUESTIONS_DATA else []
-        QUESTIONS_LIST = q_list if q_list else []
-        logger.info(f"Loaded {len(AVAILABLE_BLOCKS)} blocks with questions")
+        if QUESTIONS_DATA:
+            AVAILABLE_BLOCKS = get_available_blocks()
+            QUESTIONS_LIST = get_questions_list_flat() or []
+            logger.info(f"Loaded {len(AVAILABLE_BLOCKS)} blocks with questions")
+            logger.info(f"Total questions: {len(QUESTIONS_LIST)}")
+        else:
+            logger.warning("get_questions_data() returned None or empty")
+            QUESTIONS_DATA = {}
+            AVAILABLE_BLOCKS = []
+            QUESTIONS_LIST = []
+            
+    except ImportError as e:
+        logger.error(f"Import error loading questions data: {e}")
+        QUESTIONS_DATA = {}
+        AVAILABLE_BLOCKS = []
+        QUESTIONS_LIST = []
     except Exception as e:
         logger.error(f"Error loading questions data: {e}")
         QUESTIONS_DATA = {}
@@ -105,6 +121,45 @@ def init_data():
 # Вызываем инициализацию при импорте модуля
 init_data()
 
+# Добавьте отладочную проверку после init_data()
+def check_data_loaded():
+    """Проверяет, загружены ли данные."""
+    global QUESTIONS_DATA, AVAILABLE_BLOCKS, QUESTIONS_LIST  # Объявляем global в начале
+    
+    if not QUESTIONS_DATA:
+        logger.error("CRITICAL: QUESTIONS_DATA is empty after init!")
+        
+        # Проверяем путь к файлу
+        questions_file_path = os.path.join(
+            os.path.dirname(os.path.dirname(__file__)), 
+            'data', 
+            'questions.json'
+        )
+        logger.error(f"QUESTIONS_FILE path: {questions_file_path}")
+        logger.error(f"File exists: {os.path.exists(questions_file_path)}")
+        
+        # Попробуем загрузить напрямую
+        try:
+            from .loader import load_questions, get_stats
+            data, flat_list = load_questions()
+            if data:
+                QUESTIONS_DATA = data
+                AVAILABLE_BLOCKS = list(data.keys())
+                QUESTIONS_LIST = flat_list or []
+                logger.info("Successfully loaded questions directly")
+                stats = get_stats()
+                logger.info(f"Questions stats: {stats}")
+            else:
+                logger.error("load_questions() returned empty data")
+        except Exception as e:
+            logger.error(f"Error during direct load: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
+    else:
+        logger.info(f"Data loaded successfully: {len(AVAILABLE_BLOCKS)} blocks, {len(QUESTIONS_LIST)} questions")
+
+# Вызовите проверку
+check_data_loaded()
 
 async def cleanup_previous_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Удаляет предыдущие сообщения бота."""
@@ -250,6 +305,19 @@ async def select_random_all(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Устанавливаем активный модуль
     context.user_data['active_module'] = 'test_part'
     
+    # Проверяем, загружены ли данные
+    if not QUESTIONS_DATA:
+        logger.error("QUESTIONS_DATA is empty!")
+        await query.answer("❌ База вопросов не загружена", show_alert=True)
+        # Показываем сообщение с инструкцией
+        await query.edit_message_text(
+            "❌ <b>База вопросов не загружена</b>\n\n"
+            "Пожалуйста, обратитесь к администратору.",
+            parse_mode=ParseMode.HTML,
+            reply_markup=keyboards.get_initial_choice_keyboard()
+        )
+        return states.CHOOSING_MODE
+    
     # Собираем все вопросы
     all_questions = []
     for block_data in QUESTIONS_DATA.values():
@@ -257,6 +325,13 @@ async def select_random_all(update: Update, context: ContextTypes.DEFAULT_TYPE):
             all_questions.extend(topic_questions)
     
     if not all_questions:
+        await query.answer("❌ Нет доступных вопросов", show_alert=True)
+        await query.edit_message_text(
+            "❌ <b>Нет доступных вопросов</b>\n\n"
+            "База данных пуста. Обратитесь к администратору.",
+            parse_mode=ParseMode.HTML,
+            reply_markup=keyboards.get_initial_choice_keyboard()
+        )
         return states.CHOOSING_MODE
     
     await query.edit_message_text("⏳ Загружаю случайный вопрос...")
@@ -265,6 +340,9 @@ async def select_random_all(update: Update, context: ContextTypes.DEFAULT_TYPE):
     question_data = await utils.choose_question(query.from_user.id, all_questions)
     if question_data:
         await send_question(query.message, context, question_data, "random_all")
+        # ВАЖНО: Устанавливаем состояние пользователя
+        from core.state_validator import state_validator
+        state_validator.set_state(query.from_user.id, states.ANSWERING)
         return states.ANSWERING
     else:
         kb = keyboards.get_initial_choice_keyboard()
@@ -364,32 +442,42 @@ async def show_progress_enhanced(update: Update, context: ContextTypes.DEFAULT_T
 @safe_handler()
 @validate_state_transition({states.ANSWERING})
 async def check_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Проверка ответа пользователя с правильными вызовами БД."""
+    """Проверка ответа пользователя."""
     
     # Проверяем активный модуль
     if context.user_data.get('active_module') != 'test_part':
-        # Не наш модуль, игнорируем
         return states.ANSWERING
     
-    # Отправляем индикатор ожидания
-    thinking_msg = await update.message.reply_text("🤔 Проверяю ваш ответ...")
+    # Дополнительная проверка состояния
+    from core.state_validator import state_validator
+    user_id = update.effective_user.id
+    current_state = state_validator.get_current_state(user_id)
+    
+    if current_state != states.ANSWERING:
+        # Если состояние не установлено, устанавливаем его
+        state_validator.set_state(user_id, states.ANSWERING)
+    
+    # АНИМИРОВАННОЕ СООБЩЕНИЕ ПРОВЕРКИ
+    thinking_msg = await show_thinking_animation(
+        update.message,
+        text="Проверяю ваш ответ"
+    )
     
     # Сохраняем ID для удаления
     context.user_data['checking_message_id'] = thinking_msg.message_id
     
     user_id = update.effective_user.id
     user_answer = update.message.text.strip()
-    
+    context.user_data['user_answer_message_id'] = update.message.message_id
+
     # Получаем текущий вопрос
     current_question_id = context.user_data.get('current_question_id')
     
     if not current_question_id:
-        # Удаляем сообщение "Проверяю..."
         try:
             await thinking_msg.delete()
         except Exception:
             pass
-            
         await update.message.reply_text("Ошибка: вопрос не найден.")
         return ConversationHandler.END
     
@@ -397,12 +485,10 @@ async def check_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
     question_data = context.user_data.get(f'question_{current_question_id}')
     
     if not question_data:
-        # Удаляем сообщение "Проверяю..."
         try:
             await thinking_msg.delete()
         except Exception:
             pass
-            
         await update.message.reply_text("Ошибка: данные вопроса не найдены.")
         return ConversationHandler.END
     
@@ -415,39 +501,38 @@ async def check_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
         question_id = question_data.get('id')
         topic = question_data.get('topic')
         
-        # ПРАВИЛЬНЫЕ ВЫЗОВЫ БД:
-        
-        # 1. Обновляем прогресс по теме
+        # Обновляем БД
         if topic and topic != "N/A":
             await db.update_progress(user_id, topic, is_correct)
         
-        # 2. Записываем отвеченный вопрос
         if question_id:
-            await db.record_answered_question(user_id, question_id)
+            await db.record_answered(user_id, question_id)
         
-        # 3. Если неправильно - записываем ошибку
         if not is_correct and question_id:
             await db.record_mistake(user_id, question_id)
         
-        # 4. Обновляем дневной стрик
+        # Обновляем стрики
         daily_current, daily_max = await db.update_daily_streak(user_id)
         
-        # 5. Обновляем стрик правильных ответов
         if is_correct:
             correct_current, correct_max = await db.update_correct_streak(user_id)
         else:
             await db.reset_correct_streak(user_id)
             correct_current = 0
-            correct_max = await db.get_user_streaks(user_id).get('max_correct', 0)
+            streaks = await db.get_user_streaks(user_id)
+            correct_max = streaks.get('max_correct', 0)
         
-        # Сохраняем старый стрик для сравнения
+        # Сохраняем старый стрик
         old_correct_streak = context.user_data.get('correct_streak', 0)
         context.user_data['correct_streak'] = correct_current
         
-        # Сохраняем режим для следующего вопроса
+        # Получаем дополнительные данные
         last_mode = context.user_data.get('last_mode', 'random')
+        exam_number = context.user_data.get('current_exam_number')
+        selected_topic = context.user_data.get('selected_topic')
+        selected_block = context.user_data.get('selected_block')
         
-        # Получаем мотивационную фразу
+        # Мотивационная фраза
         motivational_phrase = None
         try:
             if not is_correct:
@@ -455,90 +540,129 @@ async def check_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception:
             pass
         
-        # Получаем счетчик правильных ответов
-        progress_text = None
-        try:
-            # Получаем статистику
-            stats = await db.get_user_stats(user_id)
-            if stats:
-                total_correct = sum(correct for _, correct, _ in stats)
-                total_answered = sum(total for _, _, total in stats)
-                
-                # Форматируем прогресс
-                if last_mode == 'exam_num':
-                    exam_number = context.user_data.get('current_exam_number')
-                    if exam_number:
-                        progress_text = f"📊 Задание №{exam_number}: {total_correct}/{total_answered} правильных"
-                elif last_mode == 'topic':
-                    selected_topic = context.user_data.get('selected_topic')
-                    if selected_topic:
-                        # Находим статистику по теме
-                        for t, c, total in stats:
-                            if t == selected_topic:
-                                progress_text = f"📊 Тема: {c}/{total} правильных"
-                                break
-                else:
-                    progress_text = f"📊 Всего: {total_correct}/{total_answered} правильных"
-        except Exception:
-            pass
+        # Статистика
+        stats = await db.get_user_stats(user_id)
+        total_correct = sum(correct for _, correct, _ in stats) if stats else 0
+        total_answered = sum(total for _, _, total in stats) if stats else 0
         
-        # Формируем ответ с улучшенной обратной связью
+        # ФОРМИРУЕМ КРАСИВЫЙ ФИДБЕК
         if is_correct:
-            # Случайная фраза для правильного ответа
-            feedback = f"<b>{utils.get_random_correct_phrase()}</b>\n\n"
+            # ПРАВИЛЬНЫЙ ОТВЕТ
+            feedback = f"<b>{utils.get_random_correct_phrase()}</b>\n"
+            feedback += "─" * 30 + "\n\n"
             
-            # Добавляем прогресс правильных ответов
-            if progress_text:
-                feedback += f"{progress_text}\n\n"
+            # Прогресс с визуализацией
+            if last_mode == 'exam_num' and exam_number:
+                questions_with_num = safe_cache_get_by_exam_num(exam_number)
+                total_in_mode = len(questions_with_num)
+                # Считаем правильные в этом задании
+                exam_correct = 0
+                for t, c, total in stats:
+                    for q in questions_with_num:
+                        if q.get('topic') == t:
+                            exam_correct += c
+                            break
+                progress_bar = create_visual_progress(exam_correct, total_in_mode)
+                feedback += f"📊 <b>Задание №{exam_number}:</b>\n"
+                feedback += f"{progress_bar}\n"
+                feedback += f"Правильных: {exam_correct}/{total_in_mode}\n\n"
+            elif last_mode == 'topic' and selected_topic:
+                for t, c, total in stats:
+                    if t == selected_topic:
+                        progress_bar = create_visual_progress(c, total)
+                        topic_name = TOPIC_NAMES.get(selected_topic, selected_topic)
+                        feedback += f"📊 <b>{topic_name}:</b>\n"
+                        feedback += f"{progress_bar}\n"
+                        feedback += f"Правильных: {c}/{total}\n\n"
+                        break
+            else:
+                progress_bar = create_visual_progress(total_correct, total_answered)
+                feedback += f"📊 <b>Общий прогресс:</b>\n"
+                feedback += f"{progress_bar}\n"
+                feedback += f"Правильных: {total_correct}/{total_answered}\n\n"
             
-            # Стрики
-            feedback += f"🔥 <b>Стрики:</b>\n"
-            feedback += f"📅 Дней подряд: {daily_current}\n"
-            feedback += f"✨ Правильных подряд: {correct_current}"
+            # Стрики с деревом
+            feedback += f"🔥 <b>Серии:</b>\n"
+            feedback += f"├ 📅 Дней подряд: <b>{daily_current}</b>"
+            if daily_current == daily_max and daily_max > 1:
+                feedback += " 🏆"
+            feedback += "\n"
             
-            # Специальная фраза для достижения milestone
+            feedback += f"└ ✨ Правильных подряд: <b>{correct_current}</b>"
+            if correct_current == correct_max and correct_max > 1:
+                feedback += " 🏆"
+            feedback += "\n"
+            
+            # Milestone
             milestone_phrase = utils.get_streak_milestone_phrase(correct_current)
             if milestone_phrase and correct_current > old_correct_streak:
-                feedback += f"\n\n{milestone_phrase}"
-
+                feedback += "\n" + "─" * 30 + "\n"
+                feedback += f"{milestone_phrase}"
+            
             # Новый рекорд
             if correct_current > old_correct_streak and correct_current == correct_max and correct_max > 1:
-                feedback += f"\n\n🎉 <b>НОВЫЙ РЕКОРД!</b>"
-
-            if motivational_phrase:
-                feedback += f"\n\n{motivational_phrase}"
-
-        else:
-            # Случайная фраза для неправильного ответа
-            feedback = f"<b>{utils.get_random_incorrect_phrase()}</b>\n\n"
-            feedback += f"Ваш ответ: <code>{user_answer}</code>\n"
-            feedback += f"Правильный ответ: <b>{correct_answer}</b>\n\n"
+                feedback += "\n\n🎊 🎉 <b>НОВЫЙ ЛИЧНЫЙ РЕКОРД!</b> 🎉 🎊"
             
-            # Добавляем прогресс правильных ответов (не меняется при неправильном)
-            if progress_text:
-                feedback += f"{progress_text}\n\n"
+            if motivational_phrase:
+                feedback += "\n\n" + "─" * 30 + "\n"
+                feedback += f"💫 <i>{motivational_phrase}</i>"
+                
+        else:
+            # НЕПРАВИЛЬНЫЙ ОТВЕТ
+            feedback = f"<b>{utils.get_random_incorrect_phrase()}</b>\n"
+            feedback += "─" * 30 + "\n\n"
+            
+            feedback += f"❌ Ваш ответ: <code>{user_answer}</code>\n"
+            feedback += f"✅ Правильный ответ: <b>{correct_answer}</b>\n\n"
+            
+            # Прогресс
+            if last_mode == 'exam_num' and exam_number:
+                questions_with_num = safe_cache_get_by_exam_num(exam_number)
+                total_in_mode = len(questions_with_num)
+                exam_correct = 0
+                for t, c, total in stats:
+                    for q in questions_with_num:
+                        if q.get('topic') == t:
+                            exam_correct += c
+                            break
+                progress_bar = create_visual_progress(exam_correct, total_in_mode)
+                feedback += f"📊 <b>Задание №{exam_number}:</b>\n"
+                feedback += f"{progress_bar}\n\n"
+            elif last_mode == 'topic' and selected_topic:
+                for t, c, total in stats:
+                    if t == selected_topic:
+                        progress_bar = create_visual_progress(c, total)
+                        topic_name = TOPIC_NAMES.get(selected_topic, selected_topic)
+                        feedback += f"📊 <b>{topic_name}:</b>\n"
+                        feedback += f"{progress_bar}\n\n"
+                        break
+            else:
+                progress_bar = create_visual_progress(total_correct, total_answered)
+                feedback += f"📊 <b>Общий прогресс:</b>\n"
+                feedback += f"{progress_bar}\n\n"
             
             # Стрики
-            feedback += f"🔥 <b>Стрики:</b>\n"
-            feedback += f"📅 Дней подряд: {daily_current}\n"
+            feedback += f"🔥 <b>Серии:</b>\n"
+            feedback += f"├ 📅 Дней подряд: <b>{daily_current}</b>\n"
             
-            # При сбросе стрика показываем рекорд
             if old_correct_streak > 0:
-                feedback += f"✨ Правильных подряд: 0\n"
-                feedback += f"\n💔 Серия из {old_correct_streak} правильных ответов прервана!"
+                feedback += f"└ ✨ Правильных подряд: <b>0</b> "
+                feedback += f"(было {old_correct_streak})\n"
+                feedback += f"\n💔 <i>Серия из {old_correct_streak} правильных ответов прервана!</i>"
                 if correct_max > 0:
-                    feedback += f"\n📈 Ваш рекорд: {correct_max}"
+                    feedback += f"\n📈 <i>Ваш рекорд: {correct_max}</i>"
             else:
-                feedback += f"✨ Правильных подряд: 0"
-
-            if motivational_phrase and not is_correct:
-                feedback += f"\n\n{motivational_phrase}"
+                feedback += f"└ ✨ Правильных подряд: <b>0</b>"
+            
+            if motivational_phrase:
+                feedback += "\n\n" + "─" * 30 + "\n"
+                feedback += f"💪 <i>{motivational_phrase}</i>"
         
-        # Показываем кнопки "что дальше"
+        # Кнопки
         has_explanation = bool(question_data.get('explanation'))
         kb = keyboards.get_next_action_keyboard(last_mode, has_explanation=has_explanation)
         
-        # ВАЖНО: Удаляем сообщение "Проверяю..." ПЕРЕД отправкой фидбека
+        # Удаляем анимацию
         try:
             await thinking_msg.delete()
         except Exception as e:
@@ -551,10 +675,7 @@ async def check_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
             parse_mode=ParseMode.HTML
         )
         
-        # Сохраняем ID сообщения с фидбеком для удаления
         context.user_data['feedback_message_id'] = sent_msg.message_id
-        
-        # Сохраняем данные о правильности ответа для пояснения
         context.user_data['last_answer_correct'] = is_correct
         
         return states.CHOOSING_NEXT_ACTION
@@ -562,7 +683,6 @@ async def check_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         logger.error(f"Error in check_answer: {e}")
         
-        # Удаляем сообщение "Проверяю..." в случае ошибки
         try:
             await thinking_msg.delete()
         except Exception:
@@ -852,15 +972,16 @@ async def back_to_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Возврат в главное меню бота."""
     query = update.callback_query
     
-    # Очищаем контекст
-    context.user_data.clear()
+    # Очищаем состояние пользователя
+    from core.state_validator import state_validator
+    state_validator.clear_state(query.from_user.id)
     
-    # Используем build_main_menu из plugin_loader
-    kb = build_main_menu()
+    # Очищаем данные модуля
+    context.user_data['active_module'] = None
     
     await query.edit_message_text(
         "👋 Что хотите потренировать?",
-        reply_markup=kb
+        reply_markup=build_main_menu()
     )
     
     return ConversationHandler.END
@@ -984,6 +1105,8 @@ async def send_question(message, context: ContextTypes.DEFAULT_TYPE,
         except:
             pass
         return ConversationHandler.END
+    from core.state_validator import state_validator
+    state_validator.set_state(user_id, states.ANSWERING)
     
     return states.ANSWERING
 
@@ -1072,11 +1195,13 @@ async def send_mistake_question(message, context: ContextTypes.DEFAULT_TYPE):
 @safe_handler()
 @validate_state_transition({states.REVIEWING_MISTAKES})
 async def handle_mistake_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обработка ответа в режиме ошибок (обновленная версия)."""
+    """Обработка ответа в режиме ошибок с анимацией."""
     
-    # Отправляем индикатор проверки
-    thinking_msg = await update.message.reply_text("🤔 Проверяю ваш ответ...")
-    context.user_data['thinking_message_id'] = thinking_msg.message_id
+    # ИСПОЛЬЗУЕМ АНИМИРОВАННОЕ СООБЩЕНИЕ
+    checking_msg = await show_thinking_animation(
+        update.message,
+        text="Проверяю ваш ответ"
+    )
     
     user_answer = update.message.text.strip()
     current_question_id = context.user_data.get('current_question_id')
@@ -1231,6 +1356,9 @@ async def select_exam_num(update: Update, context: ContextTypes.DEFAULT_TYPE):
     question_data = await utils.choose_question(query.from_user.id, questions_with_num)
     if question_data:
         await send_question(query.message, context, question_data, "exam_num")
+        # Добавить эти строки:
+        from core.state_validator import state_validator
+        state_validator.set_state(query.from_user.id, states.ANSWERING)
         return states.ANSWERING
     else:
         kb = keyboards.get_initial_choice_keyboard()
@@ -1248,18 +1376,29 @@ async def select_mode_random_in_block(update: Update, context: ContextTypes.DEFA
     
     selected_block = context.user_data.get('selected_block')
     if not selected_block or selected_block not in QUESTIONS_DATA:
+        await query.answer("❌ Блок не выбран", show_alert=True)
         return states.CHOOSING_BLOCK
     
     questions_in_block = safe_cache_get_by_block(selected_block)
     
     if not questions_in_block:
-        return states.CHOOSING_MODE
+        await query.answer("❌ В блоке нет вопросов", show_alert=True)
+        kb = keyboards.get_blocks_keyboard(AVAILABLE_BLOCKS)
+        await query.edit_message_text(
+            f"❌ В блоке '{selected_block}' нет доступных вопросов.\n\nВыберите другой блок:",
+            reply_markup=kb,
+            parse_mode=ParseMode.HTML
+        )
+        return states.CHOOSING_BLOCK
     
     await query.edit_message_text("⏳ Загружаю случайный вопрос из блока...")
     
     question_data = await utils.choose_question(query.from_user.id, questions_in_block)
     if question_data:
         await send_question(query.message, context, question_data, "block")
+        # Устанавливаем состояние
+        from core.state_validator import state_validator
+        state_validator.set_state(query.from_user.id, states.ANSWERING)
         return states.ANSWERING
     else:
         kb = keyboards.get_blocks_keyboard(AVAILABLE_BLOCKS)
@@ -1313,6 +1452,9 @@ async def select_topic(update: Update, context: ContextTypes.DEFAULT_TYPE):
     question_data = await utils.choose_question(query.from_user.id, questions_in_topic)
     if question_data:
         await send_question(query.message, context, question_data, "topic")
+        # Добавить эти строки:
+        from core.state_validator import state_validator
+        state_validator.set_state(query.from_user.id, states.ANSWERING)
         return states.ANSWERING
     else:
         topics = list(QUESTIONS_DATA[selected_block].keys())

@@ -576,8 +576,11 @@ async def purge_old_messages(context: ContextTypes.DEFAULT_TYPE, chat_id: int, k
     # Список всех ключей, содержащих ID сообщений
     message_keys = [
         'current_question_message_id',
+        'user_answer_message_id',      # ДОБАВЛЕНО: сообщение пользователя с ответом
         'answer_message_id', 
-        'feedback_message_id'
+        'feedback_message_id',
+        'checking_message_id',         # ДОБАВЛЕНО: сообщение "Проверяю ваш ответ..."
+        'thinking_message_id'          # ДОБАВЛЕНО: другие временные сообщения
     ]
     
     # Собираем все ID для удаления
@@ -593,9 +596,11 @@ async def purge_old_messages(context: ContextTypes.DEFAULT_TYPE, chat_id: int, k
     messages_to_delete.extend([msg_id for msg_id in extra_messages if msg_id != keep_id])
     
     # Удаляем сообщения
+    deleted_count = 0
     for msg_id in messages_to_delete:
         try:
             await context.bot.delete_message(chat_id=chat_id, message_id=msg_id)
+            deleted_count += 1
             logger.debug(f"Deleted message {msg_id}")
         except Exception as e:
             logger.warning(f"Failed to delete message {msg_id}: {e}")
@@ -604,6 +609,8 @@ async def purge_old_messages(context: ContextTypes.DEFAULT_TYPE, chat_id: int, k
     for key in message_keys:
         context.user_data.pop(key, None)
     context.user_data['extra_messages_to_delete'] = []
+    
+    logger.info(f"Deleted {deleted_count}/{len(messages_to_delete)} messages")
 
 def md_to_html(text: str) -> str:
     """
