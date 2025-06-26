@@ -4,6 +4,7 @@ from datetime import datetime
 from core.state_validator import validate_state_transition, state_validator
 import aiosqlite
 import os
+import io
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.constants import ParseMode
 from telegram.ext import ContextTypes, ConversationHandler
@@ -21,12 +22,6 @@ from core.error_handler import safe_handler, auto_answer_callback
 from core.utils import check_subscription, send_subscription_required
 from . import keyboards, utils
 from .loader import AVAILABLE_BLOCKS, QUESTIONS_DATA, QUESTIONS_DICT_FLAT
-from .missing_handlers import (
-    detailed_report,
-    export_csv,
-    work_mistakes,
-    check_subscription,
-)
 
 try:
     from .topic_data import TOPIC_NAMES
@@ -1804,16 +1799,86 @@ async def detailed_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
 @validate_state_transition({states.CHOOSING_MODE})
 async def test_work_mistakes(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Запускает работу над ошибками из статистики."""
-    # Используем существующую функцию work_mistakes
+    # Просто вызываем основную функцию work_mistakes
     return await work_mistakes(update, context)
 
 @safe_handler()
 @validate_state_transition({states.CHOOSING_MODE})
 async def test_export_csv(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Экспорт статистики в CSV."""
-    # Используем функцию из missing_handlers
-    from .missing_handlers import export_csv
-    return await export_csv(update, context)
+    query = update.callback_query
+    user_id = query.from_user.id
+    
+    await query.answer("Подготавливаю файл...")
+    
+    # Получаем данные
+    mistakes = await utils.get_user_mistakes(user_id)
+    stats = await db.get_user_stats(user_id)
+    
+    # Создаем CSV в памяти
+    output = io.StringIO()
+    writer = csv.writer(output)
+    
+    # Заголовок
+    writer.writerow(['Отчет по тестовой части ЕГЭ'])
+    writer.writerow([f'Дата: {datetime.now().strftime("%d.%m.%Y %H:%M")}'])
+    writer.writerow([])
+    
+    # Общая статистика
+    writer.writerow(['ОБЩАЯ СТАТИСТИКА'])
+    writer.writerow(['Тема', 'Правильных ответов', 'Всего отвечено', 'Процент'])
+    
+    total_correct = 0
+    total_answered = 0
+    
+    for topic, correct, answered in stats:
+        percentage = (correct / answered * 100) if answered > 0 else 0
+        topic_name = TOPIC_NAMES.get(topic, topic)
+        writer.writerow([topic_name, correct, answered, f'{percentage:.1f}%'])
+        total_correct += correct
+        total_answered += answered
+    
+    writer.writerow([])
+    writer.writerow(['ИТОГО', total_correct, total_answered, 
+                    f'{(total_correct/total_answered*100 if total_answered > 0 else 0):.1f}%'])
+    
+    # Детали ошибок
+    if mistakes:
+        writer.writerow([])
+        writer.writerow(['АНАЛИЗ ОШИБОК'])
+        writer.writerow(['ID вопроса', 'Тема', 'Тип ошибки'])
+        
+        for mistake in mistakes:
+            writer.writerow([
+                mistake.get('question_id', 'N/A'),
+                mistake.get('topic', 'Без темы'),
+                mistake.get('error_type', 'Неверный ответ')
+            ])
+    
+    # Готовим файл для отправки
+    output.seek(0)
+    bio = io.BytesIO(output.getvalue().encode('utf-8-sig'))
+    bio.name = f'test_statistics_{user_id}_{datetime.now().strftime("%Y%m%d")}.csv'
+    
+    # Отправляем файл
+    await query.message.reply_document(
+        document=bio,
+        caption="📊 Ваша статистика по тестовой части ЕГЭ\n\n"
+                "Файл можно открыть в Excel или Google Sheets",
+        filename=bio.name
+    )
+    
+    # Возвращаемся в меню прогресса
+    kb = InlineKeyboardMarkup([[
+        InlineKeyboardButton("⬅️ Назад", callback_data="test_part_progress")
+    ]])
+    
+    await query.message.reply_text(
+        "✅ Отчет успешно экспортирован!",
+        reply_markup=kb
+    )
+    
+    return states.CHOOSING_MODE
 
 @safe_handler()
 @validate_state_transition({states.CHOOSING_MODE})

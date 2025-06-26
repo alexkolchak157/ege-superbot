@@ -156,30 +156,7 @@ class TestPartPlugin(BotPlugin):
                     CallbackQueryHandler(
                         handlers.back_to_mode, 
                         pattern="^to_blocks$"
-                    ),
-                    
-                    # Дополнительные обработчики из missing_handlers
-                    CallbackQueryHandler(
-                        detailed_report,
-                        pattern="^detailed_report$"
-                    ),
-                    CallbackQueryHandler(
-                        export_csv,
-                        pattern="^export_csv$"
-                    ),
-                    CallbackQueryHandler(
-                        work_mistakes,
-                        pattern="^work_mistakes$"
-                    ),
-                    CallbackQueryHandler(
-                        check_subscription,
-                        pattern="^check_subscription$"
-                    ),
-                    CallbackQueryHandler(
-                        test_start_mistakes,
-                        pattern="^test_start_mistakes$"
-                    ),
-                    
+                    ),                    
                     # Возврат в главное меню
                     CallbackQueryHandler(
                         handlers.back_to_main_menu,
