@@ -1620,59 +1620,178 @@ async def test_progress(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 @safe_handler()
 @validate_state_transition({states.CHOOSING_MODE})
-async def detailed_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Показывает детальный отчет о прогрессе."""
+async def test_detailed_analysis(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Показывает расширенную детальную статистику."""
     query = update.callback_query
     user_id = query.from_user.id
     
-    # Получаем все ошибки пользователя
+    # Получаем все данные
+    stats = await db.get_user_stats(user_id)
     mistakes = await utils.get_user_mistakes(user_id)
     
-    if not mistakes:
-        text = "📊 <b>Детальный отчет</b>\n\nУ вас пока нет ошибок для анализа!"
-        kb = InlineKeyboardMarkup([[
-            InlineKeyboardButton("⬅️ Назад", callback_data="test_progress")
-        ]])
-        await query.edit_message_text(text, reply_markup=kb, parse_mode=ParseMode.HTML)
+    if not stats:
+        await query.answer("У вас пока нет статистики", show_alert=True)
         return states.CHOOSING_MODE
     
-    # Группируем ошибки по темам
-    mistakes_by_topic = {}
-    for mistake in mistakes:
-        topic = mistake.get('topic', 'Без темы')
-        if topic not in mistakes_by_topic:
-            mistakes_by_topic[topic] = []
-        mistakes_by_topic[topic].append(mistake)
+    # Создаем детальный анализ по каждой теме
+    text = "📊 <b>Детальный анализ по темам</b>\n\n"
     
-    # Формируем отчет
-    text = "📊 <b>Детальный анализ ошибок</b>\n\n"
+    # Сортируем темы по проценту успешности
+    topics_analysis = []
+    for topic, correct, total in stats:
+        if total > 0:
+            percentage = (correct / total * 100)
+            topic_name = TOPIC_NAMES.get(topic, topic)
+            topics_analysis.append((topic_name, correct, total, percentage))
     
-    for topic, topic_mistakes in mistakes_by_topic.items():
-        text += f"📌 <b>{topic}</b>\n"
-        text += f"   Ошибок: {len(topic_mistakes)}\n"
-        
-        # Показываем типы ошибок
-        error_types = {}
-        for m in topic_mistakes:
-            error_type = m.get('error_type', 'Неверный ответ')
-            error_types[error_type] = error_types.get(error_type, 0) + 1
-        
-        for error_type, count in error_types.items():
-            text += f"   • {error_type}: {count}\n"
+    topics_analysis.sort(key=lambda x: x[3], reverse=True)
+    
+    # Группируем по уровню успешности
+    excellent = [t for t in topics_analysis if t[3] >= 90]
+    good = [t for t in topics_analysis if 70 <= t[3] < 90]
+    average = [t for t in topics_analysis if 50 <= t[3] < 70]
+    weak = [t for t in topics_analysis if t[3] < 50]
+    
+    # Отображаем по группам
+    if excellent:
+        text += "🌟 <b>Отличное владение:</b>\n"
+        for topic_name, correct, total, percentage in excellent:
+            text += f"• {topic_name}: {correct}/{total} ({percentage:.0f}%)\n"
         text += "\n"
     
-    # Рекомендации
-    text += "💡 <b>Рекомендации:</b>\n"
-    if len(mistakes_by_topic) > 3:
-        text += "• Сосредоточьтесь на 2-3 темах с наибольшим количеством ошибок\n"
-    text += "• Используйте режим 'Работа над ошибками' для тренировки\n"
-    text += "• Изучите теорию по проблемным темам\n"
+    if good:
+        text += "✅ <b>Хороший уровень:</b>\n"
+        for topic_name, correct, total, percentage in good:
+            text += f"• {topic_name}: {correct}/{total} ({percentage:.0f}%)\n"
+        text += "\n"
+    
+    if average:
+        text += "📝 <b>Средний уровень:</b>\n"
+        for topic_name, correct, total, percentage in average:
+            text += f"• {topic_name}: {correct}/{total} ({percentage:.0f}%)\n"
+        text += "\n"
+    
+    if weak:
+        text += "❗ <b>Требуют особого внимания:</b>\n"
+        for topic_name, correct, total, percentage in weak:
+            text += f"• {topic_name}: {correct}/{total} ({percentage:.0f}%)\n"
+        text += "\n"
+    
+    # Анализ ошибок
+    if mistakes:
+        mistakes_by_topic = {}
+        for mistake in mistakes:
+            topic = mistake.get('topic', 'Без темы')
+            if topic not in mistakes_by_topic:
+                mistakes_by_topic[topic] = []
+            mistakes_by_topic[topic].append(mistake)
+        
+        text += "📌 <b>Анализ ошибок:</b>\n"
+        for topic, topic_mistakes in sorted(mistakes_by_topic.items(), 
+                                          key=lambda x: len(x[1]), reverse=True)[:5]:
+            text += f"• {topic}: {len(topic_mistakes)} ошибок\n"
+    
+    # Итоговые рекомендации
+    text += "\n💡 <b>План действий:</b>\n"
+    if weak:
+        text += f"1. Изучите теорию по темам: {', '.join([t[0] for t in weak[:3]])}\n"
+    if len(mistakes) > 5:
+        text += "2. Пройдите «Работу над ошибками»\n"
+    text += "3. Практикуйтесь ежедневно для поддержания формы\n"
     
     kb = InlineKeyboardMarkup([
         [InlineKeyboardButton("📥 Экспорт в CSV", callback_data="test_export_csv")],
-        [InlineKeyboardButton("🔄 Работа над ошибками", callback_data="test_work_mistakes")],
-        [InlineKeyboardButton("⬅️ Назад", callback_data="test_progress")]
+        [InlineKeyboardButton("🔧 Работа над ошибками", callback_data="test_work_mistakes")],
+        [InlineKeyboardButton("⬅️ Назад", callback_data="test_part_progress")]
     ])
+    
+    await query.edit_message_text(
+        text,
+        reply_markup=kb,
+        parse_mode=ParseMode.HTML
+    )
+    return states.CHOOSING_MODE
+    
+@safe_handler()
+@validate_state_transition({states.CHOOSING_MODE})
+async def detailed_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Показывает простую наглядную статистику пользователя."""
+    query = update.callback_query
+    user_id = query.from_user.id
+    
+    # Получаем статистику из БД
+    stats = await db.get_user_stats(user_id)
+    mistakes = await db.get_mistake_ids(user_id)
+    streaks = await db.get_user_streaks(user_id)
+    
+    if not stats:
+        # Для нового пользователя
+        text = MessageFormatter.format_welcome_message(
+            "тестовую часть ЕГЭ",
+            is_new_user=True
+        )
+        kb = keyboards.get_initial_choice_keyboard()
+    else:
+        # Подсчет общей статистики
+        total_correct = sum(correct for _, correct, _ in stats)
+        total_answered = sum(total for _, _, total in stats)
+        overall_percentage = (total_correct / total_answered * 100) if total_answered > 0 else 0
+        
+        # Находим проблемные темы (меньше 60% правильных)
+        weak_topics = []
+        for topic, correct, total in stats:
+            if total > 0 and (correct / total) < 0.6:
+                topic_name = TOPIC_NAMES.get(topic, topic)
+                percentage = (correct / total * 100)
+                weak_topics.append((topic_name, percentage))
+        
+        # Сортируем проблемные темы по проценту
+        weak_topics.sort(key=lambda x: x[1])
+        
+        # Формируем текст статистики
+        text = f"📊 <b>Ваш прогресс</b>\n\n"
+        
+        # Общий прогресс-бар
+        progress_bar = UniversalUIComponents.create_progress_bar(
+            total_correct, total_answered, width=15, show_percentage=True
+        )
+        text += f"<b>Общий прогресс:</b> {progress_bar}\n"
+        text += f"✅ Правильно: {total_correct} из {total_answered}\n\n"
+        
+        # Стрики
+        if streaks:
+            text += f"<b>🔥 Серии:</b>\n"
+            if streaks.get('current_daily', 0) > 0:
+                text += f"• Дней подряд: {streaks['current_daily']} (рекорд: {streaks.get('max_daily', 0)})\n"
+            if streaks.get('current_correct', 0) > 0:
+                text += f"• Правильных подряд: {streaks['current_correct']} (рекорд: {streaks.get('max_correct', 0)})\n"
+            text += "\n"
+        
+        # Проблемные темы (максимум 5)
+        if weak_topics:
+            text += "<b>📍 Требуют внимания:</b>\n"
+            for topic_name, percentage in weak_topics[:5]:
+                color = UniversalUIComponents.get_color_for_score(percentage, 100)
+                text += f"{color} {topic_name}: {percentage:.0f}%\n"
+            text += "\n"
+        
+        # Количество ошибок
+        if len(mistakes) > 0:
+            text += f"<b>❗ Ошибок для проработки:</b> {len(mistakes)}\n\n"
+        
+        # Рекомендации
+        text += "💡 <b>Рекомендации:</b>\n"
+        if len(mistakes) > 10:
+            text += "• Используйте режим «Работа над ошибками»\n"
+        if weak_topics:
+            text += "• Изучите теорию по проблемным темам\n"
+        if overall_percentage > 80:
+            text += "• Отличный результат! Попробуйте более сложные темы\n"
+        elif overall_percentage < 60:
+            text += "• Уделите больше времени теории перед практикой\n"
+        
+        # Используем модифицированную клавиатуру
+        kb = keyboards.get_progress_keyboard()
     
     await query.edit_message_text(
         text,

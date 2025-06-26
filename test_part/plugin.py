@@ -118,8 +118,8 @@ class TestPartPlugin(BotPlugin):
                         pattern="^test_part_progress$"
                     ),
                     CallbackQueryHandler(
-                        handlers.detailed_report,
-                        pattern="^test_detailed_report$"
+                        handlers.test_detailed_analysis,
+                        pattern="^test_detailed_analysis$"
                     ),
                     CallbackQueryHandler(
                         handlers.test_detailed_analysis,
