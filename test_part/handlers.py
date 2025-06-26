@@ -13,7 +13,6 @@ from core.plugin_loader import build_main_menu
 from core import db, states
 from core.admin_tools import admin_manager
 from core.config import DATABASE_FILE, REQUIRED_CHANNEL
-from core.ui_helpers import show_thinking_animation
 from core.ui_helpers import (create_visual_progress, get_motivational_message,
                              get_personalized_greeting,
                              show_streak_notification, show_thinking_animation)
