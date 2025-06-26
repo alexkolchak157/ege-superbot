@@ -385,6 +385,10 @@ async def random_topic_all(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["current_topic"] = topic
     await query.edit_message_text(text, reply_markup=kb, parse_mode=ParseMode.HTML)
     
+    # ВАЖНО: Устанавливаем состояние явно
+    from core.state_validator import state_validator
+    state_validator.set_state(query.from_user.id, states.ANSWERING)
+    
     return states.ANSWERING
 
 
@@ -409,8 +413,11 @@ async def random_topic_block(update: Update, context: ContextTypes.DEFAULT_TYPE)
     context.user_data["current_topic"] = topic
     await query.edit_message_text(text, reply_markup=kb, parse_mode=ParseMode.HTML)
 
-    return states.ANSWERING
+    # ВАЖНО: Устанавливаем состояние явно
+    from core.state_validator import state_validator
+    state_validator.set_state(query.from_user.id, states.ANSWERING)
 
+    return states.ANSWERING
 
 @safe_handler()
 async def list_topics(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -490,9 +497,8 @@ async def list_topics(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 @safe_handler()
-@validate_state_transition({states.CHOOSING_TOPIC})
 async def select_topic(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Выбор конкретной темы."""
+    """Выбор конкретной темы и показ задания."""
     query = update.callback_query
     
     # Извлекаем topic_id из callback_data
@@ -516,7 +522,11 @@ async def select_topic(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=kb,
         parse_mode=ParseMode.HTML
     )
-
+    
+    # ВАЖНО: Устанавливаем состояние явно
+    from core.state_validator import state_validator
+    state_validator.set_state(query.from_user.id, states.ANSWERING)
+    
     return states.ANSWERING
 
 @safe_handler()
