@@ -327,21 +327,21 @@ class Task19AIEvaluator(BaseAIEvaluator if AI_EVALUATOR_AVAILABLE else object):
             score = max(0, score - 1)
         
         return EvaluationResult(
-            scores={"К1": score},
+            criteria_scores={"К1": score},
             total_score=score,
             max_score=3,
             feedback=f"Обнаружено суждений: {len(arguments)}",
-            detailed_analysis={
+            detailed_feedback={
                 "arguments_count": len(arguments),
                 "score": score,
                 "has_concrete_examples": has_concrete
             },
+            warnings=None,
             suggestions=[
                 "Используйте больше обобщающих конструкций",
                 "Избегайте конкретных примеров",
                 "Формулируйте развёрнутые предложения"
-            ],
-            factual_errors=[]
+            ]
         )
     
     def _parse_response(self, response: Dict[str, Any], answer: str, topic: str) -> EvaluationResult:
@@ -371,13 +371,13 @@ class Task19AIEvaluator(BaseAIEvaluator if AI_EVALUATOR_AVAILABLE else object):
                     feedback += f"\n⚠️ <b>Применён штраф:</b> {response.get('penalty_reason', '')}"
                 
                 return EvaluationResult(
-                    scores={"К1": score},
+                    criteria_scores={"К1": score},
                     total_score=score,
                     max_score=3,
                     feedback=feedback,
-                    detailed_analysis=response,
-                    suggestions=response.get("suggestions", []),
-                    factual_errors=response.get("factual_errors", [])
+                    detailed_feedback=response,
+                    warnings=None,
+                    suggestions=response.get("suggestions", [])
                 )
                 
             except Exception as e:
