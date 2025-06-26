@@ -28,6 +28,12 @@ from .missing_handlers import (
 )
 
 try:
+    from .topic_data import TOPIC_NAMES
+except ImportError:
+    logger.warning("Не удалось импортировать TOPIC_NAMES из topic_data.py")
+    TOPIC_NAMES = {}
+
+try:
     from .cache import questions_cache
 except ImportError:
     logging.warning("Модуль cache не найден, работаем без кеширования")
@@ -1190,6 +1196,14 @@ async def send_mistake_question(message, context: ContextTypes.DEFAULT_TYPE):
     
     # Отправляем вопрос
     await send_question(message, context, question_data, "mistakes")
+    
+    # ДОБАВИТЬ: Устанавливаем состояние пользователя
+    # Получаем user_id из контекста
+    user_id = context.user_data.get('user_id')
+    if user_id:
+        from core.state_validator import state_validator
+        state_validator.set_state(user_id, states.REVIEWING_MISTAKES)
+    
     return states.REVIEWING_MISTAKES
 
 @safe_handler()
@@ -1206,7 +1220,7 @@ async def handle_mistake_answer(update: Update, context: ContextTypes.DEFAULT_TY
     user_answer = update.message.text.strip()
     current_question_id = context.user_data.get('current_question_id')
     user_id = update.effective_user.id
-    
+    context.user_data['user_answer_message_id'] = update.message.message_id
     if not current_question_id:
         await checking_msg.delete()
         await update.message.reply_text("Ошибка: вопрос не найден.")

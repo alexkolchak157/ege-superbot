@@ -576,34 +576,37 @@ async def purge_old_messages(context: ContextTypes.DEFAULT_TYPE, chat_id: int, k
     # Список всех ключей, содержащих ID сообщений
     message_keys = [
         'current_question_message_id',
-        'user_answer_message_id',      # ДОБАВЛЕНО: сообщение пользователя с ответом
+        'user_answer_message_id',      # Сообщение пользователя с ответом
         'answer_message_id', 
         'feedback_message_id',
-        'checking_message_id',         # ДОБАВЛЕНО: сообщение "Проверяю ваш ответ..."
-        'thinking_message_id'          # ДОБАВЛЕНО: другие временные сообщения
+        'checking_message_id',         # Сообщение "Проверяю ваш ответ..."
+        'thinking_message_id',         # Сообщение "Загружаю вопрос..."
+        'loading_message_id'           # Другие временные сообщения
     ]
     
     # Собираем все ID для удаления
     messages_to_delete = []
+    deleted_count = 0
     
     for key in message_keys:
         msg_id = context.user_data.get(key)
         if msg_id and msg_id != keep_id:
-            messages_to_delete.append(msg_id)
+            messages_to_delete.append((key, msg_id))
     
     # Добавляем дополнительные сообщения (пояснения и т.д.)
     extra_messages = context.user_data.get('extra_messages_to_delete', [])
-    messages_to_delete.extend([msg_id for msg_id in extra_messages if msg_id != keep_id])
+    for msg_id in extra_messages:
+        if msg_id and msg_id != keep_id:
+            messages_to_delete.append(('extra', msg_id))
     
     # Удаляем сообщения
-    deleted_count = 0
-    for msg_id in messages_to_delete:
+    for key, msg_id in messages_to_delete:
         try:
             await context.bot.delete_message(chat_id=chat_id, message_id=msg_id)
             deleted_count += 1
-            logger.debug(f"Deleted message {msg_id}")
+            logger.debug(f"Deleted message {key}: {msg_id}")
         except Exception as e:
-            logger.warning(f"Failed to delete message {msg_id}: {e}")
+            logger.warning(f"Failed to delete message {key} {msg_id}: {e}")
     
     # Очищаем контекст
     for key in message_keys:

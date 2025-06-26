@@ -279,11 +279,11 @@ def get_progress_keyboard() -> InlineKeyboardMarkup:
     ])
 
 def get_mistakes_finish_keyboard() -> InlineKeyboardMarkup:
-    """Клавиатура для завершения работы над ошибками."""
+    """Клавиатура завершения работы над ошибками."""
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("📊 Статистика", callback_data="test_progress")],
-        [InlineKeyboardButton("🔄 Ещё раз", callback_data="work_mistakes")],
-        [InlineKeyboardButton("🏠 Главное меню", callback_data="to_main_menu")]
+        [InlineKeyboardButton("📊 Статистика", callback_data="test_part_progress")],
+        [InlineKeyboardButton("🎲 Случайные вопросы", callback_data="initial:select_random_all")],
+        [InlineKeyboardButton("🔙 К выбору режима", callback_data="to_test_part_menu")]
     ])
 
 def get_adaptive_result_keyboard(is_correct: bool, has_explanation: bool = False) -> InlineKeyboardMarkup:

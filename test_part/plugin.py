@@ -233,11 +233,8 @@ class TestPartPlugin(BotPlugin):
                 ],
                 
                 states.ANSWERING: [
-                    # ВАЖНО: Добавляем фильтр для активного модуля
                     MessageHandler(
-                        filters.TEXT & ~filters.COMMAND & filters.create(
-                            lambda _, context: context.user_data.get('active_module') == 'test_part'
-                        ),
+                        filters.TEXT & ~filters.COMMAND,  # Убрали & filters.create(...)
                         handlers.check_answer
                     ),
                     CallbackQueryHandler(
