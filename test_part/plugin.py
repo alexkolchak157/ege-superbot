@@ -273,11 +273,6 @@ class TestPartPlugin(BotPlugin):
                     handlers.back_to_main_menu,
                     pattern="^to_main_menu$"
                 ),
-                # Добавляем обработчик для всех callback_data, которые не подходят под другие паттерны
-                CallbackQueryHandler(
-                    handlers.handle_unknown_callback,
-                    pattern="^(?!choose_test_part|initial:|block:|topic:|exam_number:|mode:|test_).*$"
-                ),
             ],
             allow_reentry=True,
             name=f"{self.code}_main_conversation",
