@@ -699,7 +699,25 @@ async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data['processing_answer'] = True
     
     try:
-        user_answer = update.message.text
+        # ИСПРАВЛЕНИЕ: Проверяем, есть ли текст из документа
+        if 'document_text' in context.user_data:
+            user_answer = context.user_data.pop('document_text')  # Извлекаем и удаляем
+            logger.info("Using text from document")
+        else:
+            user_answer = update.message.text
+            logger.info("Using text from message")
+
+        # Проверяем, что ответ не пустой
+        if not user_answer:
+            await update.message.reply_text(
+                "❌ Ответ не может быть пустым. Отправьте примеры текстом или документом.",
+                reply_markup=InlineKeyboardMarkup([[
+                    InlineKeyboardButton("🔄 Попробовать снова", callback_data="t19_retry")
+                ]])
+            )
+            context.user_data['processing_answer'] = False
+            return TASK19_WAITING
+        
         topic = context.user_data.get('current_topic')
         
         if not topic:
