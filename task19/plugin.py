@@ -109,15 +109,9 @@ class Task19Plugin(BotPlugin):
                     CallbackQueryHandler(handlers.list_topics, pattern=r"^t19_list_topics:page:\d+"),
                 ],
                 
-                states.ANSWERING: [
-                    MessageHandler(
-                        filters.TEXT & ~filters.COMMAND & create_module_filter('task19'),
-                        handlers.handle_answer
-                    ),
-                    MessageHandler(
-                        filters.Document.ALL & create_module_filter('task19'),
-                        handlers.handle_answer_document_task19
-                    ),
+                states.TASK19_WAITING: [
+                    MessageHandler(filters.TEXT & ~filters.COMMAND, handlers.handle_answer),
+                    MessageHandler(filters.Document.ALL, handlers.handle_answer_document_task19),
                     CallbackQueryHandler(handlers.practice_mode, pattern="^t19_practice$"),
                 ],
                 states.SEARCHING: [

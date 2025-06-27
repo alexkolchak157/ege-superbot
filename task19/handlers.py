@@ -11,6 +11,7 @@ from telegram.constants import ParseMode
 from telegram.ext import ContextTypes, ConversationHandler
 from core.admin_tools import admin_manager
 from core import states
+from core.states import TASK19_WAITING
 from core.ai_evaluator import Task19Evaluator, EvaluationResult
 from datetime import datetime
 import io
@@ -24,7 +25,6 @@ from core.ui_helpers import (
     get_motivational_message,
     create_visual_progress,
 )
-from core.safe_evaluator import safe_handle_answer_task19
 from core.error_handler import safe_handler, auto_answer_callback
 from core.plugin_loader import build_main_menu
 from core.state_validator import validate_state_transition, state_validator
@@ -410,9 +410,9 @@ async def random_topic_all(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     # ВАЖНО: Устанавливаем состояние явно
     from core.state_validator import state_validator
-    state_validator.set_state(query.from_user.id, states.ANSWERING)
+    state_validator.set_state(query.from_user.id, TASK19_WAITING)
     
-    return states.ANSWERING
+    return TASK19_WAITING
 
 
 @safe_handler()
@@ -438,9 +438,9 @@ async def random_topic_block(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
     # ВАЖНО: Устанавливаем состояние явно
     from core.state_validator import state_validator
-    state_validator.set_state(query.from_user.id, states.ANSWERING)
+    state_validator.set_state(query.from_user.id, TASK19_WAITING)
 
-    return states.ANSWERING
+    return TASK19_WAITING
 
 @safe_handler()
 async def list_topics(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -552,9 +552,9 @@ async def select_topic(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     # ВАЖНО: Устанавливаем состояние явно
     from core.state_validator import state_validator
-    state_validator.set_state(query.from_user.id, states.ANSWERING)
+    state_validator.set_state(query.from_user.id, TASK19_WAITING)
     
-    return states.ANSWERING
+    return TASK19_WAITING
 
 @safe_handler()
 async def show_progress_enhanced(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -623,29 +623,133 @@ async def show_progress_enhanced(update: Update, context: ContextTypes.DEFAULT_T
     return states.CHOOSING_MODE
 
 @safe_handler()
-@validate_state_transition({states.ANSWERING})
+@validate_state_transition({TASK19_WAITING})
 async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обработка ответа пользователя."""
-    # Добавить логирование
-    logger.info(f"handle_answer called for user {update.effective_user.id}")
-    logger.info(f"Current topic: {context.user_data.get('current_topic')}")
+    """Обработка ответа пользователя на задание 19."""
+    logger.info(f"task19.handle_answer called for user {update.effective_user.id}")
     
-    # Проверка наличия темы
-    if not context.user_data.get('current_topic'):
-        logger.error("No current topic found in context")
-        await update.message.reply_text(
-            "❌ Ошибка: тема не выбрана. Пожалуйста, выберите тему заново.",
-            reply_markup=InlineKeyboardMarkup([[
-                InlineKeyboardButton("📝 К заданиям", callback_data="t19_practice")
-            ]])
-        )
+    # Проверяем, что мы в правильном модуле
+    if context.user_data.get('active_module') != 'task19':
+        logger.debug("Ignoring answer - not in task19 module")
         return states.CHOOSING_MODE
     
-    return await safe_handle_answer_task19(update, context)
+    # Предотвращаем повторную обработку
+    if context.user_data.get('processing_answer', False):
+        logger.debug("Already processing answer, ignoring")
+        return states.CHOOSING_MODE
+    
+    context.user_data['processing_answer'] = True
+    
+    try:
+        user_answer = update.message.text
+        topic = context.user_data.get('current_topic')
+        
+        if not topic:
+            await update.message.reply_text(
+                "❌ Ошибка: тема не выбрана. Начните заново.",
+                reply_markup=InlineKeyboardMarkup([[
+                    InlineKeyboardButton("📝 К заданиям", callback_data="t19_practice")
+                ]])
+            )
+            return states.CHOOSING_MODE
+        
+        # Показываем анимацию проверки
+        checking_msg = await show_extended_thinking_animation(
+            update.message,
+            "Проверяю ваш ответ на задание 19",
+            duration=30
+        )
+        
+        try:
+            # Используем локальный evaluator
+            if evaluator and hasattr(evaluator, 'evaluate'):
+                # Вызываем evaluate с правильными параметрами для task19
+                result = await evaluator.evaluate(
+                    answer=user_answer,
+                    topic=topic.get('title', ''),
+                    task_text=topic.get('task_text', topic.get('title', '')),
+                    topic_data=topic
+                )
+                
+                # Форматируем результат
+                if hasattr(result, 'format_feedback'):
+                    feedback = result.format_feedback()
+                else:
+                    feedback = str(result)
+                
+                score = getattr(result, 'total_score', 0)
+                max_score = getattr(result, 'max_score', 3)
+                
+            else:
+                # Fallback оценка
+                score, feedback = await _basic_evaluation(user_answer, topic)
+                max_score = 3
+            
+            # Удаляем анимацию
+            await checking_msg.delete()
+            
+            # Сохраняем результат
+            context.user_data.setdefault('task19_results', []).append({
+                'topic': topic['title'],
+                'score': score,
+                'max_score': max_score,
+                'timestamp': datetime.now().isoformat()
+            })
+            
+            # Показываем результат
+            await update.message.reply_text(
+                feedback,
+                reply_markup=AdaptiveKeyboards.create_result_keyboard(
+                    score=score,
+                    max_score=max_score,
+                    module_code="t19"
+                ),
+                parse_mode=ParseMode.HTML
+            )
+            
+            logger.info(f"Answer evaluated: {score}/{max_score}")
+            
+        except Exception as e:
+            logger.error(f"Error evaluating answer: {e}")
+            await checking_msg.delete()
+            
+            await update.message.reply_text(
+                "❌ Произошла ошибка при проверке. Попробуйте еще раз.",
+                reply_markup=InlineKeyboardMarkup([[
+                    InlineKeyboardButton("🔄 Попробовать снова", callback_data="t19_practice"),
+                    InlineKeyboardButton("📝 В меню", callback_data="t19_menu")
+                ]])
+            )
+            
+    finally:
+        context.user_data['processing_answer'] = False
+    
+    return states.CHOOSING_MODE
 
+async def _basic_evaluation(answer: str, topic: Dict) -> tuple[int, str]:
+    """Базовая оценка без AI."""
+    examples = answer.split('\n')
+    valid_examples = 0
+    
+    for example in examples[:3]:  # Максимум 3 примера
+        if len(example.strip()) > 20:  # Минимальная длина
+            valid_examples += 1
+    
+    score = valid_examples
+    feedback = f"<b>Результат проверки:</b>\n\n"
+    feedback += f"✅ Засчитано примеров: {valid_examples}/3\n\n"
+    
+    if score == 3:
+        feedback += "🎉 Отличная работа! Все примеры засчитаны."
+    elif score > 0:
+        feedback += f"💡 Неплохо, но можно лучше. Добавьте больше деталей в примеры."
+    else:
+        feedback += "❌ Примеры не засчитаны. Убедитесь, что они конкретные и развернутые."
+    
+    return score, feedback
 
 @safe_handler()
-@validate_state_transition({states.ANSWERING})
+@validate_state_transition({TASK19_WAITING})
 async def handle_answer_document_task19(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработка примеров из документа для task19."""
     
@@ -665,7 +769,7 @@ async def handle_answer_document_task19(update: Update, context: ContextTypes.DE
     )
     
     if not extracted_text:
-        return states.ANSWERING
+        return TASK19_WAITING
     
     # Валидация
     is_valid, error_msg = DocumentHandlerMixin.validate_document_content(
@@ -675,7 +779,7 @@ async def handle_answer_document_task19(update: Update, context: ContextTypes.DE
     
     if not is_valid:
         await update.message.reply_text(f"❌ {error_msg}")
-        return states.ANSWERING
+        return TASK19_WAITING
     
     # Передаем в обычный обработчик
     update.message.text = extracted_text
@@ -822,7 +926,7 @@ async def bank_navigation(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 @safe_handler()
-@validate_state_transition({states.CHOOSING_MODE, states.CHOOSING_BLOCK, states.CHOOSING_TOPIC, states.ANSWERING, states.ANSWERING_PARTS})
+@validate_state_transition({states.CHOOSING_MODE, states.CHOOSING_BLOCK, states.CHOOSING_TOPIC, TASK19_WAITING})
 async def back_to_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Возврат в главное меню с очисткой контекста."""
     query = update.callback_query
@@ -910,7 +1014,7 @@ async def handle_result_action(update: Update, context: ContextTypes.DEFAULT_TYP
             # Сохраняем ID нового сообщения
             context.user_data['task19_question_msg_id'] = msg.message_id
             
-            return states.ANSWERING
+            return TASK19_WAITING
         else:
             await query.message.chat.send_message(
                 "❌ Ошибка: тема не найдена",
