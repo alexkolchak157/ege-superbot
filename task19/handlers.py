@@ -6,9 +6,10 @@ import json
 import random
 from typing import Optional, Dict, List
 from core.document_processor import DocumentHandlerMixin
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, Message
 from telegram.constants import ParseMode
 from telegram.ext import ContextTypes, ConversationHandler
+from telegram.error import BadRequest
 from core.admin_tools import admin_manager
 from core import states
 from core.states import TASK19_WAITING
@@ -264,6 +265,9 @@ async def practice_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Режим практики."""
     query = update.callback_query
     
+    # Сразу отвечаем на callback, чтобы убрать "часики"
+    await query.answer()
+    
     # ВАЖНО: Устанавливаем текущий модуль
     set_active_module(context)
     
@@ -279,14 +283,28 @@ async def practice_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
             pass
     
     if not task19_data.get("topics"):
-        await query.edit_message_text(
-            "❌ Данные заданий не загружены. Попробуйте позже.",
-            reply_markup=InlineKeyboardMarkup(
-                [[InlineKeyboardButton("⬅️ Назад", callback_data="t19_menu")]]
-            ),
-        )
+        try:
+            await query.edit_message_text(
+                "❌ Данные заданий не загружены. Попробуйте позже.",
+                reply_markup=InlineKeyboardMarkup(
+                    [[InlineKeyboardButton("⬅️ Назад", callback_data="t19_menu")]]
+                ),
+            )
+        except Exception as e:
+            if "Message is not modified" not in str(e):
+                raise
         return states.CHOOSING_MODE
-
+    
+    # Определение user_stats
+    results = context.user_data.get('task19_results', [])
+    user_stats = {
+        'total_attempts': len(results),
+        'average_score': sum(r.get('score', 0) for r in results) / len(results) if results else 0,
+        'streak': context.user_data.get('correct_streak', 0),
+        'weak_topics_count': 0,
+        'progress_percent': int(len(set(r.get('topic') for r in results)) / 50 * 100) if results else 0
+    }
+    
     greeting = get_personalized_greeting(user_stats)
     text = greeting + MessageFormatter.format_welcome_message(
         "задание 19",
@@ -294,13 +312,19 @@ async def practice_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     
     kb = AdaptiveKeyboards.create_menu_keyboard(user_stats, module_code="t19")
-
-    await query.edit_message_text(
-        text,
-        reply_markup=InlineKeyboardMarkup(kb_buttons),
-        parse_mode=ParseMode.HTML,
-    )
-
+    
+    # Оборачиваем в try-except для обработки ошибки "Message is not modified"
+    try:
+        await query.edit_message_text(
+            text,
+            reply_markup=kb,
+            parse_mode=ParseMode.HTML,
+        )
+    except Exception as e:
+        if "Message is not modified" not in str(e):
+            raise  # Перебрасываем другие ошибки
+        # Если сообщение не изменилось, ничего не делаем
+    
     return states.CHOOSING_MODE
 
 
