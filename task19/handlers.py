@@ -733,11 +733,11 @@ async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 if hasattr(result, 'format_feedback'):
                     feedback = result.format_feedback()
                 else:
-                    # Форматируем вручную
+                    # Используем нашу новую функцию форматирования
                     feedback = _format_evaluation_result(result)
 
-                score = getattr(result, 'total_score', 0)
-                max_score = getattr(result, 'max_score', 3)
+                score = int(getattr(result, 'total_score', 0))
+                max_score = int(getattr(result, 'max_score', 3))
                 
             else:
                 # Fallback оценка
@@ -750,8 +750,8 @@ async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
             # Сохраняем результат
             context.user_data.setdefault('task19_results', []).append({
                 'topic': topic['title'],
-                'score': score,
-                'max_score': max_score,
+                'score': score,  # Уже int
+                'max_score': max_score,  # Уже int
                 'timestamp': datetime.now().isoformat()
             })
             
@@ -806,6 +806,81 @@ async def _basic_evaluation(answer: str, topic: Dict) -> tuple[int, str]:
         feedback += "❌ Примеры не засчитаны. Убедитесь, что они конкретные и развернутые."
     
     return score, feedback
+
+def _format_evaluation_result(result) -> str:
+    """Форматирование результата проверки AI."""
+    # Безопасное получение значений
+    if isinstance(result, dict):
+        score = result.get('total_score', 0)
+        max_score = result.get('max_score', 3)
+        feedback_text = result.get('feedback', '')
+        suggestions = result.get('suggestions', [])
+        detailed = result.get('detailed_feedback', {})
+    else:
+        score = getattr(result, 'total_score', 0)
+        max_score = getattr(result, 'max_score', 3)
+        feedback_text = getattr(result, 'feedback', '')
+        suggestions = getattr(result, 'suggestions', [])
+        detailed = getattr(result, 'detailed_feedback', {})
+    
+    # Преобразуем в int
+    score = int(score)
+    max_score = int(max_score)
+    
+    # Заголовок в зависимости от результата
+    percentage = (score / max_score * 100) if max_score > 0 else 0
+    
+    if percentage >= 90:
+        header = "🎉 <b>Отличный результат!</b>"
+    elif percentage >= 60:
+        header = "👍 <b>Хороший результат!</b>"
+    elif percentage >= 30:
+        header = "📝 <b>Неплохо, но есть над чем поработать</b>"
+    else:
+        header = "❌ <b>Нужно больше практики</b>"
+    
+    # Основная информация
+    feedback = f"{header}\n\n"
+    feedback += f"<b>Ваш балл:</b> {score} из {max_score}\n\n"
+    
+    # Детальный разбор (если есть)
+    if detailed and isinstance(detailed, dict):
+        feedback += "<b>📊 Анализ ответа:</b>\n"
+        
+        # Информация о примерах
+        valid_count = detailed.get('valid_examples_count', 0)
+        total_count = detailed.get('total_examples', 0)
+        
+        if total_count > 0:
+            feedback += f"• Всего примеров: {total_count}\n"
+            feedback += f"• Засчитано: {valid_count}\n"
+            
+            # Штрафы
+            if detailed.get('penalty_applied'):
+                reason = detailed.get('penalty_reason', 'нарушение требований')
+                feedback += f"• ⚠️ Применен штраф: {reason}\n"
+        
+        feedback += "\n"
+    
+    # Краткая обратная связь от AI
+    if feedback_text:
+        feedback += f"<b>💭 Комментарий:</b>\n{feedback_text}\n\n"
+    
+    # Рекомендации (без дублирования)
+    if suggestions and isinstance(suggestions, list):
+        unique_suggestions = []
+        seen = set()
+        for s in suggestions:
+            if s and s not in seen:
+                unique_suggestions.append(s)
+                seen.add(s)
+        
+        if unique_suggestions:
+            feedback += "<b>💡 Рекомендации:</b>\n"
+            for suggestion in unique_suggestions[:3]:
+                feedback += f"• {suggestion}\n"
+    
+    return feedback.strip()
 
 @safe_handler()
 @validate_state_transition({TASK19_WAITING})
