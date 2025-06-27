@@ -206,13 +206,6 @@ async def entry_from_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Отвечаем на callback, чтобы убрать "часики"
     await query.answer()
     
-    # Устанавливаем активный модуль
-    context.user_data['current_module'] = 'task19'
-    context.user_data['active_module'] = 'task19'
-    
-    # Отвечаем на callback, чтобы убрать "часики"
-    await query.answer()
-    
     # Получаем статистику пользователя
     results = context.user_data.get('task19_results', [])
     user_stats = {
@@ -258,40 +251,6 @@ def _build_topic_message(topic: Dict) -> str:
         "💡 <i>Отправьте ваш ответ одним сообщением</i>"
     )
 
-
-async def practice_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Режим практики."""
-    query = update.callback_query
-    
-    # Устанавливаем активный модуль
-    set_active_module(context)
-    context.user_data['current_module'] = 'task19'
-    context.user_data['active_module'] = 'task19'
-    results = context.user_data.get('task19_results', [])
-    user_stats = {
-        'total_attempts': len(results),
-        'average_score': sum(r['score'] for r in results) / len(results) if results else 0,
-        'streak': 0,
-        'weak_topics_count': 0,
-        'progress_percent': int(len(set(r['topic'] for r in results)) / 50 * 100) if results else 0
-    }
-    
-    greeting = get_personalized_greeting(user_stats)
-    text = greeting + MessageFormatter.format_welcome_message(
-        "задание 19",
-        is_new_user=user_stats['total_attempts'] == 0
-    )
-    
-    kb = AdaptiveKeyboards.create_menu_keyboard(user_stats, module_code="t19")
-    
-    await update.message.reply_text(
-        text,
-        reply_markup=kb,
-        parse_mode=ParseMode.HTML
-    )
-    
-    return states.CHOOSING_MODE
-
 @safe_handler()
 @validate_state_transition({states.CHOOSING_MODE})
 async def practice_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -299,7 +258,7 @@ async def practice_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     
     # ВАЖНО: Устанавливаем текущий модуль
-    context.user_data['current_module'] = 'task19'
+    set_active_module(context)
     
     # Удаляем сообщение о проверке, если оно есть
     if 'checking_message_id' in context.user_data:
@@ -321,17 +280,13 @@ async def practice_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return states.CHOOSING_MODE
 
-    text = (
-        "🎯 <b>Режим практики</b>\n\n"
-        "Как вы хотите выбрать тему?"
+    greeting = get_personalized_greeting(user_stats)
+    text = greeting + MessageFormatter.format_welcome_message(
+        "задание 19",
+        is_new_user=user_stats['total_attempts'] == 0
     )
-
-    kb_buttons = [
-        [InlineKeyboardButton("📚 По блокам", callback_data="t19_select_block")],
-        [InlineKeyboardButton("🗂️ Все темы списком", callback_data="t19_list_topics")],
-        [InlineKeyboardButton("🎲 Случайная тема", callback_data="t19_random_all")],
-        [InlineKeyboardButton("⬅️ Назад", callback_data="t19_menu")],
-    ]
+    
+    kb = AdaptiveKeyboards.create_menu_keyboard(user_stats, module_code="t19")
 
     await query.edit_message_text(
         text,
@@ -537,8 +492,6 @@ async def select_topic(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     # Сохраняем текущую тему
     context.user_data['current_topic'] = topic
-    context.user_data['current_module'] = 'task19'
-    context.user_data['active_module'] = 'task19'
     text = _build_topic_message(topic)
     kb = InlineKeyboardMarkup([[
         InlineKeyboardButton("⬅️ Выбрать другую тему", callback_data="t19_practice")
@@ -1245,8 +1198,7 @@ async def reset_results(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def cmd_task19(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Команда /task19."""
     # Устанавливаем активный модуль
-    context.user_data['current_module'] = 'task19'
-    context.user_data['active_module'] = 'task19'
+    set_active_module(context)
     
     results = context.user_data.get('task19_results', [])
     user_stats = {
