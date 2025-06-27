@@ -83,33 +83,21 @@ class UniversalUIComponents:
         Визуализация оценки.
         
         Args:
-            score: Полученный балл
-            max_score: Максимальный балл
-            use_stars: Использовать звезды или цифры
+            score: Полученная оценка
+            max_score: Максимальная оценка
+            use_stars: Использовать звезды или проценты
         """
-        if use_stars and max_score <= 5:
-            # Звездная визуализация для небольших оценок
-            filled = "⭐" * int(score)
+        # Преобразуем оба значения в int для безопасности
+        score = int(round(score))  # Округляем и преобразуем
+        max_score = int(max_score)
+        
+        if use_stars:
+            filled = "⭐" * score
             empty = "☆" * (max_score - score)
-            return filled + empty
+            return f"{filled}{empty} ({score}/{max_score})"
         else:
-            # Для больших оценок - числовой формат с эмодзи
-            percentage = score / max_score if max_score > 0 else 0
-            
-            if percentage == 1:
-                emoji = cls.SCORE_EMOJIS['perfect']
-            elif percentage >= 0.9:
-                emoji = cls.SCORE_EMOJIS['excellent']
-            elif percentage >= 0.7:
-                emoji = cls.SCORE_EMOJIS['good']
-            elif percentage >= 0.5:
-                emoji = cls.SCORE_EMOJIS['fair']
-            elif percentage > 0:
-                emoji = cls.SCORE_EMOJIS['poor']
-            else:
-                emoji = cls.SCORE_EMOJIS['none']
-            
-            return f"{emoji} {score}/{max_score}"
+            percentage = (score / max_score * 100) if max_score > 0 else 0
+            return f"{percentage:.0f}%"
     
     @classmethod
     def create_trend_indicator(cls, current: float, previous: float) -> str:
