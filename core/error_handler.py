@@ -194,9 +194,12 @@ def _save_error_info(context: ContextTypes.DEFAULT_TYPE, user_id: Any, handler: 
     }
     
     # Сохраняем в bot_data для админ панели
-    # Используем user_data вместо bot_data для хранения ошибок
-    if 'recent_errors' not in context.user_data:
-        context.user_data['recent_errors'] = []
+    if not hasattr(context, 'bot_data') or context.bot_data is None:
+        logger.warning("context.bot_data is not available, skipping error info save")
+        return
+        
+    if 'recent_errors' not in context.bot_data:
+        context.bot_data['recent_errors'] = []
     
     context.bot_data['recent_errors'].append(error_info)
     

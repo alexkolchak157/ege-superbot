@@ -190,6 +190,19 @@ async def safe_handle_answer_task19(update: Update, context: ContextTypes.DEFAUL
     """Безопасный обработчик для task19."""
     logger.info(f"safe_handle_answer_task19 called for user {update.effective_user.id}")
     
+    # ВАЖНО: Проверяем, что мы действительно в состоянии ответа на task19
+    current_module = context.user_data.get('current_module')
+    if current_module != 'task19':
+        logger.debug(f"Ignoring answer - current module is {current_module}, not task19")
+        return states.CHOOSING_MODE
+    
+    # Предотвращаем повторную обработку
+    if context.user_data.get('answer_processing', False):
+        logger.debug("Answer already being processed, ignoring duplicate call")
+        return states.CHOOSING_MODE
+    
+    context.user_data['answer_processing'] = True
+    
     # Получаем evaluator из модуля task19
     try:
         from task19.handlers import evaluator
@@ -274,7 +287,8 @@ async def safe_handle_answer_task19(update: Update, context: ContextTypes.DEFAUL
                 InlineKeyboardButton("📝 В меню", callback_data="t19_menu")
             ]])
         )
-        
+        context.user_data['answer_processing'] = False
+
         return states.CHOOSING_MODE
 
 
