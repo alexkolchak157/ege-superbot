@@ -196,6 +196,10 @@ async def entry_from_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Вход в задание 19 из главного меню."""
     query = update.callback_query
     
+    # Устанавливаем активный модуль
+    context.user_data['current_module'] = 'task19'
+    context.user_data['active_module'] = 'task19'
+    
     # Отвечаем на callback, чтобы убрать "часики"
     await query.answer()
     
@@ -247,6 +251,9 @@ def _build_topic_message(topic: Dict) -> str:
 
 async def cmd_task19(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Команда /task19."""
+    # Устанавливаем активный модуль
+    context.user_data['current_module'] = 'task19'
+    context.user_data['active_module'] = 'task19'
     results = context.user_data.get('task19_results', [])
     user_stats = {
         'total_attempts': len(results),
@@ -277,6 +284,9 @@ async def cmd_task19(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def practice_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Режим практики."""
     query = update.callback_query
+    
+    # ВАЖНО: Устанавливаем текущий модуль
+    context.user_data['current_module'] = 'task19'
     
     # Удаляем сообщение о проверке, если оно есть
     if 'checking_message_id' in context.user_data:
@@ -511,7 +521,8 @@ async def select_topic(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     # Сохраняем текущую тему
     context.user_data['current_topic'] = topic
-    
+    context.user_data['current_module'] = 'task19'
+    context.user_data['active_module'] = 'task19'
     text = _build_topic_message(topic)
     kb = InlineKeyboardMarkup([[
         InlineKeyboardButton("⬅️ Выбрать другую тему", callback_data="t19_practice")
@@ -797,9 +808,14 @@ async def bank_navigation(update: Update, context: ContextTypes.DEFAULT_TYPE):
 @safe_handler()
 @validate_state_transition({states.CHOOSING_MODE, states.CHOOSING_BLOCK, states.CHOOSING_TOPIC, states.ANSWERING, states.ANSWERING_PARTS})
 async def back_to_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Возврат в главное меню."""
-    
+    """Возврат в главное меню с очисткой контекста."""
     query = update.callback_query
+    
+    # Очищаем контекст модуля
+    context.user_data.pop('current_module', None)
+    context.user_data.pop('active_module', None)
+    context.user_data.pop('current_topic', None)
+    context.user_data.pop('answer_processing', None)
     
     await query.edit_message_text(
         "👋 Выберите раздел для изучения:",
