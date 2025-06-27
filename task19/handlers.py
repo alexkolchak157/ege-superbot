@@ -25,6 +25,7 @@ from core.ui_helpers import (
     get_personalized_greeting,
     get_motivational_message,
     create_visual_progress,
+    get_achievement_emoji,
 )
 from core.error_handler import safe_handler, auto_answer_callback
 from core.plugin_loader import build_main_menu
@@ -305,26 +306,46 @@ async def practice_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
         'progress_percent': int(len(set(r.get('topic') for r in results)) / 50 * 100) if results else 0
     }
     
-    greeting = get_personalized_greeting(user_stats)
-    text = greeting + MessageFormatter.format_welcome_message(
-        "задание 19",
-        is_new_user=user_stats['total_attempts'] == 0
-    )
+    text = "💪 <b>Режим практики</b>\n\n"
     
-    kb = AdaptiveKeyboards.create_menu_keyboard(user_stats, module_code="t19")
+    # Показываем мини-статистику
+    if user_stats['total_attempts'] > 0:
+        avg_visual = UniversalUIComponents.create_score_visual(
+            int(user_stats['average_score']), 
+            3,  # Максимум для task19
+            use_stars=False
+        )
+        text += f"📊 Ваш прогресс: {user_stats['total_attempts']} попыток, средний балл {avg_visual}\n"
+        
+        if user_stats['streak'] > 0:
+            text += f"🔥 Серия правильных ответов: {user_stats['streak']}\n"
+        
+        text += "\n"
+    
+    text += "Выберите способ тренировки:"
+    
+    # ИСПРАВЛЕННЫЕ КНОПКИ
+    kb_buttons = [
+        [InlineKeyboardButton("📚 Выбрать блок тем", callback_data="t19_select_block")],
+        [InlineKeyboardButton("🎲 Случайная тема", callback_data="t19_random_all")],
+        [InlineKeyboardButton("📋 Список всех тем", callback_data="t19_list_topics")],
+        [InlineKeyboardButton("⬅️ Назад", callback_data="t19_menu")]
+    ]
     
     # Оборачиваем в try-except для обработки ошибки "Message is not modified"
     try:
         await query.edit_message_text(
             text,
-            reply_markup=kb,
+            reply_markup=InlineKeyboardMarkup(kb_buttons),
             parse_mode=ParseMode.HTML,
         )
     except Exception as e:
         if "Message is not modified" not in str(e):
             raise  # Перебрасываем другие ошибки
-        # Если сообщение не изменилось, ничего не делаем
     
+    # ВАЖНО: Если пользователь выберет "Выбрать блок", то следующий обработчик
+    # переведет его в состояние CHOOSING_BLOCK
+    # А пока остаемся в CHOOSING_MODE
     return states.CHOOSING_MODE
 
 
@@ -768,6 +789,10 @@ async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             
             logger.info(f"Answer evaluated: {score}/{max_score}")
+
+            # ДОБАВИТЬ: Получаем user_id
+            user_id = update.effective_user.id
+
             # После сохранения результата
             # Проверяем новые достижения
             new_achievements = await check_achievements(context, user_id)
@@ -781,7 +806,11 @@ async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 )
         except Exception as e:
             logger.error(f"Error evaluating answer: {e}")
-            await checking_msg.delete()
+            # Безопасное удаление сообщения
+            try:
+                await checking_msg.delete()
+            except:
+                pass  # Игнорируем, если сообщение уже удалено
             
             await update.message.reply_text(
                 "❌ Произошла ошибка при проверке. Попробуйте еще раз.",
@@ -794,7 +823,7 @@ async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
     finally:
         context.user_data['processing_answer'] = False
     
-    return states.CHOOSING_MODE
+    return ConversationHandler.END
 
 async def _basic_evaluation(answer: str, topic: Dict) -> tuple[int, str]:
     """Базовая оценка без AI."""
