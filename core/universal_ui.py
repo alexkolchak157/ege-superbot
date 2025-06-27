@@ -89,7 +89,7 @@ class UniversalUIComponents:
         """
         if use_stars and max_score <= 5:
             # Звездная визуализация для небольших оценок
-            filled = "⭐" * score
+            filled = "⭐" * int(score)
             empty = "☆" * (max_score - score)
             return filled + empty
         else:
@@ -289,41 +289,65 @@ class AdaptiveKeyboards:
         Создать главное меню модуля с индикаторами прогресса.
         """
         buttons = []
-        
-        # Практика с индикатором стрика
-        practice_text = "💪 Практика"
-        if user_stats.get('streak', 0) > 0:
-            practice_text += f" (🔥{user_stats['streak']})"
-        buttons.append([InlineKeyboardButton(practice_text, callback_data=f"{module_code}_practice")])
-        
-        # Теория с индикатором новизны
-        theory_text = "📚 Теория и советы"
-        if user_stats.get('total_attempts', 0) == 0:
-            theory_text += " 🆕"
-        buttons.append([InlineKeyboardButton(theory_text, callback_data=f"{module_code}_theory")])
-        
-        # Банк примеров/эталонов
-        examples_text = "🏦 Банк эталонов"
-        if user_stats.get('examples_viewed', 0) == 0:
-            examples_text += " 💡"
-        buttons.append([InlineKeyboardButton(examples_text, callback_data=f"{module_code}_examples")])
-        
-        # Работа над ошибками с счётчиком
-        if user_stats.get('mistakes_count', 0) > 0:
-            mistakes_text = f"🔧 Работа над ошибками ({user_stats['mistakes_count']})"
-            buttons.append([InlineKeyboardButton(mistakes_text, callback_data=f"{module_code}_mistakes")])
-        
-        # Прогресс с процентом
-        progress_text = "📊 Мой прогресс"
-        if user_stats.get('progress_percent', 0) > 0:
-            progress_text += f" ({user_stats['progress_percent']}%)"
-        buttons.append([InlineKeyboardButton(progress_text, callback_data=f"{module_code}_progress")])
-        
-        # Настройки и главное меню
-        buttons.extend([
-            [InlineKeyboardButton("⚙️ Настройки", callback_data=f"{module_code}_settings")],
-            [InlineKeyboardButton("🏠 Главное меню", callback_data="to_main_menu")]
-        ])
+        # Найдите блок создания кнопок и измените его для модуля "test":
+        if module_code == "test":
+            # Практика с индикатором стрика
+            practice_text = "💪 Практика"
+            if user_stats.get('streak', 0) > 0:
+                practice_text += f" (🔥{user_stats['streak']})"
+            buttons.append([InlineKeyboardButton(practice_text, callback_data=f"{module_code}_practice")])
+            
+            # Работа над ошибками с счётчиком
+            if user_stats.get('mistakes_count', 0) > 0:
+                mistakes_text = f"🔧 Работа над ошибками ({user_stats['mistakes_count']})"
+                buttons.append([InlineKeyboardButton(mistakes_text, callback_data=f"{module_code}_mistakes")])
+            
+            # Прогресс с процентом
+            progress_text = "📊 Мой прогресс"
+            if user_stats.get('progress_percent', 0) > 0:
+                progress_text += f" ({user_stats['progress_percent']}%)"
+            buttons.append([InlineKeyboardButton(progress_text, callback_data=f"{module_code}_progress")])
+            
+            # Сбросить прогресс вместо настроек
+            buttons.append([InlineKeyboardButton("🔄 Сбросить прогресс", callback_data=f"{module_code}_reset_confirm")])
+            
+            # Главное меню
+            buttons.append([InlineKeyboardButton("🏠 Главное меню", callback_data="to_main_menu")])
+        else:
+            # Практика с индикатором стрика
+            practice_text = "💪 Практика"
+            if user_stats.get('streak', 0) > 0:
+                practice_text += f" (🔥{user_stats['streak']})"
+            buttons.append([InlineKeyboardButton(practice_text, callback_data=f"{module_code}_practice")])
+            
+            # Теория с индикатором новизны
+            theory_text = "📚 Теория и советы"
+            if user_stats.get('total_attempts', 0) == 0:
+                theory_text += " 🆕"
+            buttons.append([InlineKeyboardButton(theory_text, callback_data=f"{module_code}_theory")])
+            
+            # Банк примеров/эталонов
+            examples_text = "🏦 Банк эталонов"
+            if user_stats.get('examples_viewed', 0) == 0:
+                examples_text += " 💡"
+            buttons.append([InlineKeyboardButton(examples_text, callback_data=f"{module_code}_examples")])
+            
+            # Работа над ошибками с счётчиком
+            if user_stats.get('mistakes_count', 0) > 0:
+                mistakes_text = f"🔧 Работа над ошибками ({user_stats['mistakes_count']})"
+                buttons.append([InlineKeyboardButton(mistakes_text, callback_data=f"{module_code}_mistakes")])
+            
+            # Прогресс с процентом
+            progress_text = "📊 Мой прогресс"
+            if user_stats.get('progress_percent', 0) > 0:
+                progress_text += f" ({user_stats['progress_percent']}%)"
+            buttons.append([InlineKeyboardButton(progress_text, callback_data=f"{module_code}_progress")])
+            
+            # Настройки и главное меню
+            buttons.extend([
+                [InlineKeyboardButton("⚙️ Настройки", callback_data=f"{module_code}_settings")],
+                [InlineKeyboardButton("🏠 Главное меню", callback_data="to_main_menu")]
+            ])
         
         return InlineKeyboardMarkup(buttons)
     
