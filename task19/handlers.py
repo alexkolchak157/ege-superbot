@@ -587,13 +587,13 @@ async def show_progress_enhanced(update: Update, context: ContextTypes.DEFAULT_T
                 topic_stats[topic] = []
             topic_stats[topic].append(result['score'])
         
-        # Топ темы
+        # Топ темы (С ОКРУГЛЕНИЕМ!)
         top_results = []
         for topic, scores in topic_stats.items():
             avg = sum(scores) / len(scores)
             top_results.append({
                 'topic': topic,
-                'score': avg,
+                'score': round(avg),  # ОКРУГЛЯЕМ ДО ЦЕЛОГО!
                 'max_score': 3
             })
         top_results.sort(key=lambda x: x['score'], reverse=True)
@@ -736,7 +736,7 @@ async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     # Используем нашу новую функцию форматирования
                     feedback = _format_evaluation_result(result)
 
-                score = int(getattr(result, 'total_score', 0))
+                score = int(round(getattr(result, 'total_score', 0)))
                 max_score = int(getattr(result, 'max_score', 3))
                 
             else:
@@ -750,8 +750,8 @@ async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
             # Сохраняем результат
             context.user_data.setdefault('task19_results', []).append({
                 'topic': topic['title'],
-                'score': score,  # Уже int
-                'max_score': max_score,  # Уже int
+                'score': int(round(score)),      # Округляем и преобразуем в int
+                'max_score': int(max_score),      # Преобразуем в int
                 'timestamp': datetime.now().isoformat()
             })
             
@@ -964,8 +964,9 @@ async def theory_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 @safe_handler()
+@validate_state_transition({states.CHOOSING_MODE})
 async def examples_bank(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Показ банка примеров."""
+    """Показ банка эталонных примеров."""
     query = update.callback_query
     
     # Показываем первую тему с примерами
@@ -984,7 +985,7 @@ async def examples_bank(update: Update, context: ContextTypes.DEFAULT_TYPE):
         text += "💡 <i>Обратите внимание на структуру и конкретность примеров!</i>"
         
         kb = InlineKeyboardMarkup([
-            [InlineKeyboardButton("➡️ Следующая тема", callback_data="t19_bank_next:1")],
+            [InlineKeyboardButton("➡️ Следующая тема", callback_data="t19_bank_nav:1")],  # ИСПРАВЛЕНО!
             [InlineKeyboardButton("⬅️ Назад", callback_data="t19_menu")]
         ])
     else:
