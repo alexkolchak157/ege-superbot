@@ -173,7 +173,7 @@ class TestPartPlugin(BotPlugin):
                     ),
                     CallbackQueryHandler(
                         handlers.handle_unknown_callback,
-                        pattern=".*"
+                        pattern="^test_.*$"
                     ),                    
                 ],
                 
