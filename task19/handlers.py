@@ -712,10 +712,9 @@ async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return states.CHOOSING_MODE
         
         # Показываем анимацию проверки
-        checking_msg = await show_extended_thinking_animation(
+        checking_msg = await show_thinking_animation(
             update.message,
-            "Проверяю ваш ответ на задание 19",
-            duration=30
+            text="Проверяю ваш ответ"
         )
         
         try:
@@ -915,8 +914,10 @@ async def handle_answer_document_task19(update: Update, context: ContextTypes.DE
         await update.message.reply_text(f"❌ {error_msg}")
         return TASK19_WAITING
     
-    # Передаем в обычный обработчик
-    update.message.text = extracted_text
+    # ИСПРАВЛЕНИЕ: Сохраняем текст в контексте
+    context.user_data['document_text'] = extracted_text
+    
+    # Вызываем обычный обработчик
     return await handle_answer(update, context)
 
 @safe_handler()
