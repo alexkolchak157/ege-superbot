@@ -53,7 +53,11 @@ if not evaluator:
         logger.warning(f"Failed to initialize AI evaluator: {e}")
         evaluator = None
 
-
+def set_active_module(context: ContextTypes.DEFAULT_TYPE):
+    """Устанавливает task19 как активный модуль."""
+    context.user_data['active_module'] = 'task19'
+    context.user_data['current_module'] = 'task19'
+    
 # Меню выбора уровня строгости (только для админов)
 @safe_handler()
 async def strictness_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -197,6 +201,12 @@ async def entry_from_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     
     # Устанавливаем активный модуль
+    set_active_module(context)
+    
+    # Отвечаем на callback, чтобы убрать "часики"
+    await query.answer()
+    
+    # Устанавливаем активный модуль
     context.user_data['current_module'] = 'task19'
     context.user_data['active_module'] = 'task19'
     
@@ -249,9 +259,12 @@ def _build_topic_message(topic: Dict) -> str:
     )
 
 
-async def cmd_task19(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Команда /task19."""
+async def practice_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Режим практики."""
+    query = update.callback_query
+    
     # Устанавливаем активный модуль
+    set_active_module(context)
     context.user_data['current_module'] = 'task19'
     context.user_data['active_module'] = 'task19'
     results = context.user_data.get('task19_results', [])
@@ -508,8 +521,11 @@ async def list_topics(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 @safe_handler()
 async def select_topic(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Выбор конкретной темы и показ задания."""
+    """Обработка выбора конкретной темы."""
     query = update.callback_query
+    
+    # Устанавливаем активный модуль
+    set_active_module(context)
     
     # Извлекаем topic_id из callback_data
     topic_id = int(query.data.split(':')[1])
@@ -649,7 +665,7 @@ async def handle_answer_document_task19(update: Update, context: ContextTypes.DE
     )
     
     if not extracted_text:
-        return states.WAITING_ANSWER
+        return states.ANSWERING
     
     # Валидация
     is_valid, error_msg = DocumentHandlerMixin.validate_document_content(
@@ -659,7 +675,7 @@ async def handle_answer_document_task19(update: Update, context: ContextTypes.DE
     
     if not is_valid:
         await update.message.reply_text(f"❌ {error_msg}")
-        return states.WAITING_ANSWER
+        return states.ANSWERING
     
     # Передаем в обычный обработчик
     update.message.text = extracted_text
@@ -811,11 +827,18 @@ async def back_to_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Возврат в главное меню с очисткой контекста."""
     query = update.callback_query
     
-    # Очищаем контекст модуля
-    context.user_data.pop('current_module', None)
-    context.user_data.pop('active_module', None)
-    context.user_data.pop('current_topic', None)
-    context.user_data.pop('answer_processing', None)
+    # Очищаем ВСЕ связанные с модулем данные
+    keys_to_clear = [
+        'current_module',
+        'active_module', 
+        'current_topic',
+        'answer_processing',
+        'current_block',
+        'waiting_for_bank_search'
+    ]
+    
+    for key in keys_to_clear:
+        context.user_data.pop(key, None)
     
     await query.edit_message_text(
         "👋 Выберите раздел для изучения:",
@@ -906,9 +929,11 @@ async def handle_result_action(update: Update, context: ContextTypes.DEFAULT_TYP
         # Показываем прогресс (не удаляем сообщения)
         return await show_progress_enhanced(update, context)
 
+@safe_handler()
 async def cmd_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Отмена текущего действия."""
     await update.message.reply_text("Действие отменено.")
+    # Возвращаемся в главное меню task19
     return await cmd_task19(update, context)
 
 @safe_handler()
@@ -958,29 +983,33 @@ async def reset_results(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 
-async def cmd_task19_settings(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Команда /task19_settings для быстрого доступа к настройкам."""
-    current_level = evaluator.strictness if evaluator else StrictnessLevel.STRICT
+@safe_handler()
+async def cmd_task19(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Команда /task19."""
+    # Устанавливаем активный модуль
+    context.user_data['current_module'] = 'task19'
+    context.user_data['active_module'] = 'task19'
     
-    text = f"""⚙️ <b>Быстрые настройки задания 19</b>
-
-Текущий уровень проверки: <b>{current_level.value}</b>
-
-Используйте кнопки ниже для изменения:"""
+    results = context.user_data.get('task19_results', [])
+    user_stats = {
+        'total_attempts': len(results),
+        'average_score': sum(r['score'] for r in results) / len(results) if results else 0,
+        'streak': 0,
+        'weak_topics_count': 0,
+        'progress_percent': int(len(set(r['topic'] for r in results)) / 50 * 100) if results else 0
+    }
     
-    kb_buttons = []
-    for level in StrictnessLevel:
-        emoji = "✅" if level == current_level else ""
-        kb_buttons.append([
-            InlineKeyboardButton(
-                f"{emoji} {level.value}",
-                callback_data=f"t19_set_strictness:{level.name}"
-            )
-        ])
+    greeting = get_personalized_greeting(user_stats)
+    text = greeting + MessageFormatter.format_welcome_message(
+        "задание 19",
+        is_new_user=user_stats['total_attempts'] == 0
+    )
+    
+    kb = AdaptiveKeyboards.create_menu_keyboard(user_stats, module_code="t19")
     
     await update.message.reply_text(
         text,
-        reply_markup=InlineKeyboardMarkup(kb_buttons),
+        reply_markup=kb,
         parse_mode=ParseMode.HTML
     )
     
@@ -1370,6 +1399,34 @@ async def apply_strictness(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.error(f"Error setting strictness: {e}")
         return states.CHOOSING_MODE
 
+@safe_handler()
+async def cmd_task19_settings(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Команда /task19_settings для быстрого доступа к настройкам."""
+    current_level = evaluator.strictness if evaluator else StrictnessLevel.STRICT
+    
+    text = f"""⚙️ <b>Быстрые настройки задания 19</b>
+
+Текущий уровень проверки: <b>{current_level.value}</b>
+
+Используйте кнопки ниже для изменения:"""
+    
+    kb_buttons = []
+    for level in StrictnessLevel:
+        emoji = "✅" if level == current_level else ""
+        kb_buttons.append([
+            InlineKeyboardButton(
+                f"{emoji} {level.value}",
+                callback_data=f"t19_set_strictness:{level.name}"
+            )
+        ])
+    
+    await update.message.reply_text(
+        text,
+        reply_markup=InlineKeyboardMarkup(kb_buttons),
+        parse_mode=ParseMode.HTML
+    )
+    
+    return states.CHOOSING_MODE
 
 @safe_handler()
 async def handle_theory_sections(update: Update, context: ContextTypes.DEFAULT_TYPE):

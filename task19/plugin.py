@@ -8,6 +8,7 @@ from telegram.ext import (
 from core.plugin_base import BotPlugin
 from core import states
 from . import handlers
+from core.module_filter import create_module_filter
 
 logger = logging.getLogger(__name__)
 
@@ -109,8 +110,14 @@ class Task19Plugin(BotPlugin):
                 ],
                 
                 states.ANSWERING: [
-                    MessageHandler(filters.TEXT & ~filters.COMMAND, handlers.handle_answer),
-                    MessageHandler(filters.Document.ALL, handlers.handle_answer_document_task19),
+                    MessageHandler(
+                        filters.TEXT & ~filters.COMMAND & create_module_filter('task19'),
+                        handlers.handle_answer
+                    ),
+                    MessageHandler(
+                        filters.Document.ALL & create_module_filter('task19'),
+                        handlers.handle_answer_document_task19
+                    ),
                     CallbackQueryHandler(handlers.practice_mode, pattern="^t19_practice$"),
                 ],
                 states.SEARCHING: [
@@ -130,6 +137,9 @@ class Task19Plugin(BotPlugin):
             ],
             name="task19_conversation",
             persistent=False,
+            per_chat=True,
+            per_user=True,
+            per_message=False
         )
         # Регистрируем обработчики в приложении
         app.add_handler(conv_handler)
