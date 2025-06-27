@@ -86,8 +86,18 @@ class Task19Plugin(BotPlugin):
                     # Теория - подразделы
                     CallbackQueryHandler(handlers.handle_theory_sections, pattern="^t19_(how_to_write|good_examples|common_mistakes|useful_phrases)$"),
                     
-                    # Настройки
-                    
+
+                    # Работа над ошибками
+                    CallbackQueryHandler(handlers.retry_topic, pattern="^t19_retry_topic:"),
+
+                    # Настройки строгости
+                    CallbackQueryHandler(handlers.apply_strictness, pattern="^t19_strict:"),
+
+                    # Детали достижений
+                    CallbackQueryHandler(handlers.show_achievement_details, pattern="^t19_achievement:"),
+
+                    # Обработчики результатов
+                    CallbackQueryHandler(handlers.show_ideal_answer, pattern="^t19_show_ideal$"),
                     # Новые функции
                     CallbackQueryHandler(handlers.mistakes_mode, pattern="^t19_mistakes$"),
                     CallbackQueryHandler(handlers.show_achievements, pattern="^t19_achievements$"),
@@ -137,6 +147,10 @@ class Task19Plugin(BotPlugin):
         )
         # Регистрируем обработчики в приложении
         app.add_handler(conv_handler)
+        app.add_handler(CallbackQueryHandler(
+            handlers.achievement_ok, 
+            pattern="^achievement_ok$"
+        ))
         app.add_handler(CallbackQueryHandler(lambda u, c: u.callback_query.answer() if u.callback_query else None,pattern="^streak_ok$"))
         logger.info(f"Registered handlers for {self.title} plugin")
 
