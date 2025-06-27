@@ -190,10 +190,12 @@ async def safe_handle_answer_task19(update: Update, context: ContextTypes.DEFAUL
     """Безопасный обработчик для task19."""
     logger.info(f"safe_handle_answer_task19 called for user {update.effective_user.id}")
     
-    # ВАЖНО: Проверяем, что мы действительно в состоянии ответа на task19
+    # ИСПРАВЛЕНИЕ: Проверяем оба поля для обратной совместимости
+    active_module = context.user_data.get('active_module')
     current_module = context.user_data.get('current_module')
-    if current_module != 'task19':
-        logger.debug(f"Ignoring answer - current module is {current_module}, not task19")
+    
+    if active_module != 'task19' and current_module != 'task19':
+        logger.debug(f"Ignoring answer - active_module: {active_module}, current_module: {current_module}")
         return states.CHOOSING_MODE
     
     # Предотвращаем повторную обработку
@@ -221,6 +223,7 @@ async def safe_handle_answer_task19(update: Update, context: ContextTypes.DEFAUL
                 InlineKeyboardButton("📝 К заданиям", callback_data="t19_practice")
             ]])
         )
+        context.user_data['answer_processing'] = False
         return states.CHOOSING_MODE
     
     # Показываем анимацию проверки
@@ -268,8 +271,6 @@ async def safe_handle_answer_task19(update: Update, context: ContextTypes.DEFAUL
         
         logger.info(f"Answer evaluated for user {update.effective_user.id}: {result['score']}/{result['max_score']}")
         
-        return states.CHOOSING_MODE
-        
     except Exception as e:
         logger.error(f"Error in safe_handle_answer_task19: {e}")
         
@@ -287,9 +288,12 @@ async def safe_handle_answer_task19(update: Update, context: ContextTypes.DEFAUL
                 InlineKeyboardButton("📝 В меню", callback_data="t19_menu")
             ]])
         )
+        
+    finally:
+        # ВАЖНО: Всегда сбрасываем флаг обработки
         context.user_data['answer_processing'] = False
-
-        return states.CHOOSING_MODE
+    
+    return states.CHOOSING_MODE
 
 
 async def safe_handle_answer_task20(update: Update, context: ContextTypes.DEFAULT_TYPE):
