@@ -622,6 +622,64 @@ async def show_progress_enhanced(update: Update, context: ContextTypes.DEFAULT_T
     )
     return states.CHOOSING_MODE
 
+def _format_evaluation_result(result) -> str:
+    """Форматирует результат оценки для отображения пользователю."""
+    text = f"📊 <b>Результаты проверки</b>\n\n"
+    
+    # Итоговый балл
+    total_score = getattr(result, 'total_score', 0)
+    max_score = getattr(result, 'max_score', 3)
+    text += f"<b>Итого: {total_score}/{max_score} баллов</b>\n\n"
+    
+    # Основная обратная связь
+    if hasattr(result, 'feedback') and result.feedback:
+        text += f"{result.feedback}\n"
+    
+    # Детальная информация из detailed_feedback
+    if hasattr(result, 'detailed_feedback') and result.detailed_feedback:
+        detail = result.detailed_feedback
+        
+        # Информация о засчитанных примерах
+        if detail.get('valid_examples'):
+            text += f"\n✅ <b>Засчитанные примеры:</b>\n"
+            for ex in detail['valid_examples']:
+                text += f"• Пример {ex.get('number', '?')}: {ex.get('comment', 'Пример корректный')}\n"
+        
+        # Информация о незасчитанных примерах
+        if detail.get('invalid_examples'):
+            text += f"\n❌ <b>Не засчитанные примеры:</b>\n"
+            for ex in detail['invalid_examples']:
+                text += f"• Пример {ex.get('number', '?')}: {ex.get('reason', 'Не соответствует критериям')}\n"
+                if ex.get('improvement'):
+                    text += f"  💡 <i>Совет: {ex['improvement']}</i>\n"
+        
+        # Информация о штрафах
+        if detail.get('penalty_applied'):
+            text += f"\n⚠️ <b>Применён штраф:</b> {detail.get('penalty_reason', 'Превышено количество примеров с ошибками')}\n"
+    
+    # Рекомендации
+    if hasattr(result, 'suggestions') and result.suggestions:
+        text += "\n💡 <b>Рекомендации:</b>\n"
+        for suggestion in result.suggestions:
+            text += f"• {suggestion}\n"
+    
+    # Фактические ошибки
+    if hasattr(result, 'factual_errors') and result.factual_errors:
+        text += "\n⚠️ <b>Обратите внимание на ошибки:</b>\n"
+        for error in result.factual_errors:
+            if isinstance(error, str):
+                text += f"• {error}\n"
+    
+    # Мотивационное сообщение
+    if total_score == max_score:
+        text += "\n🎉 Отличная работа! Все примеры засчитаны!"
+    elif total_score > 0:
+        text += "\n💪 Неплохо! Продолжайте практиковаться!"
+    else:
+        text += "\n📚 Изучите теорию и примеры, затем попробуйте снова!"
+    
+    return text
+
 @safe_handler()
 @validate_state_transition({TASK19_WAITING})
 async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -675,8 +733,9 @@ async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 if hasattr(result, 'format_feedback'):
                     feedback = result.format_feedback()
                 else:
-                    feedback = str(result)
-                
+                    # Форматируем вручную
+                    feedback = _format_evaluation_result(result)
+
                 score = getattr(result, 'total_score', 0)
                 max_score = getattr(result, 'max_score', 3)
                 
