@@ -58,14 +58,14 @@ async def show_extended_thinking_animation(message: Message, text: str = "Про
     
     # Создаем фоновую задачу для анимации
     async def animate():
-        iterations = duration // 3  # Обновление каждые 3 секунды
+        iterations = duration // 2  # Обновление каждые 2 секунды вместо 3
         for i in range(iterations):
             emoji = emojis[i % len(emojis)]
             dot = dots[i % len(dots)]
             
             try:
                 await thinking_msg.edit_text(f"{emoji} {text}{dot}")
-                await asyncio.sleep(3)
+                await asyncio.sleep(2)  # Уменьшено с 3
             except Exception as e:
                 # Сообщение было удалено или произошла ошибка
                 logger.debug(f"Animation stopped: {e}")

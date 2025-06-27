@@ -341,15 +341,22 @@ class AdaptiveKeyboards:
     
     @staticmethod
     def create_progress_keyboard(has_detailed_stats: bool = False,
-                               can_export: bool = True,
+                               can_export: bool = False,
                                module_code: str = "task") -> InlineKeyboardMarkup:
-        """Клавиатура для экрана прогресса."""
+        """
+        Создать клавиатуру для экрана прогресса.
+        
+        Args:
+            has_detailed_stats: Есть ли детальная статистика
+            can_export: Можно ли экспортировать результаты
+            module_code: Код модуля для callback_data
+        """
         buttons = []
         
         if has_detailed_stats:
             buttons.append([
                 InlineKeyboardButton("📈 Детальная статистика", 
-                                   callback_data=f"{module_code}_detailed_stats")
+                                   callback_data=f"{module_code}_detailed_progress")  # ИСПРАВЛЕНО!
             ])
         
         if can_export:
