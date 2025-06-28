@@ -55,6 +55,7 @@ class Task20Plugin(BotPlugin):
                     CallbackQueryHandler(handlers.noop, pattern="^noop$"),
                     
                     # Обработчики для выбора тем
+                    CallbackQueryHandler(handlers.choose_topic, pattern="^t20_topic:"),
                     CallbackQueryHandler(handlers.select_block, pattern="^t20_select_block$"),
                     CallbackQueryHandler(handlers.handle_result_action, pattern="^t20_(new|retry)$"),
                     CallbackQueryHandler(handlers.return_to_menu, pattern="^t20_menu$"),
@@ -62,7 +63,9 @@ class Task20Plugin(BotPlugin):
                     # Навигация по темам
                     CallbackQueryHandler(handlers.block_menu, pattern="^t20_block:"),
                     CallbackQueryHandler(handlers.handle_topic_choice_wrapper, pattern="^t20_topic:"),
-                    
+                    CallbackQueryHandler(handlers.list_topics, pattern="^t20_list_topics$"),
+                    CallbackQueryHandler(handlers.random_topic_block, pattern="^t20_random_block$"),
+                    CallbackQueryHandler(handlers.list_topics, pattern=r"^t20_list_topics:page:\d+$"),
                     # Дополнительные функции
                     CallbackQueryHandler(handlers.practice_stats, pattern="^t20_practice_stats$"),
                     CallbackQueryHandler(handlers.export_progress, pattern="^t20_export$"),

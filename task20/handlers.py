@@ -11,6 +11,7 @@ from telegram.constants import ParseMode
 from telegram.ext import ContextTypes, ConversationHandler
 from core.admin_tools import admin_manager
 from core import states
+from core.states import ANSWERING_T20, SEARCHING, VIEWING_EXAMPLE, CONFIRMING_RESET
 from core.universal_ui import UniversalUIComponents, AdaptiveKeyboards, MessageFormatter
 from core.ui_helpers import (
     show_thinking_animation,
@@ -822,15 +823,15 @@ async def safe_handle_answer_task20(update: Update, context: ContextTypes.DEFAUL
     thinking_msg = await show_thinking_animation(
         update.message,
         "🤔 Анализирую ваши суждения",
-        duration=2.0
     )
     
     # Оцениваем ответ
     if evaluator and AI_EVALUATOR_AVAILABLE:
         try:
-            result = await evaluator.evaluate_answer(
-                topic=topic,
+            result = await evaluator.evaluate(
                 answer=user_answer,
+                topic=topic['title'],  # передаем название темы
+                task_text=topic.get('task_text', ''),  # передаем текст задания
                 user_id=update.effective_user.id
             )
             score = result.score
@@ -1323,7 +1324,7 @@ async def return_to_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return states.CHOOSING_MODE
 
 @safe_handler()
-@validate_state_transition({states.CHOOSING_MODE, states.CHOOSING_BLOCK, states.CHOOSING_TOPIC, states.ANSWERING, states.ANSWERING_PARTS})
+@validate_state_transition({states.CHOOSING_MODE, states.CHOOSING_BLOCK, states.CHOOSING_TOPIC, ANSWERING_T20, states.ANSWERING_PARTS})
 async def back_to_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Возврат в главное меню."""
 
@@ -1343,25 +1344,62 @@ async def noop(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return None
 
 @safe_handler()
-@validate_state_transition({states.CHOOSING_BLOCK})
+@validate_state_transition({states.CHOOSING_MODE})
 async def select_block(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Выбор блока тем."""
     query = update.callback_query
     
-    # Исправленный порядок блоков
-    blocks = ["🧠 Человек и общество", "💰 Экономика", "👥 Социальные отношения", "🏛️ Политика", "⚖️ Право"]
+    # Получаем реальные блоки из загруженных данных
+    blocks_data = task20_data.get("topics_by_block", {})
+    
+    if not blocks_data:
+        await query.edit_message_text(
+            "❌ Данные о темах не загружены.\n\n"
+            "Попробуйте перезапустить бота или обратитесь к администратору.",
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("⬅️ Назад", callback_data="t20_menu")
+            ]])
+        )
+        return states.CHOOSING_MODE
     
     text = "📚 <b>Выберите блок тем:</b>"
     
+    # Маппинг блоков на эмодзи
+    block_emojis = {
+        "Человек и общество": "🧠",
+        "Экономика": "💰",
+        "Социальные отношения": "👥",
+        "Политика": "🏛️",
+        "Право": "⚖️"
+    }
+    
+    # Порядок блоков
+    block_order = ["Человек и общество", "Экономика", "Социальные отношения", "Политика", "Право"]
+    
     kb_buttons = []
-    for block in blocks:
-        topics_count = len(task20_data["topics_by_block"].get(block, []))
-        kb_buttons.append([
-            InlineKeyboardButton(
-                f"{block} ({topics_count} тем)",
-                callback_data=f"t20_block:{block}"
-            )
-        ])
+    for block_name in block_order:
+        if block_name in blocks_data:
+            topics = blocks_data[block_name]
+            emoji = block_emojis.get(block_name, "📚")
+            kb_buttons.append([
+                InlineKeyboardButton(
+                    f"{emoji} {block_name} ({len(topics)} тем)",
+                    callback_data=f"t20_block:{block_name}"
+                )
+            ])
+    
+    # Добавляем блоки, которых нет в block_order (на всякий случай)
+    for block_name, topics in blocks_data.items():
+        if block_name not in block_order and topics:
+            kb_buttons.append([
+                InlineKeyboardButton(
+                    f"📚 {block_name} ({len(topics)} тем)",
+                    callback_data=f"t20_block:{block_name}"
+                )
+            ])
+    
+    if not kb_buttons:
+        kb_buttons.append([InlineKeyboardButton("❌ Нет доступных тем", callback_data="noop")])
     
     kb_buttons.append([InlineKeyboardButton("⬅️ Назад", callback_data="t20_practice")])
     
@@ -1370,7 +1408,7 @@ async def select_block(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=InlineKeyboardMarkup(kb_buttons),
         parse_mode=ParseMode.HTML
     )
-    return states.CHOOSING_BLOCK
+    return states.CHOOSING_MODE
 
 def _build_topic_message(topic: Dict) -> str:
     """Формирует текст сообщения с заданием по теме."""
@@ -1403,7 +1441,7 @@ async def handle_result_action(update: Update, context: ContextTypes.DEFAULT_TYP
                 text,
                 parse_mode=ParseMode.HTML
             )
-            return states.ANSWERING
+            return ANSWERING_T20
     elif action == 'new':  # Обработка новой темы
         return await handle_new_task(update, context)
     elif action == 'menu':
@@ -1420,7 +1458,7 @@ async def block_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     
     block_name = query.data.split(":", 1)[1]
-    context.user_data['current_block'] = block_name
+    context.user_data['current_block'] = block_name  # Важно!
     
     topics = task20_data["topics_by_block"].get(block_name, [])
     
@@ -1442,7 +1480,7 @@ async def block_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return states.CHOOSING_MODE
 
 @safe_handler()
-@validate_state_transition({states.ANSWERING})
+@validate_state_transition({ANSWERING_T20})
 async def handle_answer_document_task20(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработка суждений из документа для task20."""
     
@@ -1458,7 +1496,7 @@ async def handle_answer_document_task20(update: Update, context: ContextTypes.DE
     )
     
     if not extracted_text:
-        return states.ANSWERING
+        return ANSWERING_T20
     
     # Передаем в обычный обработчик
     update.message.text = extracted_text
@@ -1551,7 +1589,7 @@ async def random_topic_all(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ])
     
     await query.edit_message_text(text, reply_markup=kb, parse_mode=ParseMode.HTML)
-    return states.ANSWERING
+    return ANSWERING_T20
 
 @safe_handler()
 async def random_topic_block(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1560,24 +1598,14 @@ async def random_topic_block(update: Update, context: ContextTypes.DEFAULT_TYPE)
     
     import random
     
-    block_name = context.user_data.get('current_block')
+    block_name = context.user_data.get('current_block')  # Используем current_block
     if not block_name:
-        await query.edit_message_text(
-            "❌ Блок не выбран",
-            reply_markup=InlineKeyboardMarkup([[
-                InlineKeyboardButton("⬅️ Назад", callback_data="t20_select_block")
-            ]])
-        )
+        await query.answer("Блок не выбран", show_alert=True)
         return states.CHOOSING_MODE
     
     topics = task20_data["topics_by_block"].get(block_name, [])
     if not topics:
-        await query.edit_message_text(
-            "❌ В блоке нет тем",
-            reply_markup=InlineKeyboardMarkup([[
-                InlineKeyboardButton("⬅️ Назад", callback_data=f"t20_block:{block_name}")
-            ]])
-        )
+        await query.answer("В блоке нет тем", show_alert=True)
         return states.CHOOSING_MODE
     
     topic = random.choice(topics)
@@ -1595,7 +1623,7 @@ async def random_topic_block(update: Update, context: ContextTypes.DEFAULT_TYPE)
         parse_mode=ParseMode.HTML
     )
     
-    return states.ANSWERING
+    return states.ANSWERING_T20  # Важно: возвращаем правильное состояние
 
 
 @safe_handler()
@@ -2162,7 +2190,7 @@ async def choose_topic(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode=ParseMode.HTML
     )
     
-    return states.ANSWERING
+    return ANSWERING_T20
 
 async def save_stats_by_level(context: ContextTypes.DEFAULT_TYPE, user_id: int, score: int):
     """Сохранение статистики по уровням строгости."""
@@ -2188,7 +2216,7 @@ async def save_stats_by_level(context: ContextTypes.DEFAULT_TYPE, user_id: int, 
     stats['avg_score'] = stats['total_score'] / stats['attempts']
 
 @safe_handler()
-@validate_state_transition({states.ANSWERING})
+@validate_state_transition({ANSWERING_T20})
 async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return await safe_handle_answer_task20(update, context)
 
