@@ -76,7 +76,7 @@ class Task20Plugin(BotPlugin):
                     CallbackQueryHandler(handlers.confirm_reset, pattern="^t20_confirm_reset$"),
                     
                     # Работа с банком примеров
-                    CallbackQueryHandler(handlers.search_bank, pattern="^t20_search_bank$"),
+                    CallbackQueryHandler(handlers.handle_bank_search, pattern="^t20_search_bank$"),
                     CallbackQueryHandler(handlers.view_example, pattern="^t20_view_example:"),
                     CallbackQueryHandler(handlers.view_all_examples, pattern="^t20_all_examples:"),
                     
@@ -91,7 +91,7 @@ class Task20Plugin(BotPlugin):
                 ],
                 
                 states.SEARCHING: [
-                    MessageHandler(filters.TEXT & ~filters.COMMAND, handlers.handle_search_query),
+                    MessageHandler(filters.TEXT & ~filters.COMMAND, handlers.handle_bank_search),
                     CallbackQueryHandler(handlers.examples_bank, pattern="^t20_examples$"),
                 ],
                 

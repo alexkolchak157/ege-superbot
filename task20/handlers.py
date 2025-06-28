@@ -505,6 +505,399 @@ async def how_to_write(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     return states.CHOOSING_MODE
     
+# Добавьте эти функции в файл task20/handlers.py
+
+@safe_handler()
+async def search_bank(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Инициализация поиска в банке суждений."""
+    query = update.callback_query
+    
+    await query.edit_message_text(
+        "🔍 <b>Поиск в банке суждений</b>\n\n"
+        "Отправьте название темы или ключевые слова для поиска:",
+        reply_markup=InlineKeyboardMarkup([[
+            InlineKeyboardButton("❌ Отмена", callback_data="t20_examples")
+        ]]),
+        parse_mode=ParseMode.HTML
+    )
+    
+    context.user_data['waiting_for_bank_search'] = True
+    return states.SEARCHING
+
+@safe_handler()
+async def view_example(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Просмотр конкретного примера суждений."""
+    query = update.callback_query
+    
+    # Извлекаем индекс темы из callback_data
+    topic_idx = int(query.data.split(":")[1])
+    topics = task20_data.get('topics', [])
+    
+    if not topics or topic_idx >= len(topics):
+        await query.answer("Тема не найдена", show_alert=True)
+        return states.CHOOSING_MODE
+    
+    topic = topics[topic_idx]
+    context.user_data['bank_current_idx'] = topic_idx
+    context.user_data['viewing_mode'] = 'single'
+    
+    text = f"""🏦 <b>Банк суждений - Детальный просмотр</b>
+
+<b>Тема {topic_idx + 1}/{len(topics)}:</b> {topic['title']}
+<b>Блок:</b> {topic['block']}
+
+<b>Задание:</b>
+<i>{topic['task_text']}</i>
+
+<b>📝 Эталонные суждения:</b>
+"""
+    
+    # Показываем суждения с подробными пояснениями
+    for i, example in enumerate(topic.get('example_arguments', []), 1):
+        text += f"\n<b>{i}. {example['type']}</b>\n"
+        text += f"└ <i>{example['argument']}</i>\n"
+        if 'explanation' in example:
+            text += f"   💡 <code>{example['explanation']}</code>\n"
+    
+    # Кнопки навигации
+    kb_buttons = []
+    
+    # Навигация между примерами
+    nav_row = []
+    if topic_idx > 0:
+        nav_row.append(InlineKeyboardButton("⬅️ Пред.", callback_data=f"t20_prev_example"))
+    nav_row.append(InlineKeyboardButton(f"{topic_idx + 1}/{len(topics)}", callback_data="noop"))
+    if topic_idx < len(topics) - 1:
+        nav_row.append(InlineKeyboardButton("След. ➡️", callback_data=f"t20_next_example"))
+    kb_buttons.append(nav_row)
+    
+    # Дополнительные действия
+    kb_buttons.extend([
+        [InlineKeyboardButton("📋 Все примеры", callback_data=f"t20_view_all_examples:{topic['block']}")],
+        [InlineKeyboardButton("🎯 Попробовать эту тему", callback_data=f"t20_topic:{topic['id']}")],
+        [InlineKeyboardButton("⬅️ К банку суждений", callback_data="t20_back_examples")]
+    ])
+    
+    await query.edit_message_text(
+        text,
+        reply_markup=InlineKeyboardMarkup(kb_buttons),
+        parse_mode=ParseMode.HTML
+    )
+    return states.VIEWING_EXAMPLE
+
+@safe_handler()
+async def view_all_examples(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Просмотр всех примеров по блоку."""
+    query = update.callback_query
+    
+    # Извлекаем блок из callback_data
+    block_name = query.data.split(":", 1)[1] if ":" in query.data else None
+    
+    if not block_name:
+        # Показываем выбор блока
+        blocks = list(task20_data.get("topics_by_block", {}).keys())
+        
+        text = "📚 <b>Все примеры суждений</b>\n\nВыберите блок для просмотра:"
+        
+        kb_buttons = []
+        for block in blocks:
+            topics_count = len(task20_data["topics_by_block"].get(block, []))
+            kb_buttons.append([
+                InlineKeyboardButton(
+                    f"{block} ({topics_count} тем)",
+                    callback_data=f"t20_view_all_examples:{block}"
+                )
+            ])
+        
+        kb_buttons.append([InlineKeyboardButton("⬅️ Назад", callback_data="t20_examples")])
+        
+        await query.edit_message_text(
+            text,
+            reply_markup=InlineKeyboardMarkup(kb_buttons),
+            parse_mode=ParseMode.HTML
+        )
+        return states.CHOOSING_MODE
+    
+    # Показываем все темы блока
+    topics = task20_data["topics_by_block"].get(block_name, [])
+    
+    text = f"📚 <b>Все суждения блока: {block_name}</b>\n\n"
+    
+    # Показываем краткий список тем
+    for i, topic in enumerate(topics[:10], 1):  # Ограничиваем 10 темами
+        text += f"<b>{i}. {topic['title']}</b>\n"
+        # Показываем первое суждение как пример
+        if topic.get('example_arguments'):
+            first_arg = topic['example_arguments'][0]
+            text += f"   <i>• {first_arg['argument'][:100]}...</i>\n"
+        text += "\n"
+    
+    if len(topics) > 10:
+        text += f"\n<i>...и ещё {len(topics) - 10} тем</i>"
+    
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("📖 Просмотр по одной", callback_data=f"t20_bank_nav:0")],
+        [InlineKeyboardButton("⬅️ К выбору блока", callback_data="t20_view_all_examples")],
+        [InlineKeyboardButton("⬅️ В меню", callback_data="t20_examples")]
+    ])
+    
+    await query.edit_message_text(
+        text,
+        reply_markup=kb,
+        parse_mode=ParseMode.HTML
+    )
+    return states.CHOOSING_MODE
+
+@safe_handler()
+async def next_example(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Переход к следующему примеру."""
+    query = update.callback_query
+    
+    current_idx = context.user_data.get('bank_current_idx', 0)
+    topics = task20_data.get('topics', [])
+    
+    # Увеличиваем индекс
+    new_idx = min(current_idx + 1, len(topics) - 1)
+    
+    if new_idx == current_idx:
+        await query.answer("Это последняя тема", show_alert=True)
+        return states.VIEWING_EXAMPLE
+    
+    # Обновляем данные и показываем новый пример
+    query.data = f"t20_view_example:{new_idx}"
+    return await view_example(update, context)
+
+@safe_handler()
+async def prev_example(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Переход к предыдущему примеру."""
+    query = update.callback_query
+    
+    current_idx = context.user_data.get('bank_current_idx', 0)
+    
+    # Уменьшаем индекс
+    new_idx = max(current_idx - 1, 0)
+    
+    if new_idx == current_idx:
+        await query.answer("Это первая тема", show_alert=True)
+        return states.VIEWING_EXAMPLE
+    
+    # Обновляем данные и показываем новый пример
+    query.data = f"t20_view_example:{new_idx}"
+    return await view_example(update, context)
+
+@safe_handler()
+async def back_to_examples(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Возврат к банку примеров."""
+    query = update.callback_query
+    
+    # Очищаем временные данные
+    context.user_data.pop('viewing_mode', None)
+    context.user_data.pop('bank_current_idx', None)
+    
+    # Возвращаемся к главному меню банка
+    return await examples_bank(update, context)
+
+@safe_handler()
+async def cancel_reset(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Отмена сброса прогресса."""
+    query = update.callback_query
+    
+    await query.answer("Сброс отменён")
+    
+    # Возвращаемся в настройки
+    return await settings_mode(update, context)
+
+@safe_handler()
+async def handle_unexpected_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработка неожиданных текстовых сообщений."""
+    
+    # Проверяем, не ждем ли мы поискового запроса
+    if context.user_data.get('waiting_for_bank_search'):
+        return await handle_bank_search(update, context)
+    
+    # Определяем текущее состояние
+    current_state = context.user_data.get('current_state', states.CHOOSING_MODE)
+    
+    # Формируем сообщение в зависимости от состояния
+    if current_state == states.ANSWERING_T20:
+        text = ("⚠️ Похоже, вы отправили сообщение не в том формате.\n\n"
+                "Для ответа на задание 20 отправьте все три суждения одним сообщением.")
+        kb = InlineKeyboardMarkup([[
+            InlineKeyboardButton("❌ Отменить", callback_data="t20_menu")
+        ]])
+    else:
+        text = "ℹ️ Пожалуйста, используйте кнопки меню для навигации."
+        kb = InlineKeyboardMarkup([[
+            InlineKeyboardButton("📝 В меню задания 20", callback_data="t20_menu"),
+            InlineKeyboardButton("🏠 Главное меню", callback_data="to_main_menu")
+        ]])
+    
+    await update.message.reply_text(
+        text,
+        reply_markup=kb,
+        parse_mode=ParseMode.HTML
+    )
+    
+    return current_state
+
+@safe_handler()
+async def skip_question(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Пропуск текущего вопроса."""
+    query = update.callback_query
+    
+    topic = context.user_data.get('current_topic')
+    
+    if not topic:
+        await query.answer("Нет активного задания", show_alert=True)
+        return states.CHOOSING_MODE
+    
+    # Сохраняем пропуск в статистику
+    result = {
+        'topic': topic['title'],
+        'topic_id': topic['id'],
+        'block': topic['block'],
+        'score': 0,
+        'max_score': 3,
+        'skipped': True,
+        'timestamp': datetime.now().isoformat()
+    }
+    
+    if 'task20_results' not in context.user_data:
+        context.user_data['task20_results'] = []
+    context.user_data['task20_results'].append(result)
+    
+    # Показываем сообщение о пропуске
+    text = (
+        "⏭️ <b>Задание пропущено</b>\n\n"
+        f"Тема: {topic['title']}\n\n"
+        "Пропущенные задания можно выполнить позже в режиме "
+        "«Работа над ошибками»."
+    )
+    
+    kb = InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("🎲 Новая тема", callback_data="t20_new"),
+            InlineKeyboardButton("📊 Мой прогресс", callback_data="t20_progress")
+        ],
+        [InlineKeyboardButton("⬅️ В меню", callback_data="t20_menu")]
+    ])
+    
+    await query.edit_message_text(
+        text,
+        reply_markup=kb,
+        parse_mode=ParseMode.HTML
+    )
+    
+    return states.CHOOSING_MODE
+
+
+# Дополнительная вспомогательная функция для обработки ответов в ANSWERING_T20
+async def safe_handle_answer_task20(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Безопасная обработка ответа на задание 20."""
+    
+    topic = context.user_data.get('current_topic')
+    if not topic:
+        await update.message.reply_text(
+            "❌ Ошибка: тема не выбрана.",
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("⬅️ В меню", callback_data="t20_menu")
+            ]])
+        )
+        return states.CHOOSING_MODE
+    
+    # Получаем текст ответа
+    user_answer = update.message.text.strip()
+    
+    # Проверяем минимальную длину
+    if len(user_answer) < 50:
+        await update.message.reply_text(
+            "❌ Ответ слишком короткий. Приведите три развернутых суждения.",
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("❌ Отменить", callback_data="t20_menu")
+            ]])
+        )
+        return states.ANSWERING_T20
+    
+    # Показываем анимацию проверки
+    thinking_msg = await show_thinking_animation(
+        update.message,
+        "🤔 Анализирую ваши суждения",
+        duration=2.0
+    )
+    
+    # Оцениваем ответ
+    if evaluator and AI_EVALUATOR_AVAILABLE:
+        try:
+            result = await evaluator.evaluate_answer(
+                topic=topic,
+                answer=user_answer,
+                user_id=update.effective_user.id
+            )
+            score = result.score
+            feedback = result.feedback
+            criteria_scores = result.criteria_scores
+        except Exception as e:
+            logger.error(f"Evaluation error: {e}")
+            score = 2
+            feedback = "Ваш ответ принят. Продолжайте практиковаться!"
+            criteria_scores = {"abstractness": 1, "relevance": 1, "completeness": 0}
+    else:
+        # Простая оценка без AI
+        score = min(3, len(user_answer) // 100)
+        feedback = "Ваш ответ принят. Продолжайте практиковаться!"
+        criteria_scores = {"abstractness": 1, "relevance": 1, "completeness": score - 2}
+    
+    # Удаляем анимацию
+    await thinking_msg.delete()
+    
+    # Сохраняем результат
+    result_data = {
+        'topic': topic['title'],
+        'topic_id': topic['id'],
+        'block': topic['block'],
+        'score': score,
+        'max_score': 3,
+        'timestamp': datetime.now().isoformat(),
+        'user_answer': user_answer[:500]  # Сохраняем первые 500 символов
+    }
+    
+    if 'task20_results' not in context.user_data:
+        context.user_data['task20_results'] = []
+    context.user_data['task20_results'].append(result_data)
+    
+    # Формируем ответ
+    score_emoji = {0: "❌", 1: "🟡", 2: "🟢", 3: "🎯"}.get(score, "🟡")
+    
+    text = f"{score_emoji} <b>Ваш результат: {score}/3 балла</b>\n\n"
+    text += f"<b>Обратная связь:</b>\n{feedback}\n\n"
+    
+    if criteria_scores:
+        text += "<b>Оценка по критериям:</b>\n"
+        criteria_names = {
+            "abstractness": "Абстрактность",
+            "relevance": "Соответствие теме",
+            "completeness": "Полнота ответа"
+        }
+        for criterion, value in criteria_scores.items():
+            name = criteria_names.get(criterion, criterion)
+            emoji = "✅" if value > 0 else "❌"
+            text += f"{emoji} {name}: {'+' if value > 0 else ''}{value}\n"
+    
+    # Кнопки действий
+    kb = AdaptiveKeyboards.create_result_keyboard(
+        score=score,
+        max_score=3,
+        module_code="t20"
+    )
+    
+    await update.message.reply_text(
+        text,
+        reply_markup=kb,
+        parse_mode=ParseMode.HTML
+    )
+    
+    return states.CHOOSING_MODE
+    
 async def good_examples(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Примеры правильных суждений."""
     query = update.callback_query
@@ -1676,7 +2069,7 @@ async def handle_new_task(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return await random_topic_all(update, context)
 
 @safe_handler()
-async def export_results(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def export_progress(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Экспорт результатов в CSV."""
     query = update.callback_query
     user_id = query.from_user.id
