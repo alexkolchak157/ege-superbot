@@ -6,7 +6,6 @@ import io
 import json
 from typing import Optional, Dict, List
 from datetime import datetime
-from core.document_processor import DocumentHandlerMixin
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.constants import ParseMode
 from telegram.ext import ContextTypes, ConversationHandler
@@ -16,11 +15,11 @@ from core.universal_ui import UniversalUIComponents, AdaptiveKeyboards, MessageF
 from core.ui_helpers import (
     show_thinking_animation,
     show_streak_notification,
+    show_extended_thinking_animation,
     get_personalized_greeting,
     get_motivational_message,
     create_visual_progress
 )
-from core.safe_evaluator import safe_handle_answer_task20
 from core.error_handler import safe_handler, auto_answer_callback
 from core.plugin_loader import build_main_menu
 from core.state_validator import validate_state_transition, state_validator
@@ -1285,6 +1284,44 @@ async def bank_search(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return states.SEARCHING
 
 @safe_handler()
+async def strictness_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Меню выбора уровня строгости."""
+    query = update.callback_query
+    
+    current_level = evaluator.strictness.name if evaluator else "STANDARD"
+    
+    text = (
+        "🎯 <b>Уровень строгости проверки</b>\n\n"
+        "Выберите, насколько строго проверять ваши ответы:\n\n"
+        "🟢 <b>Мягкий</b> - засчитываются частично правильные ответы\n"
+        "🟡 <b>Стандартный</b> - обычные критерии ЕГЭ\n"
+        "🔴 <b>Строгий</b> - требуется точное соответствие критериям"
+    )
+    
+    buttons = []
+    levels = [
+        ("LENIENT", "🟢 Мягкий"),
+        ("STANDARD", "🟡 Стандартный"),
+        ("STRICT", "🔴 Строгий")
+    ]
+    
+    for level_code, level_name in levels:
+        check = "✅ " if level_code == current_level else ""
+        buttons.append([InlineKeyboardButton(
+            f"{check}{level_name}",
+            callback_data=f"t20_strictness:{level_code}"
+        )])
+    
+    buttons.append([InlineKeyboardButton("⬅️ Назад", callback_data="t20_settings")])
+    
+    await query.edit_message_text(
+        text,
+        reply_markup=InlineKeyboardMarkup(buttons),
+        parse_mode=ParseMode.HTML
+    )
+    return states.CHOOSING_MODE
+
+@safe_handler()
 async def set_strictness(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Установка уровня строгости."""
     global evaluator
@@ -1572,42 +1609,133 @@ async def show_achievements(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return states.CHOOSING_MODE
 
 @safe_handler()
-@validate_state_transition({states.CHOOSING_MODE})
 async def mistakes_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Режим работы над ошибками."""
     query = update.callback_query
     
+    # Находим темы с низкими баллами
+    results = context.user_data.get('task20_results', [])
+    weak_topics = {}
+    
+    for result in results:
+        if result['score'] < 2:  # Меньше 2 баллов
+            topic_id = result['topic_id']
+            if topic_id not in weak_topics:
+                weak_topics[topic_id] = {
+                    'topic': result['topic'],
+                    'attempts': 0,
+                    'avg_score': 0,
+                    'total_score': 0
+                }
+            weak_topics[topic_id]['attempts'] += 1
+            weak_topics[topic_id]['total_score'] += result['score']
+    
+    # Вычисляем средние баллы
+    for topic_id in weak_topics:
+        topic_data = weak_topics[topic_id]
+        topic_data['avg_score'] = topic_data['total_score'] / topic_data['attempts']
+    
+    if not weak_topics:
+        text = "🎉 Отлично! У вас нет тем, требующих дополнительной практики!"
+        kb = InlineKeyboardMarkup([[
+            InlineKeyboardButton("⬅️ Назад", callback_data="t20_menu")
+        ]])
+    else:
+        text = "🔧 <b>Работа над ошибками</b>\n\n"
+        text += "Темы, требующие внимания:\n\n"
+        
+        # Сортируем по среднему баллу
+        sorted_topics = sorted(weak_topics.items(), key=lambda x: x[1]['avg_score'])
+        
+        kb_buttons = []
+        for topic_id, data in sorted_topics[:5]:  # Показываем топ-5
+            score_visual = "🔴" if data['avg_score'] < 1 else "🟡"
+            kb_buttons.append([InlineKeyboardButton(
+                f"{score_visual} {data['topic'][:40]}... ({data['avg_score']:.1f})",
+                callback_data=f"t20_topic:{topic_id}"
+            )])
+        
+        kb_buttons.append([InlineKeyboardButton("⬅️ Назад", callback_data="t20_menu")])
+        kb = InlineKeyboardMarkup(kb_buttons)
+    
+    await query.edit_message_text(
+        text,
+        reply_markup=kb,
+        parse_mode=ParseMode.HTML
+    )
+    return states.CHOOSING_MODE
+
+async def handle_topic_choice_wrapper(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обертка для обработки выбора темы."""
+    return await choose_topic(update, context)
+
+@safe_handler()
+async def handle_new_task(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработка выбора новой темы."""
+    # Используем случайную тему
+    return await random_topic_all(update, context)
+
+@safe_handler()
+async def export_results(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Экспорт результатов в CSV."""
+    query = update.callback_query
+    user_id = query.from_user.id
+    
     results = context.user_data.get('task20_results', [])
     
-    # Находим темы с низкими баллами
-    low_score_topics = [r for r in results if r['score'] < 2]
-    
-    if not low_score_topics:
-        await query.edit_message_text(
-            "👍 <b>Отличная работа!</b>\n\n"
-            "У вас нет тем с низкими баллами для повторения.",
-            reply_markup=InlineKeyboardMarkup([[
-                InlineKeyboardButton("⬅️ Назад", callback_data="t20_menu")
-            ]]),
-            parse_mode=ParseMode.HTML
-        )
+    if not results:
+        await query.answer("Нет результатов для экспорта", show_alert=True)
         return states.CHOOSING_MODE
     
-    text = f"🔧 <b>Работа над ошибками</b>\n\n"
-    text += f"Найдено тем с низкими баллами: {len(low_score_topics)}\n\n"
-    text += "Темы для повторения:\n"
+    # Создаем CSV
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(["Дата", "Тема", "Блок", "Балл", "Макс.балл"])
     
-    for i, result in enumerate(low_score_topics[:5]):  # Показываем до 5 тем
-        progress_display = create_visual_progress(result['score'], 3)
-        text += f"• {result['topic_title']} ({progress_display})\n"
+    for result in results:
+        writer.writerow([
+            result.get('timestamp', ''),
+            result.get('topic', ''),
+            result.get('block', ''),
+            result.get('score', 0),
+            result.get('max_score', 3)
+        ])
     
-    text += "\n<i>Выберите тему для повторения или начните со случайной.</i>"
+    # Отправляем файл
+    output.seek(0)
+    await query.message.reply_document(
+        document=io.BytesIO(output.getvalue().encode('utf-8')),
+        filename=f"task20_results_{user_id}.csv",
+        caption="📊 Ваши результаты по заданию 20"
+    )
     
-    kb = InlineKeyboardMarkup([
-        [InlineKeyboardButton("🎲 Случайная тема из ошибок", callback_data="t20_random_mistake")],
-        [InlineKeyboardButton("📝 Выбрать тему", callback_data="t20_select_mistake")],
-        [InlineKeyboardButton("⬅️ Назад", callback_data="t20_menu")]
-    ])
+    return states.CHOOSING_MODE
+
+@safe_handler()
+async def practice_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Статистика практики."""
+    query = update.callback_query
+    
+    results = context.user_data.get('task20_results', [])
+    
+    if not results:
+        text = "📊 У вас пока нет статистики практики"
+    else:
+        total = len(results)
+        avg_score = sum(r['score'] for r in results) / total
+        perfect = sum(1 for r in results if r['score'] == 3)
+        
+        text = f"""📊 <b>Статистика практики</b>
+
+📝 Всего попыток: {total}
+⭐ Средний балл: {avg_score:.1f}/3
+🎯 Идеальных ответов: {perfect} ({perfect/total*100:.0f}%)
+
+💡 Совет: регулярная практика - ключ к успеху!"""
+    
+    kb = InlineKeyboardMarkup([[
+        InlineKeyboardButton("⬅️ Назад", callback_data="t20_progress")
+    ]])
     
     await query.edit_message_text(
         text,
@@ -1617,85 +1745,22 @@ async def mistakes_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return states.CHOOSING_MODE
 
 @safe_handler()
-async def export_results(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Экспорт результатов в CSV."""
-    query = update.callback_query
-    
-    results = context.user_data.get('task20_results', [])
-    
-    if not results:
-        return states.CHOOSING_MODE
-    
-    try:
-        import csv
-        import io
-        
-        # Создаем CSV в памяти
-        output = io.StringIO()
-        writer = csv.writer(output, delimiter=';')
-        
-        # Заголовки
-        writer.writerow(['Дата и время', 'Тема', 'Блок', 'Балл', 'Максимальный балл'])
-        
-        # Данные
-        for result in results:
-            timestamp = result.get('timestamp', 'Не указано')
-            # Преобразуем timestamp в читаемый формат
-            try:
-                from datetime import datetime
-                dt = datetime.fromisoformat(timestamp)
-                formatted_time = dt.strftime('%d.%m.%Y %H:%M')
-            except:
-                formatted_time = timestamp
-            
-            writer.writerow([
-                formatted_time,
-                result.get('topic_title', 'Не указано'),
-                result.get('block', 'Не указано'),
-                result.get('score', 0),
-                result.get('max_score', 3)
-            ])
-        
-        # Получаем CSV как строку
-        output.seek(0)
-        csv_data = output.getvalue()
-        
-        # Отправляем файл
-        await query.message.reply_document(
-            document=io.BytesIO(csv_data.encode('utf-8-sig')),  # utf-8-sig для корректного отображения в Excel
-            filename=f"task20_results_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
-            caption="📊 Ваши результаты по заданию 20"
-        )
-        
-        
-    except Exception as e:
-        logger.error(f"Error exporting results: {e}")
-    
-    return states.CHOOSING_MODE
-
-@safe_handler()
 async def choose_topic(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Выбор конкретной темы и показ задания."""
+    """Выбор конкретной темы из списка."""
     query = update.callback_query
     
-    topic_id = int(query.data.split(":")[1])
+    topic_id = query.data.split(":")[1]
     topic = task20_data["topic_by_id"].get(topic_id)
     
     if not topic:
-        await query.edit_message_text(
-            "❌ Тема не найдена",
-            reply_markup=InlineKeyboardMarkup([[
-                InlineKeyboardButton("⬅️ Назад", callback_data="t20_select_block")
-            ]])
-        )
+        await query.answer("Тема не найдена", show_alert=True)
         return states.CHOOSING_MODE
     
     context.user_data['current_topic'] = topic
     
     text = _build_topic_message(topic)
-    
     kb = InlineKeyboardMarkup([
-        [InlineKeyboardButton("❌ Отмена", callback_data="t20_select_block")]
+        [InlineKeyboardButton("❌ Отмена", callback_data="t20_list_topics")]
     ])
     
     await query.edit_message_text(

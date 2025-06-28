@@ -8,6 +8,7 @@ from telegram.ext import (
 from core.plugin_base import BotPlugin
 from core import states
 from . import handlers
+from core.states import ANSWERING_T20, SEARCHING, VIEWING_EXAMPLE, CONFIRMING_RESET
 
 logger = logging.getLogger(__name__)
 
@@ -60,64 +61,50 @@ class Task20Plugin(BotPlugin):
                     
                     # Навигация по темам
                     CallbackQueryHandler(handlers.block_menu, pattern="^t20_block:"),
-                    CallbackQueryHandler(handlers.list_topics, pattern=r"^t20_list_topics($|:page:\d+)"),
-                    CallbackQueryHandler(handlers.random_topic_all, pattern="^t20_random_all$"),
-                    CallbackQueryHandler(handlers.random_topic_block, pattern="^t20_random_block$"),
+                    CallbackQueryHandler(handlers.handle_topic_choice_wrapper, pattern="^t20_topic:"),
                     
-                    # Банк суждений
-                    CallbackQueryHandler(handlers.bank_navigation, pattern="^t20_bank_nav:"),
-                    CallbackQueryHandler(handlers.bank_search, pattern="^t20_bank_search$"),
-                    
-                    # Настройки
-                    CallbackQueryHandler(handlers.set_strictness, pattern="^t20_set_strictness:"),
-                    
-                    # Статистика
+                    # Дополнительные функции
+                    CallbackQueryHandler(handlers.practice_stats, pattern="^t20_practice_stats$"),
+                    CallbackQueryHandler(handlers.export_progress, pattern="^t20_export$"),
                     CallbackQueryHandler(handlers.detailed_progress, pattern="^t20_detailed_progress$"),
-                    CallbackQueryHandler(handlers.export_results, pattern="^t20_export$"),
-                    
-                    # Теория - подразделы
-                    CallbackQueryHandler(handlers.handle_theory_sections, pattern="^t20_(how_to_write|good_examples|common_mistakes|useful_phrases)$"),
                     
                     # Настройки
+                    CallbackQueryHandler(handlers.strictness_menu, pattern="^t20_strictness_menu$"),
+                    CallbackQueryHandler(handlers.set_strictness, pattern="^t20_strictness:"),
                     CallbackQueryHandler(handlers.handle_settings_actions, pattern="^t20_(reset_progress|confirm_reset)$"),
+                    CallbackQueryHandler(handlers.reset_progress, pattern="^t20_reset_progress$"),
+                    CallbackQueryHandler(handlers.confirm_reset, pattern="^t20_confirm_reset$"),
                     
-                    # Новые функции
-                    CallbackQueryHandler(handlers.mistakes_mode, pattern="^t20_mistakes$"),
-                    CallbackQueryHandler(handlers.show_achievements, pattern="^t20_achievements$"),
+                    # Работа с банком примеров
+                    CallbackQueryHandler(handlers.search_bank, pattern="^t20_search_bank$"),
+                    CallbackQueryHandler(handlers.view_example, pattern="^t20_view_example:"),
+                    CallbackQueryHandler(handlers.view_all_examples, pattern="^t20_all_examples:"),
+                    
+                    # Для совместимости
+                    MessageHandler(filters.TEXT & ~filters.COMMAND, handlers.handle_unexpected_message),
                 ],
                 
-                states.CHOOSING_BLOCK: [
-                    CallbackQueryHandler(handlers.block_menu, pattern="^t20_block:"),
-                    CallbackQueryHandler(handlers.list_topics, pattern="^t20_list_topics$"),
-                    CallbackQueryHandler(handlers.random_topic_block, pattern="^t20_random_block$"),
-                    CallbackQueryHandler(handlers.practice_mode, pattern="^t20_practice$"),
-                    CallbackQueryHandler(handlers.select_block, pattern="^t20_select_block$"),
-                ],
-                
-                states.CHOOSING_TOPIC: [
-                    CallbackQueryHandler(handlers.choose_topic, pattern="^t20_topic:"),
-                    CallbackQueryHandler(handlers.block_menu, pattern="^t20_block:"),
-                    CallbackQueryHandler(handlers.select_block, pattern="^t20_select_block$"),
-                    CallbackQueryHandler(handlers.list_topics, pattern=r"^t20_list_topics:page:\d+"),
-                ],
-                
-                states.ANSWERING: [
+                states.ANSWERING_T20: [
                     MessageHandler(filters.TEXT & ~filters.COMMAND, handlers.handle_answer),
-                    MessageHandler(filters.Document.ALL, handlers.handle_answer_document_task20),
-                    CallbackQueryHandler(handlers.practice_mode, pattern="^t20_practice$"),
-                ],
-                
-                states.AWAITING_FEEDBACK: [
-                    CallbackQueryHandler(handlers.handle_result_action, pattern="^t20_retry$"),
-                    CallbackQueryHandler(handlers.handle_result_action, pattern="^t20_new$"),
-                    CallbackQueryHandler(handlers.my_progress, pattern="^t20_progress$"),
+                    CallbackQueryHandler(handlers.skip_question, pattern="^t20_skip$"),
                     CallbackQueryHandler(handlers.return_to_menu, pattern="^t20_menu$"),
-                    CallbackQueryHandler(handlers.back_to_main_menu, pattern="^to_main_menu$"),
                 ],
                 
                 states.SEARCHING: [
-                    MessageHandler(filters.TEXT & ~filters.COMMAND, handlers.handle_bank_search),
+                    MessageHandler(filters.TEXT & ~filters.COMMAND, handlers.handle_search_query),
                     CallbackQueryHandler(handlers.examples_bank, pattern="^t20_examples$"),
+                ],
+                
+                states.VIEWING_EXAMPLE: [
+                    CallbackQueryHandler(handlers.next_example, pattern="^t20_next_example$"),
+                    CallbackQueryHandler(handlers.prev_example, pattern="^t20_prev_example$"),
+                    CallbackQueryHandler(handlers.back_to_examples, pattern="^t20_back_examples$"),
+                    CallbackQueryHandler(handlers.view_all_examples, pattern="^t20_all_examples:"),
+                ],
+                
+                states.CONFIRMING_RESET: [
+                    CallbackQueryHandler(handlers.confirm_reset, pattern="^t20_confirm_reset$"),
+                    CallbackQueryHandler(handlers.cancel_reset, pattern="^t20_cancel_reset$"),
                 ],
             },
             fallbacks=[
