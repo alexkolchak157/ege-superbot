@@ -345,8 +345,8 @@ async def show_achievement_notification(update: Update, context: ContextTypes.DE
     text = f"""
 🎉 <b>Новое достижение!</b>
 
-{achievement['icon']} <b>{achievement['name']}</b>
-<i>{achievement['description']}</i>
+{achievement.get('icon', '🏆')} <b>{achievement.get('name', 'Достижение')}</b>
+<i>{achievement.get('description', '')}</i>
 
 {achievement.get('reward_text', '')}
 """
@@ -356,18 +356,21 @@ async def show_achievement_notification(update: Update, context: ContextTypes.DE
     ]])
     
     # Отправляем как отдельное сообщение
-    msg = await update.effective_message.reply_text(
-        text, 
-        reply_markup=kb,
-        parse_mode=ParseMode.HTML
-    )
-    
-    # Удаляем через 10 секунд
-    context.job_queue.run_once(
-        lambda ctx: msg.delete(),
-        when=10,
-        name=f"delete_achievement_{msg.message_id}"
-    )
+    try:
+        msg = await update.effective_message.reply_text(
+            text, 
+            reply_markup=kb,
+            parse_mode=ParseMode.HTML
+        )
+        
+        # Удаляем через 10 секунд
+        context.job_queue.run_once(
+            lambda ctx: msg.delete(),
+            when=10,
+            name=f"delete_achievement_{msg.message_id}"
+        )
+    except Exception as e:
+        logger.error(f"Error showing achievement notification: {e}")
 
 
 @safe_handler()
@@ -840,25 +843,8 @@ async def skip_question(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     return states.CHOOSING_MODE
 
-
-# Дополнительная вспомогательная функция для обработки ответов в ANSWERING_T20
 async def safe_handle_answer_task20(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обработка ответа пользователя."""
-    logger.info(f"task20.handle_answer called for user {update.effective_user.id}")
-    
-    # Проверяем, что мы в правильном модуле
-    if context.user_data.get('active_module') != 'task20':
-        logger.debug("Ignoring answer - not in task20 module")
-        return states.CHOOSING_MODE
-    
-    # ДОБАВИТЬ ЭТИ СТРОКИ:
-    # Проверяем, есть ли текст из документа
-    if 'document_text' in context.user_data:
-        user_answer = context.user_data.pop('document_text')  # Извлекаем и удаляем
-        logger.info("Using text from document")
-    else:
-        user_answer = update.message.text
-        logger.info("Using text from message")
+    """Безопасная обработка ответа на задание 20."""
     
     topic = context.user_data.get('current_topic')
     if not topic:
@@ -870,8 +856,13 @@ async def safe_handle_answer_task20(update: Update, context: ContextTypes.DEFAUL
         )
         return states.CHOOSING_MODE
     
-    # Получаем текст ответа
-    user_answer = update.message.text.strip()
+    # Проверяем наличие текста из документа
+    if 'document_text' in context.user_data:
+        user_answer = context.user_data.pop('document_text')
+        logger.info("Using text from document")
+    else:
+        user_answer = update.message.text.strip()
+        logger.info("Using text from message")
     
     # Проверяем минимальную длину
     if len(user_answer) < 50:
@@ -883,22 +874,22 @@ async def safe_handle_answer_task20(update: Update, context: ContextTypes.DEFAUL
         )
         return states.ANSWERING_T20
     
-    # Показываем анимацию проверки
-    thinking_msg = await show_thinking_animation(
-        update.message,
-        "Анализирую ваши суждения",
-    )
+    # ИСПРАВЛЕНИЕ: Убираем показ анимации "Анализирую", чтобы не было дублирования
+    # thinking_msg = await show_thinking_animation(
+    #     update.message,
+    #     "Анализирую ваши суждения",
+    # )
     
     # Оцениваем ответ
     if evaluator and AI_EVALUATOR_AVAILABLE:
         try:
             result = await evaluator.evaluate(
                 answer=user_answer,
-                topic=topic['title'],  # передаем название темы
-                task_text=topic.get('task_text', ''),  # передаем текст задания
+                topic=topic['title'],
+                task_text=topic.get('task_text', ''),
                 user_id=update.effective_user.id
             )
-            score = result.total_score  # Исправлено: result.score → result.total_score
+            score = result.total_score
             feedback = result.feedback
             criteria_scores = result.criteria_scores
         except Exception as e:
@@ -910,56 +901,80 @@ async def safe_handle_answer_task20(update: Update, context: ContextTypes.DEFAUL
         # Простая оценка без AI
         score = min(3, len(user_answer) // 100)
         feedback = "Ваш ответ принят. Продолжайте практиковаться!"
-        criteria_scores = {"abstractness": 1, "relevance": 1, "completeness": score - 2}
+        criteria_scores = None
     
-    # Удаляем анимацию
-    await thinking_msg.delete()
+    # ИСПРАВЛЕНИЕ: Убираем удаление несуществующего сообщения
+    # await thinking_msg.delete()
     
     # Сохраняем результат
-    result_data = {
+    timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    result_entry = {
+        'timestamp': timestamp,
         'topic': topic['title'],
-        'topic_id': topic['id'],
+        'topic_id': topic.get('id', topic['title']),  # Добавляем topic_id
         'block': topic['block'],
         'score': score,
         'max_score': 3,
-        'timestamp': datetime.now().isoformat(),
-        'user_answer': user_answer[:500]  # Сохраняем первые 500 символов
+        'answer': user_answer,
+        'feedback': feedback
     }
     
     if 'task20_results' not in context.user_data:
         context.user_data['task20_results'] = []
-    context.user_data['task20_results'].append(result_data)
+    
+    context.user_data['task20_results'].append(result_entry)
+    
+    # Обновляем статистику
+    await save_stats_by_level(context, update.effective_user.id, score)
     
     # Формируем ответ
-    score_emoji = {0: "❌", 1: "🟡", 2: "🟢", 3: "🎯"}.get(score, "🟡")
-    
-    text = f"{score_emoji} <b>Ваш результат: {score}/3 балла</b>\n\n"
-    text += f"<b>Обратная связь:</b>\n{feedback}\n\n"
+    text = f"<b>Результат проверки:</b>\n\n"
+    text += f"Ваш балл: <b>{score} из 3</b>\n\n"
     
     if criteria_scores:
         text += "<b>Оценка по критериям:</b>\n"
         criteria_names = {
-            "abstractness": "Абстрактность",
-            "relevance": "Соответствие теме",
-            "completeness": "Полнота ответа"
+            'abstractness': '📐 Абстрактность',
+            'relevance': '🎯 Соответствие теме',
+            'completeness': '✅ Полнота'
         }
-        for criterion, value in criteria_scores.items():
-            name = criteria_names.get(criterion, criterion)
-            emoji = "✅" if value > 0 else "❌"
-            text += f"{emoji} {name}: {'+' if value > 0 else ''}{value}\n"
+        for criteria, value in criteria_scores.items():
+            name = criteria_names.get(criteria, criteria)
+            text += f"{name}: {'✅' if value else '❌'}\n"
+        text += "\n"
     
-    # Кнопки действий
-    kb = AdaptiveKeyboards.create_result_keyboard(
-        score=score,
-        max_score=3,
-        module_code="t20"
-    )
+    text += f"<b>Комментарий:</b>\n{feedback}"
+    
+    # Мотивационные сообщения
+    if score == 3:
+        text += "\n\n🎉 Отличная работа! Все суждения соответствуют требованиям!"
+        await show_streak_notification(update, context, "task20")
+    elif score >= 2:
+        text += "\n\n👍 Хороший результат! Продолжайте практиковаться!"
+    else:
+        text += "\n\n📚 Изучите примеры в банке суждений и попробуйте снова!"
+    
+    kb = InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("🎲 Новая тема", callback_data="t20_new"),
+            InlineKeyboardButton("📊 Мой прогресс", callback_data="t20_progress")
+        ],
+        [InlineKeyboardButton("⬅️ В меню", callback_data="t20_menu")]
+    ])
     
     await update.message.reply_text(
         text,
         reply_markup=kb,
         parse_mode=ParseMode.HTML
     )
+    
+    # ИСПРАВЛЕНИЕ: Проверяем достижения правильным способом
+    if SmartRecommendations:
+        # Проверяем достижения через отдельную функцию
+        new_achievements = await achievements_check(context, update.effective_user.id)
+        if new_achievements:
+            for achievement in new_achievements:
+                await show_achievement_notification(update, context, achievement)
     
     return states.CHOOSING_MODE
     
@@ -1672,7 +1687,7 @@ async def handle_answer_document_task20(update: Update, context: ContextTypes.DE
     if not extracted_text:
         return ANSWERING_T20
     
-    # Сохраняем текст в context для использования в handle_answer
+    # Сохраняем текст в context вместо изменения message.text
     context.user_data['document_text'] = extracted_text
     
     # Вызываем handle_answer напрямую
@@ -2135,7 +2150,7 @@ async def detailed_progress(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     return states.CHOOSING_MODE
 
-async def achievements_check(context: ContextTypes.DEFAULT_TYPE, user_id: int):
+async def achievements_check(context: ContextTypes.DEFAULT_TYPE, user_id: int) -> List[Dict]:
     """Проверка и выдача достижений."""
     results = context.user_data.get('task20_results', [])
     achievements = context.user_data.get('task20_achievements', set())
@@ -2145,44 +2160,67 @@ async def achievements_check(context: ContextTypes.DEFAULT_TYPE, user_id: int):
     achievement_conditions = {
         'first_perfect': {
             'name': '🌟 Первый идеал',
-            'desc': 'Получить первый максимальный балл',
-            'check': lambda r: any(res['score'] == 3 for res in r)
+            'description': 'Получить первый максимальный балл',
+            'icon': '🌟',
+            'check': lambda r: any(res.get('score', 0) == 3 for res in r) if r else False
         },
         'consistency_5': {
             'name': '🎯 Стабильность',
-            'desc': 'Получить 3 балла 5 раз подряд',
-            'check': lambda r: any(all(r[i:i+5]) for i in range(len(r)-4) if all(res['score'] == 3 for res in r[i:i+5]))
+            'description': 'Получить 3 балла 5 раз подряд',
+            'icon': '🎯',
+            'check': lambda r: len(r) >= 5 and any(
+                all(r[i+j].get('score', 0) == 3 for j in range(5))
+                for i in range(len(r) - 4)
+            )
         },
         'explorer_10': {
             'name': '🗺️ Исследователь',
-            'desc': 'Изучить 10 разных тем',
-            'check': lambda r: len(set(res['topic_id'] for res in r)) >= 10
+            'description': 'Изучить 10 разных тем',
+            'icon': '🗺️',
+            'check': lambda r: len(set(
+                res.get('topic_id', res.get('topic', f'unknown_{i}')) 
+                for i, res in enumerate(r)
+            )) >= 10
         },
         'persistent_20': {
             'name': '💪 Упорство',
-            'desc': 'Выполнить 20 заданий',
+            'description': 'Выполнить 20 заданий',
+            'icon': '💪',
             'check': lambda r: len(r) >= 20
         },
         'master_50': {
             'name': '🏆 Мастер',
-            'desc': 'Выполнить 50 заданий со средним баллом выше 2.5',
-            'check': lambda r: len(r) >= 50 and sum(res['score'] for res in r) / len(r) >= 2.5
+            'description': 'Выполнить 50 заданий со средним баллом выше 2.5',
+            'icon': '🏆',
+            'check': lambda r: len(r) >= 50 and sum(res.get('score', 0) for res in r) / len(r) >= 2.5 if r else False
         },
         'comeback': {
             'name': '🔥 Возвращение',
-            'desc': 'Получить 3 балла после 3+ неудачных попыток',
+            'description': 'Получить 3 балла после 3+ неудачных попыток',
+            'icon': '🔥',
             'check': lambda r: any(
-                r[i]['score'] == 3 and all(r[j]['score'] < 2 for j in range(max(0, i-3), i))
-                for i in range(3, len(r))
-            )
+                i >= 3 and
+                r[i].get('score', 0) == 3 and 
+                all(r[j].get('score', 0) < 2 for j in range(max(0, i-3), i))
+                for i in range(len(r))
+            ) if len(r) >= 4 else False
         }
     }
     
     # Проверяем каждое достижение
     for ach_id, ach_data in achievement_conditions.items():
-        if ach_id not in achievements and ach_data['check'](results):
-            achievements.add(ach_id)
-            new_achievements.append(ach_data)
+        if ach_id not in achievements:
+            try:
+                if ach_data['check'](results):
+                    achievements.add(ach_id)
+                    new_achievements.append({
+                        'id': ach_id,
+                        'name': ach_data['name'],
+                        'description': ach_data['description'],
+                        'icon': ach_data['icon']
+                    })
+            except Exception as e:
+                logger.error(f"Error checking achievement {ach_id}: {e}")
     
     # Сохраняем достижения
     context.user_data['task20_achievements'] = achievements
