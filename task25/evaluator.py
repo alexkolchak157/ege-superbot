@@ -429,11 +429,11 @@ class Task25AIEvaluator(BaseAIEvaluator if AI_EVALUATOR_AVAILABLE else object):
         
         # Создаем расширенный результат
         eval_result = Task25EvaluationResult(
-            scores=scores,
+            criteria_scores=scores,
             total_score=total_score,
             max_score=6,
             feedback=feedback,
-            detailed_analysis=detailed_analysis,
+            detailed_feedback=detailed_analysis,  # Изменено: detailed_analysis -> detailed_feedback
             suggestions=result.get('suggestions', []),
             factual_errors=result.get('factual_errors', [])
         )
@@ -443,11 +443,11 @@ class Task25AIEvaluator(BaseAIEvaluator if AI_EVALUATOR_AVAILABLE else object):
     def _get_fallback_result(self) -> EvaluationResult:
         """Возвращает базовый результат при ошибке AI."""
         return EvaluationResult(
-            scores={'k1_score': 0, 'k2_score': 0, 'k3_score': 0},
+            criteria_scores={'k1_score': 0, 'k2_score': 0, 'k3_score': 0},
             total_score=0,
             max_score=6,
             feedback="⚠️ Не удалось выполнить автоматическую проверку. Обратитесь к преподавателю.",
-            detailed_analysis=None,
+            detailed_feedback=None,  # Изменено: detailed_analysis -> detailed_feedback
             suggestions=["Попробуйте отправить ответ позже"],
             factual_errors=None
         )
