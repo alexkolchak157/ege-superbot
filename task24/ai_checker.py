@@ -66,20 +66,19 @@ class PlanAIChecker:
 - Наличие фактических ошибок или неточностей"""
 
         try:
-            async with self.ai_service:
-                result = await self.ai_service.get_json_completion(
-                    prompt,
-                    system_prompt=system_prompt,
-                    temperature=0.2
-                )
+            result = await self.ai_service.get_json_completion(
+                prompt,
+                system_prompt=system_prompt,
+                temperature=0.2
+            )
 
-                if not result:
-                    logger.error("Не удалось получить ответ от AI")
-                    return self._default_relevance_result()
+            if not result:
+                logger.error("Не удалось получить ответ от AI")
+                return self._default_relevance_result()
 
-                # Валидация результата
-                return self._validate_relevance_result(result)
-                
+            # Валидация результата
+            return self._validate_relevance_result(result)
+            
         except Exception as e:
             logger.error(f"Ошибка при проверке релевантности: {e}")
             return self._default_relevance_result()
@@ -140,24 +139,23 @@ class PlanAIChecker:
 Если ошибок нет, верни пустой список []."""
 
         try:
-            async with self.ai_service:
-                result = await self.ai_service.get_json_completion(
-                    prompt,
-                    system_prompt=system_prompt,
-                    temperature=0.1  # Минимальная температура для точности
-                )
+            result = await self.ai_service.get_json_completion(
+                prompt,
+                system_prompt=system_prompt,
+                temperature=0.1  # Минимальная температура для точности
+            )
 
-                if not result or not isinstance(result, list):
-                    return []
+            if not result or not isinstance(result, list):
+                return []
 
-                # Фильтруем и валидируем результаты
-                validated_errors = []
-                for error in result:
-                    if self._validate_error_entry(error):
-                        validated_errors.append(error)
-                
-                return validated_errors[:5]  # Ограничиваем количество ошибок
-                
+            # Фильтруем и валидируем результаты
+            validated_errors = []
+            for error in result:
+                if self._validate_error_entry(error):
+                    validated_errors.append(error)
+            
+            return validated_errors[:5]  # Ограничиваем количество ошибок
+            
         except Exception as e:
             logger.error(f"Ошибка при проверке фактических ошибок: {e}")
             return []
@@ -220,18 +218,17 @@ class PlanAIChecker:
 - 0.0-0.1: нерелевантный или содержит грубые ошибки"""
 
         try:
-            async with self.ai_service:
-                result = await self.ai_service.get_json_completion(
-                    prompt,
-                    system_prompt=system_prompt,
-                    temperature=0.2
-                )
+            result = await self.ai_service.get_json_completion(
+                prompt,
+                system_prompt=system_prompt,
+                temperature=0.2
+            )
 
-                if not result:
-                    return self._default_subpoints_result(len(subpoints))
+            if not result:
+                return self._default_subpoints_result(len(subpoints))
 
-                return self._validate_subpoints_result(result, len(subpoints))
-                
+            return self._validate_subpoints_result(result, len(subpoints))
+            
         except Exception as e:
             logger.error(f"Ошибка при проверке подпунктов: {e}")
             return self._default_subpoints_result(len(subpoints))
@@ -284,18 +281,17 @@ class PlanAIChecker:
 - match_quality: качество соответствия (0.0-1.0)"""
 
         try:
-            async with self.ai_service:
-                result = await self.ai_service.get_json_completion(
-                    prompt,
-                    system_prompt=system_prompt,
-                    temperature=0.3
-                )
+            result = await self.ai_service.get_json_completion(
+                prompt,
+                system_prompt=system_prompt,
+                temperature=0.3
+            )
 
-                if not result:
-                    return self._default_comparison_result()
+            if not result:
+                return self._default_comparison_result()
 
-                return self._validate_comparison_result(result)
-                
+            return self._validate_comparison_result(result)
+            
         except Exception as e:
             logger.error(f"Ошибка при сравнении с эталоном: {e}")
             return self._default_comparison_result()
@@ -354,18 +350,18 @@ class PlanAIChecker:
 НЕ повторяй баллы - они уже показаны. Фокусируйся на качественной обратной связи."""
 
         try:
-            async with self.ai_service:
-                result = await self.ai_service.get_completion(
-                    prompt,
-                    system_prompt=system_prompt,
-                    temperature=0.7
-                )
+            result = await self.ai_service.get_completion(
+                prompt,
+                system_prompt=system_prompt,
+                temperature=0.7  # Чуть выше для разнообразия
+            )
 
-                if result["success"]:
-                    return result["text"]
-                else:
-                    return self._generate_fallback_feedback(k1_score, k2_score)
-                    
+            if result['success'] and result.get('text'):
+                return result['text']
+            
+            # Fallback
+            return self._generate_fallback_feedback(k1_score, k2_score)
+            
         except Exception as e:
             logger.error(f"Ошибка генерации feedback: {e}")
             return self._generate_fallback_feedback(k1_score, k2_score)

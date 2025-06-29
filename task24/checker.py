@@ -1057,7 +1057,7 @@ async def evaluate_plan_with_ai(
     """
     Расширенная версия evaluate_plan с углубленной AI-проверкой
     """
-    # Сначала выполняем обычную проверку
+    # Сначала выполняем обычную проверку для получения баллов
     basic_feedback = evaluate_plan(user_plan_text, ideal_plan_data, bot_data, topic_name)
     
     if not use_ai:
@@ -1080,21 +1080,18 @@ async def evaluate_plan_with_ai(
         # Параллельно выполняем все AI-проверки
         import asyncio
         
-        # 1. Проверка релевантности с учетом эталона
         relevance_task = ai_checker.check_plan_relevance(
             user_plan_text,
             topic_name,
             ideal_plan_data.get('points_data', [])
         )
         
-        # 2. Проверка фактических ошибок с эталонными данными
         errors_task = ai_checker.check_factual_errors(
             user_plan_text,
             topic_name,
             ideal_plan_data
         )
         
-        # 3. Сравнение с эталонным планом
         comparison_task = ai_checker.compare_with_etalon(
             user_plan_text,
             parsed,
@@ -1110,129 +1107,11 @@ async def evaluate_plan_with_ai(
             return_exceptions=True
         )
         
-        # Обрабатываем результаты
-        ai_feedback_parts = []
-        
-        # Анализ релевантности
-        if isinstance(relevance_check, dict) and not isinstance(relevance_check, Exception):
-            if not relevance_check.get('is_relevant', True):
-                ai_feedback_parts.append(
-                    f"\n🤖 <b>AI-анализ релевантности:</b>\n"
-                    f"⚠️ План может не полностью соответствовать теме "
-                    f"(уверенность: {relevance_check.get('confidence', 0):.0%})"
-                )
-                
-                # Добавляем конкретные проблемы
-                issues = relevance_check.get('issues', [])
-                if issues:
-                    ai_feedback_parts.append("\n<b>Обнаруженные проблемы:</b>")
-                    for issue in issues[:3]:
-                        ai_feedback_parts.append(f"• {issue}")
-            
-            # Показываем степень покрытия темы
-            coverage = relevance_check.get('coverage_score', 0)
-            if coverage < 0.7:
-                ai_feedback_parts.append(
-                    f"\n📊 <b>Покрытие темы:</b> {int(coverage * 100)}% "
-                    f"(рекомендуется минимум 70%)"
-                )
-            
-            # Упущенные ключевые аспекты
-            missing_aspects = relevance_check.get('missing_key_aspects', [])
-            if missing_aspects:
-                ai_feedback_parts.append("\n⚠️ <b>Упущенные ключевые аспекты:</b>")
-                for aspect in missing_aspects[:3]:
-                    ai_feedback_parts.append(f"• {aspect}")
-        
-        # Фактические ошибки
-        if isinstance(factual_errors, list) and not isinstance(factual_errors, Exception):
-            if factual_errors:
-                ai_feedback_parts.append("\n❌ <b>Обнаружены фактические неточности:</b>")
-                
-                # Группируем по уровню критичности
-                high_errors = [e for e in factual_errors if e.get('severity') == 'high']
-                medium_errors = [e for e in factual_errors if e.get('severity') == 'medium']
-                
-                # Сначала показываем критические ошибки
-                for error in high_errors[:2]:
-                    ai_feedback_parts.append(
-                        f"\n🔴 <b>Критическая ошибка:</b>\n"
-                        f"❌ {error['error']}\n"
-                        f"✅ {error['correction']}\n"
-                        f"💡 <i>{error['explanation']}</i>"
-                    )
-                
-                # Затем средние ошибки
-                for error in medium_errors[:2]:
-                    ai_feedback_parts.append(
-                        f"\n🟡 <b>Неточность:</b>\n"
-                        f"❌ {error['error']}\n"
-                        f"✅ {error['correction']}\n"
-                        f"💡 <i>{error['explanation']}</i>"
-                    )
-                
-                if len(factual_errors) > 4:
-                    ai_feedback_parts.append(
-                        f"\n<i>...и еще {len(factual_errors) - 4} замечаний</i>"
-                    )
-        
-        # Сравнение с эталоном
-        if isinstance(comparison_result, dict) and not isinstance(comparison_result, Exception):
-            similarity = comparison_result.get('similarity_score', 0)
-            
-            # Показываем соответствие эталону только если оно низкое
-            if similarity < 0.6:
-                ai_feedback_parts.append(
-                    f"\n📏 <b>Соответствие эталонному плану:</b> {int(similarity * 100)}%"
-                )
-                
-                # Критически важные упущенные пункты
-                missing_critical = comparison_result.get('missing_critical_points', [])
-                if missing_critical:
-                    ai_feedback_parts.append("\n⚠️ <b>Не раскрыты важные аспекты:</b>")
-                    for point in missing_critical[:3]:
-                        ai_feedback_parts.append(f"• {point}")
-            
-            # Положительная обратная связь - дополнительные хорошие пункты
-            extra_good = comparison_result.get('extra_good_points', [])
-            if extra_good and k1 >= 2:  # Показываем только для хороших планов
-                ai_feedback_parts.append("\n✨ <b>Отмечены дополнительные достоинства:</b>")
-                for point in extra_good[:2]:
-                    ai_feedback_parts.append(f"• {point}")
-        
-        # Проверка качества подпунктов для детализированных пунктов
-        if parsed and len(parsed) > 0:
-            low_quality_points = []
-            
-            for point_text, subpoints in parsed:
-                if len(subpoints) >= 3:  # Проверяем только детализированные пункты
-                    subpoint_check = await ai_checker.check_subpoints_quality(
-                        point_text,
-                        subpoints,
-                        topic_name
-                    )
-                    
-                    if subpoint_check.get('total_quality_score', 1) < 0.5:
-                        low_quality_points.append({
-                            'point': point_text,
-                            'quality': subpoint_check.get('total_quality_score', 0),
-                            'suggestions': subpoint_check.get('improvement_suggestions', [])
-                        })
-            
-            if low_quality_points:
-                ai_feedback_parts.append("\n📝 <b>Рекомендации по улучшению подпунктов:</b>")
-                for lq in low_quality_points[:2]:
-                    ai_feedback_parts.append(f"\nПункт «{lq['point'][:50]}...»:")
-                    for suggestion in lq['suggestions'][:2]:
-                        ai_feedback_parts.append(f"  • {suggestion}")
-        
-        # Получаем пропущенные пункты для персонализированной обратной связи
-        missed_points = []
+        # Получаем пропущенные пункты
         content_check = _check_obligatory_points(
             user_plan_text, parsed, ideal_plan_data, bot_data
         )
-        for missed in content_check.get('missed_obligatory', []):
-            missed_points.append(missed.get('text', ''))
+        missed_points = [m.get('text', '') for m in content_check.get('missed_obligatory', [])]
         
         # Генерация персонализированной обратной связи
         personalized_feedback = await ai_checker.generate_personalized_feedback(
@@ -1245,40 +1124,75 @@ async def evaluate_plan_with_ai(
             comparison_result if isinstance(comparison_result, dict) else None
         )
         
-        if personalized_feedback:
-            ai_feedback_parts.append(f"\n💬 <b>Персональные рекомендации:</b>\n{personalized_feedback}")
-        
-        # Добавляем итоговую рекомендацию на основе общей оценки
-        total_score = k1 + k2
-        if total_score == 4:
-            ai_feedback_parts.append(
-                "\n🎯 <b>Итог:</b> Отличный план! Вы готовы к экзамену по этой теме. "
-                "Рекомендую изучить эталонный план для закрепления знаний."
-            )
-        elif total_score >= 2:
-            ai_feedback_parts.append(
-                "\n🎯 <b>Итог:</b> Хороший план с небольшими недочётами. "
-                "Изучите замечания выше и попробуйте составить план ещё раз для закрепления."
-            )
-        else:
-            ai_feedback_parts.append(
-                "\n🎯 <b>Итог:</b> План требует серьёзной доработки. "
-                "Внимательно изучите эталонный план и теоретический материал по теме, "
-                "затем попробуйте снова."
-            )
-        
-        # Объединяем обычную и AI-проверку
-        if ai_feedback_parts:
-            # Добавляем разделитель между базовой и AI-проверкой
-            return basic_feedback + "\n\n" + "─" * 30 + "\n".join(ai_feedback_parts)
-        else:
-            return basic_feedback
+        # Форматируем структурированный AI-фидбек
+        return _format_ai_feedback(
+            topic_name=topic_name,
+            k1=k1,
+            k2=k2,
+            relevance_check=relevance_check if isinstance(relevance_check, dict) else None,
+            factual_errors=factual_errors if isinstance(factual_errors, list) else None,
+            comparison_result=comparison_result if isinstance(comparison_result, dict) else None,
+            personalized_feedback=personalized_feedback
+        )
             
     except Exception as e:
         logger.error(f"Критическая ошибка AI-проверки: {e}", exc_info=True)
         # В случае ошибки возвращаем базовую проверку
         return basic_feedback + "\n\n<i>⚠️ AI-проверка временно недоступна</i>"
 
+def _format_ai_feedback(
+    topic_name: str,
+    k1: int,
+    k2: int,
+    relevance_check: Optional[Dict] = None,
+    factual_errors: Optional[List] = None,
+    comparison_result: Optional[Dict] = None,
+    personalized_feedback: Optional[str] = None
+) -> str:
+    """Форматирует структурированный AI-фидбек"""
+    
+    total_score = k1 + k2
+    
+    # Заголовок с оценкой
+    feedback_parts = [
+        f"📋 <b>Тема:</b> {html.escape(topic_name)}\n",
+        f"📊 <b>Оценка:</b> {total_score} из 4 баллов",
+        f"▫️ К1 (Раскрытие темы): {k1}/3",
+        f"▫️ К2 (Корректность): {k2}/1\n"
+    ]
+    
+    # Анализ соответствия теме (только если есть проблемы)
+    if relevance_check and not relevance_check.get('is_relevant', True):
+        feedback_parts.append("⚠️ <b>Проблемы с соответствием теме:</b>")
+        for issue in relevance_check.get('issues', [])[:2]:
+            feedback_parts.append(f"• {issue}")
+        feedback_parts.append("")
+    
+    # Фактические ошибки (только критические)
+    if factual_errors:
+        critical_errors = [e for e in factual_errors if e.get('severity') == 'high']
+        if critical_errors:
+            feedback_parts.append("❌ <b>Критические ошибки:</b>")
+            for error in critical_errors[:2]:
+                feedback_parts.append(f"• {error['error']}")
+                feedback_parts.append(f"  ✅ Правильно: {error['correction']}")
+            feedback_parts.append("")
+    
+    # Персонализированная обратная связь
+    if personalized_feedback:
+        feedback_parts.append("💬 <b>Рекомендации эксперта:</b>")
+        feedback_parts.append(personalized_feedback)
+        feedback_parts.append("")
+    
+    # Итоговая рекомендация на основе баллов
+    if total_score == 4:
+        feedback_parts.append("🎯 <b>Итог:</b> Отличный план! Вы полностью готовы к экзамену по этой теме.")
+    elif total_score >= 2:
+        feedback_parts.append("🎯 <b>Итог:</b> Хороший план с небольшими недочётами. Изучите рекомендации выше.")
+    else:
+        feedback_parts.append("🎯 <b>Итог:</b> План требует серьёзной доработки. Внимательно изучите эталонный план.")
+    
+    return "\n".join(feedback_parts)
 
 
 # Inline-клавиатура для фидбека

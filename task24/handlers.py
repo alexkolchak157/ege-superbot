@@ -9,7 +9,7 @@ from datetime import datetime
 from typing import Set, Dict, List, Optional
 from core import states
 from core import utils as core_utils
-from .checker import PlanBotData, evaluate_plan, FEEDBACK_KB
+from .checker import PlanBotData, evaluate_plan, FEEDBACK_KB, evaluate_plan_with_ai
 from . import keyboards
 from core.document_processor import DocumentProcessor, DocumentHandlerMixin
 from core.admin_tools import admin_manager, admin_only, get_admin_keyboard_extension
