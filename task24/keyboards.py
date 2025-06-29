@@ -2,6 +2,7 @@ import math
 import html
 from typing import List, Tuple, Optional, Set
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+from core.universal_ui import AdaptiveKeyboards
 
 def build_main_menu_keyboard() -> InlineKeyboardMarkup:
     """Создает клавиатуру главного меню task24."""
@@ -21,7 +22,7 @@ def build_main_menu_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(keyboard)
 
 def build_progress_keyboard(practiced_indices: Set[int], total: int) -> InlineKeyboardMarkup:
-    """Создает клавиатуру с детальной статистикой прогресса."""
+    """Создает унифицированную клавиатуру с детальной статистикой прогресса."""
     completed = len(practiced_indices)
     progress = int(completed / total * 100) if total > 0 else 0
     
@@ -30,7 +31,8 @@ def build_progress_keyboard(practiced_indices: Set[int], total: int) -> InlineKe
     empty = "░" * (10 - progress // 10)
     progress_bar = f"{filled}{empty}"
     
-    keyboard = [
+    # Создаем кастомные кнопки для task24
+    custom_buttons = [
         [InlineKeyboardButton(
             f"📊 Прогресс: {progress_bar} {progress}%",
             callback_data="show_detailed_progress"
@@ -44,12 +46,46 @@ def build_progress_keyboard(practiced_indices: Set[int], total: int) -> InlineKe
                 f"📝 Осталось: {total - completed}",
                 callback_data="show_remaining"
             )
-        ],
-        [InlineKeyboardButton("📤 Экспорт прогресса", callback_data="export_progress")],
-        [InlineKeyboardButton("⬅️ Назад", callback_data="t24_menu")]
+        ]
     ]
     
-    return InlineKeyboardMarkup(keyboard)
+    # Получаем базовую клавиатуру
+    base_kb = AdaptiveKeyboards.create_progress_keyboard(
+        has_detailed_stats=True,
+        can_export=True,
+        module_code="task24"
+    )
+    
+    # Перестраиваем клавиатуру с новыми callback_data
+    new_buttons = []
+    
+    # Добавляем кастомные кнопки вначале
+    new_buttons.extend(custom_buttons)
+    
+    # Обрабатываем кнопки из базовой клавиатуры
+    for row in base_kb.inline_keyboard:
+        new_row = []
+        for button in row:
+            # Создаем новую кнопку с правильным callback_data
+            if button.callback_data == "task24_detailed_progress":
+                # Пропускаем, так как у нас уже есть кастомная кнопка детального прогресса
+                continue
+            elif button.callback_data == "task24_export":
+                new_row.append(InlineKeyboardButton(button.text, callback_data="export_progress"))
+            elif button.callback_data == "task24_menu":
+                new_row.append(InlineKeyboardButton(button.text, callback_data="t24_menu"))
+            elif button.callback_data == "task24_reset_confirm":
+                new_row.append(InlineKeyboardButton(button.text, callback_data="t24_reset_progress"))
+            elif button.callback_data == "task24_practice":
+                new_row.append(InlineKeyboardButton(button.text, callback_data="t24_train"))
+            else:
+                # Оставляем как есть
+                new_row.append(InlineKeyboardButton(button.text, callback_data=button.callback_data))
+        
+        if new_row:  # Добавляем только непустые строки
+            new_buttons.append(new_row)
+    
+    return InlineKeyboardMarkup(new_buttons)
 
 def build_initial_choice_keyboard(mode: str) -> InlineKeyboardMarkup:
     """Создает клавиатуру для начального выбора способа поиска темы."""

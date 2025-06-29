@@ -24,9 +24,10 @@ from core.ui_helpers import (
 )
 from core.plugin_loader import build_main_menu
 from core.state_validator import validate_state_transition, state_validator
+import math
+from core.error_handler import safe_handler, auto_answer_callback
 
 logger = logging.getLogger(__name__)
-from core.error_handler import safe_handler, auto_answer_callback
 
 # Глобальные данные
 plan_bot_data = None
@@ -939,8 +940,9 @@ async def show_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return states.CHOOSING_MODE
 
 @safe_handler()
+@validate_state_transition({states.CHOOSING_MODE})
 async def show_block_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Показ статистики по блокам с улучшенным UI."""
+    """Показывает статистику по блокам тем с универсальными компонентами."""
     query = update.callback_query
     
     stats = get_user_stats(context)
@@ -981,12 +983,10 @@ async def show_block_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         text += f"\n{color} <b>{block_name}:</b> {progress_bar} {completed}/{total}"
     
-    # Адаптивная клавиатура
-    kb = AdaptiveKeyboards.create_progress_keyboard(
-        has_detailed_stats=True,
-        can_export=True,
-        module_code="task24"
-    )
+    # Используем новую унифицированную клавиатуру
+    practiced_indices = context.user_data.get('practiced_topics', set())
+    total_topics = len(plan_bot_data.topic_index_map)
+    kb = keyboards.build_progress_keyboard(practiced_indices, total_topics)
     
     await query.edit_message_text(text, reply_markup=kb, parse_mode=ParseMode.HTML)
     return states.CHOOSING_MODE
@@ -994,18 +994,71 @@ async def show_block_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 @safe_handler()
 async def show_detailed_progress(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Показывает детальную статистику по всем темам."""
+    """Показывает детальную статистику по всем темам с пагинацией."""
     query = update.callback_query
-
+    
+    # Получаем страницу из callback_data (формат: show_detailed_progress:page)
+    callback_parts = query.data.split(':')
+    page = int(callback_parts[1]) if len(callback_parts) > 1 else 0
+    
     practiced = context.user_data.get('practiced_topics', set())
+    all_topics = list(plan_bot_data.get_all_topics_list())
+    
+    # Параметры пагинации
+    topics_per_page = 30  # Показываем по 30 тем на страницу
+    total_pages = math.ceil(len(all_topics) / topics_per_page)
+    
+    # Получаем темы для текущей страницы
+    start_idx = page * topics_per_page
+    end_idx = min(start_idx + topics_per_page, len(all_topics))
+    page_topics = all_topics[start_idx:end_idx]
+    
+    # Формируем текст
     lines = []
-    for idx, name in plan_bot_data.get_all_topics_list():
+    lines.append(f"📋 <b>Детальный прогресс</b> (стр. {page + 1}/{total_pages})")
+    lines.append(f"<i>Всего тем: {len(all_topics)}, пройдено: {len(practiced)}</i>\n")
+    
+    # Группируем по блокам для лучшей читаемости
+    current_block = None
+    for idx, name in page_topics:
+        # Определяем блок темы
+        block_name = None
+        for block, topics in plan_bot_data.topics_by_block.items():
+            if any(t[0] == idx for t in topics):
+                block_name = block
+                break
+        
+        # Добавляем заголовок блока если новый
+        if block_name != current_block:
+            current_block = block_name
+            lines.append(f"\n<b>{block_name}:</b>")
+        
+        # Добавляем тему
         mark = '✅' if idx in practiced else '❌'
         lines.append(f"{mark} {name}")
-
-    text = "📋 <b>Детальный прогресс</b>\n\n" + "\n".join(lines)
-    kb = InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ Назад", callback_data="t24_progress")]])
-    await query.edit_message_text(text, reply_markup=kb, parse_mode=ParseMode.HTML)
+    
+    text = "\n".join(lines)
+    
+    # Создаем клавиатуру с навигацией
+    keyboard = []
+    
+    # Навигационные кнопки
+    nav_row = []
+    if page > 0:
+        nav_row.append(InlineKeyboardButton("⬅️ Назад", callback_data=f"show_detailed_progress:{page-1}"))
+    if page < total_pages - 1:
+        nav_row.append(InlineKeyboardButton("➡️ Вперед", callback_data=f"show_detailed_progress:{page+1}"))
+    
+    if nav_row:
+        keyboard.append(nav_row)
+    
+    # Кнопка экспорта и возврата
+    keyboard.append([
+        InlineKeyboardButton("📤 Экспорт в файл", callback_data="export_progress"),
+        InlineKeyboardButton("🔙 К статистике", callback_data="t24_progress")
+    ])
+    
+    await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode=ParseMode.HTML)
     return states.CHOOSING_MODE
 
 
@@ -1041,14 +1094,75 @@ async def show_completed(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 @safe_handler()
 async def show_remaining(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Показывает список оставшихся тем."""
+    """Показывает список оставшихся тем с пагинацией."""
     query = update.callback_query
-
+    
+    # Получаем страницу из callback_data (формат: show_remaining:page)
+    callback_parts = query.data.split(':')
+    page = int(callback_parts[1]) if len(callback_parts) > 1 else 0
+    
     practiced = context.user_data.get('practiced_topics', set())
-    remaining = [name for idx, name in plan_bot_data.get_all_topics_list() if idx not in practiced]
-    text = "📝 <b>Оставшиеся темы</b>\n\n" + ("\n".join(remaining) if remaining else "Все темы изучены!")
-    kb = InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ Назад", callback_data="t24_progress")]])
-    await query.edit_message_text(text, reply_markup=kb, parse_mode=ParseMode.HTML)
+    remaining = [(idx, name) for idx, name in plan_bot_data.get_all_topics_list() if idx not in practiced]
+    
+    if not remaining:
+        text = "📝 <b>Оставшиеся темы</b>\n\n✅ Поздравляем! Все темы изучены!"
+        kb = InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ Назад", callback_data="t24_progress")]])
+        await query.edit_message_text(text, reply_markup=kb, parse_mode=ParseMode.HTML)
+        return states.CHOOSING_MODE
+    
+    # Параметры пагинации
+    topics_per_page = 25
+    total_pages = math.ceil(len(remaining) / topics_per_page)
+    
+    # Получаем темы для текущей страницы
+    start_idx = page * topics_per_page
+    end_idx = min(start_idx + topics_per_page, len(remaining))
+    page_topics = remaining[start_idx:end_idx]
+    
+    # Формируем текст
+    lines = []
+    lines.append(f"📝 <b>Оставшиеся темы</b> (стр. {page + 1}/{total_pages})")
+    lines.append(f"<i>Осталось изучить: {len(remaining)} тем</i>\n")
+    
+    # Группируем по блокам
+    current_block = None
+    for idx, name in page_topics:
+        # Определяем блок темы
+        block_name = None
+        for block, topics in plan_bot_data.topics_by_block.items():
+            if any(t[0] == idx for t in topics):
+                block_name = block
+                break
+        
+        # Добавляем заголовок блока если новый
+        if block_name != current_block:
+            current_block = block_name
+            lines.append(f"\n<b>{block_name}:</b>")
+        
+        lines.append(f"• {name}")
+    
+    text = "\n".join(lines)
+    
+    # Создаем клавиатуру с навигацией
+    keyboard = []
+    
+    # Навигационные кнопки
+    nav_row = []
+    if page > 0:
+        nav_row.append(InlineKeyboardButton("⬅️ Пред.", callback_data=f"show_remaining:{page-1}"))
+    
+    nav_row.append(InlineKeyboardButton(f"{page + 1}/{total_pages}", callback_data="noop"))
+    
+    if page < total_pages - 1:
+        nav_row.append(InlineKeyboardButton("След. ➡️", callback_data=f"show_remaining:{page+1}"))
+    
+    if nav_row:
+        keyboard.append(nav_row)
+    
+    # Кнопка возврата
+    keyboard.append([InlineKeyboardButton("🔙 К статистике", callback_data="t24_progress")])
+    
+    await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode=ParseMode.HTML)
     return states.CHOOSING_MODE
 
 @safe_handler()
@@ -1337,9 +1451,6 @@ async def back_to_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Возврат в меню плагина."""
     query = update.callback_query
     
-    # Удаляем все предыдущие сообщения перед показом меню
-    await delete_previous_messages(context, query.message.chat_id)
-    
     user_id = query.from_user.id
     kb = keyboards.build_main_menu_keyboard()
     
@@ -1348,17 +1459,31 @@ async def back_to_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "Выберите режим работы:"
     )
     
-    # Отправляем новое сообщение с меню
-    await query.message.chat.send_message(
-        menu_text,
-        reply_markup=kb,
-        parse_mode=ParseMode.HTML
-    )
+    try:
+        # Редактируем существующее сообщение
+        await query.edit_message_text(
+            menu_text,
+            reply_markup=kb,
+            parse_mode=ParseMode.HTML
+        )
+    except telegram.error.BadRequest as e:
+        # Если не удалось отредактировать (например, сообщение уже удалено)
+        if "Message can't be edited" in str(e) or "Message to edit not found" in str(e):
+            # Тогда отправляем новое
+            await query.message.reply_text(
+                menu_text,
+                reply_markup=kb,
+                parse_mode=ParseMode.HTML
+            )
+        else:
+            raise
     
     # Очищаем временные данные
     context.user_data.pop('current_topic_index', None)
     context.user_data.pop('current_topic', None)
     context.user_data.pop('exam_mode', None)
+    
+    # НЕ удаляем ID сообщений здесь - они могут понадобиться для последующих операций
     
     return states.CHOOSING_MODE
 
@@ -1592,10 +1717,10 @@ async def safe_edit_or_reply(query, text: str, reply_markup=None, parse_mode=Par
         else:
             # Если другая ошибка - пробрасываем её дальше
             raise
-# Вспомогательная функция для обработки noop
+
 @safe_handler()
 async def noop(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Пустой обработчик для неактивных кнопок."""
+    """Обработчик для callback_query, которые не требуют действий."""
     query = update.callback_query
-    # Не меняем состояние, просто отвечаем на callback
-    return None
+    await query.answer()
+    return  # Возвращаем текущее состояние без изменений
