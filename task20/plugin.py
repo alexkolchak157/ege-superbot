@@ -13,9 +13,9 @@ from core.states import ANSWERING_T20, SEARCHING, VIEWING_EXAMPLE, CONFIRMING_RE
 logger = logging.getLogger(__name__)
 
 class Task20Plugin(BotPlugin):
-    code = "task20"
+    code = "t20"  # Изменить с "task20" на "t20"
     title = "Задание 20 (Суждения)"
-    menu_priority = 16  # После task19
+    menu_priority = 16
     
     async def post_init(self, app):
         """Инициализация данных для задания 20."""
@@ -53,7 +53,8 @@ class Task20Plugin(BotPlugin):
                     CallbackQueryHandler(handlers.settings_mode, pattern="^t20_settings$"),
                     CallbackQueryHandler(handlers.back_to_main_menu, pattern="^to_main_menu$"),
                     CallbackQueryHandler(handlers.noop, pattern="^noop$"),
-                    
+                    CallbackQueryHandler(handlers.random_topic_all, pattern="^t20_random_all$"),
+
                     # Обработчики для выбора тем
                     CallbackQueryHandler(handlers.choose_topic, pattern="^t20_topic:"),
                     CallbackQueryHandler(handlers.select_block, pattern="^t20_select_block$"),
@@ -62,7 +63,6 @@ class Task20Plugin(BotPlugin):
                     
                     # Навигация по темам
                     CallbackQueryHandler(handlers.block_menu, pattern="^t20_block:"),
-                    CallbackQueryHandler(handlers.handle_topic_choice_wrapper, pattern="^t20_topic:"),
                     CallbackQueryHandler(handlers.list_topics, pattern="^t20_list_topics$"),
                     CallbackQueryHandler(handlers.random_topic_block, pattern="^t20_random_block$"),
                     CallbackQueryHandler(handlers.list_topics, pattern=r"^t20_list_topics:page:\d+$"),
@@ -117,6 +117,10 @@ class Task20Plugin(BotPlugin):
             ],
             name="task20_conversation",
             persistent=False,
+            allow_reentry=True,
+            per_message=False,
+            per_chat=True,
+            per_user=True
         )
         
         # Регистрируем обработчики в приложении
