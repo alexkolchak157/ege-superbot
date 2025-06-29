@@ -4,6 +4,7 @@ import logging
 from telegram.ext import Application, CommandHandler
 from core.plugin_loader import discover_plugins, build_main_menu, PLUGINS
 from core.menu_handlers import register_global_handlers
+from core.menu_handlers import handle_to_main_menu
 from core.admin_tools import register_admin_handlers
 from core.config import BOT_TOKEN
 from core import db
@@ -102,7 +103,13 @@ def main():
         await update.message.reply_text(text, parse_mode='HTML')
     
     app.add_handler(CommandHandler("state_stats", state_stats))
-
+    app.add_handler(
+        CallbackQueryHandler(
+            handle_to_main_menu,
+            pattern="^to_main_menu$"
+        ),
+        group=-1  # Низкий приоритет, срабатывает если ConversationHandler не обработал
+    )
     print("🔌 Регистрируем плагины...")
     for plugin in PLUGINS:
         plugin.register(app)
