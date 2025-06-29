@@ -61,16 +61,28 @@ class YandexGPTService:
         self.config = config
         self._session: Optional[aiohttp.ClientSession] = None
     
+    async def _ensure_session(self):
+        """Создает сессию если её нет"""
+        if self._session is None or self._session.closed:
+            self._session = aiohttp.ClientSession()
+    
+    async def _close_session(self):
+        """Закрывает сессию если она открыта"""
+        if self._session and not self._session.closed:
+            await self._session.close()
+    
     async def __aenter__(self):
-        """Создание сессии при входе в контекст"""
-        self._session = aiohttp.ClientSession()
+        """Для обратной совместимости с async with"""
         return self
     
     async def __aexit__(self, exc_type, exc_val, exc_tb):
-        """Закрытие сессии при выходе из контекста"""
-        if self._session:
-            await self._session.close()
+        """Для обратной совместимости с async with"""
+        pass
     
+    async def cleanup(self):
+        """Очистка ресурсов"""
+        await self._close_session()
+        
     async def get_completion(
         self, 
         prompt: str, 
@@ -90,8 +102,8 @@ class YandexGPTService:
         Returns:
             Словарь с ответом и метаданными
         """
-        if not self._session:
-            raise RuntimeError("Сервис должен использоваться в контексте 'async with'")
+        # Автоматически создаем сессию если её нет
+        await self._ensure_session()
         
         # Формирование сообщений
         messages = []
