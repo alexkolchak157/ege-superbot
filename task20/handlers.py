@@ -25,6 +25,8 @@ from core.error_handler import safe_handler, auto_answer_callback
 from core.plugin_loader import build_main_menu
 from core.state_validator import validate_state_transition, state_validator
 from core.utils import safe_edit_message
+from telegram.error import BadRequest
+from core.document_processor import DocumentHandlerMixin
 
 logger = logging.getLogger(__name__)
 
@@ -243,26 +245,43 @@ async def entry_from_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Вход в задание 20 из главного меню."""
     query = update.callback_query
     
-    user_id = update.effective_user.id
-    context.user_data['module'] = 'task20'
+    # Очищаем контекст от данных других модулей
+    keys_to_remove = [
+        'current_topic',
+        'task19_current_topic', 
+        'task24_current_topic',
+        'task25_current_topic',
+        'answer_processing',
+        'current_block',
+        'waiting_for_bank_search'
+    ]
+    
+    for key in keys_to_remove:
+        context.user_data.pop(key, None)
+    
+    # ВАЖНО: Устанавливаем активный модуль
+    context.user_data['active_module'] = 't20'
+    context.user_data['current_module'] = 't20'
     
     # Получаем статистику пользователя
-    if UserProgress:
-        user_stats = UserProgress(context.user_data).get_stats()
-    else:
-        user_stats = {
-            'total_attempts': 0,
-            'streak': 0,
-            'weak_topics_count': 0,
-            'progress_percent': 0
-        }
+    results = context.user_data.get('task20_results', [])
+    user_stats = {
+        'total_attempts': len(results),
+        'average_score': sum(r['score'] for r in results) / len(results) if results else 0,
+        'streak': context.user_data.get('correct_streak', 0),
+        'weak_topics_count': 0,
+        'progress_percent': int(len(set(r['topic_id'] for r in results)) / 50 * 100) if results else 0
+    }
     
-    # Используем персонализированное приветствие
+    # Персонализированное приветствие
     greeting = get_personalized_greeting(user_stats)
-    is_new_user = user_stats.get('total_attempts', 0) == 0
-    text = greeting + MessageFormatter.format_welcome_message("задание 20", is_new_user)
     
-    # Создаем адаптивное меню
+    text = greeting + MessageFormatter.format_welcome_message(
+        "задание 20",
+        is_new_user=user_stats['total_attempts'] == 0
+    )
+    
+    # Адаптивная клавиатура
     kb = AdaptiveKeyboards.create_menu_keyboard(user_stats, module_code="t20")
     
     await query.edit_message_text(
@@ -273,24 +292,44 @@ async def entry_from_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     return states.CHOOSING_MODE
 
+@safe_handler()
 async def cmd_task20(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Команда /task20."""
-    text = (
-        "📝 <b>Задание 20</b>\n\n"
-        "В этом задании нужно сформулировать суждения (аргументы) "
-        "абстрактного характера с элементами обобщения.\n\n"
-        "⚠️ <b>Важно:</b> НЕ приводите конкретные примеры!\n\n"
-        "Выберите режим работы:"
+    """Команда /task20 - прямой вход в задание 20."""
+    
+    # Очищаем контекст
+    keys_to_remove = [
+        'current_topic',
+        'task19_current_topic', 
+        'task24_current_topic',
+        'task25_current_topic',
+        'answer_processing',
+        'current_block',
+        'waiting_for_bank_search'
+    ]
+    
+    for key in keys_to_remove:
+        context.user_data.pop(key, None)
+    
+    # Устанавливаем активный модуль
+    context.user_data['active_module'] = 't20'
+    context.user_data['current_module'] = 't20'
+    
+    # Получаем статистику
+    results = context.user_data.get('task20_results', [])
+    user_stats = {
+        'total_attempts': len(results),
+        'average_score': sum(r['score'] for r in results) / len(results) if results else 0,
+        'streak': context.user_data.get('correct_streak', 0),
+        'weak_topics_count': 0,
+        'progress_percent': 0
+    }
+    
+    text = MessageFormatter.format_welcome_message(
+        "задание 20",
+        is_new_user=user_stats['total_attempts'] == 0
     )
     
-    kb = InlineKeyboardMarkup([
-        [InlineKeyboardButton("💪 Практика", callback_data="t20_practice")],
-        [InlineKeyboardButton("📚 Теория и советы", callback_data="t20_theory")],
-        [InlineKeyboardButton("🏦 Банк суждений", callback_data="t20_examples")],
-        [InlineKeyboardButton("📊 Мой прогресс", callback_data="t20_progress")],
-        [InlineKeyboardButton("⚙️ Настройки", callback_data="t20_settings")],
-        [InlineKeyboardButton("🏠 Главное меню", callback_data="to_main_menu")]
-    ])
+    kb = AdaptiveKeyboards.create_menu_keyboard(user_stats, module_code="t20")
     
     await update.message.reply_text(
         text,
@@ -529,35 +568,29 @@ async def search_bank(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 @safe_handler()
 async def view_example(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Просмотр конкретного примера суждений."""
+    """Показ примера суждений для конкретной темы."""
     query = update.callback_query
     
-    # Извлекаем индекс темы из callback_data
+    # Извлекаем индекс темы
     topic_idx = int(query.data.split(":")[1])
     topics = task20_data.get('topics', [])
     
-    if not topics or topic_idx >= len(topics):
+    if topic_idx >= len(topics) or topic_idx < 0:
         await query.answer("Тема не найдена", show_alert=True)
         return states.CHOOSING_MODE
     
     topic = topics[topic_idx]
     context.user_data['bank_current_idx'] = topic_idx
-    context.user_data['viewing_mode'] = 'single'
+    context.user_data['viewing_mode'] = 'examples'
     
-    text = f"""🏦 <b>Банк суждений - Детальный просмотр</b>
-
-<b>Тема {topic_idx + 1}/{len(topics)}:</b> {topic['title']}
-<b>Блок:</b> {topic['block']}
-
-<b>Задание:</b>
-<i>{topic['task_text']}</i>
-
-<b>📝 Эталонные суждения:</b>
-"""
+    # Формируем текст с примерами
+    text = f"📖 <b>{topic['title']}</b>\n"
+    text += f"📦 Блок: {topic['block']}\n\n"
+    text += f"<b>Задание:</b>\n<i>{topic['task_text']}</i>\n\n"
+    text += "<b>Эталонные суждения:</b>\n\n"
     
-    # Показываем суждения с подробными пояснениями
     for i, example in enumerate(topic.get('example_arguments', []), 1):
-        text += f"\n<b>{i}. {example['type']}</b>\n"
+        text += f"{i}. <b>{example['type']}</b>\n"
         text += f"└ <i>{example['argument']}</i>\n"
         if 'explanation' in example:
             text += f"   💡 <code>{example['explanation']}</code>\n"
@@ -574,10 +607,10 @@ async def view_example(update: Update, context: ContextTypes.DEFAULT_TYPE):
         nav_row.append(InlineKeyboardButton("След. ➡️", callback_data=f"t20_next_example"))
     kb_buttons.append(nav_row)
     
-    # Дополнительные действия
+    # ИСПРАВЛЕНИЕ: Добавляем кнопку "Отработать тему"
     kb_buttons.extend([
+        [InlineKeyboardButton("🎯 Отработать эту тему", callback_data=f"t20_topic:{topic['id']}")],
         [InlineKeyboardButton("📋 Все примеры", callback_data=f"t20_view_all_examples:{topic['block']}")],
-        [InlineKeyboardButton("🎯 Попробовать эту тему", callback_data=f"t20_topic:{topic['id']}")],
         [InlineKeyboardButton("⬅️ К банку суждений", callback_data="t20_back_examples")]
     ])
     
@@ -598,7 +631,8 @@ async def view_all_examples(update: Update, context: ContextTypes.DEFAULT_TYPE):
         block_name = query.data.split(":", 1)[1]
         return await show_block_examples(update, context, block_name)
     
-    # Иначе показываем список блоков
+    # ИСПРАВЛЕНИЕ: Обрабатываем случай без блока (t20_view_all_examples)
+    # Показываем список блоков
     blocks = {}
     for topic in task20_data.get('topics', []):
         block = topic.get('block', 'Другое')
@@ -809,7 +843,22 @@ async def skip_question(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # Дополнительная вспомогательная функция для обработки ответов в ANSWERING_T20
 async def safe_handle_answer_task20(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Безопасная обработка ответа на задание 20."""
+    """Обработка ответа пользователя."""
+    logger.info(f"task20.handle_answer called for user {update.effective_user.id}")
+    
+    # Проверяем, что мы в правильном модуле
+    if context.user_data.get('active_module') != 'task20':
+        logger.debug("Ignoring answer - not in task20 module")
+        return states.CHOOSING_MODE
+    
+    # ДОБАВИТЬ ЭТИ СТРОКИ:
+    # Проверяем, есть ли текст из документа
+    if 'document_text' in context.user_data:
+        user_answer = context.user_data.pop('document_text')  # Извлекаем и удаляем
+        logger.info("Using text from document")
+    else:
+        user_answer = update.message.text
+        logger.info("Using text from message")
     
     topic = context.user_data.get('current_topic')
     if not topic:
@@ -1089,10 +1138,8 @@ async def handle_theory_sections(update: Update, context: ContextTypes.DEFAULT_T
 
 @safe_handler()
 async def examples_bank(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Банк суждений - начальное меню."""
+    """Главное меню банка суждений."""
     query = update.callback_query
-    
-    context.user_data['bank_current_idx'] = 0
     
     text = (
         "🏦 <b>Банк суждений</b>\n\n"
@@ -1105,7 +1152,7 @@ async def examples_bank(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     
     kb = InlineKeyboardMarkup([
-        [InlineKeyboardButton("📖 Просмотр по порядку", callback_data="t20_bank_nav:0")],
+        [InlineKeyboardButton("📋 Просмотр по порядку", callback_data="t20_view_by_order")],
         [InlineKeyboardButton("🔍 Поиск темы", callback_data="t20_bank_search")],
         [InlineKeyboardButton("⬅️ Назад", callback_data="t20_menu")]
     ])
@@ -1115,6 +1162,76 @@ async def examples_bank(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=kb,
         parse_mode=ParseMode.HTML
     )
+    
+    return states.CHOOSING_MODE
+
+@safe_handler()
+async def view_by_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Начать просмотр суждений по порядку."""
+    query = update.callback_query
+    
+    topics = task20_data.get('topics', [])
+    
+    if not topics:
+        await query.answer("Банк суждений пуст", show_alert=True)
+        return states.CHOOSING_MODE
+    
+    # Сохраняем начальный индекс
+    context.user_data['bank_current_idx'] = 0
+    
+    # Показываем первую тему
+    topic = topics[0]
+    
+    text = f"""🏦 <b>Банк суждений</b>
+
+<b>Тема 1/{len(topics)}:</b> {topic['title']}
+<b>Блок:</b> {topic['block']}
+
+<b>Задание:</b>
+<i>{topic['task_text']}</i>
+
+<b>📝 Эталонные суждения:</b>
+
+"""
+    
+    # Показываем суждения
+    for i, example in enumerate(topic.get('example_arguments', []), 1):
+        text += f"<b>{i}. {example['type']}</b>\n"
+        text += f"└ <i>{example['argument']}</i>\n\n"
+    
+    text += "💡 <b>Обратите внимание:</b>\n"
+    text += "• Суждения носят абстрактный характер\n"
+    text += "• Используются обобщающие слова\n"
+    text += "• Нет конкретных примеров и дат"
+    
+    # Навигация
+    kb_buttons = []
+    nav_row = []
+    
+    # Первая тема - кнопка назад неактивна
+    nav_row.append(InlineKeyboardButton("⏮️", callback_data="noop"))
+    
+    # Прогресс
+    progress_display = create_visual_progress(1, len(topics))
+    nav_row.append(InlineKeyboardButton(progress_display, callback_data="noop"))
+    
+    # Кнопка вперед
+    if len(topics) > 1:
+        nav_row.append(InlineKeyboardButton("➡️", callback_data="t20_bank_nav:1"))
+    else:
+        nav_row.append(InlineKeyboardButton("⏭️", callback_data="noop"))
+    
+    kb_buttons.append(nav_row)
+    kb_buttons.append([InlineKeyboardButton("🔍 Поиск темы", callback_data="t20_bank_search")])
+    kb_buttons.append([InlineKeyboardButton("📋 Все темы", callback_data="t20_view_all_examples")])
+    kb_buttons.append([InlineKeyboardButton("⬅️ В меню", callback_data="t20_menu")])
+    
+    await query.edit_message_text(
+        text,
+        reply_markup=InlineKeyboardMarkup(kb_buttons),
+        parse_mode=ParseMode.HTML
+    )
+    
     return states.CHOOSING_MODE
 
 @safe_handler()
@@ -1555,8 +1672,10 @@ async def handle_answer_document_task20(update: Update, context: ContextTypes.DE
     if not extracted_text:
         return ANSWERING_T20
     
-    # Передаем в обычный обработчик
-    update.message.text = extracted_text
+    # Сохраняем текст в context для использования в handle_answer
+    context.user_data['document_text'] = extracted_text
+    
+    # Вызываем handle_answer напрямую
     return await handle_answer(update, context)
 
 @safe_handler()
@@ -1576,7 +1695,7 @@ async def list_topics(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 InlineKeyboardButton("⬅️ Назад", callback_data="t20_select_block")
             ]])
         )
-        return states.CHOOSING_MODE  # ✅ Правильно
+        return states.CHOOSING_MODE
     
     topics = task20_data["topics_by_block"].get(block_name, [])
     
@@ -1586,8 +1705,9 @@ async def list_topics(update: Update, context: ContextTypes.DEFAULT_TYPE):
     start_idx = page * topics_per_page
     end_idx = min(start_idx + topics_per_page, len(topics))
     
+    # ИСПРАВЛЕНИЕ: Убираем номер страницы из текста
     text = f"📚 <b>{block_name}</b>\n"
-    text += f"Выберите тему (стр. {page + 1} из {total_pages}):\n\n"
+    text += f"Выберите тему:\n\n"
     
     kb_buttons = []
     
@@ -1732,9 +1852,29 @@ async def bank_nav(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Навигация по банку суждений."""
     query = update.callback_query
     
+    topics = task20_data.get('topics', [])
+    
+    # Защита от пустого банка
+    if not topics:
+        await query.edit_message_text(
+            "📚 <b>Банк суждений</b>\n\n"
+            "❌ Банк суждений пока пуст.\n\n"
+            "Попробуйте позже или обратитесь к администратору.",
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("⬅️ Назад", callback_data="t20_menu")
+            ]]),
+            parse_mode=ParseMode.HTML
+        )
+        return states.CHOOSING_MODE
+    
     # Извлекаем индекс из callback_data
     topic_idx = int(query.data.split(":")[1])
-    topics = task20_data.get('topics', [])
+    
+    # Проверка границ
+    if topic_idx < 0:
+        topic_idx = 0
+    elif topic_idx >= len(topics):
+        topic_idx = len(topics) - 1
     
     if not topics or topic_idx >= len(topics) or topic_idx < 0:
         await query.answer("Тема не найдена", show_alert=True)
