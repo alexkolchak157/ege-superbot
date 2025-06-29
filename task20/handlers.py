@@ -333,15 +333,16 @@ async def show_achievement_notification(update: Update, context: ContextTypes.DE
 
 @safe_handler()
 async def handle_achievement_ok(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Просто удаляет сообщение о достижении."""
+    """Обработчик кнопки OK в уведомлении о достижении."""
     query = update.callback_query
-
+    
     try:
         await query.message.delete()
     except Exception:
         pass
-
-    return ConversationHandler.END
+    
+    # Не меняем состояние conversation handler
+    return None
 
 @safe_handler()
 @validate_state_transition({states.CHOOSING_MODE})
@@ -589,65 +590,78 @@ async def view_example(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 @safe_handler()
 async def view_all_examples(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Просмотр всех примеров по блоку."""
+    """Показ всех примеров по блокам."""
     query = update.callback_query
     
-    # Извлекаем блок из callback_data
-    block_name = query.data.split(":", 1)[1] if ":" in query.data else None
+    # Если callback_data содержит блок (t20_all_examples:block_name)
+    if ":" in query.data:
+        block_name = query.data.split(":", 1)[1]
+        return await show_block_examples(update, context, block_name)
     
-    if not block_name:
-        # Показываем выбор блока
-        blocks = list(task20_data.get("topics_by_block", {}).keys())
-        
-        text = "📚 <b>Все примеры суждений</b>\n\nВыберите блок для просмотра:"
-        
-        kb_buttons = []
-        for block in blocks:
-            topics_count = len(task20_data["topics_by_block"].get(block, []))
-            kb_buttons.append([
-                InlineKeyboardButton(
-                    f"{block} ({topics_count} тем)",
-                    callback_data=f"t20_view_all_examples:{block}"
-                )
-            ])
-        
-        kb_buttons.append([InlineKeyboardButton("⬅️ Назад", callback_data="t20_examples")])
-        
-        await query.edit_message_text(
-            text,
-            reply_markup=InlineKeyboardMarkup(kb_buttons),
-            parse_mode=ParseMode.HTML
-        )
-        return states.CHOOSING_MODE
+    # Иначе показываем список блоков
+    blocks = {}
+    for topic in task20_data.get('topics', []):
+        block = topic.get('block', 'Другое')
+        if block not in blocks:
+            blocks[block] = []
+        blocks[block].append(topic)
     
-    # Показываем все темы блока
-    topics = task20_data["topics_by_block"].get(block_name, [])
+    text = "🏦 <b>Банк суждений по блокам</b>\n\n"
+    text += "Выберите блок для просмотра:\n\n"
     
-    text = f"📚 <b>Все суждения блока: {block_name}</b>\n\n"
+    kb_buttons = []
+    for block_name, topics in sorted(blocks.items()):
+        kb_buttons.append([InlineKeyboardButton(
+            f"📚 {block_name} ({len(topics)} тем)",
+            callback_data=f"t20_all_examples:{block_name}"
+        )])
     
-    # Показываем краткий список тем
-    for i, topic in enumerate(topics[:10], 1):  # Ограничиваем 10 темами
-        text += f"<b>{i}. {topic['title']}</b>\n"
-        # Показываем первое суждение как пример
-        if topic.get('example_arguments'):
-            first_arg = topic['example_arguments'][0]
-            text += f"   <i>• {first_arg['argument'][:100]}...</i>\n"
-        text += "\n"
-    
-    if len(topics) > 10:
-        text += f"\n<i>...и ещё {len(topics) - 10} тем</i>"
-    
-    kb = InlineKeyboardMarkup([
-        [InlineKeyboardButton("📖 Просмотр по одной", callback_data=f"t20_bank_nav:0")],
-        [InlineKeyboardButton("⬅️ К выбору блока", callback_data="t20_view_all_examples")],
-        [InlineKeyboardButton("⬅️ В меню", callback_data="t20_examples")]
-    ])
+    kb_buttons.append([InlineKeyboardButton("⬅️ Назад", callback_data="t20_examples")])
     
     await query.edit_message_text(
         text,
-        reply_markup=kb,
+        reply_markup=InlineKeyboardMarkup(kb_buttons),
         parse_mode=ParseMode.HTML
     )
+    
+    return states.CHOOSING_MODE
+
+@safe_handler()
+async def show_block_examples(update: Update, context: ContextTypes.DEFAULT_TYPE, block_name: str):
+    """Показ примеров из конкретного блока."""
+    query = update.callback_query
+    
+    # Находим все темы блока
+    block_topics = []
+    for idx, topic in enumerate(task20_data.get('topics', [])):
+        if topic.get('block') == block_name:
+            block_topics.append((idx, topic))
+    
+    if not block_topics:
+        await query.answer("Темы не найдены", show_alert=True)
+        return states.CHOOSING_MODE
+    
+    text = f"📚 <b>Блок: {block_name}</b>\n\n"
+    text += f"Найдено тем: {len(block_topics)}\n\n"
+    
+    kb_buttons = []
+    for idx, topic in block_topics[:15]:  # Максимум 15 тем
+        kb_buttons.append([InlineKeyboardButton(
+            f"📖 {topic['title'][:50]}...",
+            callback_data=f"t20_bank_nav:{idx}"
+        )])
+    
+    if len(block_topics) > 15:
+        text += f"\n<i>Показаны первые 15 из {len(block_topics)} тем</i>"
+    
+    kb_buttons.append([InlineKeyboardButton("⬅️ К блокам", callback_data="t20_view_all_examples")])
+    
+    await query.edit_message_text(
+        text,
+        reply_markup=InlineKeyboardMarkup(kb_buttons),
+        parse_mode=ParseMode.HTML
+    )
+    
     return states.CHOOSING_MODE
 
 @safe_handler()
@@ -704,7 +718,7 @@ async def cancel_reset(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Отмена сброса прогресса."""
     query = update.callback_query
     
-    await query.answer("Сброс отменён")
+    await query.answer("✅ Сброс отменён")
     
     # Возвращаемся в настройки
     return await settings_mode(update, context)
@@ -900,16 +914,17 @@ async def safe_handle_answer_task20(update: Update, context: ContextTypes.DEFAUL
     
     return states.CHOOSING_MODE
     
+@safe_handler()
 async def good_examples(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Примеры правильных суждений."""
     query = update.callback_query
     
     text = """✅ <b>Примеры правильных суждений</b>
 
-<b>Тема: Роль образования</b>
+<b>Тема: Роль образования в обществе</b>
 
 <u>Правильно:</u>
-<i>"Система образования формирует человеческий капитал общества, обеспечивая передачу накопленных знаний и навыков новым поколениям, что является необходимым условием социально-экономического развития."</i>
+<i>"Образование как социальный институт формирует человеческий капитал, обеспечивая передачу накопленных знаний и культурных ценностей от поколения к поколению."</i>
 
 <b>Почему правильно:</b>
 • Абстрактные понятия (система, капитал, поколения)
@@ -1103,13 +1118,11 @@ async def examples_bank(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return states.CHOOSING_MODE
 
 @safe_handler()
-@auto_answer_callback
 async def my_progress(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Показ прогресса пользователя с улучшенной визуализацией."""
     query = update.callback_query
     
-    # Сначала отвечаем на callback, чтобы убрать "часики"
-    await query.answer()
+    # Убираем явный вызов query.answer(), так как декоратор safe_handler уже делает это
     
     results = context.user_data.get('task20_results', [])
     
@@ -1171,17 +1184,11 @@ async def my_progress(update: Update, context: ContextTypes.DEFAULT_TYPE):
             [InlineKeyboardButton("⬅️ Назад", callback_data="t20_menu")]
         ])
     
-    # Используем безопасное редактирование
-    success = await safe_edit_message(
-        update,
+    await query.edit_message_text(
         text,
         reply_markup=kb,
         parse_mode=ParseMode.HTML
     )
-    
-    # Если сообщение не изменилось (тот же текст), просто игнорируем
-    if not success:
-        logger.debug(f"Message not modified for user {query.from_user.id} in my_progress")
     
     return states.CHOOSING_MODE
 
@@ -1388,9 +1395,10 @@ async def back_to_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 @safe_handler()
 async def noop(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Пустой обработчик."""
+    """Обработчик для неактивных кнопок."""
     query = update.callback_query
-    return None
+    await query.answer()
+    return states.CHOOSING_MODE
 
 @safe_handler()
 @validate_state_transition({states.CHOOSING_MODE})
@@ -1692,36 +1700,51 @@ async def random_topic_block(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
 
 @safe_handler()
-@validate_state_transition({states.CHOOSING_MODE})
-async def bank_navigation(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def bank_nav(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Навигация по банку суждений."""
     query = update.callback_query
     
+    # Извлекаем индекс из callback_data
     topic_idx = int(query.data.split(":")[1])
     topics = task20_data.get('topics', [])
     
-    if not topics or topic_idx >= len(topics):
-        await query.edit_message_text("❌ Тема не найдена")
+    if not topics or topic_idx >= len(topics) or topic_idx < 0:
+        await query.answer("Тема не найдена", show_alert=True)
         return states.CHOOSING_MODE
     
-    topic = topics[topic_idx]
+    # Проверяем, изменился ли индекс
+    current_idx = context.user_data.get('bank_current_idx', -1)
+    if current_idx == topic_idx:
+        # Если индекс не изменился, просто отвечаем на callback
+        if topic_idx == 0:
+            await query.answer("Это первая тема", show_alert=False)
+        elif topic_idx == len(topics) - 1:
+            await query.answer("Это последняя тема", show_alert=False)
+        else:
+            await query.answer()
+        return states.CHOOSING_MODE
+    
+    # Сохраняем новый индекс
     context.user_data['bank_current_idx'] = topic_idx
+    
+    topic = topics[topic_idx]
     
     text = f"""🏦 <b>Банк суждений</b>
 
-<b>Тема:</b> {topic['title']}
+<b>Тема {topic_idx + 1}/{len(topics)}:</b> {topic['title']}
 <b>Блок:</b> {topic['block']}
 
 <b>Задание:</b>
-{topic['task_text']}
+<i>{topic['task_text']}</i>
 
-<b>Эталонные суждения:</b>
+<b>📝 Эталонные суждения:</b>
 
 """
     
+    # Показываем суждения
     for i, example in enumerate(topic.get('example_arguments', []), 1):
         text += f"<b>{i}. {example['type']}</b>\n"
-        text += f"<i>{example['argument']}</i>\n\n"
+        text += f"└ <i>{example['argument']}</i>\n\n"
     
     text += "💡 <b>Обратите внимание:</b>\n"
     text += "• Суждения носят абстрактный характер\n"
@@ -1732,24 +1755,40 @@ async def bank_navigation(update: Update, context: ContextTypes.DEFAULT_TYPE):
     kb_buttons = []
     nav_row = []
     
+    # Кнопка "Назад" - только если не первая тема
     if topic_idx > 0:
         nav_row.append(InlineKeyboardButton("⬅️", callback_data=f"t20_bank_nav:{topic_idx-1}"))
+    else:
+        nav_row.append(InlineKeyboardButton("⏮️", callback_data="noop"))  # Неактивная кнопка
     
+    # Прогресс
     progress_display = create_visual_progress(topic_idx + 1, len(topics))
     nav_row.append(InlineKeyboardButton(progress_display, callback_data="noop"))
     
+    # Кнопка "Вперед" - только если не последняя тема  
     if topic_idx < len(topics) - 1:
         nav_row.append(InlineKeyboardButton("➡️", callback_data=f"t20_bank_nav:{topic_idx+1}"))
+    else:
+        nav_row.append(InlineKeyboardButton("⏭️", callback_data="noop"))  # Неактивная кнопка
     
     kb_buttons.append(nav_row)
     kb_buttons.append([InlineKeyboardButton("🔍 Поиск темы", callback_data="t20_bank_search")])
+    kb_buttons.append([InlineKeyboardButton("📋 Все темы", callback_data="t20_view_all_examples")])
     kb_buttons.append([InlineKeyboardButton("⬅️ В меню", callback_data="t20_menu")])
     
-    await query.edit_message_text(
-        text,
-        reply_markup=InlineKeyboardMarkup(kb_buttons),
-        parse_mode=ParseMode.HTML
-    )
+    try:
+        await query.edit_message_text(
+            text,
+            reply_markup=InlineKeyboardMarkup(kb_buttons),
+            parse_mode=ParseMode.HTML
+        )
+    except BadRequest as e:
+        if "Message is not modified" in str(e):
+            # Если сообщение не изменилось, просто отвечаем на callback
+            await query.answer()
+        else:
+            raise
+    
     return states.CHOOSING_MODE
 
 @safe_handler()
@@ -1813,7 +1852,6 @@ async def set_strictness(update: Update, context: ContextTypes.DEFAULT_TYPE):
     global evaluator
     
     query = update.callback_query
-    
     level_str = query.data.split(":")[1].upper()
     
     try:
@@ -1825,11 +1863,20 @@ async def set_strictness(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if AI_EVALUATOR_AVAILABLE:
             evaluator = Task20AIEvaluator(strictness=new_level)
             logger.info(f"Task20 strictness changed to {new_level.value}")
+            
+            # Сохраняем статистику по уровню
+            await save_stats_by_level(context, query.from_user.id, 0)
+            
+            await query.answer(f"✅ Установлен уровень: {new_level.value}")
+        else:
+            await query.answer("⚠️ AI проверка недоступна", show_alert=True)
+            
         # Возвращаемся в настройки
         return await settings_mode(update, context)
         
     except Exception as e:
         logger.error(f"Error setting strictness: {e}")
+        await query.answer("❌ Ошибка при изменении настроек", show_alert=True)
         return states.CHOOSING_MODE
 
 
@@ -1846,148 +1893,77 @@ async def handle_settings_actions(update: Update, context: ContextTypes.DEFAULT_
     return states.CHOOSING_MODE
 
 @safe_handler()
-@auto_answer_callback
 async def detailed_progress(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Детальная статистика с графиками."""
+    """Детальная статистика по темам."""
     query = update.callback_query
     
     results = context.user_data.get('task20_results', [])
     
     if len(results) < 5:
-        return await my_progress(update, context)
-    
-    try:
-        import matplotlib
-        matplotlib.use('Agg')  # Для работы без GUI
-        import matplotlib.pyplot as plt
-        from io import BytesIO
-        
-        # Создаем фигуру с несколькими графиками
-        fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(12, 10))
-        fig.suptitle('Детальная статистика по заданию 20', fontsize=16)
-        
-        # График 1: Динамика результатов
-        scores = [r['score'] for r in results]
-        attempts = list(range(1, len(scores) + 1))
-        
-        ax1.plot(attempts, scores, 'b-o', linewidth=2, markersize=8)
-        ax1.axhline(y=2, color='orange', linestyle='--', alpha=0.7, label='Проходной балл')
-        ax1.axhline(y=3, color='green', linestyle='--', alpha=0.7, label='Максимум')
-        
-        # Добавляем скользящее среднее
-        if len(scores) >= 5:
-            window_size = 5
-            moving_avg = []
-            for i in range(len(scores) - window_size + 1):
-                moving_avg.append(sum(scores[i:i+window_size]) / window_size)
-            ax1.plot(range(window_size, len(scores) + 1), moving_avg, 'r-', linewidth=2, alpha=0.7, label='Среднее за 5 попыток')
-        
-        ax1.set_xlabel('Попытка')
-        ax1.set_ylabel('Баллы')
-        ax1.set_title('Динамика результатов')
-        ax1.legend()
-        ax1.grid(True, alpha=0.3)
-        ax1.set_ylim(-0.5, 3.5)
-        
-        # График 2: Распределение баллов
-        score_counts = {0: 0, 1: 0, 2: 0, 3: 0}
-        for score in scores:
-            score_counts[score] += 1
-        
-        bars = ax2.bar(score_counts.keys(), score_counts.values(), color=['red', 'orange', 'yellow', 'green'])
-        ax2.set_xlabel('Баллы')
-        ax2.set_ylabel('Количество')
-        ax2.set_title('Распределение результатов')
-        ax2.set_xticks([0, 1, 2, 3])
-        
-        # Добавляем проценты на столбцы
-        total = len(scores)
-        for bar, (score, count) in zip(bars, score_counts.items()):
-            height = bar.get_height()
-            ax2.text(bar.get_x() + bar.get_width()/2., height,
-                    f'{count}\n({count/total*100:.0f}%)',
-                    ha='center', va='bottom')
-        
-        # График 3: Статистика по блокам
-        for block_name, topics in task20_data.get('topics_by_block', {}).items():
-            completed = sum(1 for t in topics if t['id'] in completed_ids)
-            total = len(topics)
-    
-            progress_bar = UniversalUIComponents.create_progress_bar(completed, total)
-            color = UniversalUIComponents.get_color_for_score(completed, total)
-    
-            text += f"\n{color} <b>{block_name}:</b>\n{progress_bar}\n"
-        
-        block_names = list(blocks_data.keys())[:5]  # Максимум 5 блоков
-        block_avgs = [sum(scores)/len(scores) for block, scores in blocks_data.items()][:5]
-        
-        bars3 = ax3.bar(range(len(block_names)), block_avgs, color='skyblue')
-        ax3.set_xlabel('Блоки')
-        ax3.set_ylabel('Средний балл')
-        ax3.set_title('Результаты по блокам')
-        ax3.set_xticks(range(len(block_names)))
-        ax3.set_xticklabels([name[:15] + '...' if len(name) > 15 else name for name in block_names], rotation=45, ha='right')
-        ax3.set_ylim(0, 3.5)
-        
-        # Добавляем значения на столбцы
-        for bar in bars3:
-            height = bar.get_height()
-            ax3.text(bar.get_x() + bar.get_width()/2., height,
-                    f'{height:.2f}',
-                    ha='center', va='bottom')
-        
-        # График 4: Прогресс за последние 30 дней
-        from datetime import datetime, timedelta
-        
-        # Группируем по дням
-        daily_scores = {}
-        for result in results[-30:]:  # Последние 30 результатов
-            try:
-                date = datetime.fromisoformat(result['timestamp']).date()
-                if date not in daily_scores:
-                    daily_scores[date] = []
-                daily_scores[date].append(result['score'])
-            except:
-                continue
-        
-        if daily_scores:
-            dates = sorted(daily_scores.keys())
-            daily_avgs = [sum(daily_scores[date])/len(daily_scores[date]) for date in dates]
-            
-            ax4.plot(dates, daily_avgs, 'g-o', linewidth=2, markersize=8)
-            ax4.set_xlabel('Дата')
-            ax4.set_ylabel('Средний балл')
-            ax4.set_title('Прогресс по дням')
-            ax4.tick_params(axis='x', rotation=45)
-            ax4.grid(True, alpha=0.3)
-            ax4.set_ylim(0, 3.5)
-        else:
-            ax4.text(0.5, 0.5, 'Недостаточно данных', ha='center', va='center', transform=ax4.transAxes)
-        
-        plt.tight_layout()
-        
-        # Сохраняем график
-        buf = BytesIO()
-        plt.savefig(buf, format='png', dpi=150, bbox_inches='tight')
-        buf.seek(0)
-        plt.close()
-        
-        # Отправляем график
-        await query.message.reply_photo(
-            photo=buf,
-            caption=f"📊 <b>Детальная статистика</b>\n\n"
-                   f"Всего попыток: {len(results)}\n"
-                   f"Средний балл: {sum(scores)/len(scores):.2f}/3\n"
-                   f"Лучший результат: {max(scores)}/3\n"
-                   f"Процент максимальных баллов: {score_counts[3]/total*100:.0f}%",
+        await query.edit_message_text(
+            "📊 <b>Детальная статистика</b>\n\n"
+            "Для отображения детальной статистики необходимо выполнить минимум 5 заданий.\n\n"
+            f"Сейчас выполнено: {len(results)} из 5\n\n"
+            "Продолжайте практику, чтобы увидеть подробный анализ!",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("💪 Продолжить практику", callback_data="t20_practice")],
+                [InlineKeyboardButton("⬅️ Назад", callback_data="t20_progress")]
+            ]),
             parse_mode=ParseMode.HTML
         )
-        
-    except ImportError:
-        return await my_progress(update, context)
-    except Exception as e:
-        logger.error(f"Error creating progress chart: {e}")
-        return await my_progress(update, context)
+        return states.CHOOSING_MODE
+    
+    # Группируем результаты по темам
+    topic_stats = {}
+    for result in results:
+        topic = result.get('topic', 'Неизвестная тема')
+        if topic not in topic_stats:
+            topic_stats[topic] = {
+                'attempts': 0,
+                'total_score': 0,
+                'scores': []
+            }
+        topic_stats[topic]['attempts'] += 1
+        topic_stats[topic]['total_score'] += result['score']
+        topic_stats[topic]['scores'].append(result['score'])
+    
+    # Сортируем темы по среднему баллу (от худших к лучшим)
+    sorted_topics = sorted(
+        topic_stats.items(),
+        key=lambda x: x[1]['total_score'] / x[1]['attempts']
+    )
+    
+    text = "📈 <b>Детальная статистика по темам</b>\n\n"
+    
+    # Показываем топ-5 худших тем для работы
+    text += "🔴 <b>Темы, требующие внимания:</b>\n"
+    for i, (topic, stats) in enumerate(sorted_topics[:5], 1):
+        avg_score = stats['total_score'] / stats['attempts']
+        text += f"{i}. {topic}: {avg_score:.1f}/3 ({stats['attempts']} попыток)\n"
+    
+    # Показываем топ-5 лучших тем
+    if len(sorted_topics) > 5:
+        text += "\n🟢 <b>Ваши сильные темы:</b>\n"
+        for i, (topic, stats) in enumerate(reversed(sorted_topics[-5:]), 1):
+            avg_score = stats['total_score'] / stats['attempts']
+            text += f"{i}. {topic}: {avg_score:.1f}/3 ({stats['attempts']} попыток)\n"
+    
+    # Общие рекомендации
+    weak_topics = [t for t, s in sorted_topics if s['total_score']/s['attempts'] < 2]
+    if weak_topics:
+        text += f"\n💡 <i>Рекомендуем поработать над {len(weak_topics)} темами с низкими баллами</i>"
+    
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("🔧 Работа над ошибками", callback_data="t20_mistakes")],
+        [InlineKeyboardButton("📥 Экспорт в CSV", callback_data="t20_export")],
+        [InlineKeyboardButton("⬅️ Назад", callback_data="t20_progress")]
+    ])
+    
+    await query.edit_message_text(
+        text,
+        reply_markup=kb,
+        parse_mode=ParseMode.HTML
+    )
     
     return states.CHOOSING_MODE
 
@@ -2096,7 +2072,6 @@ async def show_achievements(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return states.CHOOSING_MODE
 
 @safe_handler()
-@auto_answer_callback
 async def mistakes_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Режим работы над ошибками."""
     query = update.callback_query
@@ -2107,7 +2082,7 @@ async def mistakes_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     for result in results:
         if result['score'] < 2:  # Меньше 2 баллов
-            topic_id = result['topic_id']
+            topic_id = result.get('topic_id', result.get('topic', 'unknown'))
             if topic_id not in weak_topics:
                 weak_topics[topic_id] = {
                     'topic': result['topic'],
@@ -2177,25 +2152,39 @@ async def export_progress(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     # Создаем CSV
     output = io.StringIO()
-    writer = csv.writer(output)
-    writer.writerow(["Дата", "Тема", "Блок", "Балл", "Макс.балл"])
+    writer = csv.writer(output, delimiter=';')  # Используем ; для лучшей совместимости с Excel
+    
+    # Добавляем заголовок с BOM для корректного отображения в Excel
+    writer.writerow(["Дата", "Тема", "Блок", "Балл", "Макс.балл", "Процент"])
     
     for result in results:
-        writer.writerow([
-            result.get('timestamp', ''),
-            result.get('topic', ''),
-            result.get('block', ''),
-            result.get('score', 0),
-            result.get('max_score', 3)
-        ])
+        timestamp = result.get('timestamp', '')
+        topic = result.get('topic', '')
+        block = result.get('block', '')
+        score = result.get('score', 0)
+        max_score = result.get('max_score', 3)
+        percentage = f"{(score/max_score*100):.0f}%" if max_score > 0 else "0%"
+        
+        writer.writerow([timestamp, topic, block, score, max_score, percentage])
     
-    # Отправляем файл
+    # Добавляем итоговую строку
+    total_score = sum(r.get('score', 0) for r in results)
+    total_max = sum(r.get('max_score', 3) for r in results)
+    avg_percentage = f"{(total_score/total_max*100):.0f}%" if total_max > 0 else "0%"
+    
+    writer.writerow([])
+    writer.writerow(["ИТОГО", "", "", total_score, total_max, avg_percentage])
+    
+    # Отправляем файл с правильной кодировкой
     output.seek(0)
+    # Используем utf-8-sig для добавления BOM, чтобы Excel корректно определил кодировку
     await query.message.reply_document(
-        document=io.BytesIO(output.getvalue().encode('utf-8')),
-        filename=f"task20_results_{user_id}.csv",
-        caption="📊 Ваши результаты по заданию 20"
+        document=io.BytesIO(output.getvalue().encode('utf-8-sig')),
+        filename=f"task20_results_{user_id}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+        caption="📊 Ваши результаты по заданию 20\n\nФайл можно открыть в Excel или Google Sheets"
     )
+    
+    await query.answer("✅ Файл успешно создан!")
     
     return states.CHOOSING_MODE
 
@@ -2289,51 +2278,49 @@ async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 @safe_handler()
 async def handle_bank_search(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обработка поискового запроса в банке суждений."""
+    """Обработка текстового поиска в банке суждений."""
     if not context.user_data.get('waiting_for_bank_search'):
-        return
-    
-    search_query = update.message.text.lower()
-    context.user_data['waiting_for_bank_search'] = False
-    
-    # Ищем подходящие темы
-    matching_topics = []
-    for idx, topic in enumerate(task20_data.get('topics', [])):
-        if (search_query in topic['title'].lower() or 
-            search_query in topic.get('task_text', '').lower() or
-            search_query in topic.get('block', '').lower()):
-            matching_topics.append((idx, topic))
-    
-    if not matching_topics:
-        await update.message.reply_text(
-            "❌ Темы не найдены. Попробуйте другой запрос.",
-            reply_markup=InlineKeyboardMarkup([[
-                InlineKeyboardButton("🔍 Искать снова", callback_data="t20_bank_search"),
-                InlineKeyboardButton("⬅️ Назад", callback_data="t20_examples")
-            ]])
-        )
         return states.CHOOSING_MODE
+        
+    search_query = update.message.text.lower()
+    topics = task20_data.get('topics', [])
     
-    # Показываем результаты поиска
-    text = f"✅ Найдено тем: {len(matching_topics)}\n\n"
+    # Ищем темы по вхождению текста
+    found_topics = []
+    for idx, topic in enumerate(topics):
+        if (search_query in topic['title'].lower() or 
+            search_query in topic.get('keywords', '').lower() or
+            search_query in topic['task_text'].lower()):
+            found_topics.append((idx, topic))
     
-    kb_buttons = []
-    for idx, (topic_idx, topic) in enumerate(matching_topics[:10]):  # Показываем до 10 результатов
-        kb_buttons.append([
-            InlineKeyboardButton(
-                f"{topic['title']}",
-                callback_data=f"t20_bank_nav:{topic_idx}"
-            )
+    if not found_topics:
+        text = "❌ По вашему запросу ничего не найдено.\n\nПопробуйте другие ключевые слова."
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("🔍 Искать снова", callback_data="t20_bank_search")],
+            [InlineKeyboardButton("⬅️ К банку", callback_data="t20_examples")]
         ])
+    else:
+        text = f"🔍 <b>Результаты поиска</b>\n\nНайдено тем: {len(found_topics)}\n\n"
+        kb_buttons = []
+        
+        for idx, topic in found_topics[:10]:  # Показываем максимум 10
+            kb_buttons.append([InlineKeyboardButton(
+                f"📖 {topic['title'][:50]}...",
+                callback_data=f"t20_bank_nav:{idx}"
+            )])
+        
+        if len(found_topics) > 10:
+            text += f"\n<i>Показаны первые 10 из {len(found_topics)} результатов</i>"
+        
+        kb_buttons.append([InlineKeyboardButton("⬅️ К банку", callback_data="t20_examples")])
+        kb = InlineKeyboardMarkup(kb_buttons)
     
-    if len(matching_topics) > 10:
-        text += f"<i>Показаны первые 10 из {len(matching_topics)} результатов</i>"
-    
-    kb_buttons.append([InlineKeyboardButton("⬅️ Назад", callback_data="t20_examples")])
+    # Очищаем флаг поиска
+    context.user_data['waiting_for_bank_search'] = False
     
     await update.message.reply_text(
         text,
-        reply_markup=InlineKeyboardMarkup(kb_buttons),
+        reply_markup=kb,
         parse_mode=ParseMode.HTML
     )
     

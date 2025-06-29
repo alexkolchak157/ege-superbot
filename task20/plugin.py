@@ -48,8 +48,15 @@ class Task20Plugin(BotPlugin):
                     # Основные режимы
                     CallbackQueryHandler(handlers.practice_mode, pattern="^t20_practice$"),
                     CallbackQueryHandler(handlers.theory_mode, pattern="^t20_theory$"),
+                    CallbackQueryHandler(handlers.how_to_write, pattern="^t20_how_to_write$"),
+                    CallbackQueryHandler(handlers.good_examples, pattern="^t20_good_examples$"), 
+                    CallbackQueryHandler(handlers.common_mistakes, pattern="^t20_common_mistakes$"),
+                    CallbackQueryHandler(handlers.useful_phrases, pattern="^t20_useful_phrases$"),
+                    CallbackQueryHandler(handlers.handle_theory_sections, pattern="^t20_(how_to_write|good_examples|common_mistakes|useful_phrases)$"),
                     CallbackQueryHandler(handlers.examples_bank, pattern="^t20_examples$"),
                     CallbackQueryHandler(handlers.my_progress, pattern="^t20_progress$"),
+                    CallbackQueryHandler(handlers.show_achievements, pattern="^t20_achievements$"),
+                    CallbackQueryHandler(handlers.mistakes_mode, pattern="^t20_mistakes$"),
                     CallbackQueryHandler(handlers.settings_mode, pattern="^t20_settings$"),
                     CallbackQueryHandler(handlers.back_to_main_menu, pattern="^to_main_menu$"),
                     CallbackQueryHandler(handlers.noop, pattern="^noop$"),
@@ -73,13 +80,14 @@ class Task20Plugin(BotPlugin):
                     
                     # Настройки
                     CallbackQueryHandler(handlers.strictness_menu, pattern="^t20_strictness_menu$"),
-                    CallbackQueryHandler(handlers.set_strictness, pattern="^t20_strictness:"),
+                    CallbackQueryHandler(handlers.set_strictness, pattern=r"^t20_set_strictness:\w+$"),
                     CallbackQueryHandler(handlers.handle_settings_actions, pattern="^t20_(reset_progress|confirm_reset)$"),
                     CallbackQueryHandler(handlers.reset_progress, pattern="^t20_reset_progress$"),
                     CallbackQueryHandler(handlers.confirm_reset, pattern="^t20_confirm_reset$"),
                     
                     # Работа с банком примеров
-                    CallbackQueryHandler(handlers.handle_bank_search, pattern="^t20_search_bank$"),
+                    CallbackQueryHandler(handlers.bank_nav, pattern=r"^t20_bank_nav:\d+$"),
+                    CallbackQueryHandler(handlers.handle_bank_search, pattern="^t20_bank_search$"),
                     CallbackQueryHandler(handlers.view_example, pattern="^t20_view_example:"),
                     CallbackQueryHandler(handlers.view_all_examples, pattern="^t20_all_examples:"),
                     
