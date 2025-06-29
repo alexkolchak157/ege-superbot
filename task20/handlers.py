@@ -571,32 +571,42 @@ async def search_bank(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 @safe_handler()
 async def view_example(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Показ примера суждений для конкретной темы."""
+    """Показ конкретного примера из банка суждений."""
     query = update.callback_query
     
-    # Извлекаем индекс темы
-    topic_idx = int(query.data.split(":")[1])
-    topics = task20_data.get('topics', [])
+    # Извлекаем индекс из callback_data
+    try:
+        topic_idx = int(query.data.split(":", 1)[1])
+    except (ValueError, IndexError):
+        await query.answer("Ошибка: неверный формат данных", show_alert=True)
+        return states.CHOOSING_MODE
     
-    if topic_idx >= len(topics) or topic_idx < 0:
+    topics = task20_data.get('topics', [])
+    if not topics or topic_idx >= len(topics):
         await query.answer("Тема не найдена", show_alert=True)
         return states.CHOOSING_MODE
     
     topic = topics[topic_idx]
     context.user_data['bank_current_idx'] = topic_idx
-    context.user_data['viewing_mode'] = 'examples'
+    context.user_data['viewing_mode'] = 'example'
     
     # Формируем текст с примерами
-    text = f"📖 <b>{topic['title']}</b>\n"
-    text += f"📦 Блок: {topic['block']}\n\n"
-    text += f"<b>Задание:</b>\n<i>{topic['task_text']}</i>\n\n"
+    text = f"🏦 <b>Банк суждений</b>\n\n"
+    text += f"📚 <b>Тема {topic_idx + 1}/{len(topics)}</b>\n"
+    text += f"{topic['title']}\n\n"
+    
+    if 'task_text' in topic:
+        text += f"<b>Задание:</b>\n{topic['task_text']}\n\n"
+    
     text += "<b>Эталонные суждения:</b>\n\n"
     
-    for i, example in enumerate(topic.get('example_arguments', []), 1):
+    for i, example in enumerate(topic.get('examples', []), 1):
         text += f"{i}. <b>{example['type']}</b>\n"
         text += f"└ <i>{example['argument']}</i>\n"
         if 'explanation' in example:
-            text += f"   💡 <code>{example['explanation']}</code>\n"
+            text += f"   💡 <code>{example['explanation']}</code>\n\n"
+        else:
+            text += "\n"
     
     # Кнопки навигации
     kb_buttons = []
@@ -610,10 +620,12 @@ async def view_example(update: Update, context: ContextTypes.DEFAULT_TYPE):
         nav_row.append(InlineKeyboardButton("След. ➡️", callback_data=f"t20_next_example"))
     kb_buttons.append(nav_row)
     
-    # ИСПРАВЛЕНИЕ: Добавляем кнопку "Отработать тему"
+    # УЛУЧШЕННАЯ кнопка "Отработать тему" - более заметная
+    kb_buttons.append([InlineKeyboardButton("🎯 Отработать эту тему", callback_data=f"t20_topic:{topic['id']}")])
+    
+    # Дополнительные действия
     kb_buttons.extend([
-        [InlineKeyboardButton("🎯 Отработать эту тему", callback_data=f"t20_topic:{topic['id']}")],
-        [InlineKeyboardButton("📋 Все примеры", callback_data=f"t20_view_all_examples:{topic['block']}")],
+        [InlineKeyboardButton("📋 Все темы", callback_data="t20_view_all_examples")],
         [InlineKeyboardButton("⬅️ К банку суждений", callback_data="t20_back_examples")]
     ])
     
@@ -634,8 +646,7 @@ async def view_all_examples(update: Update, context: ContextTypes.DEFAULT_TYPE):
         block_name = query.data.split(":", 1)[1]
         return await show_block_examples(update, context, block_name)
     
-    # ИСПРАВЛЕНИЕ: Обрабатываем случай без блока (t20_view_all_examples)
-    # Показываем список блоков
+    # Иначе показываем список блоков
     blocks = {}
     for topic in task20_data.get('topics', []):
         block = topic.get('block', 'Другое')
@@ -1720,9 +1731,8 @@ async def list_topics(update: Update, context: ContextTypes.DEFAULT_TYPE):
     start_idx = page * topics_per_page
     end_idx = min(start_idx + topics_per_page, len(topics))
     
-    # ИСПРАВЛЕНИЕ: Убираем номер страницы из текста
     text = f"📚 <b>{block_name}</b>\n"
-    text += f"Выберите тему:\n\n"
+    text += f"Выберите тему:\n\n"  # Убрана дублирующая информация о странице
     
     kb_buttons = []
     
@@ -1740,7 +1750,7 @@ async def list_topics(update: Update, context: ContextTypes.DEFAULT_TYPE):
         nav_buttons = []
         if page > 0:
             nav_buttons.append(InlineKeyboardButton("⬅️", callback_data=f"t20_list_topics:page:{page-1}"))
-        nav_buttons.append(InlineKeyboardButton(f"{page + 1}/{total_pages}", callback_data="noop"))
+        nav_buttons.append(InlineKeyboardButton(f"Стр. {page + 1}/{total_pages}", callback_data="noop"))
         if page < total_pages - 1:
             nav_buttons.append(InlineKeyboardButton("➡️", callback_data=f"t20_list_topics:page:{page+1}"))
         

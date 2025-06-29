@@ -88,16 +88,22 @@ class Task20Plugin(BotPlugin):
                     
                     # Работа с банком примеров
                     CallbackQueryHandler(handlers.bank_nav, pattern=r"^t20_bank_nav:\d+$"),
-                    CallbackQueryHandler(handlers.handle_bank_search, pattern="^t20_bank_search$"),
+                    CallbackQueryHandler(handlers.bank_search, pattern="^t20_bank_search$"),
                     CallbackQueryHandler(handlers.view_example, pattern="^t20_view_example:"),
+                    CallbackQueryHandler(handlers.view_all_examples, pattern="^t20_all_examples$"),
                     CallbackQueryHandler(handlers.view_all_examples, pattern="^t20_all_examples:"),
-                    
+                    CallbackQueryHandler(handlers.back_to_examples, pattern="^t20_back_examples$"),
+                    CallbackQueryHandler(handlers.next_example, pattern="^t20_next_example$"),
+                    CallbackQueryHandler(handlers.prev_example, pattern="^t20_prev_example$"),
+                    CallbackQueryHandler(handlers.view_by_order, pattern="^t20_view_by_order$"),
+                    CallbackQueryHandler(handlers.view_all_examples, pattern="^t20_view_all_examples"),
                     # Для совместимости
                     MessageHandler(filters.TEXT & ~filters.COMMAND, handlers.handle_unexpected_message),
                 ],
                 
                 states.ANSWERING_T20: [
                     MessageHandler(filters.TEXT & ~filters.COMMAND, handlers.handle_answer),
+                    MessageHandler(filters.Document.ALL, handlers.handle_answer_document_task20),
                     CallbackQueryHandler(handlers.skip_question, pattern="^t20_skip$"),
                     CallbackQueryHandler(handlers.return_to_menu, pattern="^t20_menu$"),
                 ],
@@ -105,13 +111,14 @@ class Task20Plugin(BotPlugin):
                 states.SEARCHING: [
                     MessageHandler(filters.TEXT & ~filters.COMMAND, handlers.handle_bank_search),
                     CallbackQueryHandler(handlers.examples_bank, pattern="^t20_examples$"),
+                    CallbackQueryHandler(handlers.return_to_menu, pattern="^t20_menu$"),
                 ],
                 
                 states.VIEWING_EXAMPLE: [
                     CallbackQueryHandler(handlers.next_example, pattern="^t20_next_example$"),
                     CallbackQueryHandler(handlers.prev_example, pattern="^t20_prev_example$"),
                     CallbackQueryHandler(handlers.back_to_examples, pattern="^t20_back_examples$"),
-                    CallbackQueryHandler(handlers.view_all_examples, pattern="^t20_all_examples:"),
+                    CallbackQueryHandler(handlers.view_all_examples, pattern="^t20_view_all_examples$"),
                 ],
                 
                 states.CONFIRMING_RESET: [
