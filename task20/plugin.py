@@ -71,6 +71,7 @@ class Task20Plugin(BotPlugin):
                     # Навигация по темам
                     CallbackQueryHandler(handlers.block_menu, pattern="^t20_block:"),
                     CallbackQueryHandler(handlers.list_topics, pattern="^t20_list_topics$"),
+                    CallbackQueryHandler(handlers.select_topic, pattern=r"^t20_topic:\d+$"),
                     CallbackQueryHandler(handlers.random_topic_block, pattern="^t20_random_block$"),
                     CallbackQueryHandler(handlers.list_topics, pattern=r"^t20_list_topics:page:\d+$"),
                     # Дополнительные функции

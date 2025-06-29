@@ -116,7 +116,7 @@ async def init_task20_data():
                         all_topics.append(topic)
                         
                         # Индексируем по ID
-                        topic_by_id[topic["id"]] = topic
+                        topic_by_id[str(topic["id"])] = topic
                         
                         # Группируем по блокам
                         block_name = topic.get("block", "Без категории")
@@ -1576,7 +1576,7 @@ async def list_topics(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 InlineKeyboardButton("⬅️ Назад", callback_data="t20_select_block")
             ]])
         )
-        return states.CHOOSING_MODE
+        return states.CHOOSING_MODE  # ✅ Правильно
     
     topics = task20_data["topics_by_block"].get(block_name, [])
     
@@ -1618,7 +1618,35 @@ async def list_topics(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=InlineKeyboardMarkup(kb_buttons),
         parse_mode=ParseMode.HTML
     )
-    return states.CHOOSING_TOPIC
+    
+    return states.CHOOSING_MODE
+
+@safe_handler()
+async def select_topic(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработка выбора конкретной темы."""
+    query = update.callback_query
+    
+    topic_id = query.data.split(":")[1]
+    topic = task20_data["topic_by_id"].get(topic_id)
+    
+    if not topic:
+        await query.answer("Тема не найдена", show_alert=True)
+        return states.CHOOSING_MODE
+    
+    context.user_data['current_topic'] = topic
+    
+    text = _build_topic_message(topic)
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("❌ Отмена", callback_data="t20_list_topics")]
+    ])
+    
+    await query.edit_message_text(
+        text,
+        reply_markup=kb,
+        parse_mode=ParseMode.HTML
+    )
+    
+    return states.ANSWERING_T20
 
 @safe_handler()
 async def random_topic_all(update: Update, context: ContextTypes.DEFAULT_TYPE):
