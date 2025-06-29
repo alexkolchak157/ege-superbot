@@ -103,13 +103,7 @@ def main():
         await update.message.reply_text(text, parse_mode='HTML')
     
     app.add_handler(CommandHandler("state_stats", state_stats))
-    app.add_handler(
-        CallbackQueryHandler(
-            handle_to_main_menu,
-            pattern="^to_main_menu$"
-        ),
-        group=-1  # Низкий приоритет, срабатывает если ConversationHandler не обработал
-    )
+    
     print("🔌 Регистрируем плагины...")
     for plugin in PLUGINS:
         plugin.register(app)
