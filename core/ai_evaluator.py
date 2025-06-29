@@ -3,6 +3,7 @@ from abc import ABC, abstractmethod
 from typing import Dict, Any, List, Optional, Tuple
 from dataclasses import dataclass
 from core.ai_service import get_ai_service
+from core.types import EvaluationResult, TaskRequirements
 
 logger = logging.getLogger(__name__)
 
@@ -15,18 +16,6 @@ class TaskRequirements:
     max_score: int
     criteria: List[Dict[str, Any]]
     description: str
-
-
-@dataclass
-class EvaluationResult:
-    """Результат проверки задания"""
-    scores: Dict[str, int]  # Баллы по критериям
-    total_score: int
-    max_score: int
-    feedback: str
-    detailed_analysis: Dict[str, Any]
-    suggestions: List[str]
-    factual_errors: List[Dict[str, str]]
 
 
 class BaseAIEvaluator(ABC):

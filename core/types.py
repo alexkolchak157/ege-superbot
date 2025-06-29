@@ -106,9 +106,10 @@ class EvaluationResult:
     max_score: int
     criteria_scores: Dict[str, int]
     feedback: str
-    detailed_feedback: Optional[Dict[str, str]] = None
+    detailed_feedback: Optional[Dict[str, Any]] = None  # Изменено с Dict[str, str] на Dict[str, Any]
     warnings: Optional[List[str]] = None
     suggestions: Optional[List[str]] = None
+    factual_errors: Optional[List[Dict[str, str]]] = None  # Добавлено новое поле
     
     @property
     def percentage(self) -> float:

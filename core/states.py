@@ -28,3 +28,8 @@ ANSWERING_PARTS = 102  # Ответ по частям
 TASK19_WAITING = 119  # Состояние ожидания ответа task19
 TASK20_WAITING = 120  # Состояние ожидания ответа task20
 TASK25_WAITING = 125  # Состояние ожидания ответа task25
+# Состояния для task20
+ANSWERING_T20 = 2001
+SEARCHING = 2002
+VIEWING_EXAMPLE = 2003
+CONFIRMING_RESET = 2004
