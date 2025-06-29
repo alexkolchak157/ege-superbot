@@ -106,6 +106,9 @@ class Task20Plugin(BotPlugin):
                     MessageHandler(filters.Document.ALL, handlers.handle_answer_document_task20),
                     CallbackQueryHandler(handlers.skip_question, pattern="^t20_skip$"),
                     CallbackQueryHandler(handlers.return_to_menu, pattern="^t20_menu$"),
+                    CallbackQueryHandler(handlers.practice_mode, pattern="^t20_practice$"),
+                    CallbackQueryHandler(handlers.list_topics, pattern="^t20_list_topics$"),
+
                 ],
                 
                 states.SEARCHING: [

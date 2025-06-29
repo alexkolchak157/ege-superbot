@@ -885,109 +885,108 @@ async def safe_handle_answer_task20(update: Update, context: ContextTypes.DEFAUL
         )
         return states.ANSWERING_T20
     
-    # ИСПРАВЛЕНИЕ: Убираем показ анимации "Анализирую", чтобы не было дублирования
-    # thinking_msg = await show_thinking_animation(
-    #     update.message,
-    #     "Анализирую ваши суждения",
-    # )
-    
-    # Оцениваем ответ
-    if evaluator and AI_EVALUATOR_AVAILABLE:
-        try:
-            result = await evaluator.evaluate(
-                answer=user_answer,
-                topic=topic['title'],
-                task_text=topic.get('task_text', ''),
-                user_id=update.effective_user.id
-            )
-            score = result.total_score
-            feedback = result.feedback
-            criteria_scores = result.criteria_scores
-        except Exception as e:
-            logger.error(f"Evaluation error: {e}")
-            score = 2
-            feedback = "Ваш ответ принят. Продолжайте практиковаться!"
-            criteria_scores = {"abstractness": 1, "relevance": 1, "completeness": 0}
-    else:
-        # Простая оценка без AI
-        score = min(3, len(user_answer) // 100)
-        feedback = "Ваш ответ принят. Продолжайте практиковаться!"
-        criteria_scores = None
-    
-    # ИСПРАВЛЕНИЕ: Убираем удаление несуществующего сообщения
-    # await thinking_msg.delete()
-    
-    # Сохраняем результат
-    timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-    result_entry = {
-        'timestamp': timestamp,
-        'topic': topic['title'],
-        'topic_id': topic.get('id', topic['title']),  # Добавляем topic_id
-        'block': topic['block'],
-        'score': score,
-        'max_score': 3,
-        'answer': user_answer,
-        'feedback': feedback
-    }
-    
-    if 'task20_results' not in context.user_data:
-        context.user_data['task20_results'] = []
-    
-    context.user_data['task20_results'].append(result_entry)
-    
-    # Обновляем статистику
-    await save_stats_by_level(context, update.effective_user.id, score)
-    
-    # Формируем ответ
-    text = f"<b>Результат проверки:</b>\n\n"
-    text += f"Ваш балл: <b>{score} из 3</b>\n\n"
-    
-    if criteria_scores:
-        text += "<b>Оценка по критериям:</b>\n"
-        criteria_names = {
-            'abstractness': '📐 Абстрактность',
-            'relevance': '🎯 Соответствие теме',
-            'completeness': '✅ Полнота'
-        }
-        for criteria, value in criteria_scores.items():
-            name = criteria_names.get(criteria, criteria)
-            text += f"{name}: {'✅' if value else '❌'}\n"
-        text += "\n"
-    
-    text += f"<b>Комментарий:</b>\n{feedback}"
-    
-    # Мотивационные сообщения
-    if score == 3:
-        text += "\n\n🎉 Отличная работа! Все суждения соответствуют требованиям!"
-        await show_streak_notification(update, context, "task20")
-    elif score >= 2:
-        text += "\n\n👍 Хороший результат! Продолжайте практиковаться!"
-    else:
-        text += "\n\n📚 Изучите примеры в банке суждений и попробуйте снова!"
-    
-    kb = InlineKeyboardMarkup([
-        [
-            InlineKeyboardButton("🎲 Новая тема", callback_data="t20_new"),
-            InlineKeyboardButton("📊 Мой прогресс", callback_data="t20_progress")
-        ],
-        [InlineKeyboardButton("⬅️ В меню", callback_data="t20_menu")]
-    ])
-    
-    await update.message.reply_text(
-        text,
-        reply_markup=kb,
-        parse_mode=ParseMode.HTML
+    # Показываем анимацию обработки
+    thinking_msg = await show_thinking_animation(
+        update.message,
+        "Анализирую ваши суждения"
     )
     
-    # ИСПРАВЛЕНИЕ: Проверяем достижения правильным способом
-    if SmartRecommendations:
-        # Проверяем достижения через отдельную функцию
-        new_achievements = await achievements_check(context, update.effective_user.id)
-        if new_achievements:
-            for achievement in new_achievements:
-                await show_achievement_notification(update, context, achievement)
+    try:
+        # Оцениваем ответ
+        if evaluator and AI_EVALUATOR_AVAILABLE:
+            try:
+                result = await evaluator.evaluate(
+                    answer=user_answer,
+                    topic=topic['title'],
+                    task_text=topic.get('task_text', ''),
+                    user_id=update.effective_user.id
+                )
+                score = result.total_score
+                
+                # Используем новую функцию форматирования
+                feedback_text = _format_evaluation_result(result, topic, user_answer)
+                
+            except Exception as e:
+                logger.error(f"Evaluation error: {e}")
+                # Fallback оценка
+                score = min(3, len(user_answer.split('\n')))
+                feedback_text = _format_evaluation_result({
+                    'total_score': score,
+                    'max_score': 3,
+                    'feedback': 'Ваш ответ принят. Продолжайте практиковаться!',
+                    'detailed_feedback': {},
+                    'suggestions': [
+                        'Формулируйте суждения более абстрактно',
+                        'Используйте обобщающие конструкции',
+                        'Избегайте конкретных дат и названий'
+                    ]
+                }, topic, user_answer)
+        else:
+            # Простая оценка без AI
+            lines = [l.strip() for l in user_answer.split('\n') if l.strip() and len(l.strip()) > 20]
+            score = min(3, len(lines))
+            feedback_text = _format_evaluation_result({
+                'total_score': score,
+                'max_score': 3,
+                'feedback': 'Ваш ответ принят.',
+                'suggestions': ['Изучите примеры в банке заданий']
+            }, topic, user_answer)
+        
+        # Удаляем анимацию
+        await thinking_msg.delete()
+        
+        # Сохраняем результат
+        result_data = {
+            'topic': topic['title'],
+            'topic_id': topic['id'],
+            'block': topic['block'],
+            'score': score,
+            'max_score': 3,
+            'timestamp': datetime.now().isoformat()
+        }
+        
+        if 'task20_results' not in context.user_data:
+            context.user_data['task20_results'] = []
+        context.user_data['task20_results'].append(result_data)
+        
+        # Обновляем серию правильных ответов
+        if score == 3:
+            context.user_data['correct_streak'] = context.user_data.get('correct_streak', 0) + 1
+            
+            # Показываем уведомление о серии
+            if context.user_data['correct_streak'] % 5 == 0:
+                await show_streak_notification(
+                    update.message,
+                    context.user_data['correct_streak']
+                )
+        else:
+            context.user_data['correct_streak'] = 0
+        
+        # Отправляем результат
+        kb = AdaptiveKeyboards.create_result_keyboard(
+            score=score,
+            max_score=3,
+            module_code="t20"
+        )
+        
+        await update.message.reply_text(
+            feedback_text,
+            reply_markup=kb,
+            parse_mode=ParseMode.HTML
+        )
+        
+    except Exception as e:
+        logger.error(f"Error in handle_answer: {e}")
+        await thinking_msg.delete()
+        await update.message.reply_text(
+            "❌ Произошла ошибка при проверке. Попробуйте еще раз.",
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("🔄 Попробовать снова", callback_data="t20_retry"),
+                InlineKeyboardButton("📝 В меню", callback_data="t20_menu")
+            ]])
+        )
     
-    return states.CHOOSING_MODE
+    return ConversationHandler.END
     
 @safe_handler()
 async def good_examples(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1163,29 +1162,69 @@ async def handle_theory_sections(update: Update, context: ContextTypes.DEFAULT_T
     return states.CHOOSING_MODE
 
 @safe_handler()
+@validate_state_transition({states.CHOOSING_MODE})
 async def examples_bank(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Главное меню банка суждений."""
+    """Показ банка примеров с эталонными суждениями."""
     query = update.callback_query
     
-    text = (
-        "🏦 <b>Банк суждений</b>\n\n"
-        "Здесь собраны эталонные суждения по всем темам задания 20.\n\n"
-        "Изучайте примеры, чтобы понять:\n"
-        "• Как формулировать абстрактные суждения\n"
-        "• Какие обобщающие конструкции использовать\n"
-        "• Как избегать конкретных примеров\n\n"
-        "Выберите способ просмотра:"
-    )
+    # Получаем все темы
+    topics = task20_data.get('topics', [])
     
-    kb = InlineKeyboardMarkup([
-        [InlineKeyboardButton("📋 Просмотр по порядку", callback_data="t20_view_by_order")],
-        [InlineKeyboardButton("🔍 Поиск темы", callback_data="t20_bank_search")],
-        [InlineKeyboardButton("⬅️ Назад", callback_data="t20_menu")]
-    ])
+    if not topics:
+        text = "📚 <b>Банк эталонных суждений</b>\n\nБанк примеров пуст."
+        kb = InlineKeyboardMarkup([[
+            InlineKeyboardButton("⬅️ Назад", callback_data="t20_menu")
+        ]])
+        await query.edit_message_text(text, reply_markup=kb, parse_mode=ParseMode.HTML)
+        return states.CHOOSING_MODE
+    
+    # Показываем первую тему
+    topic = topics[0]
+    context.user_data['bank_current_idx'] = 0
+    
+    text = f"📚 <b>Тема 1 из {len(topics)}</b>\n\n"
+    text += f"<b>{topic['title']}</b>\n\n"
+    text += f"📋 {topic['task_text']}\n\n"
+    text += "<b>Эталонные суждения:</b>\n\n"
+    
+    for i, example in enumerate(topic.get('example_arguments', []), 1):
+        text += f"{i}. <b>{example['type']}</b>\n"
+        text += f"└ <i>{example['argument']}</i>\n\n"
+    
+    text += "💡 <b>Обратите внимание:</b>\n"
+    text += "• Суждения носят абстрактный характер\n"
+    text += "• Используются обобщающие слова\n"
+    text += "• Нет конкретных примеров и дат"
+    
+    # Навигация
+    kb_buttons = []
+    nav_row = []
+    
+    # Первая тема - кнопка назад неактивна
+    nav_row.append(InlineKeyboardButton("⏮️", callback_data="noop"))
+    
+    # Прогресс
+    progress_display = create_visual_progress(1, len(topics))
+    nav_row.append(InlineKeyboardButton(progress_display, callback_data="noop"))
+    
+    # Кнопка вперед
+    if len(topics) > 1:
+        nav_row.append(InlineKeyboardButton("➡️", callback_data="t20_bank_nav:1"))
+    else:
+        nav_row.append(InlineKeyboardButton("⏭️", callback_data="noop"))
+    
+    kb_buttons.append(nav_row)
+    
+    # ВАЖНО: ДОБАВЛЯЕМ КНОПКУ "ОТРАБОТАТЬ ТЕМУ"
+    kb_buttons.append([InlineKeyboardButton("🎯 Отработать эту тему", callback_data=f"t20_topic:{topic['id']}")])
+    
+    kb_buttons.append([InlineKeyboardButton("🔍 Поиск темы", callback_data="t20_bank_search")])
+    kb_buttons.append([InlineKeyboardButton("📋 Все темы", callback_data="t20_view_all_examples")])
+    kb_buttons.append([InlineKeyboardButton("⬅️ В меню", callback_data="t20_menu")])
     
     await query.edit_message_text(
         text,
-        reply_markup=kb,
+        reply_markup=InlineKeyboardMarkup(kb_buttons),
         parse_mode=ParseMode.HTML
     )
     
@@ -1335,34 +1374,176 @@ async def my_progress(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     return states.CHOOSING_MODE
 
-def _format_evaluation_result(result: EvaluationResult, topic: Dict) -> str:
-    """Форматирование результата с использованием универсальных компонентов."""
-    # Используем универсальный форматтер
-    text = MessageFormatter.format_result_message(
-        score=result.total_score,
-        max_score=3,
-        topic=topic['title']
-    )
+def _format_evaluation_result(result, topic: Dict, user_answer: str = None) -> str:
+    """Форматирование результата оценки в стиле task19 с показом суждений пользователя."""
     
-    # Добавляем детальный анализ
-    text += "\n"
-    for i, criterion in enumerate(result.criteria_scores, 1):
-        if criterion.met:
-            status = "✅"
-            color = UniversalUIComponents.COLOR_INDICATORS['green']
-        else:
-            status = "❌"
-            color = UniversalUIComponents.COLOR_INDICATORS['red']
+    # Безопасное получение значений
+    if isinstance(result, dict):
+        score = result.get('total_score', 0)
+        max_score = result.get('max_score', 3)
+        feedback_text = result.get('feedback', '')
+        suggestions = result.get('suggestions', [])
+        detailed = result.get('detailed_feedback', {})
+    else:
+        score = getattr(result, 'total_score', 0)
+        max_score = getattr(result, 'max_score', 3)
+        feedback_text = getattr(result, 'feedback', '')
+        suggestions = getattr(result, 'suggestions', [])
+        detailed = getattr(result, 'detailed_feedback', {})
+    
+    # Преобразуем в int
+    score = int(score)
+    max_score = int(max_score)
+    
+    # Динамический заголовок в зависимости от результата
+    percentage = (score / max_score * 100) if max_score > 0 else 0
+    
+    if percentage >= 90:
+        header = "🎉 <b>Отличный результат!</b>"
+    elif percentage >= 60:
+        header = "👍 <b>Хороший результат!</b>"
+    elif percentage >= 30:
+        header = "📝 <b>Неплохо, но есть над чем поработать</b>"
+    else:
+        header = "❌ <b>Нужно больше практики</b>"
+    
+    # Основная информация
+    text = f"{header}\n\n"
+    text += f"<b>Тема:</b> {topic['title']}\n"
+    text += f"<b>Ваш балл:</b> {score} из {max_score}\n\n"
+    
+    # Парсим суждения пользователя
+    user_arguments = []
+    if user_answer:
+        # Разбиваем на строки и фильтруем пустые
+        lines = [line.strip() for line in user_answer.split('\n') if line.strip()]
         
-        text += f"\n{color} <b>Критерий {i}:</b> {status}"
-        if criterion.feedback:
-            text += f"\n   └ <i>{criterion.feedback}</i>"
+        # Пытаемся найти суждения
+        import re
+        for i, line in enumerate(lines):
+            # Убираем нумерацию если есть
+            cleaned_line = re.sub(r'^\d+[\.\)]\s*', '', line)
+            cleaned_line = re.sub(r'^[-•]\s*', '', cleaned_line)
+            
+            if len(cleaned_line) > 20:  # Минимальная длина для суждения
+                # Обрезаем длинные суждения для отображения
+                display_text = cleaned_line[:100] + "..." if len(cleaned_line) > 100 else cleaned_line
+                user_arguments.append({
+                    'number': i + 1,
+                    'text': display_text,
+                    'full_text': cleaned_line
+                })
     
-    # Общий комментарий
-    if result.general_feedback:
-        text += f"\n\n💬 <b>Комментарий эксперта:</b>\n<i>{result.general_feedback}</i>"
+    # Детальный разбор суждений
+    text += "<b>📊 Анализ ваших суждений:</b>\n\n"
     
-    return text
+    # Создаем словарь для отслеживания статуса каждого суждения
+    argument_status = {}
+    
+    # Обрабатываем информацию из detailed_feedback
+    if detailed and isinstance(detailed, dict):
+        # Сначала обрабатываем засчитанные суждения
+        if detailed.get('valid_arguments'):
+            for arg in detailed['valid_arguments']:
+                if isinstance(arg, dict):
+                    arg_num = arg.get('number', len(argument_status) + 1)
+                    if isinstance(arg_num, str):
+                        arg_num = int(arg_num) if arg_num.isdigit() else len(argument_status) + 1
+                    argument_status[arg_num] = {
+                        'status': 'valid',
+                        'comment': arg.get('comment', 'Суждение корректно')
+                    }
+        
+        # Затем незасчитанные (они перезапишут статус, если есть конфликт)
+        if detailed.get('invalid_arguments'):
+            for arg in detailed['invalid_arguments']:
+                if isinstance(arg, dict):
+                    arg_num = arg.get('number', len(argument_status) + 1)
+                    if isinstance(arg_num, str):
+                        arg_num = int(arg_num) if arg_num.isdigit() else len(argument_status) + 1
+                    argument_status[arg_num] = {
+                        'status': 'invalid',
+                        'reason': arg.get('reason', 'Не соответствует критериям'),
+                        'improvement': arg.get('improvement', '')
+                    }
+    
+    # Если нет детальной информации, создаем базовую оценку
+    if not argument_status and user_arguments:
+        # Распределяем баллы по суждениям
+        for i in range(min(3, len(user_arguments))):
+            if i < score:
+                argument_status[i + 1] = {
+                    'status': 'valid',
+                    'comment': 'Суждение засчитано'
+                }
+            else:
+                argument_status[i + 1] = {
+                    'status': 'invalid',
+                    'reason': 'Суждение не соответствует требованиям'
+                }
+    
+    # Отображаем все суждения с их статусом
+    if user_arguments:
+        text += "<b>Ваши суждения:</b>\n\n"
+        
+        for i, arg in enumerate(user_arguments[:3], 1):  # Максимум 3 суждения
+            text += f"{i}. <i>\"{arg['text']}\"</i>\n"
+            
+            # Получаем статус суждения
+            status_info = argument_status.get(i, {'status': 'unknown'})
+            
+            if status_info['status'] == 'valid':
+                text += f"   ✅ {status_info.get('comment', 'Суждение засчитано')}\n"
+            elif status_info['status'] == 'invalid':
+                text += f"   ❌ {status_info.get('reason', 'Не засчитано')}\n"
+                if status_info.get('improvement'):
+                    text += f"   💡 <i>Как улучшить: {status_info['improvement']}</i>\n"
+            else:
+                text += f"   ⚠️ Статус не определен\n"
+            
+            text += "\n"
+        
+        # Если суждений больше 3
+        if len(user_arguments) > 3:
+            text += f"⚠️ <b>Внимание:</b> Обнаружено {len(user_arguments)} суждений вместо 3 требуемых.\n"
+            text += "Дополнительные суждения не учитываются при оценке.\n\n"
+    
+    # Если суждений меньше 3
+    elif user_answer and len(user_arguments) < 3:
+        text += f"⚠️ <b>Внимание:</b> Обнаружено только {len(user_arguments)} суждение(й) из 3 требуемых.\n"
+        text += "Убедитесь, что каждое суждение написано с новой строки.\n\n"
+    
+    # Проверка на конкретные примеры
+    if detailed and detailed.get('has_concrete_examples'):
+        text += "⚠️ <b>Важное замечание:</b> В суждениях обнаружены конкретные примеры (даты, названия, имена). "
+        text += "Помните, что суждения должны носить абстрактный, обобщающий характер!\n\n"
+    
+    # Рекомендации
+    if suggestions and isinstance(suggestions, list):
+        unique_suggestions = []
+        seen = set()
+        for s in suggestions:
+            if s and s not in seen and len(s) > 10:
+                unique_suggestions.append(s)
+                seen.add(s)
+        
+        if unique_suggestions:
+            text += "<b>💡 Рекомендации для улучшения:</b>\n"
+            for suggestion in unique_suggestions[:3]:
+                text += f"• {suggestion}\n"
+            text += "\n"
+    
+    # Мотивационное сообщение
+    if score == max_score:
+        text += "🎉 Превосходно! Все три суждения сформулированы правильно!"
+    elif score >= 2:
+        text += "💪 Хорошая работа! Продолжайте практиковаться для достижения максимального балла!"
+    elif score == 1:
+        text += "📚 Неплохое начало! Изучите примеры эталонных суждений в банке заданий."
+    else:
+        text += "📖 Рекомендую изучить теорию и примеры правильных суждений, затем попробовать снова!"
+    
+    return text.strip()
 
 @safe_handler()
 @validate_state_transition({states.CHOOSING_MODE})
@@ -1874,69 +2055,27 @@ async def random_topic_block(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
 @safe_handler()
 async def bank_nav(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Навигация по банку суждений."""
+    """Навигация по банку примеров."""
     query = update.callback_query
     
+    topic_idx = int(query.data.split(":")[1])
     topics = task20_data.get('topics', [])
     
-    # Защита от пустого банка
-    if not topics:
-        await query.edit_message_text(
-            "📚 <b>Банк суждений</b>\n\n"
-            "❌ Банк суждений пока пуст.\n\n"
-            "Попробуйте позже или обратитесь к администратору.",
-            reply_markup=InlineKeyboardMarkup([[
-                InlineKeyboardButton("⬅️ Назад", callback_data="t20_menu")
-            ]]),
-            parse_mode=ParseMode.HTML
-        )
-        return states.CHOOSING_MODE
-    
-    # Извлекаем индекс из callback_data
-    topic_idx = int(query.data.split(":")[1])
-    
-    # Проверка границ
-    if topic_idx < 0:
-        topic_idx = 0
-    elif topic_idx >= len(topics):
-        topic_idx = len(topics) - 1
-    
-    if not topics or topic_idx >= len(topics) or topic_idx < 0:
+    if topic_idx >= len(topics):
         await query.answer("Тема не найдена", show_alert=True)
         return states.CHOOSING_MODE
     
-    # Проверяем, изменился ли индекс
-    current_idx = context.user_data.get('bank_current_idx', -1)
-    if current_idx == topic_idx:
-        # Если индекс не изменился, просто отвечаем на callback
-        if topic_idx == 0:
-            await query.answer("Это первая тема", show_alert=False)
-        elif topic_idx == len(topics) - 1:
-            await query.answer("Это последняя тема", show_alert=False)
-        else:
-            await query.answer()
-        return states.CHOOSING_MODE
-    
-    # Сохраняем новый индекс
+    topic = topics[topic_idx]
     context.user_data['bank_current_idx'] = topic_idx
     
-    topic = topics[topic_idx]
+    # Текст темы
+    text = f"📚 <b>Тема {topic_idx + 1} из {len(topics)}</b>\n\n"
+    text += f"<b>{topic['title']}</b>\n\n"
+    text += f"📋 {topic['task_text']}\n\n"
+    text += "<b>Эталонные суждения:</b>\n\n"
     
-    text = f"""🏦 <b>Банк суждений</b>
-
-<b>Тема {topic_idx + 1}/{len(topics)}:</b> {topic['title']}
-<b>Блок:</b> {topic['block']}
-
-<b>Задание:</b>
-<i>{topic['task_text']}</i>
-
-<b>📝 Эталонные суждения:</b>
-
-"""
-    
-    # Показываем суждения
     for i, example in enumerate(topic.get('example_arguments', []), 1):
-        text += f"<b>{i}. {example['type']}</b>\n"
+        text += f"{i}. <b>{example['type']}</b>\n"
         text += f"└ <i>{example['argument']}</i>\n\n"
     
     text += "💡 <b>Обратите внимание:</b>\n"
@@ -1952,7 +2091,7 @@ async def bank_nav(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if topic_idx > 0:
         nav_row.append(InlineKeyboardButton("⬅️", callback_data=f"t20_bank_nav:{topic_idx-1}"))
     else:
-        nav_row.append(InlineKeyboardButton("⏮️", callback_data="noop"))  # Неактивная кнопка
+        nav_row.append(InlineKeyboardButton("⏮️", callback_data="noop"))
     
     # Прогресс
     progress_display = create_visual_progress(topic_idx + 1, len(topics))
@@ -1962,9 +2101,13 @@ async def bank_nav(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if topic_idx < len(topics) - 1:
         nav_row.append(InlineKeyboardButton("➡️", callback_data=f"t20_bank_nav:{topic_idx+1}"))
     else:
-        nav_row.append(InlineKeyboardButton("⏭️", callback_data="noop"))  # Неактивная кнопка
+        nav_row.append(InlineKeyboardButton("⏭️", callback_data="noop"))
     
     kb_buttons.append(nav_row)
+    
+    # ВАЖНО: ДОБАВЛЯЕМ КНОПКУ "ОТРАБОТАТЬ ТЕМУ"
+    kb_buttons.append([InlineKeyboardButton("🎯 Отработать эту тему", callback_data=f"t20_topic:{topic['id']}")])
+    
     kb_buttons.append([InlineKeyboardButton("🔍 Поиск темы", callback_data="t20_bank_search")])
     kb_buttons.append([InlineKeyboardButton("📋 Все темы", callback_data="t20_view_all_examples")])
     kb_buttons.append([InlineKeyboardButton("⬅️ В меню", callback_data="t20_menu")])
@@ -1977,7 +2120,6 @@ async def bank_nav(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
     except BadRequest as e:
         if "Message is not modified" in str(e):
-            # Если сообщение не изменилось, просто отвечаем на callback
             await query.answer()
         else:
             raise
