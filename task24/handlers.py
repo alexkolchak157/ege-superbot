@@ -624,7 +624,7 @@ async def show_etalon_plan(query, context, topic_idx):
     kb = InlineKeyboardMarkup([
         [InlineKeyboardButton("📝 Потренироваться", callback_data=f"t24_tr:{topic_idx}")],
         [InlineKeyboardButton("🎲 Другая тема", callback_data="t24_nav_rnd:show")],
-        [InlineKeyboardButton("📚 Выбрать тему", callback_data="t24_nav_cb:show")],
+        [InlineKeyboardButton("📚 Выбрать блок", callback_data="t24_nav_cb:show")],
         [InlineKeyboardButton("🏠 В меню", callback_data="t24_menu")]
     ])
     
@@ -656,26 +656,26 @@ async def navigate_topics(update: Update, context: ContextTypes.DEFAULT_TYPE):
     action = parts[0]
     
     # Обработка различных действий навигации
-    if action == "cb":  # choose_block сокращено до cb
+    if action == "cb":  # choose_block
         mode = parts[1]
-        kb = keyboards.build_block_selection_keyboard(mode)
+        # ИСПРАВЛЕНО: передаем plan_bot_data
+        kb = keyboards.build_block_selection_keyboard(mode, plan_bot_data)
         await query.edit_message_text(
             "📚 Выберите блок тем:",
             reply_markup=kb,
             parse_mode=ParseMode.HTML
         )
     
-    elif action == "show_all":
+    elif action == "all":  # Кнопка "Все темы"
         mode = parts[1]
-        page = 0
+        page = int(parts[2]) if len(parts) > 2 else 0
         practiced = context.user_data.get('practiced_topics', set())
         text, kb = keyboards.build_topic_page_keyboard(
             mode, page, plan_bot_data, practiced
         )
         await query.edit_message_text(text, reply_markup=kb, parse_mode=ParseMode.HTML)
     
-    elif action == "bc":  # back_to_choice сокращено до bc
-        # Возвращаемся к выбору способа поиска темы
+    elif action == "bc":  # back_to_choice
         mode = parts[1] if len(parts) > 1 else context.user_data.get('mode', 'show')
         kb = keyboards.build_initial_choice_keyboard(mode)
         await query.edit_message_text(
@@ -685,7 +685,7 @@ async def navigate_topics(update: Update, context: ContextTypes.DEFAULT_TYPE):
             parse_mode=ParseMode.HTML
         )
     
-    elif action == "rnd":  # random сокращено до rnd
+    elif action == "rnd":  # random
         mode = parts[1]
         
         # Выбираем случайную тему
@@ -727,36 +727,13 @@ async def navigate_topics(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 parse_mode=ParseMode.HTML
             )
             
-            # Сохраняем ID сообщения с заданием
             context.user_data['task24_topic_msg_id'] = query.message.message_id
             return states.AWAITING_PLAN
             
         elif mode == 'show':
-            # ИСПРАВЛЕНО: передаем query вместо update
             return await show_etalon_plan(query, context, idx)
     
-    elif action == "all" or action == "block":
-        mode = parts[1]
-        page = int(parts[2])
-        block_name = parts[3] if len(parts) > 3 else None
-        
-        practiced = context.user_data.get('practiced_topics', set())
-        text, kb = keyboards.build_topic_page_keyboard(
-            mode, page, plan_bot_data, practiced, block_name
-        )
-        await query.edit_message_text(text, reply_markup=kb, parse_mode=ParseMode.HTML)
-    
-    elif action == "select_block":
-        mode = parts[1]
-        block_name = ":".join(parts[2:])
-        
-        practiced = context.user_data.get('practiced_topics', set())
-        text, kb = keyboards.build_topic_page_keyboard(
-            mode, 0, plan_bot_data, practiced, block_name
-        )
-        await query.edit_message_text(text, reply_markup=kb, parse_mode=ParseMode.HTML)
-    
-    elif action == "btm":  # back_to_main сокращено до btm
+    elif action == "btm":  # back_to_main
         mode = parts[1] if len(parts) > 1 else 'train'
         kb = keyboards.build_initial_choice_keyboard(mode)
         await query.edit_message_text(
@@ -765,9 +742,6 @@ async def navigate_topics(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=kb,
             parse_mode=ParseMode.HTML
         )
-    
-    elif action == "t24btc":  # t24_back_to_choice сокращено
-        return await train_mode(update, context) if context.user_data.get('mode') == 'train' else await show_mode(update, context)
     
     return states.CHOOSING_TOPIC
 
@@ -1116,7 +1090,7 @@ async def show_block_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     # Используем новую унифицированную клавиатуру
     practiced_indices = context.user_data.get('practiced_topics', set())
-    total_topics = len(plan_bot_data.topic_index_map)
+    total_topics = len(plan_bot_data.topic_index_map) if plan_bot_data else 0
     kb = keyboards.build_progress_keyboard(practiced_indices, total_topics)
     
     await query.edit_message_text(text, reply_markup=kb, parse_mode=ParseMode.HTML)

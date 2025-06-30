@@ -131,19 +131,29 @@ def build_progress_keyboard(practiced_indices: Set[int], total: int) -> InlineKe
 
 def build_initial_choice_keyboard(mode: str) -> InlineKeyboardMarkup:
     """Создает клавиатуру для начального выбора способа поиска темы."""
-    keyboard = [
-        [InlineKeyboardButton("📚 По блокам", callback_data=f"t24_nav_choose_block:{mode}")],
-        [InlineKeyboardButton("🗂️ Все темы списком", callback_data=f"t24_nav_show_all:{mode}")],
-        [InlineKeyboardButton("🎲 Случайная тема", callback_data=f"t24_nav_random:{mode}")],
-        [InlineKeyboardButton("⬅️ Назад", callback_data="t24_menu")]
-    ]
-    return InlineKeyboardMarkup(keyboard)
+    buttons = []
+    
+    if mode == 'train':
+        buttons = [
+            [InlineKeyboardButton("🎲 Случайная тема", callback_data="t24_nav_rnd:train")],
+            [InlineKeyboardButton("📚 Выбрать из списка", callback_data="t24_nav_cb:train")],
+            [InlineKeyboardButton("🔙 Назад", callback_data="t24_menu")]
+        ]
+    else:  # show mode
+        buttons = [
+            [InlineKeyboardButton("📖 Все темы", callback_data="t24_nav_all:show:0")],
+            [InlineKeyboardButton("📚 По блокам", callback_data="t24_nav_cb:show")],
+            [InlineKeyboardButton("🎲 Случайная тема", callback_data="t24_nav_rnd:show")],
+            [InlineKeyboardButton("🔙 Назад", callback_data="t24_menu")]
+        ]
+    
+    return InlineKeyboardMarkup(buttons)
 
-def build_block_selection_keyboard(mode: str) -> InlineKeyboardMarkup:
+def build_block_selection_keyboard(mode: str, plan_bot_data=None) -> InlineKeyboardMarkup:
     """Создает клавиатуру для выбора блока тем с короткими callback_data."""
     buttons = []
     
-    if not plan_bot_data or not plan_bot_data.topics_by_block:
+    if not plan_bot_data or not hasattr(plan_bot_data, 'topics_by_block'):
         return InlineKeyboardMarkup([[
             InlineKeyboardButton("❌ Данные не загружены", callback_data="noop")
         ]])
@@ -175,8 +185,14 @@ def build_topic_page_keyboard(
     """Создает постраничную клавиатуру тем с короткими callback_data."""
     per_page = 8
     
+    # Проверяем data_source
+    if not data_source or not hasattr(data_source, 'topic_list_for_pagination'):
+        return "❌ Данные не загружены", InlineKeyboardMarkup([[
+            InlineKeyboardButton("🔙 Назад", callback_data="t24_menu")
+        ]])
+    
     # Получаем список тем
-    if block_name:
+    if block_name and hasattr(data_source, 'topics_by_block'):
         topics = data_source.topics_by_block.get(block_name, [])
         header = f"📚 <b>Блок: {block_name}</b>\n\n"
     else:
