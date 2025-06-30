@@ -91,6 +91,10 @@ class Task25Plugin(BotPlugin):
                     
                     # Прогресс
                     CallbackQueryHandler(handlers.detailed_stats, pattern="^t25_detailed_stats$"),
+                    CallbackQueryHandler(handlers.handle_export, pattern="^t25_export$"),
+                    CallbackQueryHandler(handlers.handle_detailed_stats, pattern="^t25_detailed_progress$"),
+                    CallbackQueryHandler(handlers.handle_reset_confirm, pattern="^t25_reset_confirm$"),
+                    CallbackQueryHandler(handlers.handle_do_reset, pattern="^t25_do_reset$"),
                     CallbackQueryHandler(handlers.recommendations, pattern="^t25_recommendations$"),
                 ],
                 

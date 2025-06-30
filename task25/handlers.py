@@ -1,5 +1,7 @@
 import logging
 import os
+import io
+import csv
 import json
 import random
 from typing import Optional, Dict, List
@@ -1350,14 +1352,59 @@ async def my_progress(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Топ результаты
         topic_scores = {}
         for result in results:
-            topic_id = result['topic_id']
-            if topic_id not in topic_scores or result['score'] > topic_scores[topic_id]:
+            topic_id = result.get('topic_id', 0)  # Используем topic_id с дефолтным значением
+            if topic_id not in topic_scores or result['score'] > topic_scores[topic_id]['score']:
                 topic_scores[topic_id] = {
-                    'topic': result.get('topic_title', 'Неизвестная тема'),
+                    'topic': result.get('topic_title', 'Неизвестная тема'),  # Используем topic_title
                     'score': result['score'],
                     'max_score': 6
                 }
-        
+        def save_result(context: ContextTypes.DEFAULT_TYPE, topic: Dict, score: int):
+            """Сохраняет результат проверки."""
+            # Инициализируем структуру результатов если нужно
+            if 'task25_results' not in context.user_data:
+                context.user_data['task25_results'] = []
+            
+            # Сохраняем результат с правильными ключами
+            result = {
+                'topic_id': topic.get('id'),  # Добавляем topic_id
+                'topic_title': topic.get('title', 'Неизвестная тема'),
+                'block': topic.get('block', 'Общие темы'),
+                'score': score,
+                'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            }
+            
+            context.user_data['task25_results'].append(result)
+            
+            # Обновляем также practice_stats для обратной совместимости
+            if 'practice_stats' not in context.user_data:
+                context.user_data['practice_stats'] = {}
+            
+            topic_id_str = str(topic.get('id', 0))
+            if topic_id_str not in context.user_data['practice_stats']:
+                context.user_data['practice_stats'][topic_id_str] = {
+                    'attempts': 0,
+                    'scores': []
+                }
+            
+            context.user_data['practice_stats'][topic_id_str]['attempts'] += 1
+            context.user_data['practice_stats'][topic_id_str]['scores'].append(score)
+            
+            # Обновляем общую статистику (остальной код без изменений)
+            stats = context.user_data.get('task25_stats', {
+                'total_attempts': 0,
+                'topics_completed': [],
+                'scores': [],
+                'blocks_progress': {}
+            })
+            
+            stats['total_attempts'] += 1
+            
+            topic_id = topic.get('id')
+            if topic_id and topic_id not in stats['topics_completed']:
+                stats['topics_completed'].append(topic_id)
+            
+            stats['scores'].append(score)
         top_results = sorted(topic_scores.values(), key=lambda x: x['score'], reverse=True)[:3]
         
         # Форматируем сообщение
@@ -2889,6 +2936,166 @@ async def handle_try_topic(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     
     return states.AWAITING_ANSWER
+
+@safe_handler()
+async def handle_export(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Экспорт результатов в CSV."""
+    query = update.callback_query
+    user_id = query.from_user.id
+    
+    results = context.user_data.get('task25_results', [])
+    
+    if not results:
+        await query.answer("Нет результатов для экспорта", show_alert=True)
+        return states.CHOOSING_MODE
+    
+    # Создаем CSV
+    import io
+    import csv
+    
+    output = io.StringIO()
+    writer = csv.writer(output, delimiter=';')
+    
+    # Заголовок
+    writer.writerow(["Дата", "Тема", "Блок", "Балл", "Макс.балл", "Процент"])
+    
+    for result in results:
+        timestamp = result.get('timestamp', '')
+        topic_title = result.get('topic_title', 'Неизвестная тема')
+        block = result.get('block', 'Общие темы')
+        score = result.get('score', 0)
+        max_score = 6
+        percentage = f"{(score/max_score*100):.0f}%"
+        
+        writer.writerow([timestamp, topic_title, block, score, max_score, percentage])
+    
+    # Итоговая строка
+    total_score = sum(r.get('score', 0) for r in results)
+    total_max = len(results) * 6
+    avg_percentage = f"{(total_score/total_max*100):.0f}%" if total_max > 0 else "0%"
+    
+    writer.writerow([])
+    writer.writerow(["ИТОГО", "", "", total_score, total_max, avg_percentage])
+    
+    # Отправляем файл
+    output.seek(0)
+    await query.message.reply_document(
+        document=io.BytesIO(output.getvalue().encode('utf-8-sig')),
+        filename=f"task25_results_{user_id}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+        caption="📊 Ваши результаты по заданию 25\n\nФайл можно открыть в Excel или Google Sheets"
+    )
+    
+    await query.answer("✅ Файл успешно создан!")
+    
+    return states.CHOOSING_MODE
+    
+@safe_handler()
+async def handle_detailed_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Детальная статистика по темам."""
+    query = update.callback_query
+    
+    results = context.user_data.get('task25_results', [])
+    
+    if not results:
+        text = "📊 <b>Детальная статистика</b>\n\n"
+        text += "У вас пока нет результатов для анализа."
+    else:
+        # Группируем результаты по темам
+        topic_stats = {}
+        for result in results:
+            topic_id = result.get('topic_id')
+            topic_title = result.get('topic_title', 'Неизвестная тема')
+            
+            if topic_id not in topic_stats:
+                topic_stats[topic_id] = {
+                    'title': topic_title,
+                    'scores': [],
+                    'block': result.get('block', 'Общие темы')
+                }
+            
+            topic_stats[topic_id]['scores'].append(result.get('score', 0))
+        
+        # Сортируем по среднему баллу
+        sorted_topics = sorted(
+            topic_stats.items(),
+            key=lambda x: sum(x[1]['scores']) / len(x[1]['scores']),
+            reverse=True
+        )
+        
+        text = "📊 <b>Детальная статистика по темам</b>\n\n"
+        
+        for topic_id, data in sorted_topics[:10]:  # Топ-10 тем
+            avg_score = sum(data['scores']) / len(data['scores'])
+            max_score = max(data['scores'])
+            attempts = len(data['scores'])
+            
+            text += f"<b>{data['title']}</b>\n"
+            text += f"Блок: {data['block']}\n"
+            text += f"Средний балл: {avg_score:.1f}/6\n"
+            text += f"Лучший результат: {max_score}/6\n"
+            text += f"Попыток: {attempts}\n\n"
+    
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("📊 К прогрессу", callback_data="t25_progress")],
+        [InlineKeyboardButton("⬅️ В меню", callback_data="t25_menu")]
+    ])
+    
+    await query.edit_message_text(
+        text,
+        reply_markup=kb,
+        parse_mode=ParseMode.HTML
+    )
+    
+    return states.CHOOSING_MODE
+
+
+@safe_handler()
+async def handle_reset_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Подтверждение сброса прогресса."""
+    query = update.callback_query
+    
+    text = (
+        "⚠️ <b>Сброс прогресса</b>\n\n"
+        "Вы уверены, что хотите сбросить весь прогресс по заданию 25?\n"
+        "Это действие нельзя отменить!"
+    )
+    
+    kb = InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("✅ Да, сбросить", callback_data="t25_do_reset"),
+            InlineKeyboardButton("❌ Отмена", callback_data="t25_progress")
+        ]
+    ])
+    
+    await query.edit_message_text(
+        text,
+        reply_markup=kb,
+        parse_mode=ParseMode.HTML
+    )
+    
+    return states.CHOOSING_MODE
+
+
+@safe_handler()
+async def handle_do_reset(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Выполнение сброса прогресса."""
+    query = update.callback_query
+    
+    # Сбрасываем все данные
+    context.user_data['task25_results'] = []
+    context.user_data['task25_stats'] = {
+        'total_attempts': 0,
+        'topics_completed': [],
+        'scores': [],
+        'blocks_progress': {}
+    }
+    context.user_data['practice_stats'] = {}
+    context.user_data.pop('correct_streak', None)
+    
+    await query.answer("✅ Прогресс сброшен!", show_alert=True)
+    
+    # Возвращаемся в меню
+    return await return_to_menu(update, context)
 
 @safe_handler()
 @validate_state_transition({states.ANSWERING})
