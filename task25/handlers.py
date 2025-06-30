@@ -21,7 +21,6 @@ from core.ui_helpers import (
     get_motivational_message,
     create_visual_progress
 )
-from core.safe_evaluator import safe_handle_answer_task25
 from core.error_handler import safe_handler, auto_answer_callback
 from core.state_validator import validate_state_transition, state_validator
 from telegram.ext import ConversationHandler
@@ -31,6 +30,7 @@ logger = logging.getLogger(__name__)
 # Глобальные переменные
 task25_data = {}
 topic_selector = None
+evaluator = None
 
 # Импорты внутренних модулей ПОСЛЕ определения переменных
 try:
@@ -618,29 +618,140 @@ async def random_topic_all(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         return states.ANSWERING
 
-@safe_handler()
-@validate_state_transition({states.ANSWERING})
-async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    return await safe_handle_answer_task25(update, context)
-
-def _get_fallback_feedback(user_answer: str, topic: Dict) -> str:
-    """Базовая проверка без AI."""
-    parts = user_answer.split('\n\n')
+async def safe_handle_answer_task25(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Безопасная обработка ответа на задание 25."""
     
-    feedback = f"📊 <b>Результаты проверки</b>\n\n"
-    feedback += f"<b>Тема:</b> {topic['title']}\n"
-    feedback += f"<b>Частей в ответе:</b> {len(parts)}\n\n"
+    topic = context.user_data.get('current_topic')
+    if not topic:
+        await update.message.reply_text(
+            "❌ Ошибка: тема не выбрана.",
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("⬅️ В меню", callback_data="t25_menu")
+            ]])
+        )
+        return states.CHOOSING_MODE
     
-    if len(parts) >= 3:
-        feedback += "✅ Структура ответа соответствует требованиям.\n"
-        feedback += "📌 <b>Предварительная оценка:</b> 3-4 балла\n\n"
+    # Проверяем наличие текста из документа
+    if 'document_text' in context.user_data:
+        user_answer = context.user_data.pop('document_text')
+        logger.info("Using text from document")
     else:
-        feedback += "❌ Необходимо три части: обоснование, ответ, примеры.\n"
-        feedback += "📌 <b>Предварительная оценка:</b> 0-2 балла\n\n"
+        user_answer = update.message.text.strip()
+        logger.info("Using text from message")
     
-    feedback += "⚠️ <i>AI-проверка недоступна. Обратитесь к преподавателю для детальной оценки.</i>"
+    # Проверяем минимальную длину
+    if len(user_answer) < 100:
+        await update.message.reply_text(
+            "❌ Ответ слишком короткий. Задание 25 требует развёрнутого ответа с обоснованием и примерами.",
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("❌ Отменить", callback_data="t25_menu")
+            ]])
+        )
+        return states.ANSWERING
     
-    return feedback
+    # Показываем анимацию обработки
+    thinking_msg = await show_thinking_animation(
+        update.message,
+        "Анализирую ваш ответ"
+    )
+    
+    try:
+        # Инициализируем evaluator если нужно
+        global evaluator
+        if evaluator is None and AI_EVALUATOR_AVAILABLE:
+            try:
+                strictness = StrictnessLevel.STANDARD
+                evaluator = Task25AIEvaluator(strictness=strictness)
+                logger.info("Task25 evaluator initialized")
+            except Exception as e:
+                logger.error(f"Failed to initialize evaluator: {e}")
+                evaluator = None
+        
+        # Оцениваем ответ
+        if evaluator and AI_EVALUATOR_AVAILABLE:
+            try:
+                result = await evaluator.evaluate(
+                    answer=user_answer,
+                    topic=topic,
+                    user_id=update.effective_user.id
+                )
+                
+                # Форматируем результат
+                if hasattr(result, 'format_feedback'):
+                    feedback_text = result.format_feedback()
+                else:
+                    feedback_text = _format_evaluation_result(result, topic)
+                
+                score = result.total_score
+                
+            except Exception as e:
+                logger.error(f"Evaluation error: {e}")
+                # Fallback оценка
+                feedback_text = _get_fallback_feedback(user_answer, topic)
+                score = _estimate_score(user_answer)
+        else:
+            # Простая оценка без AI
+            feedback_text = _get_fallback_feedback(user_answer, topic)
+            score = _estimate_score(user_answer)
+        
+        # Удаляем анимацию
+        await thinking_msg.delete()
+        
+        # Сохраняем результат
+        result_data = {
+            'topic': topic['title'],
+            'topic_id': topic.get('id'),
+            'block': topic.get('block', 'Общее'),
+            'score': score,
+            'max_score': 6,
+            'timestamp': datetime.now().isoformat()
+        }
+        
+        if 'task25_results' not in context.user_data:
+            context.user_data['task25_results'] = []
+        context.user_data['task25_results'].append(result_data)
+        
+        # Обновляем серию правильных ответов
+        if score >= 5:  # Считаем хорошим результатом 5+ баллов
+            context.user_data['correct_streak'] = context.user_data.get('correct_streak', 0) + 1
+            
+            # Показываем уведомление о серии
+            if context.user_data['correct_streak'] % 3 == 0:
+                await show_streak_notification(
+                    update.message,
+                    context.user_data['correct_streak']
+                )
+        else:
+            context.user_data['correct_streak'] = 0
+        
+        # Кнопки действий
+        kb = AdaptiveKeyboards.create_result_keyboard(
+            score=score,
+            max_score=6,
+            module_code="t25"
+        )
+        
+        # Отправляем результат
+        await update.message.reply_text(
+            feedback_text,
+            reply_markup=kb,
+            parse_mode=ParseMode.HTML
+        )
+        
+        # Меняем состояние на AWAITING_FEEDBACK для обработки дальнейших действий
+        return states.AWAITING_FEEDBACK
+        
+    except Exception as e:
+        logger.error(f"Error in handle_answer: {e}")
+        await thinking_msg.delete()
+        await update.message.reply_text(
+            "❌ Произошла ошибка при проверке. Попробуйте еще раз.",
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("🔄 Попробовать снова", callback_data="t25_retry"),
+                InlineKeyboardButton("📝 В меню", callback_data="t25_menu")
+            ]])
+        )
+        return states.CHOOSING_MODE
 
 
 def _estimate_score(user_answer: str) -> int:
@@ -720,52 +831,65 @@ async def handle_answer_parts(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 
 def _format_evaluation_result(result: EvaluationResult, topic: Dict) -> str:
-    """Форматирование результата с улучшенным UI."""
-    # Подсчет общего балла
-    total_score = sum(1 for part in result.part_scores.values() if part['score'] > 0)
-    max_score = 6
+    """Форматирование результата проверки."""
     
-    # Базовое сообщение
-    text = MessageFormatter.format_result_message(
-        score=total_score,
-        max_score=max_score,
-        topic=topic['title']
-    )
+    score = result.total_score
+    max_score = result.max_score
     
-    # Детализация по частям с визуальными элементами
-    text += "\n\n<b>📋 Оценка по частям:</b>\n"
+    # Заголовок в зависимости от результата
+    if score >= 5:
+        header = "🎉 <b>Отличный результат!</b>"
+    elif score >= 3:
+        header = "👍 <b>Хороший ответ!</b>"
+    else:
+        header = "📝 <b>Нужно доработать</b>"
     
-    for part_num in range(1, 4):
-        part_key = f'part{part_num}'
-        part_result = result.part_scores.get(part_key, {})
-        part_score = part_result.get('score', 0)
-        part_max = part_result.get('max_score', 2)
-        
-        # Визуализация оценки части
-        score_visual = UniversalUIComponents.create_score_visual(
-            part_score, part_max, use_stars=True
-        )
-        
-        # Цветовой индикатор
-        color = UniversalUIComponents.get_color_for_score(part_score, part_max)
-        
-        part_names = {
-            1: "Обоснование",
-            2: "Ответ на вопрос",
-            3: "Примеры"
-        }
-        
-        text += f"\n{color} <b>Часть {part_num} ({part_names[part_num]}):</b> {score_visual}"
-        
-        # Обратная связь по части
-        if part_result.get('feedback'):
-            text += f"\n   └ <i>{part_result['feedback']}</i>"
+    text = f"{header}\n\n"
+    text += f"<b>Ваш балл:</b> {score} из {max_score}\n\n"
     
-    # Общий комментарий AI
-    if result.ai_feedback:
-        text += f"\n\n🤖 <b>Анализ AI:</b>\n<i>{result.ai_feedback}</i>"
+    # Детальная разбивка по критериям
+    if hasattr(result, 'criteria_scores') and result.criteria_scores:
+        text += "<b>📊 Детальная оценка:</b>\n"
+        text += f"• К1 (Обоснование): {result.criteria_scores.get('k1_score', 0)}/2\n"
+        text += f"• К2 (Ответ на вопрос): {result.criteria_scores.get('k2_score', 0)}/1\n"
+        text += f"• К3 (Примеры): {result.criteria_scores.get('k3_score', 0)}/3\n\n"
     
-    return text
+    # Обратная связь
+    if result.feedback:
+        text += f"<b>💭 Комментарий:</b>\n{result.feedback}\n\n"
+    
+    # Детальный разбор - ИСПРАВЛЕНО: используем detailed_feedback вместо detailed_analysis
+    if hasattr(result, 'detailed_feedback') and result.detailed_feedback:
+        detail = result.detailed_feedback
+        if isinstance(detail, dict):
+            if detail.get('k1_comment'):
+                text += f"<b>📌 Обоснование:</b> {detail['k1_comment']}\n"
+            if detail.get('k2_comment'):
+                text += f"<b>📌 Ответ:</b> {detail['k2_comment']}\n"
+            if detail.get('k3_comment'):
+                text += f"<b>📌 Примеры:</b> {detail['k3_comment']}\n"
+            
+            # Найденные примеры
+            if detail.get('k3_examples_found'):
+                examples = detail['k3_examples_found']
+                if examples and isinstance(examples, list):
+                    text += "\n<b>Найденные примеры:</b>\n"
+                    for i, ex in enumerate(examples[:3], 1):
+                        text += f"{i}. {ex}\n"
+    
+    # Рекомендации
+    if hasattr(result, 'suggestions') and result.suggestions:
+        text += "\n<b>💡 Рекомендации:</b>\n"
+        for suggestion in result.suggestions[:3]:
+            text += f"• {suggestion}\n"
+    
+    # Фактические ошибки
+    if hasattr(result, 'factual_errors') and result.factual_errors:
+        text += "\n<b>⚠️ Фактические ошибки:</b>\n"
+        for error in result.factual_errors[:3]:
+            text += f"• {error}\n"
+    
+    return text.strip()
 
 
 @safe_handler()
@@ -2859,69 +2983,3 @@ async def show_theory(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode=ParseMode.HTML
     )
     return states.CHOOSING_MODE
-
-# Обновлённая функция регистрации всех обработчиков
-def register_task25_handlers(app):
-    """Регистрация всех обработчиков задания 25."""
-    from telegram.ext import CommandHandler, CallbackQueryHandler, MessageHandler, filters
-    
-    # Команды
-    app.add_handler(CommandHandler("task25", cmd_task25))
-    
-    # Основное меню
-    app.add_handler(CallbackQueryHandler(entry_from_menu, pattern="^t25_menu$"))
-    app.add_handler(CallbackQueryHandler(choose_practice_mode, pattern="^t25_practice$"))
-    app.add_handler(CallbackQueryHandler(show_theory, pattern="^t25_theory$"))
-    app.add_handler(CallbackQueryHandler(show_settings, pattern="^t25_settings$"))
-    
-    # Выбор темы
-    app.add_handler(CallbackQueryHandler(handle_random_topic, pattern="^t25_random$"))
-    app.add_handler(CallbackQueryHandler(choose_block, pattern="^t25_by_block$"))
-    app.add_handler(CallbackQueryHandler(handle_by_difficulty, pattern="^t25_by_difficulty$"))
-    app.add_handler(CallbackQueryHandler(handle_recommended, pattern="^t25_recommended$"))
-    
-    # Обработка выбора блока
-    app.add_handler(CallbackQueryHandler(handle_topic_by_block, pattern="^t25_block:"))
-    app.add_handler(CallbackQueryHandler(select_block, pattern="^t25_select_block$"))
-    
-    # Выбор по сложности
-    app.add_handler(CallbackQueryHandler(handle_difficulty_selected, pattern="^t25_diff:"))
-    
-    # Списки и навигация
-    app.add_handler(CallbackQueryHandler(list_topics, pattern="^t25_list_topics:"))
-    app.add_handler(CallbackQueryHandler(handle_select_topic, pattern="^t25_select_topic:"))
-    
-    # Случайная тема
-    app.add_handler(CallbackQueryHandler(random_topic_all, pattern="^t25_random_all$"))
-    app.add_handler(CallbackQueryHandler(random_topic_block, pattern="^t25_random_block$"))
-    
-    # Банк ответов
-    app.add_handler(CallbackQueryHandler(bank_search, pattern="^t25_bank_search$"))
-    app.add_handler(CallbackQueryHandler(handle_all_examples, pattern="^t25_all_examples$"))
-    app.add_handler(CallbackQueryHandler(show_example_answer, pattern="^t25_show_example:"))
-    app.add_handler(CallbackQueryHandler(handle_try_topic, pattern="^t25_try_topic:"))
-    
-    # После ответа
-    app.add_handler(CallbackQueryHandler(handle_retry, pattern="^t25_retry$"))
-    app.add_handler(CallbackQueryHandler(handle_new_topic, pattern="^t25_new$"))
-    app.add_handler(CallbackQueryHandler(handle_result_action, pattern="^t25_result_"))
-    
-    # Прогресс и статистика
-    app.add_handler(CallbackQueryHandler(handle_progress, pattern="^t25_progress$"))
-    app.add_handler(CallbackQueryHandler(show_block_stats, pattern="^t25_block_stats$"))
-    app.add_handler(CallbackQueryHandler(detailed_progress, pattern="^t25_detailed_progress$"))
-    
-    # Настройки
-    app.add_handler(CallbackQueryHandler(handle_strictness_change, pattern="^t25_strictness:"))
-    app.add_handler(CallbackQueryHandler(handle_reset_progress, pattern="^t25_reset_progress$"))
-    app.add_handler(CallbackQueryHandler(confirm_reset_progress, pattern="^t25_confirm_reset$"))
-    
-    # Обработчик текстовых ответов (для состояния AWAITING_ANSWER)
-    app.add_handler(MessageHandler(
-        filters.TEXT & ~filters.COMMAND,
-        handle_answer
-    ), group=1)  # Используем группу для приоритета
-    
-    # Возврат в главное меню
-    app.add_handler(CallbackQueryHandler(back_to_main_menu, pattern="^to_main_menu$"))
-    logger.info("All task25 handlers registered successfully")

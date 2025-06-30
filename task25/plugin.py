@@ -95,7 +95,7 @@ class Task25Plugin(BotPlugin):
                 ],
                 
                 states.ANSWERING: [
-                    MessageHandler(filters.TEXT & ~filters.COMMAND, handlers.handle_answer),
+                    MessageHandler(filters.TEXT & ~filters.COMMAND, handlers.safe_handle_answer_task25),
                     MessageHandler(filters.Document.ALL, handlers.handle_answer_document_task25),
                     CallbackQueryHandler(handlers.practice_mode, pattern="^t25_practice$"),
                     CallbackQueryHandler(handlers.another_topic_from_current, pattern="^t25_another_topic$"),
