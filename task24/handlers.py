@@ -213,7 +213,7 @@ async def entry_from_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     
     # Строим унифицированную клавиатуру
-    kb = build_main_menu_keyboard(user_stats)
+    kb = keyboards.build_main_menu_keyboard(user_stats)
     
     await query.edit_message_text(
         text,
@@ -249,7 +249,7 @@ async def cmd_start_plan(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     
     # Строим унифицированную клавиатуру
-    kb = build_main_menu_keyboard(user_stats)
+    kb = keyboards.build_main_menu_keyboard(user_stats)
     
     await update.message.reply_text(
         text,
@@ -1480,7 +1480,7 @@ async def return_to_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     
     # Используем унифицированную клавиатуру
-    kb = build_main_menu_keyboard(user_stats)
+    kb = keyboards.build_main_menu_keyboard(user_stats)
     
     try:
         await query.edit_message_text(
@@ -1603,7 +1603,7 @@ async def cmd_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     }
     
     # Используем унифицированную клавиатуру
-    kb = build_main_menu_keyboard(user_stats)
+    kb = keyboards.build_main_menu_keyboard(user_stats)
     
     await update.message.reply_text(
         "❌ Действие отменено.\n\nВыберите режим:",
