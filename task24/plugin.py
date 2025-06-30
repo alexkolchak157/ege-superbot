@@ -57,10 +57,14 @@ class Task24Plugin(BotPlugin):
                     CallbackQueryHandler(handlers.cancel_reset, pattern="^t24_cancel_reset$"),
                 ],
                 states.CHOOSING_TOPIC: [
-                    CallbackQueryHandler(handlers.select_topic, pattern=r"^t24_topic_"),
+                    CallbackQueryHandler(handlers.select_topic, pattern=r"^t24_t:"),
                     CallbackQueryHandler(handlers.navigate_topics, pattern=r"^t24_nav_"),
+                    CallbackQueryHandler(handlers.handle_block_selection, pattern=r"^t24_blk:"),
+                    CallbackQueryHandler(handlers.handle_pagination, pattern=r"^t24_pg:"),
+                    CallbackQueryHandler(handlers.start_training_from_etalon, pattern=r"^t24_tr:"),
+                    
+                    # Остальные обработчики
                     CallbackQueryHandler(handlers.next_topic, pattern="^next_topic$"),
-                    CallbackQueryHandler(handlers.start_training_from_etalon, pattern=r"^t24_topic_train:"),
                     CallbackQueryHandler(handlers.return_to_menu, pattern="^t24_menu$"),
                     CallbackQueryHandler(handlers.back_to_main_menu, pattern="^to_main_menu$"),
                     CallbackQueryHandler(handlers.noop, pattern="^noop$")

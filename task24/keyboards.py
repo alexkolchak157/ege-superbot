@@ -140,105 +140,113 @@ def build_initial_choice_keyboard(mode: str) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(keyboard)
 
 def build_block_selection_keyboard(mode: str) -> InlineKeyboardMarkup:
-    """Создает клавиатуру для выбора блока тем."""
-    # Предопределенные блоки (должны соответствовать данным в JSON)
-    THEORY_BLOCKS = [
-        "Человек и общество", 
-        "Экономика", 
-        "Социальные отношения",
-        "Политика", 
-        "Право"
-    ]
+    """Создает клавиатуру для выбора блока тем с короткими callback_data."""
+    buttons = []
     
-    keyboard = []
-    for block_name in THEORY_BLOCKS:
-        keyboard.append([InlineKeyboardButton(
-            f"📁 {block_name}", 
-            callback_data=f"t24_nav_select_block:{mode}:{block_name}"
+    if not plan_bot_data or not plan_bot_data.topics_by_block:
+        return InlineKeyboardMarkup([[
+            InlineKeyboardButton("❌ Данные не загружены", callback_data="noop")
+        ]])
+    
+    # Создаем кнопки для каждого блока
+    for block_name in plan_bot_data.topics_by_block.keys():
+        # Сокращаем блок до первых 20 символов для callback_data
+        short_block = block_name[:20] if len(block_name) > 20 else block_name
+        buttons.append([InlineKeyboardButton(
+            block_name, 
+            callback_data=f"t24_blk:{mode}:{short_block}"
         )])
     
-    keyboard.append([InlineKeyboardButton("⬅️ Назад", callback_data=f"t24_nav_back_to_main:{mode}")])
-    return InlineKeyboardMarkup(keyboard)
+    # Кнопка назад
+    buttons.append([InlineKeyboardButton(
+        "🔙 Назад", 
+        callback_data=f"t24_nav_bc:{mode}"  # back_to_choice -> bc
+    )])
+    
+    return InlineKeyboardMarkup(buttons)
 
 def build_topic_page_keyboard(
     mode: str,
     page: int,
-    bot_data,
-    practiced_indices: Set[int],
+    data_source,
+    practiced_set: Set[int],
     block_name: Optional[str] = None
-) -> Tuple[str, Optional[InlineKeyboardMarkup]]:
-    """Создает текст и клавиатуру для указанной страницы тем."""
-    ITEMS_PER_PAGE = 8  # Уменьшено для удобства
+) -> Tuple[str, InlineKeyboardMarkup]:
+    """Создает постраничную клавиатуру тем с короткими callback_data."""
+    per_page = 8
     
     # Получаем список тем
     if block_name:
-        topic_list = bot_data.topics_by_block.get(block_name, [])
-        list_source = "block"
+        topics = data_source.topics_by_block.get(block_name, [])
+        header = f"📚 <b>Блок: {block_name}</b>\n\n"
     else:
-        topic_list = bot_data.get_all_topics_list()
-        list_source = "all"
+        topics = data_source.topic_list_for_pagination
+        header = "📚 <b>Все темы для планов</b>\n\n"
     
-    if not topic_list:
-        title_suffix = f" (блок: {html.escape(block_name)})" if block_name else " (все темы)"
-        return f"❌ Темы{title_suffix} не найдены.", None
+    if not topics:
+        return "❌ Темы не найдены", InlineKeyboardMarkup([[
+            InlineKeyboardButton("🔙 Назад", callback_data=f"t24_nav_bc:{mode}")
+        ]])
     
-    # Вычисляем количество страниц
-    total_pages = math.ceil(len(topic_list) / ITEMS_PER_PAGE)
+    # Пагинация
+    total_pages = math.ceil(len(topics) / per_page)
     page = max(0, min(page, total_pages - 1))
     
-    # Получаем темы для текущей страницы
-    start_idx = page * ITEMS_PER_PAGE
-    end_idx = start_idx + ITEMS_PER_PAGE
-    page_topics = topic_list[start_idx:end_idx]
+    start_idx = page * per_page
+    end_idx = min(start_idx + per_page, len(topics))
+    page_topics = topics[start_idx:end_idx]
     
-    # Создаем текст с нумерацией
-    title_suffix = f" (блок: {html.escape(block_name)})" if block_name else " (все темы)"
-    message_text = f"<b>Список тем{title_suffix}</b>\n"
-    message_text += f"Страница {page + 1} из {total_pages}\n\n"
+    # Формируем текст
+    text = header
+    for i, (idx, topic_name) in enumerate(page_topics, 1):
+        marker = "✅ " if idx in practiced_set else "▫️ "
+        text += f"{marker}{start_idx + i}. {topic_name}\n"
     
-    keyboard_rows = []
+    text += f"\n📄 Страница {page + 1} из {total_pages}"
     
-    # Добавляем темы на текущей странице
-    for i, (topic_idx, topic_title) in enumerate(page_topics):
-        display_number = start_idx + i + 1
-        
-        # Отмечаем пройденные темы
-        if topic_idx in practiced_indices:
-            mark = "✅"
-        else:
-            mark = "📄"
-        
-        # Текст для сообщения
-        escaped_title = html.escape(topic_title[:100])
-        if len(topic_title) > 100:
-            escaped_title += "..."
-        message_text += f"{display_number}. {mark} {escaped_title}\n"
-        
-        # Кнопка
-        button_text = f"{mark} {topic_title[:50]}{'...' if len(topic_title) > 50 else ''}"
-        callback_data = f"t24_topic_{mode}:{topic_idx}"
-        
-        keyboard_rows.append([InlineKeyboardButton(button_text, callback_data=callback_data)])
+    # Кнопки тем
+    buttons = []
+    for idx, topic_name in page_topics:
+        # Обрезаем название темы для отображения
+        display_name = topic_name[:40] + "..." if len(topic_name) > 40 else topic_name
+        callback_data = f"t24_t:{mode}:{idx}"  # topic -> t
+        buttons.append([InlineKeyboardButton(display_name, callback_data=callback_data)])
     
     # Навигация по страницам
     nav_row = []
     if page > 0:
-        nav_row.append(InlineKeyboardButton("◀️", callback_data=f"t24_nav_page:{mode}:{list_source}:{page-1}:{block_name or ''}"))
-    nav_row.append(InlineKeyboardButton(f"{page + 1}/{total_pages}", callback_data="noop"))
+        # Сокращаем callback_data для навигации
+        if block_name:
+            # Сокращаем имя блока
+            short_block = block_name[:20]
+            cb = f"t24_pg:b:{mode}:{page-1}:{short_block}"  # page:block
+        else:
+            cb = f"t24_pg:a:{mode}:{page-1}"  # page:all
+        nav_row.append(InlineKeyboardButton("◀️", callback_data=cb))
+    
+    nav_row.append(InlineKeyboardButton(
+        f"{page + 1}/{total_pages}", 
+        callback_data="noop"
+    ))
+    
     if page < total_pages - 1:
-        nav_row.append(InlineKeyboardButton("▶️", callback_data=f"t24_nav_page:{mode}:{list_source}:{page+1}:{block_name or ''}"))
+        if block_name:
+            short_block = block_name[:20]
+            cb = f"t24_pg:b:{mode}:{page+1}:{short_block}"
+        else:
+            cb = f"t24_pg:a:{mode}:{page+1}"
+        nav_row.append(InlineKeyboardButton("▶️", callback_data=cb))
     
     if nav_row:
-        keyboard_rows.append(nav_row)
+        buttons.append(nav_row)
     
-    # Кнопка возврата
-    keyboard_rows.append([InlineKeyboardButton("⬅️ Назад", callback_data=f"t24_nav_back_to_main:{mode}")])
+    # Кнопка назад
+    buttons.append([InlineKeyboardButton(
+        "🔙 Назад", 
+        callback_data=f"t24_nav_bc:{mode}"
+    )])
     
-    # Ограничение: если кнопок слишком много, показываем только навигацию
-    if len(keyboard_rows) > 12:
-        return message_text + "\n<i>Используйте навигацию для выбора темы</i>", InlineKeyboardMarkup(keyboard_rows[-2:])
-    
-    return message_text, InlineKeyboardMarkup(keyboard_rows)
+    return text, InlineKeyboardMarkup(buttons)
 
 def build_search_keyboard() -> InlineKeyboardMarkup:
     """Создает клавиатуру для поиска."""
