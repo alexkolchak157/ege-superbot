@@ -56,8 +56,8 @@ class Task25EvaluationResult(EvaluationResult if AI_EVALUATOR_AVAILABLE else obj
         # Баллы по критериям
         text += "<b>Баллы по критериям:</b>\n"
 
-        # Используем ключи из scores, которые могут быть k1_score, k2_score, k3_score или К1, К2, К3
-        scores = self.scores if hasattr(self, 'scores') and self.scores else {}
+        # ИСПРАВЛЕНО: используем self.criteria_scores вместо self.scores
+        scores = self.criteria_scores if hasattr(self, 'criteria_scores') and self.criteria_scores else {}
 
         # Проверяем разные форматы ключей
         k1_score = scores.get('k1_score', scores.get('К1', 0))
@@ -75,23 +75,23 @@ class Task25EvaluationResult(EvaluationResult if AI_EVALUATOR_AVAILABLE else obj
         if self.feedback:
             text += f"{self.feedback}\n"
 
-        # Детальный анализ если есть
-        if self.detailed_analysis:
+        # ИСПРАВЛЕНО: используем self.detailed_feedback вместо self.detailed_analysis
+        if self.detailed_feedback:
             text += "\n<b>Детальный анализ:</b>\n"
 
             # Комментарии по критериям
-            if 'k1_comment' in self.detailed_analysis:
-                text += f"\n<b>Обоснование:</b> {self.detailed_analysis['k1_comment']}\n"
+            if 'k1_comment' in self.detailed_feedback:
+                text += f"\n<b>Обоснование:</b> {self.detailed_feedback['k1_comment']}\n"
 
-            if 'k2_comment' in self.detailed_analysis:
-                text += f"\n<b>Ответ:</b> {self.detailed_analysis['k2_comment']}\n"
+            if 'k2_comment' in self.detailed_feedback:
+                text += f"\n<b>Ответ:</b> {self.detailed_feedback['k2_comment']}\n"
 
-            if 'k3_comment' in self.detailed_analysis:
-                text += f"\n<b>Примеры:</b> {self.detailed_analysis['k3_comment']}\n"
+            if 'k3_comment' in self.detailed_feedback:
+                text += f"\n<b>Примеры:</b> {self.detailed_feedback['k3_comment']}\n"
 
                 # Найденные примеры
-                if 'k3_examples_found' in self.detailed_analysis:
-                    examples = self.detailed_analysis['k3_examples_found']
+                if 'k3_examples_found' in self.detailed_feedback:
+                    examples = self.detailed_feedback['k3_examples_found']
                     if examples and isinstance(examples, list):
                         text += "\nНайденные примеры:\n"
                         for i, ex in enumerate(examples[:3], 1):
@@ -387,7 +387,7 @@ class Task25AIEvaluator(BaseAIEvaluator if AI_EVALUATOR_AVAILABLE else object):
         k3 = validated.get('k3_score', 0)
         validated['k3_score'] = max(0, min(3, int(k3)))
         
-        # Пересчитываем общий балл
+        # ВАЖНО: Всегда пересчитываем общий балл как сумму критериев
         validated['total_score'] = (
             validated['k1_score'] + 
             validated['k2_score'] + 
@@ -405,9 +405,10 @@ class Task25AIEvaluator(BaseAIEvaluator if AI_EVALUATOR_AVAILABLE else object):
             'k3_score': result.get('k3_score', 0)
         }
         
-        total_score = result.get('total_score', sum(scores.values()))
+        # ВАЖНО: Используем сумму баллов по критериям, а не total_score от AI
+        total_score = scores['k1_score'] + scores['k2_score'] + scores['k3_score']
         
-        # Формируем основную обратную связь
+        # Формируем основную обратную связь на основе реальных баллов
         if total_score >= 5:
             feedback = "🎉 Отличная работа! Ответ соответствует всем критериям."
         elif total_score >= 3:
@@ -415,12 +416,12 @@ class Task25AIEvaluator(BaseAIEvaluator if AI_EVALUATOR_AVAILABLE else object):
         else:
             feedback = "📝 Нужно доработать ответ. Изучите рекомендации."
         
-        # Добавляем общий комментарий если есть
-        if result.get('general_feedback'):
-            feedback = result['general_feedback']
+        # Добавляем общий комментарий если есть (но не переопределяем feedback полностью)
+        if result.get('general_feedback') and total_score >= 3:
+            feedback += f"\n\n{result['general_feedback']}"
         
         # Создаём детальный анализ
-        detailed_analysis = {
+        detailed_feedback = {
             'k1_comment': result.get('k1_comment', ''),
             'k2_comment': result.get('k2_comment', ''),
             'k3_comment': result.get('k3_comment', ''),
@@ -430,10 +431,10 @@ class Task25AIEvaluator(BaseAIEvaluator if AI_EVALUATOR_AVAILABLE else object):
         # Создаем расширенный результат
         eval_result = Task25EvaluationResult(
             criteria_scores=scores,
-            total_score=total_score,
+            total_score=total_score,  # Используем пересчитанный балл
             max_score=6,
             feedback=feedback,
-            detailed_feedback=detailed_analysis,  # Изменено: detailed_analysis -> detailed_feedback
+            detailed_feedback=detailed_feedback,
             suggestions=result.get('suggestions', []),
             factual_errors=result.get('factual_errors', [])
         )
@@ -558,14 +559,14 @@ def format_evaluation_feedback(result: EvaluationResult, topic: Dict = None) -> 
         text += f"<b>Тема:</b> {topic.get('title', 'Не указана')}\n"
         text += f"{'─' * 30}\n\n"
     
-    # Баллы по критериям
-    if result.scores:
+    # ИСПРАВЛЕНО: используем result.criteria_scores вместо result.scores
+    if hasattr(result, 'criteria_scores') and result.criteria_scores:
         text += "<b>Баллы по критериям:</b>\n"
         
         # Проверяем разные форматы ключей
-        k1_score = result.scores.get('k1_score', result.scores.get('К1', 0))
-        k2_score = result.scores.get('k2_score', result.scores.get('К2', 0))
-        k3_score = result.scores.get('k3_score', result.scores.get('К3', 0))
+        k1_score = result.criteria_scores.get('k1_score', result.criteria_scores.get('К1', 0))
+        k2_score = result.criteria_scores.get('k2_score', result.criteria_scores.get('К2', 0))
+        k3_score = result.criteria_scores.get('k3_score', result.criteria_scores.get('К3', 0))
         
         text += f"К1 (Обоснование): {k1_score}/2\n"
         text += f"К2 (Ответ): {k2_score}/1\n"
@@ -578,16 +579,16 @@ def format_evaluation_feedback(result: EvaluationResult, topic: Dict = None) -> 
     if result.feedback:
         text += f"{result.feedback}\n"
     
-    # Детальный анализ если есть
-    if hasattr(result, 'detailed_analysis') and result.detailed_analysis:
-        if 'k1_comment' in result.detailed_analysis:
-            text += f"\n<b>Обоснование:</b> {result.detailed_analysis['k1_comment']}\n"
+    # ИСПРАВЛЕНО: используем detailed_feedback вместо detailed_analysis
+    if hasattr(result, 'detailed_feedback') and result.detailed_feedback:
+        if 'k1_comment' in result.detailed_feedback:
+            text += f"\n<b>Обоснование:</b> {result.detailed_feedback['k1_comment']}\n"
         
-        if 'k2_comment' in result.detailed_analysis:
-            text += f"\n<b>Ответ:</b> {result.detailed_analysis['k2_comment']}\n"
+        if 'k2_comment' in result.detailed_feedback:
+            text += f"\n<b>Ответ:</b> {result.detailed_feedback['k2_comment']}\n"
         
-        if 'k3_comment' in result.detailed_analysis:
-            text += f"\n<b>Примеры:</b> {result.detailed_analysis['k3_comment']}\n"
+        if 'k3_comment' in result.detailed_feedback:
+            text += f"\n<b>Примеры:</b> {result.detailed_feedback['k3_comment']}\n"
     
     # Рекомендации
     if hasattr(result, 'suggestions') and result.suggestions:

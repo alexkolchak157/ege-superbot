@@ -618,6 +618,32 @@ async def random_topic_all(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         return states.ANSWERING
 
+def _get_fallback_feedback(user_answer: str, topic: Dict) -> str:
+    """Формирует базовую обратную связь без AI."""
+    score = _estimate_score(user_answer)
+    
+    text = f"📊 <b>Результаты проверки</b>\n\n"
+    text += f"<b>Тема:</b> {topic.get('title', 'Не указана')}\n"
+    text += f"{'─' * 30}\n\n"
+    
+    # Примерная оценка
+    text += f"<b>Предварительная оценка:</b> {score}/6 баллов\n\n"
+    
+    if score >= 5:
+        text += "✅ Ваш ответ выглядит полным и развёрнутым.\n"
+    elif score >= 3:
+        text += "⚡ Ответ содержит основные элементы, но может быть улучшен.\n"
+    else:
+        text += "📝 Рекомендуется дополнить ответ.\n"
+    
+    text += "\n<b>Общие рекомендации:</b>\n"
+    text += "• Убедитесь, что есть теоретическое обоснование\n"
+    text += "• Проверьте наличие ответа на поставленный вопрос\n"
+    text += "• Приведите 3 примера из разных источников\n"
+    text += "\n⚠️ <i>Это предварительная оценка. Для точной проверки обратитесь к преподавателю.</i>"
+    
+    return text
+
 async def safe_handle_answer_task25(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Безопасная обработка ответа на задание 25."""
     
@@ -831,8 +857,7 @@ async def handle_answer_parts(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 
 def _format_evaluation_result(result: EvaluationResult, topic: Dict) -> str:
-    """Форматирование результата проверки."""
-    
+    """Форматирует результат AI-оценки для отображения."""
     score = result.total_score
     max_score = result.max_score
     
@@ -858,7 +883,7 @@ def _format_evaluation_result(result: EvaluationResult, topic: Dict) -> str:
     if result.feedback:
         text += f"<b>💭 Комментарий:</b>\n{result.feedback}\n\n"
     
-    # Детальный разбор - ИСПРАВЛЕНО: используем detailed_feedback вместо detailed_analysis
+    # ИСПРАВЛЕНО: используем правильное имя атрибута detailed_feedback
     if hasattr(result, 'detailed_feedback') and result.detailed_feedback:
         detail = result.detailed_feedback
         if isinstance(detail, dict):
