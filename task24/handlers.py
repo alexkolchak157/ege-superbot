@@ -200,21 +200,37 @@ async def entry_from_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if 'session_start' not in context.user_data:
         context.user_data['session_start'] = datetime.now()
     
-    # Строим клавиатуру с учетом прав пользователя
+    # Получаем статистику пользователя
+    practiced_indices = context.user_data.get('practiced_topics', set())
+    total_topics = len(plan_bot_data.topic_list_for_pagination) if plan_bot_data else 0
+    
+    user_stats = {
+        'total_attempts': len(practiced_indices),
+        'average_score': 0,  # Можно вычислить из результатов если сохраняются
+        'streak': context.user_data.get('correct_streak', 0),
+        'weak_topics_count': 0,
+        'progress_percent': int(len(practiced_indices) / total_topics * 100) if total_topics > 0 else 0
+    }
+    
+    # Персонализированное приветствие
+    from core.ui_helpers import get_personalized_greeting
+    greeting = get_personalized_greeting(user_stats)
+    
+    text = greeting + "\n\n📝 <b>Задание 24 - составление сложного плана</b>\n\nВыберите режим работы:"
+    
+    # Строим клавиатуру с учетом статистики
     user_id = query.from_user.id
-    kb = keyboards.build_main_menu_keyboard()
+    kb = keyboards.build_main_menu_keyboard(user_stats)
+    
     # Добавляем админские кнопки если пользователь - админ
     if admin_manager.is_admin(user_id):
         admin_buttons = get_admin_keyboard_extension(user_id)
-        # InlineKeyboardMarkup.inline_keyboard возвращает кортеж кортежей, поэтому
-        # создаем новую клавиатуру на основе существующей и админских кнопок
         keyboard_rows = [list(row) for row in kb.inline_keyboard]
         keyboard_rows.extend(admin_buttons)
         kb = InlineKeyboardMarkup(keyboard_rows)
     
     await query.edit_message_text(
-        "📝 <b>Задание 24 - составление сложного плана</b>\n\n"
-        "Выберите режим работы:",
+        text,
         reply_markup=kb,
         parse_mode=ParseMode.HTML
     )
@@ -226,12 +242,28 @@ async def cmd_start_plan(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if 'session_start' not in context.user_data:
         context.user_data['session_start'] = datetime.now()
     
+    # Получаем статистику пользователя
+    practiced_indices = context.user_data.get('practiced_topics', set())
+    total_topics = len(plan_bot_data.topic_list_for_pagination) if plan_bot_data else 0
+    
+    user_stats = {
+        'total_attempts': len(practiced_indices),
+        'average_score': 0,
+        'streak': context.user_data.get('correct_streak', 0),
+        'weak_topics_count': 0,
+        'progress_percent': int(len(practiced_indices) / total_topics * 100) if total_topics > 0 else 0
+    }
+    
+    from core.ui_helpers import get_personalized_greeting
+    greeting = get_personalized_greeting(user_stats)
+    
+    text = greeting + "\n\n📝 <b>Задание 24 - составление сложного плана</b>\n\nВыберите режим работы:"
+    
     user_id = update.effective_user.id
-    kb = keyboards.build_main_menu_keyboard()
+    kb = keyboards.build_main_menu_keyboard(user_stats)
     
     await update.message.reply_text(
-        "📝 <b>Задание 24 - составление сложного плана</b>\n\n"
-        "Выберите режим работы:",
+        text,
         reply_markup=kb,
         parse_mode=ParseMode.HTML
     )

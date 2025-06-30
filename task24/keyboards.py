@@ -1,25 +1,84 @@
 import math
 import html
-from typing import List, Tuple, Optional, Set
+from typing import List, Tuple, Optional, Set, Dict, Any
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from core.universal_ui import AdaptiveKeyboards
 
-def build_main_menu_keyboard() -> InlineKeyboardMarkup:
-    """Создает клавиатуру главного меню task24."""
-    keyboard = [
-        [InlineKeyboardButton("💪 Тренироваться", callback_data="t24_train")],
-        [InlineKeyboardButton("👀 Посмотреть эталоны", callback_data="t24_show")],
-        [InlineKeyboardButton("🎯 Режим экзамена", callback_data="t24_exam")],
+def build_main_menu_keyboard(user_stats: Optional[Dict[str, Any]] = None) -> InlineKeyboardMarkup:
+    """Создает унифицированную клавиатуру главного меню task24."""
+    
+    # Если статистика не передана, создаем пустую
+    if user_stats is None:
+        user_stats = {
+            'total_attempts': 0,
+            'average_score': 0,
+            'streak': 0,
+            'weak_topics_count': 0,
+            'progress_percent': 0
+        }
+    
+    # Используем адаптивную клавиатуру
+    base_kb = AdaptiveKeyboards.create_menu_keyboard(user_stats, module_code="task24")
+    
+    # Создаем новую клавиатуру с правильными callback_data для task24
+    new_buttons = []
+    
+    for row in base_kb.inline_keyboard:
+        new_row = []
+        for button in row:
+            # Маппинг стандартных callback на специфичные для task24
+            if button.callback_data == "task24_practice":
+                new_row.append(InlineKeyboardButton("💪 Тренироваться", callback_data="t24_train"))
+            elif button.callback_data == "task24_theory":
+                new_row.append(InlineKeyboardButton("📋 Критерии оценки", callback_data="t24_criteria"))
+            elif button.callback_data == "task24_examples":
+                new_row.append(InlineKeyboardButton("👀 Посмотреть эталоны", callback_data="t24_show"))
+            elif button.callback_data == "task24_progress":
+                new_row.append(InlineKeyboardButton(button.text, callback_data="t24_progress"))
+            elif button.callback_data == "task24_settings":
+                # Вместо настроек добавляем режим экзамена
+                new_row.append(InlineKeyboardButton("🎯 Режим экзамена", callback_data="t24_exam"))
+            elif button.callback_data == "task24_mistakes":
+                # Пропускаем работу над ошибками, так как она не реализована в task24
+                continue
+            elif button.callback_data == "task24_achievements":
+                # Пропускаем достижения
+                continue
+            elif button.callback_data == "task24_menu":
+                # Это кнопка возврата в меню - не нужна в главном меню
+                continue
+            elif button.callback_data == "to_main_menu":
+                new_row.append(button)  # Оставляем как есть
+            else:
+                new_row.append(button)
+        
+        if new_row:
+            new_buttons.append(new_row)
+    
+    # Добавляем специфичные для task24 кнопки
+    additional_buttons = [
         [InlineKeyboardButton("🔍 Поиск темы", callback_data="t24_search")],
         [InlineKeyboardButton("📜 Список всех тем", callback_data="t24_show_list")],
-        [InlineKeyboardButton("📊 Мой прогресс", callback_data="t24_progress")],
-        [InlineKeyboardButton("📋 Критерии оценки", callback_data="t24_criteria")],
-        [InlineKeyboardButton("❓ Помощь", callback_data="t24_help")],
-        [InlineKeyboardButton("🔄 Сбросить прогресс", callback_data="t24_reset_progress")],
-        [InlineKeyboardButton("📤 Экспорт прогресса", callback_data="export_progress")],
-        [InlineKeyboardButton("🏠 Главное меню", callback_data="to_main_menu")]
+        [InlineKeyboardButton("❓ Помощь", callback_data="t24_help")]
     ]
-    return InlineKeyboardMarkup(keyboard)
+    
+    # Вставляем дополнительные кнопки перед последней строкой (где кнопка главного меню)
+    if new_buttons and any("to_main_menu" in str(btn.callback_data) for btn in new_buttons[-1]):
+        # Сохраняем последнюю строку
+        last_row = new_buttons.pop()
+        # Добавляем дополнительные кнопки
+        new_buttons.extend(additional_buttons)
+        # Добавляем кнопки управления прогрессом
+        new_buttons.append([
+            InlineKeyboardButton("🔄 Сбросить прогресс", callback_data="t24_reset_progress"),
+            InlineKeyboardButton("📤 Экспорт прогресса", callback_data="export_progress")
+        ])
+        # Возвращаем последнюю строку
+        new_buttons.append(last_row)
+    else:
+        new_buttons.extend(additional_buttons)
+    
+    return InlineKeyboardMarkup(new_buttons)
 
 def build_progress_keyboard(practiced_indices: Set[int], total: int) -> InlineKeyboardMarkup:
     """Создает унифицированную клавиатуру с детальной статистикой прогресса."""
@@ -140,76 +199,61 @@ def build_topic_page_keyboard(
         title_suffix = f" (блок: {html.escape(block_name)})" if block_name else " (все темы)"
         return f"❌ Темы{title_suffix} не найдены.", None
     
-    # Пагинация
-    total_items = len(topic_list)
-    total_pages = math.ceil(total_items / ITEMS_PER_PAGE)
+    # Вычисляем количество страниц
+    total_pages = math.ceil(len(topic_list) / ITEMS_PER_PAGE)
     page = max(0, min(page, total_pages - 1))
     
-    start_index = page * ITEMS_PER_PAGE
-    end_index = min(start_index + ITEMS_PER_PAGE, total_items)
-    page_items = topic_list[start_index:end_index]
+    # Получаем темы для текущей страницы
+    start_idx = page * ITEMS_PER_PAGE
+    end_idx = start_idx + ITEMS_PER_PAGE
+    page_topics = topic_list[start_idx:end_idx]
     
-    # Формируем текст
-    action_text = "тренировки" if mode == "train" else "просмотра эталона"
-    title_suffix = f"\n📁 Блок: <b>{html.escape(block_name)}</b>" if block_name else ""
+    # Создаем текст с нумерацией
+    title_suffix = f" (блок: {html.escape(block_name)})" if block_name else " (все темы)"
+    message_text = f"<b>Список тем{title_suffix}</b>\n"
+    message_text += f"Страница {page + 1} из {total_pages}\n\n"
     
-    message_text = f"📋 <b>Выберите тему для {action_text}</b>{title_suffix}\n\n"
-    
-    # Добавляем статистику
-    completed = len([idx for idx, _ in topic_list if idx in practiced_indices])
-    total = len(topic_list)
-    progress = int(completed / total * 100) if total > 0 else 0
-    message_text += f"📊 Прогресс: {completed}/{total} ({progress}%)\n"
-    message_text += "━" * 25 + "\n\n"
-    
-    # Создаем кнопки для тем
     keyboard_rows = []
-    for index, topic_name in page_items:
-        # Сокращаем длинные названия
-        display_name = topic_name if len(topic_name) < 45 else topic_name[:42] + "..."
-        marker = "✅" if index in practiced_indices else "📄"
+    
+    # Добавляем темы на текущей странице
+    for i, (topic_idx, topic_title) in enumerate(page_topics):
+        display_number = start_idx + i + 1
         
-        keyboard_rows.append([InlineKeyboardButton(
-            f"{marker} {display_name}", 
-            callback_data=f"t24_topic_{mode}:{index}"
-        )])
+        # Отмечаем пройденные темы
+        if topic_idx in practiced_indices:
+            mark = "✅"
+        else:
+            mark = "📄"
+        
+        # Текст для сообщения
+        escaped_title = html.escape(topic_title[:100])
+        if len(topic_title) > 100:
+            escaped_title += "..."
+        message_text += f"{display_number}. {mark} {escaped_title}\n"
+        
+        # Кнопка
+        button_text = f"{mark} {topic_title[:50]}{'...' if len(topic_title) > 50 else ''}"
+        callback_data = f"t24_topic_{mode}:{topic_idx}"
+        
+        keyboard_rows.append([InlineKeyboardButton(button_text, callback_data=callback_data)])
     
     # Навигация по страницам
-    nav_buttons = []
+    nav_row = []
     if page > 0:
-        nav_buttons.append(InlineKeyboardButton(
-            "⬅️", 
-            callback_data=f"t24_nav_{list_source}:{mode}:{page-1}" + (f":{block_name}" if block_name else "")
-        ))
-    
-    nav_buttons.append(InlineKeyboardButton(
-        f"{page + 1}/{total_pages}", 
-        callback_data="noop"
-    ))
-    
+        nav_row.append(InlineKeyboardButton("◀️", callback_data=f"t24_nav_page:{mode}:{list_source}:{page-1}:{block_name or ''}"))
+    nav_row.append(InlineKeyboardButton(f"{page + 1}/{total_pages}", callback_data="noop"))
     if page < total_pages - 1:
-        nav_buttons.append(InlineKeyboardButton(
-            "➡️", 
-            callback_data=f"t24_nav_{list_source}:{mode}:{page+1}" + (f":{block_name}" if block_name else "")
-        ))
+        nav_row.append(InlineKeyboardButton("▶️", callback_data=f"t24_nav_page:{mode}:{list_source}:{page+1}:{block_name or ''}"))
     
-    if nav_buttons and len(nav_buttons) > 1:
-        keyboard_rows.append(nav_buttons)
+    if nav_row:
+        keyboard_rows.append(nav_row)
     
-    # Кнопка назад
-    if block_name:
-        keyboard_rows.append([InlineKeyboardButton(
-            "⬅️ К выбору блока", 
-            callback_data=f"t24_nav_choose_block:{mode}"
-        )])
-    else:
-        keyboard_rows.append([InlineKeyboardButton(
-            "⬅️ Назад", 
-            callback_data=f"t24_nav_back_to_main:{mode}"
-        )])
+    # Кнопка возврата
+    keyboard_rows.append([InlineKeyboardButton("⬅️ Назад", callback_data=f"t24_nav_back_to_main:{mode}")])
     
-    if not page_items:
-        return f"На этой странице нет тем{title_suffix}.", InlineKeyboardMarkup(keyboard_rows[-1:])
+    # Ограничение: если кнопок слишком много, показываем только навигацию
+    if len(keyboard_rows) > 12:
+        return message_text + "\n<i>Используйте навигацию для выбора темы</i>", InlineKeyboardMarkup(keyboard_rows[-2:])
     
     return message_text, InlineKeyboardMarkup(keyboard_rows)
 
@@ -220,12 +264,41 @@ def build_search_keyboard() -> InlineKeyboardMarkup:
     ]
     return InlineKeyboardMarkup(keyboard)
 
-def build_feedback_keyboard() -> InlineKeyboardMarkup:
+def build_feedback_keyboard(score: int = 0, max_score: int = 4) -> InlineKeyboardMarkup:
     """Создает клавиатуру после проверки плана."""
     # Использовать адаптивную клавиатуру
-    # score нужно получить из контекста
-    return AdaptiveKeyboards.create_result_keyboard(
-        score=context.user_data.get('last_score', 0),
-        max_score=4,
+    base_kb = AdaptiveKeyboards.create_result_keyboard(
+        score=score,
+        max_score=max_score,
         module_code="task24"
     )
+    
+    # Адаптируем callback_data для task24
+    new_buttons = []
+    
+    for row in base_kb.inline_keyboard:
+        new_row = []
+        for button in row:
+            # Маппинг callback_data
+            if button.callback_data == "task24_retry":
+                new_row.append(InlineKeyboardButton(button.text, callback_data="t24_retry"))
+            elif button.callback_data == "task24_new":
+                new_row.append(InlineKeyboardButton(button.text, callback_data="next_topic"))
+            elif button.callback_data == "task24_show_ideal":
+                # Пропускаем, так как эталон уже показан
+                continue
+            elif button.callback_data == "task24_progress":
+                new_row.append(InlineKeyboardButton(button.text, callback_data="t24_progress"))
+            elif button.callback_data == "task24_menu":
+                new_row.append(InlineKeyboardButton(button.text, callback_data="t24_menu"))
+            elif button.callback_data == "task24_theory":
+                new_row.append(InlineKeyboardButton("📋 Критерии", callback_data="t24_criteria"))
+            elif button.callback_data == "task24_examples":
+                new_row.append(InlineKeyboardButton("👀 Эталоны", callback_data="t24_show"))
+            else:
+                new_row.append(button)
+        
+        if new_row:
+            new_buttons.append(new_row)
+    
+    return InlineKeyboardMarkup(new_buttons)
