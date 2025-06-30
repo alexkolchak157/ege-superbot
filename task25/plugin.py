@@ -50,6 +50,7 @@ class Task25Plugin(BotPlugin):
                     CallbackQueryHandler(handlers.practice_mode, pattern="^t25_practice$"),
                     CallbackQueryHandler(handlers.theory_mode, pattern="^t25_theory$"),
                     CallbackQueryHandler(handlers.examples_bank, pattern="^t25_examples$"),
+                    CallbackQueryHandler(handlers.show_examples_block, pattern="^t25_examples_block:"),
                     CallbackQueryHandler(handlers.my_progress, pattern="^t25_progress$"),
                     CallbackQueryHandler(handlers.settings_mode, pattern="^t25_settings$"),
                     CallbackQueryHandler(handlers.back_to_main_menu, pattern="^to_main_menu$"),
@@ -135,7 +136,7 @@ class Task25Plugin(BotPlugin):
                 
                 states.SEARCHING: [
                     MessageHandler(filters.TEXT & ~filters.COMMAND, handlers.handle_bank_search),
-                    CallbackQueryHandler(handlers.examples_bank, pattern="^t25_examples$"),
+                    CallbackQueryHandler(handlers.cancel_search, pattern="^t25_examples$"),
                     CallbackQueryHandler(handlers.return_to_menu, pattern="^t25_menu$"),
                 ],
             },

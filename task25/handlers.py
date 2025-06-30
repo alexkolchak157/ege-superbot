@@ -793,10 +793,16 @@ def _estimate_score(user_answer: str) -> int:
         return 1
         
 @safe_handler()
-@validate_state_transition({states.ANSWERING})
+@validate_state_transition({ANSWERING_PARTS})
 async def handle_answer_parts(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработка ответа по частям."""
-    user_answer = update.message.text
+    
+    # Получаем текст из документа или сообщения
+    if 'document_text' in context.user_data:
+        user_answer = context.user_data.pop('document_text')
+    else:
+        user_answer = update.message.text
+    
     topic = context.user_data.get('current_topic')
     current_part = context.user_data.get('current_part', 1)
     answers = context.user_data.get('part_answers', {})
@@ -849,13 +855,11 @@ async def handle_answer_parts(update: Update, context: ContextTypes.DEFAULT_TYPE
         context.user_data.pop('part_answers', None)
         context.user_data.pop('current_part', None)
         
-        # Сохраняем полный ответ для проверки
-        context.user_data['full_answer'] = full_answer
+        # Сохраняем полный ответ в context вместо изменения message.text
+        context.user_data['document_text'] = full_answer
         
         # Вызываем стандартную функцию проверки
-        # Создаем фиктивное обновление с полным текстом
-        update.message.text = full_answer
-        return await handle_answer(update, context)
+        return await safe_handle_answer_task25(update, context)
 
 
 def _format_evaluation_result(result: EvaluationResult, topic: Dict) -> str:
@@ -948,15 +952,23 @@ async def search_examples(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     text = (
         "🔍 <b>Поиск примеров</b>\n\n"
-        "Введите ключевые слова для поиска.\n"
+        "Отправьте ключевые слова для поиска.\n"
         "Например: <i>семья, экономика, право</i>\n\n"
-        "Отправьте /cancel для отмены"
+        "Для отмены нажмите кнопку ниже:"
     )
+    
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("❌ Отмена", callback_data="t25_examples")]
+    ])
     
     await query.edit_message_text(
         text,
+        reply_markup=kb,
         parse_mode=ParseMode.HTML
     )
+    
+    # Устанавливаем флаг ожидания поиска
+    context.user_data['waiting_for_search'] = True
     
     return states.SEARCHING
 
@@ -1034,24 +1046,34 @@ async def best_examples(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 @safe_handler()
 async def show_example(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Показ примера ответа."""
+    """Показ примера ответа с навигацией."""
     query = update.callback_query
     
+    # Извлекаем ID темы
     topic_id = query.data.split(':')[1]
-    topic = task25_data.get("topic_by_id", {}).get(topic_id)
+    
+    # Находим тему по ID
+    topic = None
+    for t in task25_data.get('topics', []):
+        if str(t.get('id')) == str(topic_id):
+            topic = t
+            break
     
     if not topic or 'example_answers' not in topic:
+        await query.answer("Пример не найден", show_alert=True)
         return states.CHOOSING_MODE
     
-    example = topic['example_answers']
+    # Форматируем текст примера
+    text = f"📝 <b>Пример эталонного ответа</b>\n\n"
+    text += f"<b>Тема:</b> {topic['title']}\n"
+    text += f"<b>Блок:</b> {topic.get('block', 'Не указан')}\n\n"
     
-    text = f"📝 <b>Пример ответа</b>\n\n"
-    text += f"<b>Тема:</b> {topic['title']}\n\n"
-    
-    # Показываем части задания
-    parts = topic.get('parts', {})
-    if parts:
+    # Показываем задание
+    if 'task_text' in topic:
+        text += f"<b>Задание:</b>\n{topic['task_text']}\n\n"
+    elif 'parts' in topic:
         text += "<b>Задание:</b>\n"
+        parts = topic['parts']
         if parts.get('part1'):
             text += f"1) {parts['part1']}\n"
         if parts.get('part2'):
@@ -1060,35 +1082,62 @@ async def show_example(update: Update, context: ContextTypes.DEFAULT_TYPE):
             text += f"3) {parts['part3']}\n"
         text += "\n"
     
-    # Эталонный ответ
+    # Показываем эталонный ответ
+    example = topic['example_answers']
     text += "<b>Эталонный ответ:</b>\n\n"
     
-    if isinstance(example.get('part1'), dict):
-        text += f"<b>1. Обоснование (2 балла):</b>\n{example['part1']['answer']}\n\n"
-    elif 'part1' in example:
-        text += f"<b>1. Обоснование (2 балла):</b>\n{example['part1']}\n\n"
+    # Обработка разных форматов ответов
+    if isinstance(example, dict):
+        if 'part1' in example:
+            if isinstance(example['part1'], dict):
+                text += f"<b>1. Обоснование (2 балла):</b>\n{example['part1'].get('answer', example['part1'])}\n\n"
+            else:
+                text += f"<b>1. Обоснование (2 балла):</b>\n{example['part1']}\n\n"
+        
+        if 'part2' in example:
+            if isinstance(example['part2'], dict):
+                text += f"<b>2. Ответ на вопрос (1 балл):</b>\n{example['part2'].get('answer', example['part2'])}\n\n"
+            else:
+                text += f"<b>2. Ответ на вопрос (1 балл):</b>\n{example['part2']}\n\n"
+        
+        if 'part3' in example:
+            text += "<b>3. Примеры (3 балла):</b>\n"
+            if isinstance(example['part3'], list):
+                for i, ex in enumerate(example['part3'], 1):
+                    if isinstance(ex, dict):
+                        text += f"\n{i}) <b>{ex.get('type', 'Пример')}:</b>\n{ex.get('example', ex)}\n"
+                    else:
+                        text += f"\n{i}) {ex}\n"
+            else:
+                text += f"{example['part3']}\n"
     
-    if isinstance(example.get('part2'), dict):
-        text += f"<b>2. Ответ (1 балл):</b>\n{example['part2']['answer']}\n\n"
-    elif 'part2' in example:
-        text += f"<b>2. Ответ (1 балл):</b>\n{example['part2']}\n\n"
+    # Кнопки действий
+    buttons = []
     
-    if 'part3' in example:
-        text += "<b>3. Примеры (3 балла):</b>\n"
-        if isinstance(example['part3'], list):
-            for i, ex in enumerate(example['part3'], 1):
-                if isinstance(ex, dict):
-                    text += f"{i}) <i>{ex.get('type', '')}:</i> {ex.get('example', '')}\n"
-                else:
-                    text += f"{i}) {ex}\n"
+    # Кнопка "Попробовать эту тему"
+    buttons.append([InlineKeyboardButton(
+        "📝 Попробовать эту тему",
+        callback_data=f"t25_topic:{topic['id']}"
+    )])
     
-    kb = InlineKeyboardMarkup([
-        [InlineKeyboardButton("📝 Попробовать эту тему", callback_data=f"t25_topic:{topic_id}")],
-        [InlineKeyboardButton("⬅️ Назад", callback_data="t25_examples")]
+    # Навигация по блоку
+    block_name = topic.get('block')
+    if block_name:
+        buttons.append([InlineKeyboardButton(
+            f"📚 Другие темы из блока «{block_name}»",
+            callback_data=f"t25_examples_block:{block_name}"
+        )])
+    
+    # Возврат в меню
+    buttons.extend([
+        [InlineKeyboardButton("🔍 Поиск примеров", callback_data="t25_search_examples")],
+        [InlineKeyboardButton("⬅️ К банку примеров", callback_data="t25_examples")]
     ])
     
+    kb = InlineKeyboardMarkup(buttons)
+    
     await query.edit_message_text(
-        text[:4000],  # Telegram limit
+        text,
         reply_markup=kb,
         parse_mode=ParseMode.HTML
     )
@@ -2076,20 +2125,31 @@ async def strictness_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 @safe_handler()
 async def handle_bank_search(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обработка поиска в банке примеров."""
+    """Обработка поискового запроса."""
+    # Проверяем, ожидаем ли мы поисковый запрос
+    if not context.user_data.get('waiting_for_search'):
+        return states.CHOOSING_MODE
+    
+    # Сбрасываем флаг
+    context.user_data['waiting_for_search'] = False
+    
     search_query = update.message.text.lower()
     
-    # Ищем подходящие темы
+    # Ищем темы с примерами
     found_topics = []
     for topic in task25_data.get('topics', []):
+        if 'example_answers' not in topic:
+            continue
+            
         if (search_query in topic.get('title', '').lower() or
             search_query in topic.get('task_text', '').lower() or
+            search_query in topic.get('block', '').lower() or
             any(search_query in str(part).lower() for part in topic.get('parts', {}).values())):
             found_topics.append(topic)
     
     if not found_topics:
         text = "🔍 <b>Результаты поиска</b>\n\n"
-        text += f"По запросу «{update.message.text}» ничего не найдено.\n"
+        text += f"По запросу «{update.message.text}» примеры не найдены.\n"
         text += "Попробуйте другие ключевые слова."
         
         kb = InlineKeyboardMarkup([
@@ -2097,22 +2157,24 @@ async def handle_bank_search(update: Update, context: ContextTypes.DEFAULT_TYPE)
             [InlineKeyboardButton("⬅️ К банку примеров", callback_data="t25_examples")]
         ])
     else:
-        text = f"🔍 <b>Найдено тем: {len(found_topics)}</b>\n\n"
+        text = f"🔍 <b>Найдено примеров: {len(found_topics)}</b>\n\n"
         
-        # Показываем первые 5 результатов
+        # Показываем первые 7 результатов
         buttons = []
-        for i, topic in enumerate(found_topics[:5]):
+        for i, topic in enumerate(found_topics[:7]):
             text += f"{i+1}. {topic['title']}\n"
             buttons.append([InlineKeyboardButton(
-                f"👁 {topic['title'][:40]}...",
+                f"👁 Пример {i+1}",
                 callback_data=f"t25_show_example:{topic['id']}"
             )])
         
-        if len(found_topics) > 5:
-            text += f"\n<i>...и ещё {len(found_topics) - 5} тем</i>"
+        if len(found_topics) > 7:
+            text += f"\n<i>Показаны первые 7 из {len(found_topics)} тем</i>"
         
-        buttons.append([InlineKeyboardButton("🔍 Новый поиск", callback_data="t25_search_examples")])
-        buttons.append([InlineKeyboardButton("⬅️ К банку примеров", callback_data="t25_examples")])
+        buttons.extend([
+            [InlineKeyboardButton("🔍 Новый поиск", callback_data="t25_search_examples")],
+            [InlineKeyboardButton("⬅️ К банку примеров", callback_data="t25_examples")]
+        ])
         
         kb = InlineKeyboardMarkup(buttons)
     
@@ -2122,8 +2184,62 @@ async def handle_bank_search(update: Update, context: ContextTypes.DEFAULT_TYPE)
         parse_mode=ParseMode.HTML
     )
     
-    return states.SEARCHING
+    return states.CHOOSING_MODE
 
+@safe_handler()
+async def cancel_search(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Отмена поиска и возврат к банку примеров."""
+    query = update.callback_query
+    
+    # Сбрасываем флаг поиска
+    context.user_data['waiting_for_search'] = False
+    
+    # Возвращаемся к банку примеров
+    return await examples_bank(update, context)
+
+@safe_handler()
+async def show_examples_block(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Показ примеров ответов по выбранному блоку."""
+    query = update.callback_query
+    
+    # Извлекаем название блока из callback_data
+    block_name = query.data.split(':', 1)[1]
+    
+    # Фильтруем темы по блоку с примерами
+    topics_in_block = [
+        t for t in task25_data.get('topics', [])
+        if t.get('block') == block_name and 'example_answers' in t
+    ]
+    
+    if not topics_in_block:
+        await query.answer("В этом блоке пока нет примеров", show_alert=True)
+        return states.CHOOSING_MODE
+    
+    text = f"📚 <b>{block_name}</b>\n"
+    text += f"Доступно примеров: {len(topics_in_block)}\n\n"
+    text += "Выберите тему:\n\n"
+    
+    buttons = []
+    for i, topic in enumerate(topics_in_block[:10], 1):  # Ограничиваем 10 темами
+        buttons.append([InlineKeyboardButton(
+            f"{i}. {topic['title'][:45]}...",
+            callback_data=f"t25_show_example:{topic['id']}"
+        )])
+    
+    if len(topics_in_block) > 10:
+        text += f"\n<i>Показаны первые 10 из {len(topics_in_block)} тем</i>"
+    
+    buttons.append([InlineKeyboardButton("⬅️ Назад", callback_data="t25_examples_by_block")])
+    
+    kb = InlineKeyboardMarkup(buttons)
+    
+    await query.edit_message_text(
+        text,
+        reply_markup=kb,
+        parse_mode=ParseMode.HTML
+    )
+    
+    return states.CHOOSING_MODE
 
 @safe_handler()
 async def handle_settings_actions(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -3144,14 +3260,14 @@ async def handle_answer_document_task25(update: Update, context: ContextTypes.DE
     current_part = context.user_data.get('current_part', 0)
     
     if current_part > 0:
-        # Если отвечаем по частям
-        update.message.text = extracted_text
+        # Если отвечаем по частям - сохраняем текст в context
+        context.user_data['document_text'] = extracted_text
         return await handle_answer_parts(update, context)
     else:
-        # Если полный ответ
-        update.message.text = extracted_text
-        return await handle_answer(update, context)
-
+        # Если полный ответ - сохраняем текст в context
+        context.user_data['document_text'] = extracted_text
+        return await safe_handle_answer_task25(update, context)
+        
 @safe_handler()
 async def handle_all_examples(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Показать все доступные примеры."""
