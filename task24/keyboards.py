@@ -17,7 +17,7 @@ def build_main_menu_keyboard(user_stats: Optional[Dict[str, Any]] = None) -> Inl
             'progress_percent': 0
         }
     
-    # Используем адаптивную клавиатуру
+    # Используем адаптивную клавиатуру из core
     base_kb = AdaptiveKeyboards.create_menu_keyboard(user_stats, module_code="task24")
     
     # Создаем новую клавиатуру с правильными callback_data для task24
@@ -36,16 +36,13 @@ def build_main_menu_keyboard(user_stats: Optional[Dict[str, Any]] = None) -> Inl
             elif button.callback_data == "task24_progress":
                 new_row.append(InlineKeyboardButton(button.text, callback_data="t24_progress"))
             elif button.callback_data == "task24_settings":
-                # Вместо настроек добавляем режим экзамена
-                new_row.append(InlineKeyboardButton("🎯 Режим экзамена", callback_data="t24_exam"))
+                # Добавляем поиск темы вместо настроек
+                new_row.append(InlineKeyboardButton("🔍 Поиск темы", callback_data="t24_search"))
             elif button.callback_data == "task24_mistakes":
-                # Пропускаем работу над ошибками, так как она не реализована в task24
+                # Пропускаем работу над ошибками, так как она не реализована
                 continue
             elif button.callback_data == "task24_achievements":
                 # Пропускаем достижения
-                continue
-            elif button.callback_data == "task24_menu":
-                # Это кнопка возврата в меню - не нужна в главном меню
                 continue
             elif button.callback_data == "to_main_menu":
                 new_row.append(button)  # Оставляем как есть
@@ -55,28 +52,14 @@ def build_main_menu_keyboard(user_stats: Optional[Dict[str, Any]] = None) -> Inl
         if new_row:
             new_buttons.append(new_row)
     
-    # Добавляем специфичные для task24 кнопки
-    additional_buttons = [
-        [InlineKeyboardButton("🔍 Поиск темы", callback_data="t24_search")],
-        [InlineKeyboardButton("📜 Список всех тем", callback_data="t24_show_list")],
-        [InlineKeyboardButton("❓ Помощь", callback_data="t24_help")]
-    ]
+    # Добавляем дополнительные специфичные для task24 кнопки
+    additional_row = [InlineKeyboardButton("📜 Список всех тем", callback_data="t24_show_list")]
     
-    # Вставляем дополнительные кнопки перед последней строкой (где кнопка главного меню)
-    if new_buttons and any("to_main_menu" in str(btn.callback_data) for btn in new_buttons[-1]):
-        # Сохраняем последнюю строку
-        last_row = new_buttons.pop()
-        # Добавляем дополнительные кнопки
-        new_buttons.extend(additional_buttons)
-        # Добавляем кнопки управления прогрессом
-        new_buttons.append([
-            InlineKeyboardButton("🔄 Сбросить прогресс", callback_data="t24_reset_progress"),
-            InlineKeyboardButton("📤 Экспорт прогресса", callback_data="export_progress")
-        ])
-        # Возвращаем последнюю строку
-        new_buttons.append(last_row)
+    # Вставляем перед последней строкой (где кнопка главного меню)
+    if new_buttons and "to_main_menu" in str(new_buttons[-1]):
+        new_buttons.insert(-1, additional_row)
     else:
-        new_buttons.extend(additional_buttons)
+        new_buttons.append(additional_row)
     
     return InlineKeyboardMarkup(new_buttons)
 

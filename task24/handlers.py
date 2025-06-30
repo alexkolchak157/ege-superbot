@@ -173,21 +173,13 @@ def init_data():
     return data_loaded  # Возвращаем статус загрузки
 
 @safe_handler()
-@validate_state_transition({ConversationHandler.END, None})
 async def entry_from_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Вход из главного меню."""
+    """Точка входа в задание 24 из главного меню."""
     query = update.callback_query
     
-    # Проверка наличия данных планов
-    if not plan_bot_data or not plan_bot_data.topic_list_for_pagination:
-        await query.edit_message_text(
-            "❌ Данные планов не загружены. Обратитесь к администратору.",
-            reply_markup=InlineKeyboardMarkup([[
-                InlineKeyboardButton("🏠 Главное меню", callback_data="to_main_menu")
-            ]]),
-            parse_mode=ParseMode.HTML
-        )
-        return ConversationHandler.END
+    # Инициализация данных если нужно
+    if not plan_bot_data:
+        await load_data()
     
     # Проверка подписки если включена
     if hasattr(core_utils, 'check_subscription'):
@@ -203,31 +195,25 @@ async def entry_from_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Получаем статистику пользователя
     practiced_indices = context.user_data.get('practiced_topics', set())
     total_topics = len(plan_bot_data.topic_list_for_pagination) if plan_bot_data else 0
+    results = context.user_data.get('task24_results', [])
     
     user_stats = {
-        'total_attempts': len(practiced_indices),
-        'average_score': 0,  # Можно вычислить из результатов если сохраняются
+        'total_attempts': len(results),
+        'average_score': sum(r.get('score', 0) for r in results) / len(results) if results else 0,
         'streak': context.user_data.get('correct_streak', 0),
         'weak_topics_count': 0,
         'progress_percent': int(len(practiced_indices) / total_topics * 100) if total_topics > 0 else 0
     }
     
     # Персонализированное приветствие
-    from core.ui_helpers import get_personalized_greeting
     greeting = get_personalized_greeting(user_stats)
+    text = greeting + MessageFormatter.format_welcome_message(
+        "задание 24",
+        is_new_user=user_stats['total_attempts'] == 0
+    )
     
-    text = greeting + "\n\n📝 <b>Задание 24 - составление сложного плана</b>\n\nВыберите режим работы:"
-    
-    # Строим клавиатуру с учетом статистики
-    user_id = query.from_user.id
-    kb = keyboards.build_main_menu_keyboard(user_stats)
-    
-    # Добавляем админские кнопки если пользователь - админ
-    if admin_manager.is_admin(user_id):
-        admin_buttons = get_admin_keyboard_extension(user_id)
-        keyboard_rows = [list(row) for row in kb.inline_keyboard]
-        keyboard_rows.extend(admin_buttons)
-        kb = InlineKeyboardMarkup(keyboard_rows)
+    # Строим унифицированную клавиатуру
+    kb = build_main_menu_keyboard(user_stats)
     
     await query.edit_message_text(
         text,
@@ -238,29 +224,32 @@ async def entry_from_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def cmd_start_plan(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Команда /start_plan."""
-    # Инициализация времени сессии
-    if 'session_start' not in context.user_data:
-        context.user_data['session_start'] = datetime.now()
+    # Инициализация данных если нужно
+    if not plan_bot_data:
+        await load_data()
     
     # Получаем статистику пользователя
     practiced_indices = context.user_data.get('practiced_topics', set())
     total_topics = len(plan_bot_data.topic_list_for_pagination) if plan_bot_data else 0
+    results = context.user_data.get('task24_results', [])
     
     user_stats = {
-        'total_attempts': len(practiced_indices),
-        'average_score': 0,
+        'total_attempts': len(results),
+        'average_score': sum(r.get('score', 0) for r in results) / len(results) if results else 0,
         'streak': context.user_data.get('correct_streak', 0),
         'weak_topics_count': 0,
         'progress_percent': int(len(practiced_indices) / total_topics * 100) if total_topics > 0 else 0
     }
     
-    from core.ui_helpers import get_personalized_greeting
+    # Персонализированное приветствие
     greeting = get_personalized_greeting(user_stats)
+    text = greeting + MessageFormatter.format_welcome_message(
+        "задание 24",
+        is_new_user=user_stats['total_attempts'] == 0
+    )
     
-    text = greeting + "\n\n📝 <b>Задание 24 - составление сложного плана</b>\n\nВыберите режим работы:"
-    
-    user_id = update.effective_user.id
-    kb = keyboards.build_main_menu_keyboard(user_stats)
+    # Строим унифицированную клавиатуру
+    kb = build_main_menu_keyboard(user_stats)
     
     await update.message.reply_text(
         text,
@@ -320,62 +309,7 @@ async def show_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=kb,
         parse_mode=ParseMode.HTML
     )
-    return states.CHOOSING_TOPIC  # ← Исправлено: возвращаем правильное состояние
-
-@safe_handler()
-@validate_state_transition({states.CHOOSING_MODE})
-async def exam_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Режим экзамена - случайная тема без возможности выбора."""
-    query = update.callback_query
-    
-    if not plan_bot_data or not plan_bot_data.topic_list_for_pagination:
-        await query.edit_message_text(
-            "❌ Данные планов не загружены. Обратитесь к администратору.",
-            reply_markup=InlineKeyboardMarkup([[
-                InlineKeyboardButton("🏠 Главное меню", callback_data="to_main_menu")
-            ]])
-        )
-        return ConversationHandler.END
-    
-    import random
-    all_topics = plan_bot_data.get_all_topics_list()
-    practiced = context.user_data.get('practiced_topics', set())
-    
-    # Приоритет непройденным темам
-    unpracticed = [(idx, topic) for idx, topic in all_topics if idx not in practiced]
-    
-    if not unpracticed and not all_topics:
-        await query.edit_message_text(
-            "❌ Нет доступных тем для экзамена.",
-            reply_markup=InlineKeyboardMarkup([[
-                InlineKeyboardButton("⬅️ Назад", callback_data="t24_menu")
-            ]])
-        )
-        return states.CHOOSING_MODE
-    
-    # Выбираем тему
-    topics_pool = unpracticed if unpracticed else all_topics
-    idx, topic = random.choice(topics_pool)
-    
-    context.user_data['current_topic_index'] = idx
-    context.user_data['current_topic'] = topic
-    context.user_data['exam_mode'] = True
-    
-    status = "🆕 новая тема" if idx not in practiced else "🔁 повторение"
-    
-    await query.edit_message_text(
-        f"🎯 <b>Режим экзамена</b> ({status})\n\n"
-        f"📝 <b>Тема:</b> {topic}\n\n"
-        "Составьте план. У вас одна попытка!\n\n"
-        "<b>💡 Примеры форматов подпунктов:</b>\n"
-        "• <code>Виды: фрикционная; структурная; циклическая</code>\n"
-        "• <code>а) первый подпункт б) второй в) третий</code>\n"
-        "• <code>- подпункт 1\n- подпункт 2</code>\n\n"
-        "<i>Отправьте /cancel для отмены.</i>",
-        parse_mode=ParseMode.HTML
-    )
-    
-    return states.AWAITING_PLAN
+    return states.CHOOSING_TOPIC
 
 @safe_handler()
 async def list_topics(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -790,7 +724,7 @@ async def handle_plan_enhanced(update: Update, context: ContextTypes.DEFAULT_TYP
         
         # Сохраняем ID сообщения с результатом
         context.user_data['task24_result_msg_id'] = result_msg.message_id
-        
+        save_result(context, topic_name, evaluation_result.score)
         return states.AWAITING_FEEDBACK
         
     except Exception as e:
@@ -1247,6 +1181,21 @@ async def reset_progress(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return states.CHOOSING_MODE
 
 @safe_handler()
+async def confirm_reset_progress(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Подтверждение сброса прогресса."""
+    query = update.callback_query
+    
+    # Сбрасываем прогресс
+    context.user_data['practiced_topics'] = set()
+    context.user_data['task24_results'] = []  # Сбрасываем историю результатов
+    context.user_data['correct_streak'] = 0   # Сбрасываем серию
+    
+    await query.answer("✅ Прогресс сброшен!", show_alert=True)
+    
+    # Возвращаемся в меню
+    return await return_to_menu(update, context)
+
+@safe_handler()
 async def cancel_reset(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Отмена сброса прогресса."""
     query = update.callback_query
@@ -1395,6 +1344,27 @@ def _format_evaluation_feedback(k1: int, k2: int, missing: list, topic_name: str
     
     return text
 
+def save_result(context: ContextTypes.DEFAULT_TYPE, topic_name: str, score: int, max_score: int = 4):
+    """Сохранение результата в историю."""
+    if 'task24_results' not in context.user_data:
+        context.user_data['task24_results'] = []
+    
+    result = {
+        'topic': topic_name,
+        'score': score,
+        'max_score': max_score,
+        'timestamp': datetime.now().isoformat(),
+        'topic_index': context.user_data.get('current_topic_index')
+    }
+    
+    context.user_data['task24_results'].append(result)
+    
+    # Обновляем серию правильных ответов
+    if score >= 3:  # Хороший результат
+        context.user_data['correct_streak'] = context.user_data.get('correct_streak', 0) + 1
+    else:
+        context.user_data['correct_streak'] = 0
+
 @safe_handler()
 async def handle_search_query(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработка поискового запроса."""
@@ -1478,44 +1448,55 @@ async def handle_search_query(update: Update, context: ContextTypes.DEFAULT_TYPE
     return states.CHOOSING_TOPIC
     
 @safe_handler()
-@validate_state_transition({states.CHOOSING_MODE, states.CHOOSING_BLOCK, states.CHOOSING_TOPIC, states.ANSWERING})
-async def back_to_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Возврат в меню плагина."""
+async def return_to_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Возврат в меню плагина с унифицированным интерфейсом."""
     query = update.callback_query
-    
-    user_id = query.from_user.id
-    kb = keyboards.build_main_menu_keyboard()
-    
-    menu_text = (
-        "📝 <b>Задание 24 - составление сложного плана</b>\n\n"
-        "Выберите режим работы:"
-    )
-    
-    try:
-        # Редактируем существующее сообщение
-        await query.edit_message_text(
-            menu_text,
-            reply_markup=kb,
-            parse_mode=ParseMode.HTML
-        )
-    except telegram.error.BadRequest as e:
-        # Если не удалось отредактировать (например, сообщение уже удалено)
-        if "Message can't be edited" in str(e) or "Message to edit not found" in str(e):
-            # Тогда отправляем новое
-            await query.message.reply_text(
-                menu_text,
-                reply_markup=kb,
-                parse_mode=ParseMode.HTML
-            )
-        else:
-            raise
     
     # Очищаем временные данные
     context.user_data.pop('current_topic_index', None)
     context.user_data.pop('current_topic', None)
     context.user_data.pop('exam_mode', None)
     
-    # НЕ удаляем ID сообщений здесь - они могут понадобиться для последующих операций
+    # Получаем статистику пользователя
+    practiced_indices = context.user_data.get('practiced_topics', set())
+    total_topics = len(plan_bot_data.topic_list_for_pagination) if plan_bot_data else 0
+    
+    # Получаем историю результатов если есть
+    results = context.user_data.get('task24_results', [])
+    
+    user_stats = {
+        'total_attempts': len(results),
+        'average_score': sum(r.get('score', 0) for r in results) / len(results) if results else 0,
+        'streak': context.user_data.get('correct_streak', 0),
+        'weak_topics_count': 0,
+        'progress_percent': int(len(practiced_indices) / total_topics * 100) if total_topics > 0 else 0
+    }
+    
+    # Персонализированное приветствие
+    greeting = get_personalized_greeting(user_stats)
+    text = greeting + MessageFormatter.format_welcome_message(
+        "задание 24",
+        is_new_user=user_stats['total_attempts'] == 0
+    )
+    
+    # Используем унифицированную клавиатуру
+    kb = build_main_menu_keyboard(user_stats)
+    
+    try:
+        await query.edit_message_text(
+            text,
+            reply_markup=kb,
+            parse_mode=ParseMode.HTML
+        )
+    except telegram.error.BadRequest as e:
+        if "Message can't be edited" in str(e) or "Message to edit not found" in str(e):
+            await query.message.reply_text(
+                text,
+                reply_markup=kb,
+                parse_mode=ParseMode.HTML
+            )
+        else:
+            raise
     
     return states.CHOOSING_MODE
 
@@ -1608,15 +1589,21 @@ async def t24_retry(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def cmd_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Отмена текущего действия."""
-    user_id = update.effective_user.id
+    # Получаем статистику
+    practiced_indices = context.user_data.get('practiced_topics', set())
+    total_topics = len(plan_bot_data.topic_list_for_pagination) if plan_bot_data else 0
+    results = context.user_data.get('task24_results', [])
     
-    # ОБНОВЛЕННЫЙ КОД
-    kb = keyboards.build_main_menu_keyboard()
-    if admin_manager.is_admin(user_id):
-        admin_buttons = get_admin_keyboard_extension(user_id)
-        keyboard_rows = [list(row) for row in kb.inline_keyboard]
-        keyboard_rows.extend(admin_buttons)
-        kb = InlineKeyboardMarkup(keyboard_rows)
+    user_stats = {
+        'total_attempts': len(results),
+        'average_score': sum(r.get('score', 0) for r in results) / len(results) if results else 0,
+        'streak': context.user_data.get('correct_streak', 0),
+        'weak_topics_count': 0,
+        'progress_percent': int(len(practiced_indices) / total_topics * 100) if total_topics > 0 else 0
+    }
+    
+    # Используем унифицированную клавиатуру
+    kb = build_main_menu_keyboard(user_stats)
     
     await update.message.reply_text(
         "❌ Действие отменено.\n\nВыберите режим:",

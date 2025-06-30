@@ -44,7 +44,6 @@ class Task24Plugin(BotPlugin):
                     CallbackQueryHandler(handlers.train_mode, pattern="^t24_train$"),
                     CallbackQueryHandler(handlers.show_mode, pattern="^t24_show$"),
                     CallbackQueryHandler(handlers.list_topics, pattern="^t24_show_list$"),
-                    CallbackQueryHandler(handlers.exam_mode, pattern="^t24_exam$"),
                     CallbackQueryHandler(handlers.search_topics, pattern="^t24_search$"),
                     CallbackQueryHandler(handlers.show_criteria, pattern="^t24_criteria$"),
                     CallbackQueryHandler(handlers.show_help, pattern="^t24_help$"),
@@ -61,7 +60,7 @@ class Task24Plugin(BotPlugin):
                     CallbackQueryHandler(handlers.select_topic, pattern=r"^t24_topic_"),
                     CallbackQueryHandler(handlers.navigate_topics, pattern=r"^t24_nav_"),
                     CallbackQueryHandler(handlers.next_topic, pattern="^next_topic$"),
-                    CallbackQueryHandler(handlers.back_to_menu, pattern="^t24_menu$"),
+                    CallbackQueryHandler(handlers.return_to_menu, pattern="^t24_menu$"),
                     CallbackQueryHandler(handlers.back_to_main_menu, pattern="^to_main_menu$"),
                     CallbackQueryHandler(handlers.noop, pattern="^noop$")
                 ],
@@ -72,7 +71,7 @@ class Task24Plugin(BotPlugin):
                 states.AWAITING_FEEDBACK: [
                     CallbackQueryHandler(handlers.t24_retry, pattern="^t24_retry$"),
                     CallbackQueryHandler(handlers.next_topic, pattern="^next_topic$"),
-                    CallbackQueryHandler(handlers.back_to_menu, pattern="^t24_menu$"),
+                    CallbackQueryHandler(handlers.return_to_menu, pattern="^t24_menu$"),
                     CallbackQueryHandler(handlers.back_to_main_menu, pattern="^to_main_menu$"),
                 ],
                 states.AWAITING_SEARCH: [
@@ -81,7 +80,7 @@ class Task24Plugin(BotPlugin):
             },
             fallbacks=[
                 CommandHandler("cancel", handlers.cmd_cancel),
-                CallbackQueryHandler(handlers.back_to_menu, pattern="^t24_menu$"),
+                CallbackQueryHandler(handlers.return_to_menu, pattern="^t24_menu$"),
             ],
             allow_reentry=True,
         )
