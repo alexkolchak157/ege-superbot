@@ -49,19 +49,23 @@ class Task24Plugin(BotPlugin):
                     CallbackQueryHandler(handlers.show_help, pattern="^t24_help$"),
                     CallbackQueryHandler(handlers.reset_progress, pattern="^t24_reset_progress$"),
                     CallbackQueryHandler(handlers.show_block_stats, pattern="^t24_progress$"),
-                    CallbackQueryHandler(handlers.show_detailed_progress, pattern="^show_detailed_progress"),  
+                    CallbackQueryHandler(handlers.show_detailed_progress, pattern="^show_detailed_progress"),
                     CallbackQueryHandler(handlers.show_completed, pattern="^show_completed$"),
-                    CallbackQueryHandler(handlers.show_remaining, pattern="^show_remaining"),
+                    CallbackQueryHandler(handlers.show_remaining, pattern="^show_remaining$"),
                     CallbackQueryHandler(handlers.export_progress, pattern="^export_progress$"),
                     CallbackQueryHandler(handlers.back_to_main_menu, pattern="^to_main_menu$"),
                     CallbackQueryHandler(handlers.cancel_reset, pattern="^t24_cancel_reset$"),
                 ],
                 states.CHOOSING_TOPIC: [
+                    # Обработчики с короткими callback_data
                     CallbackQueryHandler(handlers.select_topic, pattern=r"^t24_t:"),
                     CallbackQueryHandler(handlers.navigate_topics, pattern=r"^t24_nav_"),
                     CallbackQueryHandler(handlers.handle_block_selection, pattern=r"^t24_blk:"),
                     CallbackQueryHandler(handlers.handle_pagination, pattern=r"^t24_pg:"),
                     CallbackQueryHandler(handlers.start_training_from_etalon, pattern=r"^t24_tr:"),
+                    
+                    # Обработчики для старого формата (для обратной совместимости)
+                    CallbackQueryHandler(handlers.select_topic, pattern=r"^t24_topic_"),
                     
                     # Остальные обработчики
                     CallbackQueryHandler(handlers.next_topic, pattern="^next_topic$"),

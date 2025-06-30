@@ -1,6 +1,7 @@
 import logging
 import json
 import os
+import html
 import telegram
 from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton
 from telegram.ext import ContextTypes, ConversationHandler
@@ -388,21 +389,31 @@ async def list_topics(update: Update, context: ContextTypes.DEFAULT_TYPE):
 @safe_handler()
 @validate_state_transition({states.CHOOSING_TOPIC})
 async def select_topic(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Выбор конкретной темы из списка."""
+    """Выбор конкретной темы из списка. Поддерживает оба формата callback_data."""
     query = update.callback_query
     
     data = query.data
-    if not data.startswith("t24_t:"):
+    mode = None
+    topic_idx = None
+    
+    # Поддержка нового формата: t24_t:mode:idx
+    if data.startswith("t24_t:"):
+        parts = data[len("t24_t:"):].split(":")
+        if len(parts) >= 2:
+            mode = parts[0]
+            topic_idx = int(parts[1])
+    
+    # Поддержка старого формата: t24_topic_mode:idx
+    elif data.startswith("t24_topic_"):
+        parts = data[len("t24_topic_"):].split(":")
+        if len(parts) >= 2:
+            mode = parts[0]
+            topic_idx = int(parts[1])
+    
+    if mode is None or topic_idx is None:
         logger.error(f"Неправильный формат callback_data: {query.data}")
+        await query.answer("❌ Ошибка формата данных", show_alert=True)
         return states.CHOOSING_TOPIC
-
-    parts = data[len("t24_t:"):].split(":")
-    if len(parts) < 2:
-        logger.error(f"Неправильный формат callback_data: {query.data}")
-        return states.CHOOSING_TOPIC
-
-    mode = parts[0]
-    topic_idx = int(parts[1])
     
     # Получаем тему по индексу
     topic_name = plan_bot_data.topic_index_map.get(topic_idx)
@@ -1522,60 +1533,54 @@ def save_result(context: ContextTypes.DEFAULT_TYPE, topic_name: str, score: int,
 @safe_handler()
 async def handle_search_query(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработка поискового запроса."""
-    search_text = update.message.text.lower()
-    results = []
+    query_text = update.message.text.strip().lower()
     
-    # Поиск по названиям тем
-    for idx, topic in plan_bot_data.topic_list_for_pagination:
-        if search_text in topic.lower():
-            results.append((idx, topic, "exact"))
-    
-    # Поиск по индексу
-    search_words = search_text.split()
-    for word in search_words:
-        if word in plan_bot_data.search_index:
-            for idx in plan_bot_data.search_index[word]:
-                topic = plan_bot_data.topic_index_map[idx]
-                if (idx, topic, "exact") not in results:
-                    results.append((idx, topic, "partial"))
-    
-    # Ограничиваем количество результатов
-    results = results[:15]
-    
-    if not results:
+    if not plan_bot_data:
         await update.message.reply_text(
-            "❌ По вашему запросу ничего не найдено.\n"
-            "Попробуйте:\n"
-            "• Использовать другие ключевые слова\n"
-            "• Проверить правописание\n"
-            "• Использовать более общие термины",
+            "❌ Данные планов не загружены.",
             reply_markup=InlineKeyboardMarkup([[
-                InlineKeyboardButton("🔍 Искать снова", callback_data="t24_search"),
-                InlineKeyboardButton("⬅️ Назад", callback_data="t24_menu")
-            ]]),
-            parse_mode=ParseMode.HTML
+                InlineKeyboardButton("🏠 Главное меню", callback_data="to_main_menu")
+            ]])
         )
-        return states.CHOOSING_MODE
+        return ConversationHandler.END
     
-    # Показываем результаты
-    text = f"🔍 <b>Найдено тем: {len(results)}</b>\n\n"
+    # Поиск по темам
+    exact_matches = []
+    partial_matches = []
     
-    # Группируем по типу совпадения
-    exact_matches = [(idx, topic) for idx, topic, match_type in results if match_type == "exact"]
-    partial_matches = [(idx, topic) for idx, topic, match_type in results if match_type == "partial"]
+    for idx, topic in plan_bot_data.topic_list_for_pagination:
+        topic_lower = topic.lower()
+        if query_text == topic_lower:
+            exact_matches.append((idx, topic))
+        elif query_text in topic_lower or all(word in topic_lower for word in query_text.split()):
+            partial_matches.append((idx, topic))
     
+    # Формируем результаты
+    text = f"🔍 <b>Результаты поиска по запросу:</b> <i>{html.escape(update.message.text)}</i>\n\n"
     kb_buttons = []
     
-    if exact_matches:
-        text += "📌 <b>Точные совпадения:</b>\n"
-        for idx, topic in exact_matches[:5]:
-            kb_buttons.append([
-                InlineKeyboardButton(
-                    f"📄 {topic[:50]}{'...' if len(topic) > 50 else ''}",
-                    callback_data=f"t24_topic_{context.user_data.get('mode', 'train')}:{idx}"
-                )
-            ])
+    if not exact_matches and not partial_matches:
+        text += "❌ Ничего не найдено.\n\nПопробуйте изменить запрос или выбрать тему из списка."
+    else:
+        if exact_matches:
+            text += f"✅ <b>Точные совпадения:</b> {len(exact_matches)}\n"
+        if partial_matches:
+            text += f"📎 <b>Частичные совпадения:</b> {len(partial_matches)}\n"
     
+    # Добавляем кнопки результатов
+    mode = context.user_data.get('mode', 'train')
+    
+    # Сначала точные совпадения
+    for idx, topic in exact_matches[:5]:
+        kb_buttons.append([
+            InlineKeyboardButton(
+                f"🎯 {topic[:50]}{'...' if len(topic) > 50 else ''}",
+                # ИСПРАВЛЕНО: используем новый формат callback_data
+                callback_data=f"t24_t:{mode}:{idx}"
+            )
+        ])
+    
+    # Затем частичные
     if partial_matches and len(kb_buttons) < 10:
         if exact_matches:
             text += "\n📎 <b>Частичные совпадения:</b>\n"
@@ -1585,7 +1590,8 @@ async def handle_search_query(update: Update, context: ContextTypes.DEFAULT_TYPE
             kb_buttons.append([
                 InlineKeyboardButton(
                     f"📄 {topic[:50]}{'...' if len(topic) > 50 else ''}",
-                    callback_data=f"t24_topic_{context.user_data.get('mode', 'train')}:{idx}"
+                    # ИСПРАВЛЕНО: используем новый формат callback_data
+                    callback_data=f"t24_t:{mode}:{idx}"
                 )
             ])
     
@@ -1604,18 +1610,17 @@ async def handle_search_query(update: Update, context: ContextTypes.DEFAULT_TYPE
 @safe_handler()
 async def return_to_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Возврат в меню плагина с унифицированным интерфейсом."""
+    # Получаем query или message
     query = update.callback_query
+    message = query.message if query else update.message
     
-    # Очищаем временные данные
-    context.user_data.pop('current_topic_index', None)
-    context.user_data.pop('current_topic', None)
-    context.user_data.pop('exam_mode', None)
+    if not message:
+        logger.error("No message object in return_to_menu")
+        return states.CHOOSING_MODE
     
     # Получаем статистику пользователя
     practiced_indices = context.user_data.get('practiced_topics', set())
     total_topics = len(plan_bot_data.topic_list_for_pagination) if plan_bot_data else 0
-    
-    # Получаем историю результатов если есть
     results = context.user_data.get('task24_results', [])
     
     user_stats = {
@@ -1633,24 +1638,31 @@ async def return_to_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         is_new_user=user_stats['total_attempts'] == 0
     )
     
-    # Используем унифицированную клавиатуру
+    # Строим унифицированную клавиатуру
     kb = keyboards.build_main_menu_keyboard(user_stats)
     
-    try:
-        await query.edit_message_text(
-            text,
-            reply_markup=kb,
-            parse_mode=ParseMode.HTML
-        )
-    except telegram.error.BadRequest as e:
-        if "Message can't be edited" in str(e) or "Message to edit not found" in str(e):
-            await query.message.reply_text(
+    # Используем edit_message_text если есть query, иначе reply_text
+    if query:
+        try:
+            await query.edit_message_text(
                 text,
                 reply_markup=kb,
                 parse_mode=ParseMode.HTML
             )
-        else:
-            raise
+        except Exception as e:
+            # Если не удалось отредактировать, отправляем новое сообщение
+            logger.error(f"Failed to edit message in return_to_menu: {e}")
+            await message.reply_text(
+                text,
+                reply_markup=kb,
+                parse_mode=ParseMode.HTML
+            )
+    else:
+        await message.reply_text(
+            text,
+            reply_markup=kb,
+            parse_mode=ParseMode.HTML
+        )
     
     return states.CHOOSING_MODE
 
