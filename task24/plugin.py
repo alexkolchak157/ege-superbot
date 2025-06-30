@@ -60,6 +60,7 @@ class Task24Plugin(BotPlugin):
                     CallbackQueryHandler(handlers.select_topic, pattern=r"^t24_topic_"),
                     CallbackQueryHandler(handlers.navigate_topics, pattern=r"^t24_nav_"),
                     CallbackQueryHandler(handlers.next_topic, pattern="^next_topic$"),
+                    CallbackQueryHandler(handlers.start_training_from_etalon, pattern=r"^t24_topic_train:"),
                     CallbackQueryHandler(handlers.return_to_menu, pattern="^t24_menu$"),
                     CallbackQueryHandler(handlers.back_to_main_menu, pattern="^to_main_menu$"),
                     CallbackQueryHandler(handlers.noop, pattern="^noop$")

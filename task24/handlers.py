@@ -414,6 +414,9 @@ async def select_topic(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data['current_topic'] = topic_name
     
     if mode == 'train':
+        # Сохраняем режим тренировки
+        context.user_data['mode'] = 'train'
+        
         # Режим тренировки - просим прислать план
         await query.edit_message_text(
             f"📝 <b>Тема:</b> {topic_name}\n\n"
@@ -438,18 +441,60 @@ async def select_topic(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     elif mode == 'show':
         # Режим просмотра - показываем эталон
+        # ИСПРАВЛЕНО: передаем query вместо update
         return await show_etalon_plan(query, context, topic_idx)
 
 @safe_handler()
+@validate_state_transition({states.CHOOSING_TOPIC})
+async def start_training_from_etalon(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Начать тренировку после просмотра эталона."""
+    query = update.callback_query
+    
+    # Извлекаем индекс темы
+    topic_idx = int(query.data.split(':')[1])
+    topic_name = plan_bot_data.topic_index_map.get(topic_idx)
+    
+    if not topic_name:
+        await query.answer("❌ Тема не найдена", show_alert=True)
+        return states.CHOOSING_TOPIC
+    
+    # Устанавливаем режим тренировки
+    context.user_data['mode'] = 'train'
+    context.user_data['current_topic_index'] = topic_idx
+    context.user_data['current_topic'] = topic_name
+    
+    # Показываем задание
+    await query.edit_message_text(
+        f"📝 <b>Тема:</b> {topic_name}\n\n"
+        "Составьте и отправьте сложный план по этой теме.\n\n"
+        "<b>Требования ЕГЭ 2025:</b>\n"
+        "• Минимум 3 пункта, раскрывающих тему\n"
+        "• Минимум 3 из них должны быть детализированы\n"
+        "• В каждом пункте минимум 3 подпункта\n\n"
+        "<b>Форматы написания подпунктов:</b>\n"
+        "✅ <code>1. Виды: фрикционная; структурная; циклическая</code>\n"
+        "✅ <code>2. Последствия:\n   а) для экономики\n   б) для общества</code>\n"
+        "✅ <code>3. Меры борьбы:\n   - программы занятости\n   - переквалификация</code>\n\n"
+        "<i>💡 Можете использовать любой удобный формат!</i>\n\n"
+        "<i>Отправьте /cancel для отмены</i>",
+        parse_mode=ParseMode.HTML
+    )
+    
+    context.user_data['task24_topic_msg_id'] = query.message.message_id
+    
+    return states.AWAITING_PLAN
+
 async def show_etalon_plan(query, context, topic_idx):
     """Показ эталонного плана."""
     topic_name = plan_bot_data.topic_index_map.get(topic_idx)
     if not topic_name:
-        return
+        await query.answer("❌ Тема не найдена", show_alert=True)
+        return states.CHOOSING_TOPIC
     
     plan_data = plan_bot_data.get_plan_data(topic_name)
     if not plan_data:
-        return
+        await query.answer("❌ План не найден", show_alert=True)
+        return states.CHOOSING_TOPIC
     
     # Формируем текст эталона
     text = f"📋 <b>Эталонный план</b>\n<b>Тема:</b> {topic_name}\n\n"
@@ -479,9 +524,11 @@ async def show_etalon_plan(query, context, topic_idx):
     if obligatory_count > 0:
         text += f"\n⭐ <i>Обязательных пунктов: {obligatory_count}</i>"
     
+    # ИСПРАВЛЕННЫЕ КНОПКИ с короткими callback_data
     kb = InlineKeyboardMarkup([
-        [InlineKeyboardButton("📝 Потренироваться", callback_data=f"t24_topic_train:{topic_idx}")],
-        [InlineKeyboardButton("⬅️ К выбору темы", callback_data=f"t24_nav_back_to_choice:{context.user_data.get('mode')}")],
+        [InlineKeyboardButton("📝 Потренироваться с этой темой", callback_data=f"t24_topic_train:{topic_idx}")],
+        [InlineKeyboardButton("🎲 Другая тема", callback_data="t24_nav_rnd:show")],  # random -> rnd
+        [InlineKeyboardButton("📚 Выбрать тему", callback_data="t24_nav_cb:show")],  # choose_block -> cb
         [InlineKeyboardButton("🏠 В меню", callback_data="t24_menu")]
     ])
     
@@ -530,6 +577,18 @@ async def navigate_topics(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         await query.edit_message_text(text, reply_markup=kb, parse_mode=ParseMode.HTML)
     
+    elif action == "back_to_choice":
+        # Возвращаемся к выбору способа поиска темы
+        mode = parts[1] if len(parts) > 1 else context.user_data.get('mode', 'show')
+        kb = keyboards.build_initial_choice_keyboard(mode)
+        await query.edit_message_text(
+            f"👁 <b>Режим {'тренировки' if mode == 'train' else 'просмотра эталонов'}</b>\n\n"
+            "Как вы хотите выбрать тему?",
+            reply_markup=kb,
+            parse_mode=ParseMode.HTML
+        )
+        return states.CHOOSING_TOPIC
+
     elif action == "random":
         mode = parts[1]
         import random
@@ -568,7 +627,7 @@ async def navigate_topics(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
             elif mode == 'show':
                 # Режим просмотра - показываем эталон
-                return await show_etalon_plan(query, context, idx)
+                return await show_etalon_plan(update, context, idx)
 
     elif action in ["all", "block"]:
         mode = parts[1]
