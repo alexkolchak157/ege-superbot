@@ -727,9 +727,9 @@ async def safe_handle_answer_task25(update: Update, context: ContextTypes.DEFAUL
         
         # Сохраняем результат
         result_data = {
-            'topic': topic['title'],
+            'topic_title': topic.get('title', 'Неизвестная тема'),  # Изменить ключ
             'topic_id': topic.get('id'),
-            'block': topic.get('block', 'Общее'),
+            'block': topic.get('block', 'Общие темы'),  # Исправить значение по умолчанию
             'score': score,
             'max_score': 6,
             'timestamp': datetime.now().isoformat()
@@ -1576,14 +1576,38 @@ async def back_to_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Возврат в главное меню."""
     query = update.callback_query
     
-    kb = build_main_menu()
+    # Очищаем состояние пользователя
+    from core.state_validator import state_validator
+    if query and query.from_user:
+        state_validator.clear_state(query.from_user.id)
     
-    await query.edit_message_text(
-        "🎓 <b>Подготовка к ЕГЭ по обществознанию</b>\n\n"
-        "Выберите раздел для тренировки:",
-        reply_markup=kb,
-        parse_mode=ParseMode.HTML
-    )
+    # Очищаем данные модуля
+    keys_to_clear = [
+        'current_topic', 'current_block', 'bank_current_idx', 
+        'waiting_for_bank_search', 'task25_results', 'module',
+        'active_module', 'current_module', 'task25_current_topic',
+        'current_part', 'answer_parts', 'task25_stats',
+        'practice_stats', 'selected_block'
+    ]
+    for key in keys_to_clear:
+        context.user_data.pop(key, None)
+    
+    # Отвечаем на callback
+    if query:
+        await query.answer()
+    
+    # Показываем главное меню
+    try:
+        await query.edit_message_text(
+            "👋 Что хотите потренировать?",
+            reply_markup=build_main_menu()
+        )
+    except Exception as e:
+        # Если не удалось отредактировать, отправляем новое сообщение
+        await query.message.reply_text(
+            "👋 Что хотите потренировать?",
+            reply_markup=build_main_menu()
+        )
     
     return ConversationHandler.END
 
@@ -2098,7 +2122,7 @@ async def handle_bank_search(update: Update, context: ContextTypes.DEFAULT_TYPE)
         parse_mode=ParseMode.HTML
     )
     
-    return states.CHOOSING_MODE
+    return states.SEARCHING
 
 
 @safe_handler()
