@@ -38,34 +38,50 @@ async def show_thinking_animation(message: Message, text: str = "Анализи�
     return thinking_msg
 
 async def show_extended_thinking_animation(message: Message, text: str = "Проверяю ваш ответ", 
-                                         duration: int = 60) -> Message:
+                                         duration: int = 40) -> Message:
     """
     Показывает длительную анимированную проверку для AI-оценки.
     
     Args:
         message: Сообщение для ответа
         text: Текст анимации
-        duration: Длительность анимации в секундах (по умолчанию 60)
+        duration: Длительность анимации в секундах (по умолчанию 40)
         
     Returns:
         Message: Отправленное сообщение с анимацией
     """
-    emojis = ["✨", "🔍", "📝", "💭", "🤔", "📊"]
-    dots = [".", "..", "..."]
+    # Расширенный набор эмодзи для разнообразия
+    emojis = ["🔍", "📝", "🤔", "💭", "📊", "✨", "🧐", "📖", "🎯", "⚡"]
+    dots_sequence = [".", "..", "..."]
     
     # Отправляем начальное сообщение
-    thinking_msg = await message.reply_text(f"{emojis[0]} {text}{dots[0]}")
+    thinking_msg = await message.reply_text(f"{emojis[0]} {text}{dots_sequence[0]}")
     
     # Создаем фоновую задачу для анимации
     async def animate():
-        iterations = duration // 2  # Обновление каждые 2 секунды вместо 3
+        update_interval = 1.5  # Обновление каждые 1.5 секунды
+        iterations = int(duration / update_interval)
+        
         for i in range(iterations):
-            emoji = emojis[i % len(emojis)]
-            dot = dots[i % len(dots)]
+            # Меняем эмодзи каждые 3 итерации (примерно каждые 4.5 секунды)
+            emoji_index = (i // 3) % len(emojis)
+            emoji = emojis[emoji_index]
+            
+            # Точки меняются каждую итерацию
+            dots = dots_sequence[i % len(dots_sequence)]
             
             try:
-                await thinking_msg.edit_text(f"{emoji} {text}{dot}")
-                await asyncio.sleep(2)  # Уменьшено с 3
+                # Добавляем вариативность в текст для некоторых итераций
+                if i % 10 == 5:  # Каждые ~15 секунд
+                    variation_text = "Анализирую детали"
+                elif i % 10 == 8:  # Каждые ~12 секунд с смещением
+                    variation_text = "Почти готово"
+                else:
+                    variation_text = text
+                
+                await thinking_msg.edit_text(f"{emoji} {variation_text}{dots}")
+                await asyncio.sleep(update_interval)
+                
             except Exception as e:
                 # Сообщение было удалено или произошла ошибка
                 logger.debug(f"Animation stopped: {e}")
@@ -73,6 +89,74 @@ async def show_extended_thinking_animation(message: Message, text: str = "Про
     
     # Запускаем анимацию в фоне
     asyncio.create_task(animate())
+    
+    return thinking_msg
+
+
+async def show_ai_evaluation_animation(message: Message, duration: int = 40) -> Message:
+    """
+    Специальная анимация для AI-проверки с подробными статусами.
+    
+    Args:
+        message: Сообщение для ответа
+        duration: Общая длительность анимации в секундах
+        
+    Returns:
+        Message: Сообщение с анимацией
+    """
+    # Фазы проверки с соответствующими эмодзи
+    phases = [
+        ("🔍", "Анализирую ваш ответ"),
+        ("📝", "Проверяю соответствие критериям"),
+        ("🤔", "Оцениваю полноту ответа"),
+        ("💭", "Проверяю фактическую точность"),
+        ("📊", "Подсчитываю баллы"),
+        ("✨", "Формирую обратную связь")
+    ]
+    
+    dots_sequence = [".", "..", "..."]
+    
+    # Отправляем начальное сообщение
+    emoji, text = phases[0]
+    thinking_msg = await message.reply_text(f"{emoji} {text}{dots_sequence[0]}")
+    
+    # Рассчитываем время для каждой фазы
+    phase_duration = duration / len(phases)
+    updates_per_phase = max(3, int(phase_duration / 1.5))  # Минимум 3 обновления на фазу
+    
+    # Создаём корутину для анимации
+    async def run_animation():
+        try:
+            for phase_idx, (emoji, phase_text) in enumerate(phases):
+                for update_idx in range(updates_per_phase):
+                    dots = dots_sequence[update_idx % len(dots_sequence)]
+                    
+                    try:
+                        # В конце каждой фазы добавляем галочку
+                        if update_idx == updates_per_phase - 1 and phase_idx < len(phases) - 1:
+                            await thinking_msg.edit_text(f"{emoji} {phase_text}... ✓")
+                            await asyncio.sleep(0.7)
+                        else:
+                            await thinking_msg.edit_text(f"{emoji} {phase_text}{dots}")
+                            await asyncio.sleep(1.3)
+                            
+                    except Exception as e:
+                        logger.debug(f"Animation update failed: {e}")
+                        return
+            
+            # Финальное сообщение
+            try:
+                await thinking_msg.edit_text("✅ Проверка завершена!")
+                await asyncio.sleep(0.5)
+            except:
+                pass
+                
+        except Exception as e:
+            logger.error(f"Animation error: {e}")
+    
+    # Запускаем анимацию как фоновую задачу
+    # НЕ сохраняем ссылку на задачу в объекте Message
+    asyncio.create_task(run_animation())
     
     return thinking_msg
 

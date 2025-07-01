@@ -36,13 +36,19 @@ async def post_shutdown(application: Application) -> None:
     """Выполняется при завершении приложения."""
     await db.close_db()
     
-    # Выводим статистику переходов состояний
-    stats = state_validator.get_stats()
-    logger.info(f"State transitions statistics: {stats['total_transitions']} total transitions")
-    if stats['top_transitions']:
-        logger.info("Top state transitions:")
-        for transition, count in stats['top_transitions'][:5]:
-            logger.info(f"  {transition}: {count} times")
+    # Закрываем AI сессии для всех модулей
+    from task19.handlers import evaluator as task19_evaluator
+    from task20.handlers import evaluator as task20_evaluator
+    from task25.handlers import evaluator as task25_evaluator
+    
+    for evaluator in [task19_evaluator, task20_evaluator, task25_evaluator]:
+        if evaluator and hasattr(evaluator, 'cleanup'):
+            try:
+                await evaluator.cleanup()
+            except:
+                pass
+    
+    logger.info("All resources cleaned up")
 
 async def start(update, context):
     """Главная команда /start."""
