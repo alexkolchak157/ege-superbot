@@ -17,7 +17,8 @@ from core.universal_ui import UniversalUIComponents, AdaptiveKeyboards, MessageF
 from core.states import ANSWERING_PARTS, CHOOSING_BLOCK_T25
 from core.ui_helpers import (
     show_thinking_animation,
-    show_extended_thinking_animation,  # Добавить
+    show_extended_thinking_animation,
+    show_ai_evaluation_animation,
     show_streak_notification,
     get_personalized_greeting,
     get_motivational_message,
@@ -678,12 +679,12 @@ async def safe_handle_answer_task25(update: Update, context: ContextTypes.DEFAUL
         return states.ANSWERING
     
     # Показываем анимацию обработки
-    thinking_msg = await show_thinking_animation(
+    thinking_msg = await show_ai_evaluation_animation(
         update.message,
-        "Анализирую ваш ответ"
+        duration=45  # 45 секунд для task25 (сложнее)
     )
     
-    try:
+    try:    
         # Инициализируем evaluator если нужно
         global evaluator
         if evaluator is None and AI_EVALUATOR_AVAILABLE:
