@@ -22,6 +22,7 @@ from core.ui_helpers import (
     show_thinking_animation,
     show_extended_thinking_animation,
     show_streak_notification,
+    show_ai_evaluation_animation,
     get_personalized_greeting,
     get_motivational_message,
     create_visual_progress,
@@ -65,11 +66,16 @@ def set_active_module(context: ContextTypes.DEFAULT_TYPE):
 async def strictness_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Показывает меню выбора уровня строгости проверки."""
     query = update.callback_query
-
-    # Проверка прав
+    
+    # Проверяем, что пользователь админ
     if not admin_manager.is_admin(query.from_user.id):
-        await query.answer("У вас нет прав для изменения настроек", show_alert=True)
+        await query.answer("❌ Недостаточно прав", show_alert=True)
         return states.CHOOSING_MODE
+    
+    # Безопасно получаем текущий уровень строгости
+    current_strictness = StrictnessLevel.STRICT  # значение по умолчанию
+    if evaluator and hasattr(evaluator, 'strictness'):
+        current_strictness = evaluator.strictness
     
     kb = InlineKeyboardMarkup([
         [InlineKeyboardButton("🟢 Мягкий", callback_data="t19_strict:lenient")],
@@ -735,9 +741,9 @@ async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return states.CHOOSING_MODE
         
         # Показываем анимацию проверки
-        checking_msg = await show_thinking_animation(
+        thinking_msg = await show_ai_evaluation_animation(
             update.message,
-            text="Проверяю ваш ответ"
+            duration=40  # 40 секунд для task19
         )
         
         try:
@@ -767,7 +773,7 @@ async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 max_score = 3
             
             # Удаляем анимацию
-            await checking_msg.delete()
+            await thinking_msg.delete()
             
             # Сохраняем результат
             context.user_data.setdefault('task19_results', []).append({
@@ -808,7 +814,7 @@ async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
             logger.error(f"Error evaluating answer: {e}")
             # Безопасное удаление сообщения
             try:
-                await checking_msg.delete()
+                await thinking_msg.delete()
             except:
                 pass  # Игнорируем, если сообщение уже удалено
             
