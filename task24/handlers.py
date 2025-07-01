@@ -7,7 +7,7 @@ from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton
 from telegram.ext import ContextTypes, ConversationHandler
 from telegram.constants import ParseMode
 from datetime import datetime
-from typing import Set, Dict, List, Optional
+from typing import Set, Dict, List, Optional, Any
 from core import states
 from core import utils as core_utils
 from .checker import PlanBotData, evaluate_plan, FEEDBACK_KB, evaluate_plan_with_ai
