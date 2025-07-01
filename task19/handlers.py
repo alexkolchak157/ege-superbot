@@ -743,7 +743,6 @@ async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Показываем анимацию проверки
         thinking_msg = await show_ai_evaluation_animation(
             update.message,
-            duration=40  # 40 секунд для task19
         )
         
         try:

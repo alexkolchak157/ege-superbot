@@ -8,7 +8,6 @@ from telegram.ext import (
 from core.plugin_base import BotPlugin
 from core import states
 from . import handlers
-from core.module_filter import create_module_filter
 
 logger = logging.getLogger(__name__)
 
@@ -63,7 +62,7 @@ class Task19Plugin(BotPlugin):
                     
                     # Обработчики для выбора тем
                     CallbackQueryHandler(handlers.select_block, pattern="^t19_select_block$"),
-                    CallbackQueryHandler(handlers.handle_result_action, pattern="^t19_(new|retry)$"),
+                    CallbackQueryHandler(handlers.handle_result_action, pattern="^t19_(new|retry|progress|menu|show_ideal)$"),
                     CallbackQueryHandler(handlers.return_to_menu, pattern="^t19_menu$"),
                     
                     # Навигация по темам
