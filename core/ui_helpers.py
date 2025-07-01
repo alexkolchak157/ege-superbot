@@ -4,26 +4,13 @@
 import asyncio
 import random
 from datetime import datetime
-from typing import Dict, Optional, Set
+from typing import Dict, Optional
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, Message
 from telegram.constants import ParseMode
 from telegram.ext import ContextTypes
 import logging
 
 logger = logging.getLogger(__name__)
-
-# Глобальный набор для хранения активных задач анимации
-_active_animation_tasks: Set[asyncio.Task] = set()
-
-def _create_animation_task(coro):
-    """Создает задачу анимации и сохраняет ссылку на неё."""
-    task = asyncio.create_task(coro)
-    _active_animation_tasks.add(task)
-    
-    # Удаляем задачу из набора после завершения
-    task.add_done_callback(_active_animation_tasks.discard)
-    
-    return task
 
 async def show_thinking_animation(message: Message, text: str = "Анализирую") -> Message:
     """
@@ -100,8 +87,8 @@ async def show_extended_thinking_animation(message: Message, text: str = "Про
                 logger.debug(f"Animation stopped: {e}")
                 break
     
-    # Запускаем анимацию в фоне с сохранением ссылки
-    _create_animation_task(animate())
+    # Запускаем анимацию в фоне
+    asyncio.create_task(animate())
     
     return thinking_msg
 
@@ -167,8 +154,9 @@ async def show_ai_evaluation_animation(message: Message, duration: int = 40) -> 
         except Exception as e:
             logger.error(f"Animation error: {e}")
     
-    # Запускаем анимацию как фоновую задачу с сохранением ссылки
-    _create_animation_task(run_animation())
+    # Запускаем анимацию как фоновую задачу
+    # НЕ сохраняем ссылку на задачу в объекте Message
+    asyncio.create_task(run_animation())
     
     return thinking_msg
 
@@ -188,72 +176,96 @@ async def show_streak_notification(update: Update, context: ContextTypes.DEFAULT
         5: ("🔥🔥", "Продолжайте в том же духе!"),
         7: ("🔥🔥", "Неделя подряд!"),
         10: ("🔥🔥🔥", "Десятка! Впечатляет!"),
-        15: ("🔥🔥🔥", "Две недели! Вы в ударе!"),
-        20: ("🏆", "20 дней! Легендарно!"),
-        30: ("💎", "Месяц подряд! Невероятно!"),
-        50: ("👑", "50 дней! Вы мастер!"),
-        100: ("🌟", "100 дней! Эпический стрик!")
+        14: ("🔥🔥🔥", "Две недели! Вы молодец!"),
+        20: ("⭐", "20 подряд! Фантастика!"),
+        30: ("🏆", "Месяц занятий! Невероятно!"),
+        50: ("🌟", "50 дней! Вы настоящий герой!"),
+        100: ("💎", "100 дней! Легендарное достижение!")
     }
     
-    # Находим подходящий milestone
-    emoji = "🔥"
-    message_text = "Отличная серия!"
-    
-    for milestone, (milestone_emoji, milestone_text) in sorted(milestones.items(), reverse=True):
-        if value >= milestone:
-            emoji = milestone_emoji
-            message_text = milestone_text
-            break
-    
-    notification_text = f"{emoji} <b>Стрик {value}!</b>\n{message_text}"
-    
-    # Отправляем уведомление
-    notification = await update.effective_message.reply_text(
-        notification_text,
-        parse_mode=ParseMode.HTML
-    )
-    
-    # Удаляем через 5 секунд
-    async def delete_notification():
-        await asyncio.sleep(5)
-        try:
-            await notification.delete()
-        except:
-            pass
-    
-    _create_animation_task(delete_notification())
+    if value in milestones:
+        emoji, text = milestones[value]
+        
+        if streak_type == 'correct':
+            title = f"{value} правильных ответов подряд!"
+        else:
+            title = f"{value} дней подряд!"
+        
+        notification = f"""
+{emoji} <b>Новый рекорд!</b>
 
-def get_personalized_greeting(user_name: str, user_stats: Dict[str, Any]) -> str:
+🎯 <b>{title}</b>
+{text}
+
+Продолжайте в том же духе! 💪
+"""
+        
+        kb = InlineKeyboardMarkup([[
+            InlineKeyboardButton("🎉 Супер!", callback_data="streak_ok")
+        ]])
+        
+        msg = await update.effective_message.reply_text(
+            notification,
+            reply_markup=kb,
+            parse_mode=ParseMode.HTML
+        )
+        
+        # Автоудаление через 10 секунд
+        if context.job_queue:
+            async def delete_msg(ctx: ContextTypes.DEFAULT_TYPE) -> None:
+                try:
+                    await msg.delete()
+                except Exception:
+                    pass
+
+            context.job_queue.run_once(
+                delete_msg,
+                when=10,
+                name=f"delete_streak_{msg.message_id}"
+            )
+
+def get_personalized_greeting(user_stats: Dict) -> str:
     """
     Возвращает персонализированное приветствие.
     
     Args:
-        user_name: Имя пользователя
         user_stats: Статистика пользователя
         
     Returns:
         str: Персонализированное приветствие
     """
     hour = datetime.now().hour
+    attempts = user_stats.get('total_attempts', 0)
+    streak = user_stats.get('streak', 0)
     
-    # Определяем время суток
+    # Приветствие по времени суток
     if 5 <= hour < 12:
         time_greeting = "Доброе утро"
-        emoji = "☀️"
     elif 12 <= hour < 17:
         time_greeting = "Добрый день"
-        emoji = "🌤"
-    elif 17 <= hour < 22:
+    elif 17 <= hour < 23:
         time_greeting = "Добрый вечер"
-        emoji = "🌆"
     else:
         time_greeting = "Доброй ночи"
-        emoji = "🌙"
     
-    # Получаем стрик
-    streak = user_stats.get('daily_streak', 0)
+    # Статус пользователя
+    if attempts == 0:
+        status = "новичок"
+        emoji = "🌱"
+    elif attempts < 10:
+        status = "ученик"
+        emoji = "📚"
+    elif attempts < 50:
+        status = "практикант"
+        emoji = "🎯"
+    elif attempts < 100:
+        status = "знаток"
+        emoji = "🏆"
+    else:
+        status = "эксперт"
+        emoji = "🌟"
     
-    greeting = f"{emoji} {time_greeting}, {user_name}!\n"
+    greeting = f"{time_greeting}! {emoji}\n"
     
     if streak > 0:
         greeting += f"🔥 Ваш стрик: {streak} дней\n"
@@ -324,53 +336,88 @@ def create_visual_progress(current: int, total: int) -> str:
     
     Args:
         current: Текущее значение
-        total: Общее значение
+        total: Максимальное значение
         
     Returns:
-        str: Визуальная шкала прогресса
+        str: Визуальный прогресс
     """
     if total == 0:
-        return "⬜⬜⬜⬜⬜⬜⬜⬜⬜⬜"
+        return "⚪⚪⚪⚪⚪"
     
     percentage = current / total
-    filled = int(percentage * 10)
+    filled = int(percentage * 5)
     
-    bar = "🟩" * filled + "⬜" * (10 - filled)
+    progress = ""
+    for i in range(5):
+        if i < filled:
+            progress += "🟢"
+        else:
+            progress += "⚪"
     
-    return f"{bar} {int(percentage * 100)}%"
+    return progress
+
+# Дополнительные хелперы
+
+def format_time_difference(timestamp: str) -> str:
+    """
+    Форматирует разницу во времени в читаемый вид.
+    
+    Args:
+        timestamp: ISO формат времени
+        
+    Returns:
+        str: Отформатированная разница
+    """
+    try:
+        dt = datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
+        diff = datetime.now() - dt
+        
+        if diff.days > 0:
+            return f"{diff.days} дн. назад"
+        elif diff.seconds > 3600:
+            hours = diff.seconds // 3600
+            return f"{hours} ч. назад"
+        elif diff.seconds > 60:
+            minutes = diff.seconds // 60
+            return f"{minutes} мин. назад"
+        else:
+            return "только что"
+    except:
+        return "недавно"
 
 def get_achievement_emoji(achievement_type: str) -> str:
     """
-    Возвращает эмодзи для достижения.
+    Возвращает эмодзи для типа достижения.
     
     Args:
         achievement_type: Тип достижения
         
     Returns:
-        str: Соответствующий эмодзи
+        str: Эмодзи
     """
-    achievement_emojis = {
-        'first_answer': '🎯',
-        'perfect_score': '⭐',
+    emojis = {
+        'first_perfect': '🌟',
         'streak_3': '🔥',
         'streak_7': '🔥🔥',
-        'streak_30': '🔥🔥🔥',
-        'completed_10': '📚',
-        'completed_50': '📖',
-        'completed_100': '🎓',
+        'streak_30': '🏆',
+        'all_topics': '🎓',
         'speed_demon': '⚡',
         'perfectionist': '💎',
-        'explorer': '🗺',
-        'champion': '🏆',
-        'legend': '👑'
+        'explorer': '🗺️',
+        'dedicated': '💪',
+        'master': '👑'
     }
     
-    return achievement_emojis.get(achievement_type, '🏅')
+    return emojis.get(achievement_type, '🏅')
 
-# Функция очистки завершенных задач (опционально)
-async def cleanup_completed_animation_tasks():
-    """Очищает завершенные задачи анимации из набора."""
-    global _active_animation_tasks
-    completed = {task for task in _active_animation_tasks if task.done()}
-    _active_animation_tasks -= completed
-    logger.debug(f"Cleaned up {len(completed)} completed animation tasks")
+# Экспорт всех функций
+__all__ = [
+    'show_thinking_animation',
+    'show_extended_thinking_animation',  # Добавить эту строку
+    'show_streak_notification',
+    'get_personalized_greeting',
+    'get_motivational_message',
+    'create_visual_progress',
+    'format_time_difference',
+    'get_achievement_emoji'
+]
