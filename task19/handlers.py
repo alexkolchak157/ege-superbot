@@ -4,7 +4,7 @@ import logging
 import os
 import json
 import random
-from typing import Optional, Dict, List
+from typing import Optional, Dict, List, Any
 from core.document_processor import DocumentHandlerMixin
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, Message
 from telegram.constants import ParseMode
