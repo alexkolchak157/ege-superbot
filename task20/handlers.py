@@ -17,6 +17,7 @@ from core.ui_helpers import (
     show_thinking_animation,
     show_streak_notification,
     show_extended_thinking_animation,
+    show_ai_evaluation_animation,
     get_personalized_greeting,
     get_motivational_message,
     create_visual_progress
@@ -886,9 +887,9 @@ async def safe_handle_answer_task20(update: Update, context: ContextTypes.DEFAUL
         return states.ANSWERING_T20
     
     # Показываем анимацию обработки
-    thinking_msg = await show_thinking_animation(
+    thinking_msg = await show_ai_evaluation_animation(
         update.message,
-        "Анализирую ваши суждения"
+        duration=40  # 40 секунд для task20
     )
     
     try:
