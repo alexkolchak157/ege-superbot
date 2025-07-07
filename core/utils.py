@@ -1,15 +1,52 @@
-# core/utils.py - обновленная версия с проверкой платных подписок
+# core/utils.py - исправленная версия без циклического импорта
 
 import logging
-from typing import Optional, Union
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from typing import Optional, Union, Tuple
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, Message
 from telegram.ext import ContextTypes
+from telegram.error import BadRequest
 from datetime import datetime
 
 from core import config, db
-from payment.subscription_manager import SubscriptionManager
+
+# НЕ импортируем SubscriptionManager здесь!
+# from payment.subscription_manager import SubscriptionManager  # УДАЛИТЬ!
 
 logger = logging.getLogger(__name__)
+
+async def safe_edit_message(
+    message: Message,
+    text: str,
+    reply_markup: Optional[InlineKeyboardMarkup] = None,
+    parse_mode: Optional[str] = None
+) -> bool:
+    """
+    Безопасно редактирует сообщение, обрабатывая возможные ошибки.
+    
+    Returns:
+        True если успешно, False если ошибка
+    """
+    try:
+        await message.edit_text(
+            text=text,
+            reply_markup=reply_markup,
+            parse_mode=parse_mode
+        )
+        return True
+    except BadRequest as e:
+        if "message is not modified" in str(e):
+            # Сообщение не изменилось - это нормально
+            return True
+        elif "message to edit not found" in str(e):
+            # Сообщение удалено
+            logger.warning(f"Сообщение для редактирования не найдено: {e}")
+            return False
+        else:
+            logger.error(f"Ошибка при редактировании сообщения: {e}")
+            return False
+    except Exception as e:
+        logger.error(f"Неожиданная ошибка при редактировании сообщения: {e}")
+        return False
 
 async def check_subscription(
     user_id: int, 
@@ -34,6 +71,9 @@ async def check_subscription(
     
     # Сначала проверяем платную подписку
     if check_paid:
+        # Импортируем только когда нужно, чтобы избежать циклического импорта
+        from payment.subscription_manager import SubscriptionManager
+        
         subscription_manager = SubscriptionManager()
         subscription_info = await subscription_manager.get_subscription_info(user_id)
         
@@ -108,18 +148,22 @@ async def send_subscription_required(
         if hasattr(query_or_update, 'answer'):
             # Для CallbackQuery используем answer и edit_message_text
             await query_or_update.answer("Требуется подписка!", show_alert=True)
-            await message.edit_text(text, reply_markup=reply_markup)
+            if message:
+                await safe_edit_message(message, text, reply_markup=reply_markup)
         else:
             # Для обычного сообщения
             await answer_func(text, reply_markup=reply_markup)
 
-async def check_daily_limit(user_id: int) -> tuple[bool, int, int]:
+async def check_daily_limit(user_id: int) -> Tuple[bool, int, int]:
     """
     Проверяет дневной лимит использования для пользователя.
     
     Returns:
         (можно_использовать, использовано_сегодня, лимит)
     """
+    # Импортируем только когда нужно
+    from payment.subscription_manager import SubscriptionManager
+    
     subscription_manager = SubscriptionManager()
     subscription_info = await subscription_manager.get_subscription_info(user_id)
     
@@ -234,3 +278,6 @@ def requires_subscription(check_channel: bool = False):
         
         return wrapper
     return decorator
+
+# Другие утилиты, которые могут быть в вашем utils.py
+# ...

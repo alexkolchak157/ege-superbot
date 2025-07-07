@@ -20,7 +20,7 @@ DATABASE_FILE = os.getenv("DATABASE_FILE", "quiz_async.db")
 STORAGE_DATABASE_FILE = os.getenv("STORAGE_DATABASE_FILE", "fsm_storage.db")
 REMINDER_INACTIVITY_DAYS = int(os.getenv("REMINDER_INACTIVITY_DAYS", 3))
 # Основные настройки бота
-BOT_TOKEN = os.getenv('BOT_TOKEN')
+BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
 DATABASE_PATH = os.getenv('DATABASE_PATH', 'quiz_async.db')
 
 # Настройки платежей Tinkoff

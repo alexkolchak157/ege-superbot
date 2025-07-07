@@ -2,18 +2,16 @@
 
 import asyncio
 import logging
-from telegram.ext import Application, CommandHandler, CallbackQueryHandler
-from aiohttp import web
+from telegram import Update
+from telegram.ext import Application
 import sys
 import os
 
 # Добавляем путь к корневой директории для импорта модулей
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from core import config, db, plugin_loader, utils
-from payment import handlers as payment_handlers
-from payment import webhook
-from payment.subscription_manager import SubscriptionManager
+from core import config, db, plugin_loader
+from payment import init_payment_module
 
 logger = logging.getLogger(__name__)
 
@@ -30,6 +28,16 @@ async def post_init(application: Application) -> None:
     
     # Инициализация модуля платежей
     await init_payment_module(application)
+    
+    # Настройка middleware для проверки подписок
+    # Это ДОЛЖНО быть после init_payment_module но ДО загрузки других модулей
+    setup_subscription_middleware(
+        application,
+        free_commands={'start', 'help', 'subscribe', 'subscription', 'settings', 'about'},
+        free_patterns={'main_menu', 'subscribe_', 'plan_', 'check_payment_', 'help_', 'settings_'},
+        check_channel=True  # Также проверять подписку на канал
+    )
+    logger.info("Middleware для проверки подписок настроен")
     
     # Загрузка остальных модулей
     plugin_loader.load_modules(application)
@@ -48,16 +56,16 @@ async def init_payment_module(application: Application) -> None:
     application.bot_data['subscription_manager'] = subscription_manager
     
     # Регистрируем обработчики платежей
-    application.add_handler(CommandHandler("subscribe", payment_handlers.subscribe_command))
-    application.add_handler(CommandHandler("subscription", payment_handlers.subscription_status_command))
-    application.add_handler(CallbackQueryHandler(payment_handlers.plan_callback, pattern="^plan_"))
-    application.add_handler(CallbackQueryHandler(payment_handlers.check_payment_callback, pattern="^check_payment_"))
+    application.add_handler(CommandHandler("subscribe", subscribe_command))
+    application.add_handler(CommandHandler("subscription", subscription_status_command))
+    application.add_handler(CallbackQueryHandler(plan_callback, pattern="^plan_"))
+    application.add_handler(CallbackQueryHandler(check_payment_callback, pattern="^check_payment_"))
     
     # Админские команды (если пользователь в списке админов)
     if hasattr(config, 'ADMIN_IDS'):
-        application.add_handler(CommandHandler("grant_subscription", payment_handlers.grant_subscription_command))
-        application.add_handler(CommandHandler("revoke_subscription", payment_handlers.revoke_subscription_command))
-        application.add_handler(CommandHandler("payment_stats", payment_handlers.payment_stats_command))
+        application.add_handler(CommandHandler("grant_subscription", grant_subscription_command))
+        application.add_handler(CommandHandler("revoke_subscription", revoke_subscription_command))
+        application.add_handler(CommandHandler("payment_stats", payment_stats_command))
     
     logger.info("Модуль платежей инициализирован")
 
@@ -76,7 +84,7 @@ async def start_webhook_server(application: Application) -> None:
     
     try:
         # Создаем aiohttp приложение для webhook
-        webhook_app = webhook.create_webhook_app(application.bot)
+        webhook_app = create_webhook_app(application.bot)
         
         # Запускаем сервер на порту 8080
         webhook_runner = web.AppRunner(webhook_app)
