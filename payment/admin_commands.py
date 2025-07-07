@@ -122,10 +122,58 @@ async def cmd_payment_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.exception(f"Error getting payment stats: {e}")
         await update.message.reply_text("❌ Ошибка получения статистики")
 
+async def cmd_check_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Проверяет админские права пользователя."""
+    user_id = update.effective_user.id
+    
+    # Получаем список админов из конфигурации
+    admin_ids = []
+    if hasattr(config, 'ADMIN_IDS') and config.ADMIN_IDS:
+        if isinstance(config.ADMIN_IDS, str):
+            admin_ids = [int(id.strip()) for id in config.ADMIN_IDS.split(',') if id.strip()]
+        elif isinstance(config.ADMIN_IDS, list):
+            admin_ids = config.ADMIN_IDS
+    
+    # Также проверяем BOT_ADMIN_IDS если есть
+    if hasattr(config, 'BOT_ADMIN_IDS') and config.BOT_ADMIN_IDS:
+        bot_admin_ids = []
+        if isinstance(config.BOT_ADMIN_IDS, str):
+            bot_admin_ids = [int(id.strip()) for id in config.BOT_ADMIN_IDS.split(',') if id.strip()]
+        elif isinstance(config.BOT_ADMIN_IDS, list):
+            bot_admin_ids = config.BOT_ADMIN_IDS
+        admin_ids.extend(bot_admin_ids)
+    
+    # Убираем дубликаты
+    admin_ids = list(set(admin_ids))
+    
+    if user_id in admin_ids:
+        await update.message.reply_text(
+            f"✅ <b>Вы администратор!</b>\n\n"
+            f"📱 Ваш ID: <code>{user_id}</code>\n"
+            f"👥 Всего админов: {len(admin_ids)}\n"
+            f"📋 Список ID админов: {', '.join(map(str, admin_ids))}\n\n"
+            f"Доступные команды:\n"
+            f"/grant &lt;user_id&gt; &lt;plan&gt; - выдать подписку\n"
+            f"/revoke &lt;user_id&gt; - отозвать подписку\n"
+            f"/payment_stats - статистика платежей",
+            parse_mode=ParseMode.HTML
+        )
+    else:
+        await update.message.reply_text(
+            f"❌ <b>Вы не администратор</b>\n\n"
+            f"📱 Ваш ID: <code>{user_id}</code>\n"
+            f"💡 Чтобы получить права администратора:\n\n"
+            f"1. Добавьте ваш ID в файл <code>.env</code>:\n"
+            f"   <code>ADMIN_IDS={user_id}</code>\n\n"
+            f"2. Перезапустите бота\n\n"
+            f"Текущие админы: {len(admin_ids)}",
+            parse_mode=ParseMode.HTML
+        )
 
 def register_admin_commands(app: Application):
     """Регистрирует админские команды."""
     app.add_handler(CommandHandler("grant", cmd_grant_subscription))
     app.add_handler(CommandHandler("revoke", cmd_revoke_subscription))
     app.add_handler(CommandHandler("payment_stats", cmd_payment_stats))
+    app.add_handler(CommandHandler("check_admin", cmd_check_admin))
     logger.info("Admin commands registered")

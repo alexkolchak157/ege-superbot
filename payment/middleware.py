@@ -67,6 +67,22 @@ class SubscriptionMiddleware:
             
         user_id = update.effective_user.id
         
+        # НОВОЕ: Проверяем, является ли пользователь админом
+        from core import config
+        admin_ids = []
+        if hasattr(config, 'ADMIN_IDS') and config.ADMIN_IDS:
+            if isinstance(config.ADMIN_IDS, str):
+                admin_ids = [int(id.strip()) for id in config.ADMIN_IDS.split(',') if id.strip()]
+            elif isinstance(config.ADMIN_IDS, list):
+                admin_ids = config.ADMIN_IDS
+        
+        # Если пользователь админ - пропускаем все проверки
+        if user_id in admin_ids:
+            logger.info(f"Admin {user_id} bypassing subscription check")
+            # Добавляем флаг админа в context для использования в других местах
+            context.user_data['is_admin'] = True
+            return True
+        
         # Определяем, нужна ли проверка
         if self._is_free_action(update):
             return True
