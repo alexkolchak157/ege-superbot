@@ -21,52 +21,112 @@ class SubscriptionManager:
         self.db_path = db_path
     
     async def init_tables(self):
-        """Создает необходимые таблицы для платежей и подписок."""
-        async with aiosqlite.connect(self.db_path) as db:
-            # Таблица платежей
-            await db.execute(f'''
-                CREATE TABLE IF NOT EXISTS {TABLE_PAYMENTS} (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    user_id INTEGER NOT NULL,
-                    order_id TEXT UNIQUE NOT NULL,
-                    payment_id TEXT,
-                    plan_id TEXT NOT NULL,
-                    amount_kopecks INTEGER NOT NULL,
-                    status TEXT NOT NULL DEFAULT 'initiated',
-                    provider TEXT DEFAULT 'tinkoff',
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    confirmed_at TIMESTAMP,
-                    metadata TEXT,
-                    FOREIGN KEY (user_id) REFERENCES users(user_id)
-                )
-            ''')
-            
-            # Таблица подписок
-            await db.execute(f'''
-                CREATE TABLE IF NOT EXISTS {TABLE_SUBSCRIPTIONS} (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    user_id INTEGER NOT NULL,
-                    plan_id TEXT NOT NULL,
-                    payment_id INTEGER,
-                    status TEXT NOT NULL DEFAULT 'pending',
-                    starts_at TIMESTAMP NOT NULL,
-                    expires_at TIMESTAMP NOT NULL,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    activated_at TIMESTAMP,
-                    cancelled_at TIMESTAMP,
-                    FOREIGN KEY (user_id) REFERENCES users(user_id),
-                    FOREIGN KEY (payment_id) REFERENCES {TABLE_PAYMENTS}(id)
-                )
-            ''')
-            
-            # Индексы
-            await db.execute(f'CREATE INDEX IF NOT EXISTS idx_payments_order ON {TABLE_PAYMENTS}(order_id)')
-            await db.execute(f'CREATE INDEX IF NOT EXISTS idx_payments_user ON {TABLE_PAYMENTS}(user_id)')
-            await db.execute(f'CREATE INDEX IF NOT EXISTS idx_subscriptions_user ON {TABLE_SUBSCRIPTIONS}(user_id)')
-            await db.execute(f'CREATE INDEX IF NOT EXISTS idx_subscriptions_status ON {TABLE_SUBSCRIPTIONS}(status)')
-            
-            await db.commit()
-            logger.info("Payment tables initialized")
+            """Создает необходимые таблицы для платежей и подписок."""
+            try:
+                async with aiosqlite.connect(self.db_path) as db:
+                    # Включаем поддержку внешних ключей
+                    await db.execute("PRAGMA foreign_keys = ON")
+                    
+                    # Проверяем существование таблиц и их структуру
+                    cursor = await db.execute("""
+                        SELECT name FROM sqlite_master 
+                        WHERE type='table' AND name IN ('payments', 'user_subscriptions')
+                    """)
+                    existing_tables = [row[0] for row in await cursor.fetchall()]
+                    
+                    # Таблица платежей
+                    if 'payments' not in existing_tables:
+                        await db.execute(f'''
+                            CREATE TABLE IF NOT EXISTS {TABLE_PAYMENTS} (
+                                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                                user_id INTEGER NOT NULL,
+                                order_id TEXT UNIQUE NOT NULL,
+                                payment_id TEXT,
+                                plan_id TEXT NOT NULL,
+                                amount_kopecks INTEGER NOT NULL,
+                                status TEXT NOT NULL DEFAULT 'initiated',
+                                provider TEXT DEFAULT 'tinkoff',
+                                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                                confirmed_at TIMESTAMP,
+                                metadata TEXT,
+                                FOREIGN KEY (user_id) REFERENCES users(user_id)
+                            )
+                        ''')
+                        logger.info("Created payments table")
+                    
+                    # Таблица подписок
+                    if 'user_subscriptions' not in existing_tables:
+                        await db.execute(f'''
+                            CREATE TABLE IF NOT EXISTS {TABLE_SUBSCRIPTIONS} (
+                                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                                user_id INTEGER NOT NULL,
+                                plan_id TEXT NOT NULL,
+                                payment_id INTEGER,
+                                status TEXT NOT NULL DEFAULT 'pending',
+                                starts_at TIMESTAMP NOT NULL,
+                                expires_at TIMESTAMP NOT NULL,
+                                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                                activated_at TIMESTAMP,
+                                cancelled_at TIMESTAMP,
+                                FOREIGN KEY (user_id) REFERENCES users(user_id),
+                                FOREIGN KEY (payment_id) REFERENCES {TABLE_PAYMENTS}(id)
+                            )
+                        ''')
+                        logger.info("Created user_subscriptions table")
+                    else:
+                        # Проверяем наличие колонки status
+                        cursor = await db.execute(f"PRAGMA table_info({TABLE_SUBSCRIPTIONS})")
+                        columns = await cursor.fetchall()
+                        column_names = [col[1] for col in columns]
+                        
+                        if 'status' not in column_names:
+                            logger.error(f"Table {TABLE_SUBSCRIPTIONS} is missing 'status' column!")
+                            logger.error("Please run: python fix_db.py to fix the database structure")
+                            raise Exception(f"Database structure error: missing 'status' column in {TABLE_SUBSCRIPTIONS}")
+                    
+                    # Создаем индексы только если таблицы созданы/проверены
+                    indices_to_create = []
+                    
+                    # Проверяем какие индексы уже существуют
+                    cursor = await db.execute("""
+                        SELECT name FROM sqlite_master 
+                        WHERE type='index' AND sql IS NOT NULL
+                    """)
+                    existing_indices = [row[0] for row in await cursor.fetchall()]
+                    
+                    # Список необходимых индексов
+                    required_indices = [
+                        (f'idx_payments_order', f'{TABLE_PAYMENTS}', 'order_id'),
+                        (f'idx_payments_user', f'{TABLE_PAYMENTS}', 'user_id'),
+                        (f'idx_subscriptions_user', f'{TABLE_SUBSCRIPTIONS}', 'user_id'),
+                        (f'idx_subscriptions_status', f'{TABLE_SUBSCRIPTIONS}', 'status'),
+                    ]
+                    
+                    # Создаем только отсутствующие индексы
+                    for index_name, table_name, column_name in required_indices:
+                        if index_name not in existing_indices:
+                            try:
+                                await db.execute(
+                                    f'CREATE INDEX {index_name} ON {table_name}({column_name})'
+                                )
+                                logger.debug(f"Created index {index_name}")
+                            except Exception as e:
+                                # Индекс может уже существовать под другим именем
+                                logger.debug(f"Could not create index {index_name}: {e}")
+                    
+                    await db.commit()
+                    logger.info("Payment tables initialized successfully")
+                    
+            except Exception as e:
+                logger.error(f"Error initializing payment tables: {e}")
+                if "no such column" in str(e):
+                    logger.error("\n" + "="*50)
+                    logger.error("DATABASE STRUCTURE ERROR!")
+                    logger.error("Please run one of these commands:")
+                    logger.error("1. python fix_db.py (to fix the structure)")
+                    logger.error("2. python reset_db.py (to reset the database)")
+                    logger.error("="*50 + "\n")
+                raise
     
     async def create_payment(
         self,
