@@ -65,6 +65,17 @@ class Task19Plugin(BotPlugin):
                     CallbackQueryHandler(handlers.handle_result_action, pattern="^t19_(new|retry|progress|menu|show_ideal)$"),
                     CallbackQueryHandler(handlers.return_to_menu, pattern="^t19_menu$"),
                     
+                    # Обработчики для кнопок результата (ВСЕ возможные варианты)
+                    CallbackQueryHandler(handlers.topic_pagination, pattern="^t19_page:"),
+                    CallbackQueryHandler(handlers.set_strictness, pattern="^t19_strictness:"),
+                    CallbackQueryHandler(handlers.handle_new_task, pattern="^t19_new$"),
+                    CallbackQueryHandler(handlers.handle_retry, pattern="^t19_retry$"),
+                    CallbackQueryHandler(handlers.handle_show_progress, pattern="^t19_progress$"),
+                    CallbackQueryHandler(handlers.handle_theory, pattern="^t19_theory$"),
+                    CallbackQueryHandler(handlers.handle_examples, pattern="^t19_examples$"),
+                    CallbackQueryHandler(handlers.handle_achievements, pattern="^t19_achievements$"),
+                    CallbackQueryHandler(handlers.handle_show_ideal, pattern="^t19_show_ideal$"),
+                    
                     # Навигация по темам
                     CallbackQueryHandler(handlers.block_menu, pattern="^t19_block:"),
                     CallbackQueryHandler(handlers.list_topics, pattern=r"^t19_list_topics($|:page:\d+)"),
@@ -73,8 +84,8 @@ class Task19Plugin(BotPlugin):
                     
                     # Банк примеров
                     CallbackQueryHandler(handlers.bank_navigation, pattern="^t19_bank_nav:"),
-                    CallbackQueryHandler(handlers.bank_search, pattern="^t19_bank_search$"),
-                    
+                    CallbackQueryHandler(handlers.bank_search_start, pattern="^t19_bank_search$"),
+                    MessageHandler(filters.TEXT & ~filters.COMMAND, handlers.handle_bank_search_text),
                     # Настройки
                     CallbackQueryHandler(handlers.apply_strictness, pattern="^t19_set_strictness:"),
                     
@@ -85,9 +96,9 @@ class Task19Plugin(BotPlugin):
                     # Теория - подразделы
                     CallbackQueryHandler(handlers.handle_theory_sections, pattern="^t19_(how_to_write|good_examples|common_mistakes|useful_phrases)$"),
                     
-
                     # Работа над ошибками
                     CallbackQueryHandler(handlers.retry_topic, pattern="^t19_retry_topic:"),
+                    CallbackQueryHandler(handlers.mistakes_mode, pattern="^t19_mistakes$"),
 
                     # Настройки строгости
                     CallbackQueryHandler(handlers.apply_strictness, pattern="^t19_strict:"),
@@ -95,25 +106,28 @@ class Task19Plugin(BotPlugin):
                     # Детали достижений
                     CallbackQueryHandler(handlers.show_achievement_details, pattern="^t19_achievement:"),
 
-                    # Обработчики результатов
-                    CallbackQueryHandler(handlers.show_ideal_answer, pattern="^t19_show_ideal$"),
-                    # Новые функции
-                    CallbackQueryHandler(handlers.mistakes_mode, pattern="^t19_mistakes$"),
-                    CallbackQueryHandler(handlers.show_achievements, pattern="^t19_achievements$"),
+                    # Сброс и подтверждения
+                    CallbackQueryHandler(handlers.handle_settings_actions, pattern="^t19_(reset_progress|confirm_reset)$"),
                 ],
                 
                 states.CHOOSING_BLOCK: [
                     CallbackQueryHandler(handlers.block_menu, pattern="^t19_block:"),
                     CallbackQueryHandler(handlers.list_topics, pattern="^t19_list_topics$"),
                     CallbackQueryHandler(handlers.random_topic_block, pattern="^t19_random_block$"),
+                    CallbackQueryHandler(handlers.topic_pagination, pattern="^t19_page:"),
+                    CallbackQueryHandler(handlers.return_to_menu, pattern="^t19_menu$"),
+                    CallbackQueryHandler(handlers.back_to_main_menu, pattern="^to_main_menu$"),
                     CallbackQueryHandler(handlers.practice_mode, pattern="^t19_practice$"),
                     CallbackQueryHandler(handlers.select_block, pattern="^t19_select_block$"),
                 ],
                 
                 states.CHOOSING_TOPIC: [
                     CallbackQueryHandler(handlers.select_topic, pattern="^t19_topic:"),
+                    CallbackQueryHandler(handlers.topic_pagination, pattern="^t19_page:"),
                     CallbackQueryHandler(handlers.practice_mode, pattern="^t19_practice$"),
                     CallbackQueryHandler(handlers.block_menu, pattern="^t19_block:"),
+                    CallbackQueryHandler(handlers.return_to_menu, pattern="^t19_menu$"),
+                    CallbackQueryHandler(handlers.back_to_main_menu, pattern="^to_main_menu$"),
                     CallbackQueryHandler(handlers.select_block, pattern="^t19_select_block$"),
                     CallbackQueryHandler(handlers.list_topics, pattern=r"^t19_list_topics:page:\d+"),
                 ],
@@ -137,6 +151,10 @@ class Task19Plugin(BotPlugin):
                 CommandHandler("cancel", handlers.cmd_cancel),
                 CallbackQueryHandler(handlers.return_to_menu, pattern="^t19_menu$"),
                 CallbackQueryHandler(handlers.back_to_main_menu, pattern="^to_main_menu$"),
+                CallbackQueryHandler(
+                    lambda u, c: u.callback_query.answer("Обрабатывается...") if u.callback_query else None,
+                    pattern="^t19_"
+                ),
             ],
             name="task19_conversation",
             persistent=False,
