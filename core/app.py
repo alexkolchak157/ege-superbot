@@ -1,124 +1,194 @@
+# core/app.py - обновленная версия с интеграцией платежей
+
+import asyncio
+import logging
+from telegram.ext import Application, CommandHandler, CallbackQueryHandler
+from aiohttp import web
 import sys
 import os
-import logging
-from telegram.ext import Application, CommandHandler
-from core.plugin_loader import discover_plugins, build_main_menu, PLUGINS
-from core.menu_handlers import register_global_handlers
-from core.menu_handlers import handle_to_main_menu
-from core.admin_tools import register_admin_handlers
-from core.config import BOT_TOKEN
-from core import db
-from core.error_handler import register_error_handler
-from core.state_validator import state_validator  # Добавленный импорт
 
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
+# Добавляем путь к корневой директории для импорта модулей
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from core import config, db, plugin_loader, utils
+from payment import handlers as payment_handlers
+from payment import webhook
+from payment.subscription_manager import SubscriptionManager
+
 logger = logging.getLogger(__name__)
 
+# Глобальные переменные для webhook сервера
+webhook_runner = None
+webhook_site = None
+
 async def post_init(application: Application) -> None:
-    """Инициализация после запуска приложения."""
-    logger.info("Инициализация БД...")
+    """Инициализация после запуска бота"""
+    logger.info("Выполняется post-init...")
+    
+    # Инициализация БД
     await db.init_db()
     
-    # Загрузка данных для плагинов
-    for plugin in PLUGINS:
-        if hasattr(plugin, 'post_init'):
-            await plugin.post_init(application)
+    # Инициализация модуля платежей
+    await init_payment_module(application)
     
-    logger.info("Инициализация завершена")
+    # Загрузка остальных модулей
+    plugin_loader.load_modules(application)
     
-    # Логируем статус валидатора состояний
-    logger.info(f"State validator initialized with {len(state_validator.allowed_transitions)} state transitions")
+    # Запуск webhook сервера для платежей
+    await start_webhook_server(application)
+    
+    logger.info("Post-init завершен")
+
+async def init_payment_module(application: Application) -> None:
+    """Инициализация модуля платежей"""
+    logger.info("Инициализация модуля платежей...")
+    
+    # Создаем менеджер подписок и сохраняем в bot_data
+    subscription_manager = SubscriptionManager()
+    application.bot_data['subscription_manager'] = subscription_manager
+    
+    # Регистрируем обработчики платежей
+    application.add_handler(CommandHandler("subscribe", payment_handlers.subscribe_command))
+    application.add_handler(CommandHandler("subscription", payment_handlers.subscription_status_command))
+    application.add_handler(CallbackQueryHandler(payment_handlers.plan_callback, pattern="^plan_"))
+    application.add_handler(CallbackQueryHandler(payment_handlers.check_payment_callback, pattern="^check_payment_"))
+    
+    # Админские команды (если пользователь в списке админов)
+    if hasattr(config, 'ADMIN_IDS'):
+        application.add_handler(CommandHandler("grant_subscription", payment_handlers.grant_subscription_command))
+        application.add_handler(CommandHandler("revoke_subscription", payment_handlers.revoke_subscription_command))
+        application.add_handler(CommandHandler("payment_stats", payment_handlers.payment_stats_command))
+    
+    logger.info("Модуль платежей инициализирован")
+
+async def start_webhook_server(application: Application) -> None:
+    """Запуск webhook сервера для приема уведомлений об оплате"""
+    global webhook_runner, webhook_site
+    
+    # Проверяем наличие необходимых переменных окружения
+    if not all([
+        getattr(config, 'TINKOFF_TERMINAL_KEY', None),
+        getattr(config, 'TINKOFF_SECRET_KEY', None),
+        getattr(config, 'WEBHOOK_BASE_URL', None)
+    ]):
+        logger.warning("Переменные окружения для платежей не настроены. Webhook сервер не будет запущен.")
+        return
+    
+    try:
+        # Создаем aiohttp приложение для webhook
+        webhook_app = webhook.create_webhook_app(application.bot)
+        
+        # Запускаем сервер на порту 8080
+        webhook_runner = web.AppRunner(webhook_app)
+        await webhook_runner.setup()
+        webhook_site = web.TCPSite(webhook_runner, 'localhost', 8080)
+        await webhook_site.start()
+        
+        logger.info("Webhook сервер запущен на порту 8080")
+        
+    except Exception as e:
+        logger.error(f"Ошибка при запуске webhook сервера: {e}")
 
 async def post_shutdown(application: Application) -> None:
-    """Выполняется при завершении приложения."""
+    """Очистка ресурсов при остановке бота"""
+    global webhook_runner, webhook_site
+    
+    logger.info("Выполняется shutdown...")
+    
+    # Останавливаем webhook сервер
+    if webhook_site:
+        await webhook_site.stop()
+    if webhook_runner:
+        await webhook_runner.cleanup()
+    
+    # Закрываем соединение с БД
     await db.close_db()
     
-    # Закрываем AI сессии для всех модулей
-    from task19.handlers import evaluator as task19_evaluator
-    from task20.handlers import evaluator as task20_evaluator
-    from task25.handlers import evaluator as task25_evaluator
-    
-    for evaluator in [task19_evaluator, task20_evaluator, task25_evaluator]:
-        if evaluator and hasattr(evaluator, 'cleanup'):
-            try:
-                await evaluator.cleanup()
-            except:
-                pass
-    
-    logger.info("All resources cleaned up")
-
-async def start(update, context):
-    """Главная команда /start."""
-    await update.message.reply_text(
-        "👋 Добро пожаловать! Что хотите потренировать?",
-        reply_markup=build_main_menu(),
-    )
-    context.user_data.clear()
-    
-    # Очищаем состояние пользователя в валидаторе
-    if update.effective_user:
-        state_validator.clear_state(update.effective_user.id)
+    logger.info("Shutdown завершен")
 
 def main():
-    """Основная функция запуска бота."""
+    """Главная функция запуска бота"""
+    # Настройка логирования
+    logging.basicConfig(
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+        level=logging.INFO
+    )
     
-    print("🔍 Обнаруживаем плагины...")
-    discover_plugins()
+    # Проверка наличия токена
+    if not hasattr(config, 'BOT_TOKEN') or not config.BOT_TOKEN:
+        logger.error("BOT_TOKEN не найден в конфигурации!")
+        return
     
-    print("⚙️ Создаём приложение...")
-    app = (
+    # Создание приложения
+    application = (
         Application.builder()
-        .token(BOT_TOKEN)
+        .token(config.BOT_TOKEN)
         .post_init(post_init)
         .post_shutdown(post_shutdown)
         .build()
     )
+    
+    # Добавляем базовые команды
+    application.add_handler(CommandHandler("start", start_command))
+    application.add_handler(CommandHandler("help", help_command))
+    
+    # Запуск бота
+    logger.info("Запуск бота...")
+    application.run_polling(allowed_updates=True)
 
-    print("🌐 Регистрируем глобальные обработчики...")
-    register_global_handlers(app)
+async def start_command(update, context):
+    """Обработчик команды /start"""
+    user_id = update.effective_user.id
+    
+    # Проверяем/создаем пользователя в БД
+    await db.ensure_user(user_id)
+    
+    # Проверяем подписку
+    subscription_manager = context.bot_data.get('subscription_manager')
+    if subscription_manager:
+        subscription_info = await subscription_manager.get_subscription_info(user_id)
+        if subscription_info['is_active']:
+            status_text = f"✅ У вас активная подписка: {subscription_info['plan_name']}"
+        else:
+            status_text = "❌ У вас нет активной подписки"
+    else:
+        status_text = ""
+    
+    welcome_text = f"""
+👋 Добро пожаловать в бот для подготовки к ЕГЭ по обществознанию!
 
-    print("🔧 Регистрируем админские обработчики...")
-    register_admin_handlers(app)
-    
-    print("📝 Регистрируем команду /start...")
-    app.add_handler(CommandHandler("start", start))
-    
-    # Добавляем команду для просмотра статистики состояний (для админов)
-    async def state_stats(update, context):
-        """Показывает статистику переходов состояний."""
-        from core.admin_tools import admin_manager
-        
-        if not admin_manager.is_admin(update.effective_user.id):
-            await update.message.reply_text("❌ Эта команда доступна только администраторам")
-            return
-        
-        stats = state_validator.get_stats()
-        text = f"📊 <b>Статистика переходов состояний</b>\n\n"
-        text += f"Всего переходов: {stats['total_transitions']}\n"
-        text += f"Уникальных переходов: {stats['unique_transitions']}\n"
-        text += f"Активных пользователей: {stats['active_users']}\n\n"
-        
-        if stats['top_transitions']:
-            text += "<b>Топ переходов:</b>\n"
-            for transition, count in stats['top_transitions'][:10]:
-                text += f"• {transition}: {count}\n"
-        
-        await update.message.reply_text(text, parse_mode='HTML')
-    
-    app.add_handler(CommandHandler("state_stats", state_stats))
-    
-    print("🔌 Регистрируем плагины...")
-    for plugin in PLUGINS:
-        plugin.register(app)
-    
-    register_error_handler(app)
-    
-    print("✅ Валидатор состояний активирован")
-    print("🚀 Бот запущен! Нажмите Ctrl+C для остановки.")
-    app.run_polling(drop_pending_updates=True)
+{status_text}
 
-if __name__ == "__main__":
+Доступные команды:
+/help - справка по командам
+/subscribe - оформить подписку
+/subscription - статус подписки
+
+Выберите раздел для начала работы:
+    """
+    
+    # Здесь должна быть клавиатура с основными разделами
+    await update.message.reply_text(welcome_text)
+
+async def help_command(update, context):
+    """Обработчик команды /help"""
+    help_text = """
+📚 Справка по командам:
+
+/start - начать работу с ботом
+/subscribe - оформить подписку
+/subscription - проверить статус подписки
+/help - показать эту справку
+
+💎 О подписках:
+• Бесплатно: 50 вопросов в месяц
+• Базовая (299₽/мес): 100 вопросов в день
+• Pro (599₽/мес): неограниченно
+• Pro до ЕГЭ (1999₽): неограниченно до ЕГЭ 2025
+
+По всем вопросам: @your_support_bot
+    """
+    await update.message.reply_text(help_text)
+
+if __name__ == '__main__':
     main()
