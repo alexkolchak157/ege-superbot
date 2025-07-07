@@ -3,7 +3,7 @@
 import asyncio
 import logging
 from telegram import Update
-from telegram.ext import Application, CommandHandler, CallbackQueryHandler
+from telegram.ext import Application, CommandHandler, CallbackQueryHandler, PicklePersistence
 from telegram.constants import ParseMode
 import sys
 import os
@@ -11,7 +11,7 @@ import os
 # Добавляем путь к корневой директории для импорта модулей
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from core import config, db, plugin_loader
+from core import config, db
 from payment import init_payment_module
 
 logger = logging.getLogger(__name__)
@@ -23,16 +23,39 @@ async def post_init(application: Application) -> None:
     # Инициализация БД
     await db.init_db()
     
-    # Добавляем базовые команды до инициализации модулей
+    # Добавляем базовые команды
     application.add_handler(CommandHandler("start", start_command))
     application.add_handler(CommandHandler("help", help_command))
+    application.add_handler(CommandHandler("menu", menu_command))
     
     # Инициализация модуля платежей
     # Модуль сам регистрирует все обработчики и запускает webhook
     await init_payment_module(application)
     
-    # Загрузка остальных модулей
-    plugin_loader.load_modules(application)
+    # Загрузка модулей-плагинов
+    try:
+        from core import plugin_loader
+        if hasattr(plugin_loader, 'load_modules'):
+            plugin_loader.load_modules(application)
+        else:
+            # Если load_modules не существует, используем discover_plugins
+            plugin_loader.discover_plugins()
+            
+            # Регистрируем плагины вручную
+            for plugin in plugin_loader.PLUGINS:
+                try:
+                    logger.info(f"Registering plugin: {plugin.title}")
+                    plugin.register(application)
+                except Exception as e:
+                    logger.error(f"Failed to register plugin {plugin.code}: {e}")
+            
+            # Добавляем обработчик для главного меню
+            application.add_handler(
+                CallbackQueryHandler(show_plugin_menu, pattern="^main_menu$")
+            )
+    except Exception as e:
+        logger.error(f"Error loading plugins: {e}")
+        logger.info("Bot will work without additional plugins")
     
     logger.info("Post-init завершен")
 
@@ -70,14 +93,23 @@ async def start_command(update: Update, context):
 
 Доступные команды:
 /help - справка по командам
+/menu - главное меню
 /subscribe - оформить подписку
 /status - статус подписки
 
 Выберите раздел для начала работы:
     """
     
-    # Здесь должна быть клавиатура с основными разделами
-    await update.message.reply_text(welcome_text, parse_mode=ParseMode.HTML)
+    # Показываем главное меню если есть плагины
+    try:
+        from core import plugin_loader
+        if hasattr(plugin_loader, 'build_main_menu'):
+            menu = plugin_loader.build_main_menu()
+            await update.message.reply_text(welcome_text, reply_markup=menu, parse_mode=ParseMode.HTML)
+        else:
+            await update.message.reply_text(welcome_text, parse_mode=ParseMode.HTML)
+    except:
+        await update.message.reply_text(welcome_text, parse_mode=ParseMode.HTML)
 
 async def help_command(update: Update, context):
     """Обработчик команды /help"""
@@ -85,6 +117,7 @@ async def help_command(update: Update, context):
 📚 Справка по командам:
 
 /start - начать работу с ботом
+/menu - показать главное меню
 /subscribe - оформить подписку
 /status - проверить статус подписки
 /help - показать эту справку
@@ -98,6 +131,41 @@ async def help_command(update: Update, context):
 По всем вопросам: @your_support_bot
     """
     await update.message.reply_text(help_text, parse_mode=ParseMode.HTML)
+
+async def menu_command(update: Update, context):
+    """Обработчик команды /menu"""
+    try:
+        from core import plugin_loader
+        if hasattr(plugin_loader, 'build_main_menu'):
+            menu = plugin_loader.build_main_menu()
+            await update.message.reply_text(
+                "📚 Выберите раздел для подготовки:",
+                reply_markup=menu
+            )
+        else:
+            await update.message.reply_text(
+                "📚 Главное меню временно недоступно.\n"
+                "Используйте /help для просмотра доступных команд."
+            )
+    except Exception as e:
+        logger.error(f"Error showing menu: {e}")
+        await update.message.reply_text("❌ Ошибка при загрузке меню")
+
+async def show_plugin_menu(update: Update, context):
+    """Показывает меню плагинов"""
+    query = update.callback_query
+    await query.answer()
+    
+    try:
+        from core import plugin_loader
+        menu = plugin_loader.build_main_menu()
+        await query.edit_message_text(
+            "📚 Выберите раздел для подготовки:",
+            reply_markup=menu
+        )
+    except Exception as e:
+        logger.error(f"Error showing plugin menu: {e}")
+        await query.edit_message_text("❌ Ошибка при загрузке меню")
 
 def main():
     """Главная функция запуска бота"""
@@ -114,13 +182,12 @@ def main():
     
     # Создание приложения
     try:
-        # Настройка persistence для сохранения состояний
-        from telegram.ext import PicklePersistence
-        persistence = PicklePersistence(filepath='bot_persistence.pickle')
-        
         builder = Application.builder()
         builder.token(config.BOT_TOKEN)
-        builder.persistence(persistence)  # ← Добавляем persistence
+        
+        # Добавляем persistence для сохранения состояний
+        persistence = PicklePersistence(filepath="bot_persistence.pickle")
+        builder.persistence(persistence)
         
         # Настройка параметров
         builder.post_init(post_init)

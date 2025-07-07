@@ -53,3 +53,50 @@ def build_main_menu() -> InlineKeyboardMarkup:
     
     logger.info(f"Main menu built with {len(buttons)} buttons")
     return InlineKeyboardMarkup(buttons)
+    
+# Добавьте эту функцию в конец файла core/plugin_loader.py
+
+def load_modules(application):
+    """Загружает и регистрирует все плагины в приложении."""
+    import logging
+    logger = logging.getLogger(__name__)
+    
+    # Сначала ищем все плагины
+    discover_plugins()
+    
+    # Затем регистрируем каждый плагин
+    for plugin in PLUGINS:
+        try:
+            logger.info(f"Registering plugin: {plugin.title}")
+            plugin.register(application)
+            
+            # Если у плагина есть post_init, добавляем его в очередь
+            if hasattr(plugin, 'post_init'):
+                application.post_init(plugin.post_init)
+                
+        except Exception as e:
+            logger.error(f"Failed to register plugin {plugin.code}: {e}")
+    
+    logger.info(f"Successfully registered {len(PLUGINS)} plugins")
+    
+    # Регистрируем обработчик главного меню
+    from telegram import Update
+    from telegram.ext import CommandHandler, CallbackQueryHandler
+    
+    async def show_main_menu(update: Update, context):
+        """Показывает главное меню."""
+        menu = build_main_menu()
+        text = "👋 Выберите раздел для подготовки к ЕГЭ:"
+        
+        if update.message:
+            await update.message.reply_text(text, reply_markup=menu)
+        elif update.callback_query:
+            await update.callback_query.edit_message_text(text, reply_markup=menu)
+    
+    # Добавляем команду /menu для показа главного меню
+    application.add_handler(CommandHandler("menu", show_main_menu))
+    
+    # Добавляем обработчик для кнопки "Главное меню"
+    application.add_handler(
+        CallbackQueryHandler(show_main_menu, pattern="^main_menu$")
+    )

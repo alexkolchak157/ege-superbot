@@ -346,25 +346,50 @@ async def get_mistake_ids(user_id: int) -> List[str]:
         logger.exception(f"Ошибка получения ошибок user {user_id}: {e}")
         return []
 
+async def get_correct_answers_count(user_id: int) -> int:
+    """Возвращает общее количество правильных ответов. Защищено от SQL injection."""
+    if not isinstance(user_id, int) or user_id <= 0:
+        return 0
+        
+    try:
+        async with aiosqlite.connect(DATABASE_FILE) as db:
+            cursor = await db.execute(
+                f"""SELECT SUM(correct_count) 
+                    FROM {TABLE_PROGRESS}
+                    WHERE user_id = ?""",
+                (user_id,)
+            )
+            result = await cursor.fetchone()
+            return result[0] if result and result[0] else 0
+            
+    except Exception as e:
+        logger.exception(f"Ошибка получения количества правильных ответов: {e}")
+        return 0
+
+
+async def get_total_questions_count() -> int:
+    """Возвращает общее количество вопросов в базе."""
+    # Это заглушка - нужно реализовать подсчет из данных вопросов
+    # Временно возвращаем примерное значение
+    return 500
 
 async def delete_mistake(user_id: int, question_id: str):
-    """Удаляет запись об ошибке. Защищено от SQL injection."""
+    """Удаляет ошибку из списка. Защищено от SQL injection."""
     if not isinstance(user_id, int) or user_id <= 0:
-        logger.error(f"Некорректный user_id: {user_id}")
         return
         
     if not question_id or not isinstance(question_id, str):
-        logger.debug(f"Пропуск удаления ошибки для user {user_id} без question_id.")
         return
-    
+        
     try:
         await execute_with_retry(
             f"DELETE FROM {TABLE_MISTAKES} WHERE user_id = ? AND question_id = ?",
             (user_id, question_id)
         )
-        logger.info(f"Ошибка {question_id} удалена для user {user_id}")
+        logger.debug(f"Удалена ошибка {question_id} для user {user_id}")
+        
     except Exception as e:
-        logger.exception(f"Ошибка удаления ошибки user {user_id}, question {question_id}: {e}")
+        logger.exception(f"Ошибка удаления ошибки: {e}")
 
 
 async def record_answered(user_id: int, question_id: str):
@@ -502,9 +527,12 @@ async def get_users_for_reminders(inactive_days: int) -> List[int]:
         return []
 
 
-async def update_streak(user_id: int, is_correct: bool, is_new_day: bool):
-    """Обновляет стрики пользователя. Защищено от SQL injection."""
+async def update_streak(user_id: int, streak_type: str, value: int):
+    """Обновляет значение стрика. Защищено от SQL injection."""
     if not isinstance(user_id, int) or user_id <= 0:
+        return
+        
+    if streak_type not in ['daily', 'correct']:
         return
         
     try:
@@ -514,35 +542,27 @@ async def update_streak(user_id: int, is_correct: bool, is_new_day: bool):
                 (user_id,)
             )
             
-            if is_new_day:
-                # Увеличиваем дневной стрик
-                await db.execute(
-                    f"""UPDATE {TABLE_USERS} 
-                        SET current_daily_streak = current_daily_streak + 1,
-                            max_daily_streak = MAX(max_daily_streak, current_daily_streak + 1)
-                        WHERE user_id = ?""",
-                    (user_id,)
-                )
-            
-            if is_correct:
-                # Увеличиваем стрик правильных ответов
+            if streak_type == 'daily':
                 await db.execute(
                     f"""UPDATE {TABLE_USERS}
-                        SET current_correct_streak = current_correct_streak + 1,
-                            max_correct_streak = MAX(max_correct_streak, current_correct_streak + 1)
+                        SET current_daily_streak = ?,
+                            max_daily_streak = MAX(max_daily_streak, ?)
                         WHERE user_id = ?""",
-                    (user_id,)
+                    (value, value, user_id)
                 )
-            else:
-                # Сбрасываем стрик правильных ответов
+            else:  # correct
                 await db.execute(
-                    f"UPDATE {TABLE_USERS} SET current_correct_streak = 0 WHERE user_id = ?",
-                    (user_id,)
+                    f"""UPDATE {TABLE_USERS}
+                        SET current_correct_streak = ?,
+                            max_correct_streak = MAX(max_correct_streak, ?)
+                        WHERE user_id = ?""",
+                    (value, value, user_id)
                 )
             
             await db.commit()
+            
     except Exception as e:
-        logger.exception(f"Ошибка обновления стриков: {e}")
+        logger.exception(f"Ошибка обновления стрика {streak_type} для user {user_id}: {e}")
 
 
 async def get_user_streaks(user_id: int) -> Dict[str, int]:
@@ -697,5 +717,56 @@ async def reset_correct_streak(user_id: int):
     except Exception as e:
         logger.exception(f"Ошибка сброса стрика правильных ответов: {e}")
 
+async def reset_user_progress(user_id: int):
+    """Полностью сбрасывает прогресс пользователя. Защищено от SQL injection."""
+    if not isinstance(user_id, int) or user_id <= 0:
+        logger.error(f"Некорректный user_id: {user_id}")
+        return
+        
+    try:
+        async with aiosqlite.connect(DATABASE_FILE) as db:
+            # Удаляем прогресс
+            await db.execute(
+                f"DELETE FROM {TABLE_PROGRESS} WHERE user_id = ?",
+                (user_id,)
+            )
+            
+            # Удаляем ошибки
+            await db.execute(
+                f"DELETE FROM {TABLE_MISTAKES} WHERE user_id = ?",
+                (user_id,)
+            )
+            
+            # Удаляем историю ответов
+            await db.execute(
+                f"DELETE FROM {TABLE_ANSWERED} WHERE user_id = ?",
+                (user_id,)
+            )
+            
+            # Сбрасываем стрики
+            await db.execute(
+                f"""UPDATE {TABLE_USERS} 
+                    SET current_daily_streak = 0,
+                        current_correct_streak = 0,
+                        monthly_usage_count = 0
+                    WHERE user_id = ?""",
+                (user_id,)
+            )
+            
+            await db.commit()
+            logger.info(f"Прогресс пользователя {user_id} полностью сброшен")
+            
+    except Exception as e:
+        logger.exception(f"Ошибка сброса прогресса для user {user_id}: {e}")
 
-from datetime import timedelta
+async def ensure_user(user_id: int) -> None:
+    """Создает пользователя в БД если он не существует."""
+    try:
+        async with aiosqlite.connect(DATABASE_FILE) as db:
+            await db.execute(
+                f"INSERT OR IGNORE INTO {TABLE_USERS} (user_id) VALUES (?)",
+                (user_id,)
+            )
+            await db.commit()
+    except Exception as e:
+        logger.exception(f"Ошибка при создании пользователя: {e}")
