@@ -1,59 +1,71 @@
 # payment/admin_commands.py
 """Админские команды для управления подписками."""
 import logging
-from datetime import datetime
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import Update
+from telegram.ext import ContextTypes, CommandHandler, Application
 from telegram.constants import ParseMode
-from telegram.ext import ContextTypes, CommandHandler
+from functools import wraps
 
-from core.admin_tools import admin_only
+from core import config
 from .subscription_manager import SubscriptionManager
-from .config import SUBSCRIPTION_PLANS
 
 logger = logging.getLogger(__name__)
 
-subscription_manager = SubscriptionManager()
+
+def admin_only(func):
+    """Декоратор для проверки админских прав."""
+    @wraps(func)
+    async def wrapper(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        user_id = update.effective_user.id
+        
+        # Проверяем список админов
+        admin_ids = []
+        if hasattr(config, 'ADMIN_IDS') and config.ADMIN_IDS:
+            if isinstance(config.ADMIN_IDS, str):
+                admin_ids = [int(id.strip()) for id in config.ADMIN_IDS.split(',') if id.strip()]
+            elif isinstance(config.ADMIN_IDS, list):
+                admin_ids = [int(id) for id in config.ADMIN_IDS]
+        
+        if user_id not in admin_ids:
+            await update.message.reply_text("❌ У вас нет прав для выполнения этой команды.")
+            return
+        
+        return await func(update, context)
+    
+    return wrapper
 
 
 @admin_only
 async def cmd_grant_subscription(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Выдает подписку пользователю. Использование: /grant <user_id> <plan_id> [days]"""
-    
+    """Выдает подписку пользователю."""
     if len(context.args) < 2:
         await update.message.reply_text(
-            "Использование: /grant <user_id> <plan_id> [days]\n\n"
-            f"Доступные планы: {', '.join(SUBSCRIPTION_PLANS.keys())}"
+            "Использование: /grant <user_id> <plan_id>\n"
+            "Планы: basic_month, pro_month, pro_ege"
         )
         return
     
     try:
         user_id = int(context.args[0])
         plan_id = context.args[1]
-        days = int(context.args[2]) if len(context.args) > 2 else None
         
-        if plan_id not in SUBSCRIPTION_PLANS:
-            await update.message.reply_text(f"❌ Неизвестный план: {plan_id}")
-            return
+        subscription_manager = SubscriptionManager()
         
-        success = await subscription_manager.grant_subscription(
+        # Создаем фиктивный платеж
+        from datetime import datetime, timedelta, timezone
+        payment = await subscription_manager.create_payment(
             user_id=user_id,
             plan_id=plan_id,
-            days=days,
-            reason=f"admin_grant_by_{update.effective_user.id}"
+            amount_kopecks=0  # Бесплатная выдача
+        )
+        
+        # Активируем подписку
+        success = await subscription_manager.activate_subscription(
+            order_id=payment['order_id'],
+            payment_id=f'ADMIN_GRANT_{datetime.now().timestamp()}'
         )
         
         if success:
-            # Уведомляем пользователя
-            try:
-                plan = SUBSCRIPTION_PLANS[plan_id]
-                await context.bot.send_message(
-                    user_id,
-                    f"🎁 Вам выдана подписка \"{plan['name']}\"!\n"
-                    f"Используйте /status для просмотра деталей."
-                )
-            except:
-                pass
-            
             await update.message.reply_text(
                 f"✅ Подписка {plan_id} выдана пользователю {user_id}"
             )
@@ -61,7 +73,7 @@ async def cmd_grant_subscription(update: Update, context: ContextTypes.DEFAULT_T
             await update.message.reply_text("❌ Ошибка при выдаче подписки")
             
     except ValueError:
-        await update.message.reply_text("❌ Неверный формат команды")
+        await update.message.reply_text("❌ Неверный ID пользователя")
     except Exception as e:
         logger.exception(f"Error granting subscription: {e}")
         await update.message.reply_text(f"❌ Ошибка: {str(e)}")
@@ -69,8 +81,7 @@ async def cmd_grant_subscription(update: Update, context: ContextTypes.DEFAULT_T
 
 @admin_only
 async def cmd_revoke_subscription(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Отзывает подписку. Использование: /revoke <user_id>"""
-    
+    """Отзывает подписку у пользователя."""
     if not context.args:
         await update.message.reply_text("Использование: /revoke <user_id>")
         return
@@ -78,6 +89,7 @@ async def cmd_revoke_subscription(update: Update, context: ContextTypes.DEFAULT_
     try:
         user_id = int(context.args[0])
         
+        subscription_manager = SubscriptionManager()
         success = await subscription_manager.cancel_subscription(user_id)
         
         if success:
@@ -97,26 +109,23 @@ async def cmd_revoke_subscription(update: Update, context: ContextTypes.DEFAULT_
 @admin_only
 async def cmd_payment_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Показывает статистику платежей."""
-    
     try:
-        # Здесь можно добавить подробную статистику из БД
-        text = """📊 <b>Статистика платежей</b>
-
-🚧 Функция в разработке...
-
-Используйте:
-/grant - выдать подписку
-/revoke - отозвать подписку"""
-        
-        await update.message.reply_text(text, parse_mode=ParseMode.HTML)
-        
+        await update.message.reply_text(
+            "📊 <b>Статистика платежей</b>\n\n"
+            "🚧 Функция в разработке...\n\n"
+            "Используйте:\n"
+            "/grant <user_id> <plan> - выдать подписку\n"
+            "/revoke <user_id> - отозвать подписку",
+            parse_mode=ParseMode.HTML
+        )
     except Exception as e:
         logger.exception(f"Error getting payment stats: {e}")
         await update.message.reply_text("❌ Ошибка получения статистики")
 
 
-def register_admin_commands(app):
+def register_admin_commands(app: Application):
     """Регистрирует админские команды."""
     app.add_handler(CommandHandler("grant", cmd_grant_subscription))
     app.add_handler(CommandHandler("revoke", cmd_revoke_subscription))
     app.add_handler(CommandHandler("payment_stats", cmd_payment_stats))
+    logger.info("Admin commands registered")

@@ -15,7 +15,9 @@ from telegram.ext import (
     ContextTypes, 
     ConversationHandler,
     CommandHandler,
-    CallbackQueryHandler
+    CallbackQueryHandler,
+    MessageHandler,
+    filters
 )
 
 from core import db, states

@@ -6,8 +6,11 @@ from telegram.ext import Application
 
 from .subscription_manager import SubscriptionManager
 from .handlers import register_payment_handlers
-from .middleware import register_subscription_middleware, requires_subscription
+from .middleware import setup_subscription_middleware
+from .decorators import requires_subscription
 from .webhook import start_webhook_server
+from .admin_commands import register_admin_commands
+from core import config
 
 logger = logging.getLogger(__name__)
 
@@ -32,12 +35,22 @@ async def init_payment_module(app: Application):
     # Создаем менеджер подписок
     subscription_manager = SubscriptionManager()
     
+    # Сохраняем менеджер в bot_data для доступа из других модулей
+    app.bot_data['subscription_manager'] = subscription_manager
+    
     # Инициализируем таблицы БД
     await subscription_manager.init_tables()
     
     # Регистрируем обработчики
     register_payment_handlers(app)
-    register_subscription_middleware(app)
+    
+    # Регистрируем админские команды (если пользователь админ)
+    if hasattr(config, 'ADMIN_IDS') and config.ADMIN_IDS:
+        register_admin_commands(app)
+        logger.info("Admin commands registered")
+    
+    # Регистрируем middleware для проверки подписок
+    setup_subscription_middleware(app)
     
     # Запускаем webhook сервер в фоне
     webhook_task = asyncio.create_task(start_webhook_server())

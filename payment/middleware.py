@@ -10,7 +10,7 @@ from telegram.ext import (
 from datetime import datetime
 
 from core import config, db
-from payment.subscription_manager import SubscriptionManager
+# НЕ импортируем SubscriptionManager в начале файла!
 
 logger = logging.getLogger(__name__)
 
@@ -45,7 +45,7 @@ class SubscriptionMiddleware:
         
         self.check_channel = check_channel
         self.channel = channel or config.REQUIRED_CHANNEL
-        self.subscription_manager = SubscriptionManager()
+        # НЕ создаем subscription_manager здесь!
         
     async def process_update(
         self,
@@ -92,7 +92,9 @@ class SubscriptionMiddleware:
         await self._increment_usage(user_id)
         
         # Добавляем информацию о подписке в context
-        context.user_data['subscription_info'] = await self.subscription_manager.get_subscription_info(user_id)
+        from payment.subscription_manager import SubscriptionManager
+        subscription_manager = SubscriptionManager()
+        context.user_data['subscription_info'] = await subscription_manager.get_subscription_info(user_id)
         context.user_data['usage_info'] = {'used': used + 1, 'limit': limit}
         
         # Показываем оставшийся лимит для базовых подписок
@@ -130,8 +132,13 @@ class SubscriptionMiddleware:
     
     async def _check_subscription(self, user_id: int, bot) -> bool:
         """Проверяет наличие активной подписки"""
+        # Импортируем только когда нужно
+        from payment.subscription_manager import SubscriptionManager
+        
+        subscription_manager = SubscriptionManager()
+        
         # Проверяем платную подписку
-        subscription_info = await self.subscription_manager.get_subscription_info(user_id)
+        subscription_info = await subscription_manager.get_subscription_info(user_id)
         if subscription_info['is_active']:
             return True
         
@@ -148,7 +155,11 @@ class SubscriptionMiddleware:
     
     async def _check_limits(self, user_id: int) -> tuple[bool, int, int]:
         """Проверяет лимиты использования"""
-        subscription_info = await self.subscription_manager.get_subscription_info(user_id)
+        # Импортируем только когда нужно
+        from payment.subscription_manager import SubscriptionManager
+        
+        subscription_manager = SubscriptionManager()
+        subscription_info = await subscription_manager.get_subscription_info(user_id)
         
         # Безлимитные планы
         if subscription_info['is_active'] and subscription_info['plan_id'] in ['pro_month', 'pro_ege']:

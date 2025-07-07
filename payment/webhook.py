@@ -1,265 +1,177 @@
 # payment/webhook.py
-"""Webhook сервер для обработки уведомлений от Tinkoff."""
-import json
+"""Webhook сервер для приема уведомлений от платежной системы."""
 import logging
-from datetime import datetime
+import json
+import hashlib
+import hmac
 from aiohttp import web
-
 from telegram import Bot
 
-from core.config import BOT_TOKEN
-from .config import PAYMENT_ADMIN_CHAT_ID, WEBHOOK_PATH
+from core import config
 from .subscription_manager import SubscriptionManager
 from .tinkoff import TinkoffPayment
 
 logger = logging.getLogger(__name__)
 
-# Инициализация
-subscription_manager = SubscriptionManager()
-tinkoff_payment = TinkoffPayment()
-bot = Bot(token=BOT_TOKEN)
-
-routes = web.RouteTableDef()
+# Глобальные переменные для webhook приложения
+webhook_app = None
+webhook_runner = None
+webhook_site = None
 
 
-@routes.post(WEBHOOK_PATH)
-async def handle_payment_webhook(request: web.Request):
-    """Обработчик webhook от Tinkoff."""
+def verify_tinkoff_signature(data: dict, token: str, terminal_key: str, secret_key: str) -> bool:
+    """Проверяет подпись от Tinkoff."""
+    # Копируем данные для проверки
+    check_data = data.copy()
+    
+    # Удаляем Token из данных
+    received_token = check_data.pop('Token', '')
+    
+    # Добавляем пароль и TerminalKey
+    check_data['Password'] = secret_key
+    check_data['TerminalKey'] = terminal_key
+    
+    # Сортируем по ключам
+    sorted_data = sorted(check_data.items())
+    
+    # Конкатенируем значения
+    concat_values = ''.join(str(value) for key, value in sorted_data)
+    
+    # Вычисляем SHA256
+    calculated_token = hashlib.sha256(concat_values.encode()).hexdigest()
+    
+    return calculated_token.upper() == received_token.upper()
+
+
+async def handle_webhook(request: web.Request) -> web.Response:
+    """Обработчик webhook запросов от Tinkoff."""
     try:
-        # Получаем данные
+        # Читаем данные
         data = await request.json()
-        logger.info(f"Received webhook: {json.dumps(data, ensure_ascii=False)}")
+        logger.info(f"Webhook received: {data}")
+        
+        # Проверяем наличие необходимых полей
+        if 'TerminalKey' not in data or 'Token' not in data:
+            logger.warning("Missing required fields in webhook data")
+            return web.Response(text="FAIL", status=400)
         
         # Проверяем подпись
-        if not tinkoff_payment.verify_webhook_token(data):
+        if not verify_tinkoff_signature(
+            data,
+            data.get('Token', ''),
+            config.TINKOFF_TERMINAL_KEY,
+            config.TINKOFF_SECRET_KEY
+        ):
             logger.warning("Invalid webhook signature")
-            return web.Response(status=403, text="Invalid signature")
+            return web.Response(text="FAIL", status=401)
         
-        # Извлекаем данные
-        status = data.get("Status")
-        order_id = data.get("OrderId")
-        payment_id = data.get("PaymentId")
-        amount = data.get("Amount", 0)
+        # Обрабатываем разные статусы
+        status = data.get('Status')
+        order_id = data.get('OrderId')
+        payment_id = data.get('PaymentId')
         
-        # Обрабатываем только успешные платежи
-        if status in ["CONFIRMED", "AUTHORIZED"]:
-            logger.info(f"Payment confirmed: {order_id}")
+        if not order_id:
+            logger.warning("No OrderId in webhook data")
+            return web.Response(text="OK")
+        
+        subscription_manager = SubscriptionManager()
+        
+        if status == 'CONFIRMED':
+            # Платеж подтвержден - активируем подписку
+            logger.info(f"Payment confirmed for order {order_id}")
             
-            # Активируем подписку
-            success = await subscription_manager.confirm_payment(order_id, payment_id)
+            success = await subscription_manager.activate_subscription(
+                order_id=order_id,
+                payment_id=str(payment_id)
+            )
             
             if success:
-                # Получаем данные пользователя из DATA
-                user_data = data.get("DATA", {})
-                user_id = int(user_data.get("user_id", 0))
-                plan_id = user_data.get("plan_id", "unknown")
+                logger.info(f"Subscription activated for order {order_id}")
                 
-                if user_id:
-                    # Отправляем уведомление пользователю
-                    try:
-                        from .config import SUBSCRIPTION_PLANS
-                        plan = SUBSCRIPTION_PLANS.get(plan_id, {})
-                        
-                        user_text = f"""✅ <b>Оплата прошла успешно!</b>
-
-Ваша подписка "{plan.get('name', 'Premium')}" активирована.
-Спасибо за доверие!
-
-Используйте /status для просмотра информации о подписке."""
-                        
-                        await bot.send_message(
-                            user_id,
-                            user_text,
-                            parse_mode="HTML"
-                        )
-                    except Exception as e:
-                        logger.error(f"Failed to notify user {user_id}: {e}")
-                
-                # Уведомляем админа
-                if PAYMENT_ADMIN_CHAT_ID:
-                    admin_text = f"""✅ Платеж подтвержден:
-                    
-Order: {order_id}
-User: {user_id}
-План: {plan_id}
-Сумма: {amount / 100} ₽"""
-                    
-                    try:
-                        await bot.send_message(PAYMENT_ADMIN_CHAT_ID, admin_text)
-                    except Exception as e:
-                        logger.error(f"Failed to notify admin: {e}")
+                # Уведомляем пользователя
+                bot = request.app.get('bot')
+                if bot:
+                    payment_info = await subscription_manager.get_payment_by_order_id(order_id)
+                    if payment_info:
+                        try:
+                            await bot.send_message(
+                                payment_info['user_id'],
+                                "✅ Оплата прошла успешно! Подписка активирована.\n\n"
+                                "Используйте /status для просмотра информации о подписке."
+                            )
+                        except Exception as e:
+                            logger.error(f"Failed to notify user: {e}")
             else:
                 logger.error(f"Failed to activate subscription for order {order_id}")
         
-        elif status in ["REFUNDED", "PARTIAL_REFUNDED"]:
-            logger.info(f"Payment refunded: {order_id}")
-            
-            # Здесь можно добавить логику отмены подписки при возврате
-            # user_id = ... получить из БД по order_id
-            # await subscription_manager.cancel_subscription(user_id)
+        elif status in ['REJECTED', 'REFUNDED', 'PARTIAL_REFUNDED']:
+            # Платеж отклонен/возвращен
+            logger.info(f"Payment {status} for order {order_id}")
+            await subscription_manager.update_payment_status(order_id, status.lower())
         
-        # Всегда отвечаем OK для Tinkoff
-        return web.Response(status=200, text="OK")
+        return web.Response(text="OK")
         
+    except json.JSONDecodeError:
+        logger.error("Invalid JSON in webhook request")
+        return web.Response(text="FAIL", status=400)
     except Exception as e:
         logger.exception(f"Error processing webhook: {e}")
-        # Даже при ошибке отвечаем 200, чтобы Tinkoff не повторял запрос
-        return web.Response(status=200, text="OK")
+        return web.Response(text="FAIL", status=500)
 
 
-@routes.get('/payment/success')
-async def handle_payment_success(request: web.Request):
-    """Страница успешной оплаты."""
-    order_id = request.query.get('order', 'unknown')
-    
-    html = f"""
-    <!DOCTYPE html>
-    <html>
-    <head>
-        <meta charset="UTF-8">
-        <title>Оплата успешна</title>
-        <style>
-            body {{
-                font-family: Arial, sans-serif;
-                display: flex;
-                justify-content: center;
-                align-items: center;
-                height: 100vh;
-                margin: 0;
-                background-color: #f0f2f5;
-            }}
-            .container {{
-                text-align: center;
-                padding: 40px;
-                background: white;
-                border-radius: 10px;
-                box-shadow: 0 2px 10px rgba(0,0,0,0.1);
-            }}
-            .success-icon {{
-                font-size: 64px;
-                color: #4CAF50;
-                margin-bottom: 20px;
-            }}
-            h1 {{
-                color: #333;
-                margin-bottom: 10px;
-            }}
-            p {{
-                color: #666;
-                margin-bottom: 30px;
-            }}
-            .button {{
-                display: inline-block;
-                padding: 12px 30px;
-                background-color: #0088cc;
-                color: white;
-                text-decoration: none;
-                border-radius: 5px;
-                transition: background-color 0.3s;
-            }}
-            .button:hover {{
-                background-color: #0077b5;
-            }}
-        </style>
-    </head>
-    <body>
-        <div class="container">
-            <div class="success-icon">✅</div>
-            <h1>Оплата прошла успешно!</h1>
-            <p>Заказ: {order_id}</p>
-            <p>Ваша подписка активирована. Вернитесь в Telegram для продолжения работы.</p>
-            <a href="https://t.me/{(await bot.get_me()).username}" class="button">Вернуться в бот</a>
-        </div>
-    </body>
-    </html>
-    """
-    
-    return web.Response(text=html, content_type='text/html')
-
-
-@routes.get('/payment/fail')
-async def handle_payment_fail(request: web.Request):
-    """Страница неудачной оплаты."""
-    order_id = request.query.get('order', 'unknown')
-    
-    html = f"""
-    <!DOCTYPE html>
-    <html>
-    <head>
-        <meta charset="UTF-8">
-        <title>Ошибка оплаты</title>
-        <style>
-            body {{
-                font-family: Arial, sans-serif;
-                display: flex;
-                justify-content: center;
-                align-items: center;
-                height: 100vh;
-                margin: 0;
-                background-color: #f0f2f5;
-            }}
-            .container {{
-                text-align: center;
-                padding: 40px;
-                background: white;
-                border-radius: 10px;
-                box-shadow: 0 2px 10px rgba(0,0,0,0.1);
-            }}
-            .error-icon {{
-                font-size: 64px;
-                color: #f44336;
-                margin-bottom: 20px;
-            }}
-            h1 {{
-                color: #333;
-                margin-bottom: 10px;
-            }}
-            p {{
-                color: #666;
-                margin-bottom: 30px;
-            }}
-            .button {{
-                display: inline-block;
-                padding: 12px 30px;
-                background-color: #0088cc;
-                color: white;
-                text-decoration: none;
-                border-radius: 5px;
-                transition: background-color 0.3s;
-            }}
-            .button:hover {{
-                background-color: #0077b5;
-            }}
-        </style>
-    </head>
-    <body>
-        <div class="container">
-            <div class="error-icon">❌</div>
-            <h1>Оплата не завершена</h1>
-            <p>Заказ: {order_id}</p>
-            <p>Платеж был отменен или произошла ошибка. Попробуйте еще раз.</p>
-            <a href="https://t.me/{(await bot.get_me()).username}" class="button">Вернуться в бот</a>
-        </div>
-    </body>
-    </html>
-    """
-    
-    return web.Response(text=html, content_type='text/html')
-
-
-async def start_webhook_server(host='0.0.0.0', port=8080):
-    """Запускает webhook сервер."""
-    # Инициализируем таблицы БД
-    await subscription_manager.init_tables()
-    
+def create_webhook_app(bot: Bot = None) -> web.Application:
+    """Создает aiohttp приложение для webhook."""
     app = web.Application()
-    app.add_routes(routes)
+    app['bot'] = bot
+    app.router.add_post('/webhook', handle_webhook)
+    return app
+
+
+async def start_webhook_server(bot: Bot = None, port: int = 8080):
+    """Запускает webhook сервер."""
+    global webhook_app, webhook_runner, webhook_site
     
-    runner = web.AppRunner(app)
-    await runner.setup()
-    site = web.TCPSite(runner, host, port)
+    try:
+        # Проверяем конфигурацию
+        if not all([
+            getattr(config, 'TINKOFF_TERMINAL_KEY', None),
+            getattr(config, 'TINKOFF_SECRET_KEY', None)
+        ]):
+            logger.warning("Tinkoff credentials not configured, webhook server not started")
+            return
+        
+        # Создаем приложение
+        webhook_app = create_webhook_app(bot)
+        
+        # Создаем и запускаем runner
+        webhook_runner = web.AppRunner(webhook_app)
+        await webhook_runner.setup()
+        
+        # Запускаем сайт
+        webhook_site = web.TCPSite(webhook_runner, '0.0.0.0', port)
+        await webhook_site.start()
+        
+        logger.info(f"Webhook server started on port {port}")
+        
+        # Логируем webhook URL для настройки в Tinkoff
+        if hasattr(config, 'WEBHOOK_BASE_URL'):
+            webhook_url = f"{config.WEBHOOK_BASE_URL}/webhook"
+            logger.info(f"Webhook URL for Tinkoff: {webhook_url}")
+        
+    except Exception as e:
+        logger.exception(f"Failed to start webhook server: {e}")
+
+
+async def stop_webhook_server():
+    """Останавливает webhook сервер."""
+    global webhook_site, webhook_runner
     
-    logger.info(f"Starting webhook server on {host}:{port}")
-    await site.start()
+    if webhook_site:
+        await webhook_site.stop()
+        webhook_site = None
     
-    return runner
+    if webhook_runner:
+        await webhook_runner.cleanup()
+        webhook_runner = None
+    
+    logger.info("Webhook server stopped")
