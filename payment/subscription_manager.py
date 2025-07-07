@@ -352,3 +352,32 @@ class SubscriptionManager:
         except Exception as e:
             logger.exception(f"Error granting subscription: {e}")
             return False
+    
+    async def get_subscription_info(self, user_id: int) -> Optional[Dict[str, Any]]:
+        """
+        Получает информацию о подписке пользователя.
+        Обертка для обратной совместимости.
+        """
+        subscription = await self.check_active_subscription(user_id)
+        
+        if subscription:
+            from .config import SUBSCRIPTION_PLANS
+            plan = SUBSCRIPTION_PLANS.get(subscription['plan_id'], {})
+            
+            return {
+                'is_active': True,
+                'plan_id': subscription['plan_id'],
+                'plan_name': plan.get('name', 'Неизвестный план'),
+                'expires_at': subscription['expires_at'],
+                'features': plan.get('features', []),
+                'price': plan.get('price_rub', 0)
+            }
+        
+        return {
+            'is_active': False,
+            'plan_id': None,
+            'plan_name': None,
+            'expires_at': None,
+            'features': [],
+            'price': 0
+        }
