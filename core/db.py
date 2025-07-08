@@ -770,3 +770,24 @@ async def ensure_user(user_id: int) -> None:
             await db.commit()
     except Exception as e:
         logger.exception(f"Ошибка при создании пользователя: {e}")
+        
+# Методы для обратной совместимости с payment модулем
+async def execute_query(query: str, params: tuple = ()) -> Any:
+    """Обертка для execute_with_retry."""
+    return await execute_with_retry(query, params)
+
+async def fetch_one(query: str, params: tuple = ()) -> Optional[Dict[str, Any]]:
+    """Выполняет SELECT и возвращает одну строку."""
+    try:
+        async with aiosqlite.connect(DATABASE_FILE) as conn:
+            conn.row_factory = aiosqlite.Row
+            cursor = await conn.execute(query, params)
+            row = await cursor.fetchone()
+            return dict(row) if row else None
+    except Exception as e:
+        logger.error(f"Error in fetch_one: {e}")
+        return None
+
+async def get_user(user_id: int) -> Optional[Dict[str, Any]]:
+    """Получает данные пользователя."""
+    return await get_or_create_user_status(user_id)
