@@ -48,6 +48,8 @@ class Task25Plugin(BotPlugin):
                 states.CHOOSING_MODE: [
                     # Основные режимы
                     CallbackQueryHandler(handlers.practice_mode, pattern="^t25_practice$"),
+                    CallbackQueryHandler(handlers.by_difficulty, pattern="^t25_by_difficulty$"),
+                    CallbackQueryHandler(handlers.recommended_topic, pattern="^t25_recommended$"),
                     CallbackQueryHandler(handlers.theory_mode, pattern="^t25_theory$"),
                     CallbackQueryHandler(handlers.examples_bank, pattern="^t25_examples$"),
                     CallbackQueryHandler(handlers.show_examples_block, pattern="^t25_examples_block:"),

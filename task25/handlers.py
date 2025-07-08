@@ -14,7 +14,15 @@ from core.admin_tools import admin_manager
 from core import states
 from core.plugin_loader import build_main_menu
 from core.universal_ui import UniversalUIComponents, AdaptiveKeyboards, MessageFormatter
-from core.states import ANSWERING_PARTS, CHOOSING_BLOCK_T25
+from core.states import (
+    CHOOSING_MODE, 
+    CHOOSING_BLOCK_T25,
+    ANSWERING,
+    ANSWERING_PARTS,
+    SEARCHING,
+    AWAITING_FEEDBACK,
+    TASK25_WAITING
+)
 from core.ui_helpers import (
     show_thinking_animation,
     show_extended_thinking_animation,
@@ -338,28 +346,45 @@ async def practice_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Режим практики."""
     query = update.callback_query
     
-    # Очищаем контекст выбранного блока
-    context.user_data.pop('selected_block', None)
+    # Проверяем загрузку данных
+    if not task25_data or not task25_data.get('topics'):
+        logger.warning("Task25 data not loaded when accessing practice mode")
+        
+        # Пытаемся перезагрузить данные
+        await query.answer("⏳ Загружаю данные...", show_alert=False)
+        await init_task25_data()
+        
+        # Проверяем еще раз после попытки загрузки
+        if not task25_data or not task25_data.get('topics'):
+            text = """💪 <b>Режим практики</b>
+
+❌ <b>Данные заданий не загружены</b>
+
+<b>Проблема:</b>
+Не удалось загрузить темы для практики.
+
+<b>Возможные причины:</b>
+• Отсутствует файл task25/task25_topics.json
+• Файл содержит ошибки или пустой
+• Проблемы с доступом к файлу
+
+<b>Что делать:</b>
+1. Убедитесь, что файл существует и доступен
+2. Проверьте корректность JSON-структуры
+3. Перезапустите бота
+
+Обратитесь к администратору для решения проблемы."""
+            
+            kb = InlineKeyboardMarkup([
+                [InlineKeyboardButton("🔄 Попробовать снова", callback_data="t25_practice")],
+                [InlineKeyboardButton("⬅️ Назад", callback_data="t25_menu")]
+            ])
+            
+            await query.edit_message_text(text, reply_markup=kb, parse_mode=ParseMode.HTML)
+            return states.CHOOSING_MODE
     
-    text = (
-        "💪 <b>Режим практики</b>\n\n"
-        "Выберите способ выбора темы:"
-    )
-    
-    kb = InlineKeyboardMarkup([
-        [InlineKeyboardButton("🎲 Случайная тема", callback_data="t25_random_all")],
-        [InlineKeyboardButton("📚 Выбрать блок", callback_data="t25_select_block")],
-        [InlineKeyboardButton("📋 Список всех тем", callback_data="t25_all_topics_list")],
-        [InlineKeyboardButton("⬅️ Назад", callback_data="t25_menu")]
-    ])
-    
-    await query.edit_message_text(
-        text,
-        reply_markup=kb,
-        parse_mode=ParseMode.HTML
-    )
-    
-    return states.CHOOSING_MODE
+    # Если данные загружены, продолжаем
+    return await choose_practice_mode(update, context)
 
 
 @safe_handler()
@@ -407,50 +432,44 @@ async def theory_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return states.CHOOSING_MODE
 
 @safe_handler()
-@validate_state_transition({states.CHOOSING_BLOCK})
+@validate_state_transition({states.CHOOSING_MODE})  # Изменено с CHOOSING_BLOCK
 async def select_block(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Выбор блока тем с улучшенным отображением."""
     query = update.callback_query
     
-    blocks = task25_data.get("topics_by_block", {})
+    # Проверяем загрузку данных
+    if not task25_data or not task25_data.get('topics_by_block'):
+        logger.warning("No blocks data available")
+        await query.answer("❌ Данные не загружены", show_alert=True)
+        return await practice_mode(update, context)
     
-    text = "📚 <b>Выберите блок:</b>\n\n"
-    buttons = []
+    blocks_data = task25_data.get('topics_by_block', {})
     
-    # Получаем статистику пользователя
-    user_stats = context.user_data.get('task25_stats', {})
-    completed_topics = set(user_stats.get('topics_completed', []))
-    
-    # Добавляем общую статистику
-    total_topics = sum(len(topics) for topics in blocks.values())
-    total_completed = len(completed_topics)
-    
-    text += f"📊 Общий прогресс: {total_completed}/{total_topics} тем\n\n"
-    
-    for block_name, topics in blocks.items():
-        # Статистика по блоку
-        completed_in_block = len([t for t in topics if t.get('id') in completed_topics])
-        total_in_block = len(topics)
+    if not blocks_data:
+        text = "📚 <b>Выбор блока</b>\n\n❌ Блоки тем не найдены."
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("⬅️ Назад", callback_data="t25_practice")]
+        ])
+    else:
+        text = "📚 <b>Выбор блока</b>\n\nВыберите блок для практики:"
         
-        # Эмодзи прогресса
-        if completed_in_block == 0:
-            emoji = "⚪"
-        elif completed_in_block == total_in_block:
-            emoji = "✅"
-        else:
-            percentage = (completed_in_block / total_in_block) * 100
-            if percentage >= 50:
-                emoji = "🟡"
-            else:
-                emoji = "🔵"
+        buttons = []
         
-        button_text = f"{emoji} {block_name} (выполнено: {completed_in_block}/{total_in_block})"
-        buttons.append([InlineKeyboardButton(button_text, callback_data=f"t25_block:{block_name}")])
-    
-    buttons.append([InlineKeyboardButton("🎲 Случайная тема", callback_data="t25_random_all")])
-    buttons.append([InlineKeyboardButton("⬅️ Назад", callback_data="t25_practice")])
-    
-    kb = InlineKeyboardMarkup(buttons)
+        # Создаем кнопки для каждого блока
+        for block_name, topics in blocks_data.items():
+            # Получаем статистику по блоку
+            user_stats = context.user_data.get('task25_stats', {})
+            completed_topics = set(user_stats.get('topics_completed', []))
+            completed_in_block = len([t for t in topics if t.get('id') in completed_topics])
+            
+            button_text = f"{block_name} ({completed_in_block}/{len(topics)})"
+            buttons.append([InlineKeyboardButton(
+                button_text,
+                callback_data=f"t25_block:{block_name}"
+            )])
+        
+        buttons.append([InlineKeyboardButton("⬅️ Назад", callback_data="t25_practice")])
+        kb = InlineKeyboardMarkup(buttons)
     
     await query.edit_message_text(
         text,
@@ -458,7 +477,12 @@ async def select_block(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode=ParseMode.HTML
     )
     
-    return states.CHOOSING_MODE
+    return states.CHOOSING_BLOCK_T25
+
+@safe_handler()
+async def by_block(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Алиас для select_block."""
+    return await select_block(update, context)
 
 @safe_handler()
 async def another_topic_from_current(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -2639,7 +2663,7 @@ async def choose_practice_mode(update: Update, context: ContextTypes.DEFAULT_TYP
     text = "💪 <b>Режим практики</b>\n\nВыберите способ выбора темы:"
     
     kb = InlineKeyboardMarkup([
-        [InlineKeyboardButton("🎲 Случайная тема", callback_data="t25_random")],
+        [InlineKeyboardButton("🎲 Случайная тема", callback_data="t25_random_all")],  # Изменено с t25_random на t25_random_all
         [InlineKeyboardButton("📚 По блокам", callback_data="t25_by_block")],
         [InlineKeyboardButton("📈 По сложности", callback_data="t25_by_difficulty")],
         [InlineKeyboardButton("🎯 Рекомендованная", callback_data="t25_recommended")],
@@ -2686,7 +2710,7 @@ async def handle_random_topic(update: Update, context: ContextTypes.DEFAULT_TYPE
         parse_mode=ParseMode.HTML
     )
     
-    return states.AWAITING_ANSWER
+    return states.ANSWERING
 
 
 @safe_handler()
@@ -2729,16 +2753,16 @@ async def choose_block(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 @safe_handler()
-async def handle_by_difficulty(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def by_difficulty(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Выбор темы по сложности."""
     query = update.callback_query
     
-    text = "📊 <b>Выберите уровень сложности:</b>"
+    text = "📈 <b>Выбор по сложности</b>\n\nВыберите уровень:"
     
     kb = InlineKeyboardMarkup([
-        [InlineKeyboardButton("🟢 Лёгкий", callback_data="t25_diff:easy")],
-        [InlineKeyboardButton("🟡 Средний", callback_data="t25_diff:medium")],
-        [InlineKeyboardButton("🔴 Сложный", callback_data="t25_diff:hard")],
+        [InlineKeyboardButton("🟢 Легкие", callback_data="t25_diff:easy")],
+        [InlineKeyboardButton("🟡 Средние", callback_data="t25_diff:medium")],
+        [InlineKeyboardButton("🔴 Сложные", callback_data="t25_diff:hard")],
         [InlineKeyboardButton("⬅️ Назад", callback_data="t25_practice")]
     ])
     
@@ -2784,8 +2808,16 @@ async def handle_difficulty_selected(update: Update, context: ContextTypes.DEFAU
         parse_mode=ParseMode.HTML
     )
     
-    return states.AWAITING_ANSWER
+    return states.ANSWERING
 
+@safe_handler()
+async def recommended_topic(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Рекомендованная тема на основе прогресса."""
+    query = update.callback_query
+    
+    # Временно используем случайную тему
+    await query.answer("🎯 Подбираю рекомендацию...", show_alert=False)
+    return await random_topic_all(update, context)
 
 @safe_handler()
 async def handle_recommended(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -2825,7 +2857,7 @@ async def handle_recommended(update: Update, context: ContextTypes.DEFAULT_TYPE)
         parse_mode=ParseMode.HTML
     )
     
-    return states.AWAITING_ANSWER
+    return states.ANSWERING
 
 @safe_handler()
 async def handle_topic_by_block(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -2876,7 +2908,7 @@ async def handle_retry(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode=ParseMode.HTML
     )
     
-    return states.AWAITING_ANSWER
+    return states.ANSWERING
 
 @safe_handler()
 async def handle_new_topic(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -2906,7 +2938,7 @@ async def handle_new_topic(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode=ParseMode.HTML
     )
     
-    return states.AWAITING_ANSWER
+    return states.ANSWERING
 
 
 @safe_handler()
@@ -3048,7 +3080,7 @@ async def handle_select_topic(update: Update, context: ContextTypes.DEFAULT_TYPE
         parse_mode=ParseMode.HTML
     )
     
-    return states.AWAITING_ANSWER
+    return states.ANSWERING
 
 
 @safe_handler()
@@ -3076,7 +3108,7 @@ async def handle_try_topic(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode=ParseMode.HTML
     )
     
-    return states.AWAITING_ANSWER
+    return states.ANSWERING
 
 @safe_handler()
 async def handle_export(update: Update, context: ContextTypes.DEFAULT_TYPE):
