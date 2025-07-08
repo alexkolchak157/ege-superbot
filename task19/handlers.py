@@ -104,47 +104,6 @@ async def strictness_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     return states.CHOOSING_MODE
 
-async def run_animation_task(thinking_msg: Message, duration: int = 40):
-    """Запускает анимацию проверки и сохраняет задачу."""
-    phases = [
-        ("🔍", "Анализирую ваш ответ"),
-        ("📝", "Проверяю соответствие критериям"),
-        ("🤔", "Оцениваю полноту ответа"),
-        ("💭", "Проверяю фактическую точность"),
-        ("📊", "Подсчитываю баллы"),
-        ("✨", "Формирую обратную связь")
-    ]
-    
-    dots_sequence = [".", "..", "..."]
-    phase_duration = duration / len(phases)
-    updates_per_phase = max(3, int(phase_duration / 1.5))
-    
-    try:
-        for phase_idx, (emoji, phase_text) in enumerate(phases):
-            for update_idx in range(updates_per_phase):
-                dots = dots_sequence[update_idx % len(dots_sequence)]
-                
-                try:
-                    if update_idx == updates_per_phase - 1 and phase_idx < len(phases) - 1:
-                        await thinking_msg.edit_text(f"{emoji} {phase_text}... ✓")
-                        await asyncio.sleep(0.7)
-                    else:
-                        await thinking_msg.edit_text(f"{emoji} {phase_text}{dots}")
-                        await asyncio.sleep(1.3)
-                        
-                except Exception as e:
-                    logger.debug(f"Animation update failed: {e}")
-                    return
-        
-        try:
-            await thinking_msg.edit_text("✅ Проверка завершена!")
-            await asyncio.sleep(0.5)
-        except:
-            pass
-            
-    except Exception as e:
-        logger.error(f"Animation error: {e}")
-
 async def delete_previous_messages(context: ContextTypes.DEFAULT_TYPE, chat_id: int, keep_message_id: Optional[int] = None):
     """Удаляет предыдущие сообщения диалога (включая сообщения пользователя)."""
     if not hasattr(context, 'bot') or not context.bot:
