@@ -410,7 +410,7 @@ async def practice_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     kb = InlineKeyboardMarkup([
         [InlineKeyboardButton("🎲 Случайная тема", callback_data="t20_random_all")],
-        [InlineKeyboardButton("📚 Выбрать блок", callback_data="t20_choose_block")],
+        [InlineKeyboardButton("📚 Выбрать блок", callback_data="t20_select_block")],
         [InlineKeyboardButton("📋 Список всех тем", callback_data="t20_list_topics")],
         [InlineKeyboardButton("⬅️ Назад", callback_data="t20_menu")]
     ])
@@ -1915,74 +1915,13 @@ async def handle_answer_document_task20(update: Update, context: ContextTypes.DE
     return await handle_answer(update, context)
 
 @safe_handler()
-async def list_topics(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Показ списка тем в блоке с пагинацией."""
-    query = update.callback_query
-    
-    # Извлекаем номер страницы из callback_data
-    parts = query.data.split(":page:")
-    page = int(parts[1]) if len(parts) > 1 else 0
-    
-    block_name = context.user_data.get('current_block')
-    if not block_name:
-        await query.edit_message_text(
-            "❌ Блок не выбран",
-            reply_markup=InlineKeyboardMarkup([[
-                InlineKeyboardButton("⬅️ Назад", callback_data="t20_select_block")
-            ]])
-        )
-        return states.CHOOSING_MODE
-    
-    topics = task20_data["topics_by_block"].get(block_name, [])
-    
-    # Пагинация: 5 тем на страницу
-    topics_per_page = 5
-    total_pages = (len(topics) + topics_per_page - 1) // topics_per_page
-    start_idx = page * topics_per_page
-    end_idx = min(start_idx + topics_per_page, len(topics))
-    
-    text = f"📚 <b>{block_name}</b>\n"
-    text += f"Выберите тему:\n\n"  # Убрана дублирующая информация о странице
-    
-    kb_buttons = []
-    
-    # Кнопки с темами
-    for topic in topics[start_idx:end_idx]:
-        kb_buttons.append([
-            InlineKeyboardButton(
-                f"{topic['id']}. {topic['title']}",
-                callback_data=f"t20_topic:{topic['id']}"
-            )
-        ])
-    
-    # Навигация по страницам (только если больше 1 страницы)
-    if total_pages > 1:
-        nav_buttons = []
-        if page > 0:
-            nav_buttons.append(InlineKeyboardButton("⬅️", callback_data=f"t20_list_topics:page:{page-1}"))
-        nav_buttons.append(InlineKeyboardButton(f"Стр. {page + 1}/{total_pages}", callback_data="noop"))
-        if page < total_pages - 1:
-            nav_buttons.append(InlineKeyboardButton("➡️", callback_data=f"t20_list_topics:page:{page+1}"))
-        
-        kb_buttons.append(nav_buttons)
-    
-    kb_buttons.append([InlineKeyboardButton("⬅️ Назад", callback_data=f"t20_block:{block_name}")])
-    
-    await query.edit_message_text(
-        text,
-        reply_markup=InlineKeyboardMarkup(kb_buttons),
-        parse_mode=ParseMode.HTML
-    )
-    
-    return states.CHOOSING_MODE
-
-@safe_handler()
 async def select_topic(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обработка выбора конкретной темы."""
+    """Выбор конкретной темы по ID."""
     query = update.callback_query
     
     topic_id = query.data.split(":")[1]
-    topic = task20_data["topic_by_id"].get(topic_id)
+    # Важно: topic_by_id использует строковые ключи
+    topic = task20_data["topic_by_id"].get(str(topic_id))
     
     if not topic:
         await query.answer("Тема не найдена", show_alert=True)
@@ -1990,7 +1929,7 @@ async def select_topic(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     context.user_data['current_topic'] = topic
     
-    text = _build_topic_message(topic)
+    text = _build_topic_message(topic)  # Исправлена опечатка
     kb = InlineKeyboardMarkup([
         [InlineKeyboardButton("❌ Отмена", callback_data="t20_list_topics")]
     ])
@@ -2001,7 +1940,99 @@ async def select_topic(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode=ParseMode.HTML
     )
     
-    return states.ANSWERING_T20
+    return ANSWERING_T20
+
+
+@safe_handler()
+async def list_topics(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Показ списка тем в блоке или всех тем с пагинацией."""
+    query = update.callback_query
+    
+    # Извлекаем номер страницы из callback_data
+    parts = query.data.split(":page:")
+    page = int(parts[1]) if len(parts) > 1 else 0
+    
+    block_name = context.user_data.get('current_block')
+    
+    # Если блок не выбран, показываем все темы
+    if not block_name:
+        # Собираем все темы из всех блоков
+        all_topics = []
+        blocks_data = task20_data.get("topics_by_block", {})
+        
+        for block, topics in blocks_data.items():
+            for topic in topics:
+                # Добавляем информацию о блоке к каждой теме
+                topic_with_block = topic.copy()
+                topic_with_block['block_display'] = block
+                all_topics.append(topic_with_block)
+        
+        if not all_topics:
+            await query.edit_message_text(
+                "❌ Темы не найдены",
+                reply_markup=InlineKeyboardMarkup([[
+                    InlineKeyboardButton("⬅️ Назад", callback_data="t20_practice")
+                ]])
+            )
+            return states.CHOOSING_MODE
+        
+        topics = all_topics
+        header_text = "📚 <b>Все темы</b>\n"
+    else:
+        # Если блок выбран, показываем темы блока
+        topics = task20_data["topics_by_block"].get(block_name, [])
+        header_text = f"📚 <b>{block_name}</b>\n"
+    
+    # Пагинация: 5 тем на страницу
+    topics_per_page = 5
+    total_pages = (len(topics) + topics_per_page - 1) // topics_per_page
+    start_idx = page * topics_per_page
+    end_idx = min(start_idx + topics_per_page, len(topics))
+    
+    text = header_text
+    text += f"Страница {page + 1} из {total_pages}\n\n"
+    
+    kb_buttons = []
+    
+    # Кнопки с темами
+    for topic in topics[start_idx:end_idx]:
+        # Если показываем все темы, добавляем информацию о блоке
+        if not block_name and 'block_display' in topic:
+            button_text = f"{topic['id']}. {topic['title'][:30]}... [{topic['block_display']}]"
+        else:
+            button_text = f"{topic['id']}. {topic['title'][:40]}..."
+            
+        kb_buttons.append([
+            InlineKeyboardButton(
+                button_text,
+                callback_data=f"t20_topic:{topic['id']}"
+            )
+        ])
+    
+    # Навигация по страницам
+    nav_buttons = []
+    if page > 0:
+        nav_buttons.append(InlineKeyboardButton("⬅️", callback_data=f"t20_list_topics:page:{page-1}"))
+    nav_buttons.append(InlineKeyboardButton(f"{page+1}/{total_pages}", callback_data="noop"))
+    if page < total_pages - 1:
+        nav_buttons.append(InlineKeyboardButton("➡️", callback_data=f"t20_list_topics:page:{page+1}"))
+    
+    if nav_buttons:
+        kb_buttons.append(nav_buttons)
+    
+    # Кнопка назад
+    if block_name:
+        kb_buttons.append([InlineKeyboardButton("⬅️ К блоку", callback_data=f"t20_block:{block_name}")])
+    else:
+        kb_buttons.append([InlineKeyboardButton("⬅️ Назад", callback_data="t20_practice")])
+    
+    await query.edit_message_text(
+        text,
+        reply_markup=InlineKeyboardMarkup(kb_buttons),
+        parse_mode=ParseMode.HTML
+    )
+    
+    return states.CHOOSING_MODE
 
 @safe_handler()
 async def random_topic_all(update: Update, context: ContextTypes.DEFAULT_TYPE):
