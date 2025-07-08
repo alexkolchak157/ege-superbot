@@ -2,15 +2,26 @@
 
 import logging
 from telegram.ext import (
-    ConversationHandler, CommandHandler, CallbackQueryHandler,
+    ConversationHandler, CommandHandler, ContextTypes, CallbackQueryHandler,
     MessageHandler, filters
 )
+from telegram import Update
 from core.plugin_base import BotPlugin
 from core import states
 from . import handlers
 
 logger = logging.getLogger(__name__)
 
+async def handle_processing(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработчик для временного ответа."""
+    if update.callback_query:
+        await update.callback_query.answer("Обрабатывается...")
+    return states.CHOOSING_MODE
+
+async def handle_streak_ok(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработчик для подтверждения стрика."""
+    if update.callback_query:
+        await update.callback_query.answer()
 
 class Task19Plugin(BotPlugin):
     code = "task19"
@@ -142,10 +153,7 @@ class Task19Plugin(BotPlugin):
                 CommandHandler("cancel", handlers.cmd_cancel),
                 CallbackQueryHandler(handlers.return_to_menu, pattern="^t19_menu$"),
                 CallbackQueryHandler(handlers.back_to_main_menu, pattern="^to_main_menu$"),
-                CallbackQueryHandler(
-                    lambda u, c: u.callback_query.answer("Обрабатывается...") if u.callback_query else None,
-                    pattern="^t19_"
-                ),
+                CallbackQueryHandler(handle_processing, pattern="^t19_"),
             ],
             name="task19_conversation",
             persistent=False,
@@ -159,7 +167,7 @@ class Task19Plugin(BotPlugin):
             handlers.achievement_ok, 
             pattern="^achievement_ok$"
         ))
-        app.add_handler(CallbackQueryHandler(lambda u, c: u.callback_query.answer() if u.callback_query else None,pattern="^streak_ok$"))
+        app.add_handler(CallbackQueryHandler(handle_streak_ok, pattern="^streak_ok$"))
         logger.info(f"Registered handlers for {self.title} plugin")
 
 

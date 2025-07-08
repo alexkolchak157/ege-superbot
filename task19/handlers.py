@@ -4,6 +4,7 @@ import logging
 import os
 import json
 import random
+import time
 from typing import Optional, Dict, List, Any
 from core.document_processor import DocumentHandlerMixin
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, Message
@@ -801,12 +802,14 @@ async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 context.user_data['processing_answer'] = False
                 return states.CHOOSING_MODE
         
-        # Показываем начальное сообщение о проверке
-        # Показываем анимацию проверки (используем единую систему как в task25)
+        # Показываем анимацию проверки (используем единую систему)
         thinking_msg = await show_ai_evaluation_animation(
             update.message,
             duration=40  # 40 секунд для task19
         )
+        
+        # Добавляем задержку, чтобы анимация успела начаться и показать первые фазы
+        await asyncio.sleep(1.0)  # 1 секунда гарантирует показ анимации
         
         try:
             # Используем локальный evaluator
@@ -890,15 +893,17 @@ async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text(
                 "❌ Произошла ошибка при проверке. Попробуйте еще раз.",
                 reply_markup=InlineKeyboardMarkup([[
-                    InlineKeyboardButton("🔄 Попробовать снова", callback_data="t19_practice"),
-                    InlineKeyboardButton("📝 В меню", callback_data="t19_menu")
+                    InlineKeyboardButton("🔄 Попробовать снова", callback_data="t19_retry")
                 ]])
             )
-            
+            context.user_data['processing_answer'] = False
+            return TASK19_WAITING
+
     finally:
+        # Сбрасываем флаг обработки в любом случае
         context.user_data['processing_answer'] = False
-    
-    return ConversationHandler.END
+        
+    return states.CHOOSING_MODE  # Возвращаем в меню после обработки ответа
 
 @safe_handler()
 async def handle_new_task(update: Update, context: ContextTypes.DEFAULT_TYPE):
