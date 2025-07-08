@@ -178,6 +178,21 @@ async def entry_from_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Точка входа в задание 24 из главного меню."""
     query = update.callback_query
     
+    # Проверяем загрузку данных при входе в модуль
+    if not plan_bot_data:
+        logger.info("Первый вход в модуль task24, загружаем данные...")
+        data_loaded = init_data()
+        if not data_loaded:
+            await query.edit_message_text(
+                "❌ Не удалось загрузить данные планов.\n\n"
+                "Проверьте наличие файла plans_data_with_blocks.json в папке data/\n\n"
+                "Обратитесь к администратору.",
+                reply_markup=InlineKeyboardMarkup([[
+                    InlineKeyboardButton("🏠 Главное меню", callback_data="to_main_menu")
+                ]])
+            )
+            return ConversationHandler.END
+    
     # Инициализация времени сессии
     if 'session_start' not in context.user_data:
         context.user_data['session_start'] = datetime.now()
@@ -254,6 +269,13 @@ async def train_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Режим тренировки."""
     query = update.callback_query
     
+    # Проверяем и загружаем данные если они не загружены
+    if not plan_bot_data:
+        logger.info("Данные планов не загружены, пытаемся загрузить...")
+        data_loaded = init_data()
+        if not data_loaded:
+            logger.error("Не удалось загрузить данные планов")
+    
     # Проверяем загрузку данных планов
     if not plan_bot_data or not plan_bot_data.topic_list_for_pagination:
         await query.edit_message_text(
@@ -281,6 +303,13 @@ async def train_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def show_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Режим просмотра эталонов."""
     query = update.callback_query
+    
+    # Проверяем и загружаем данные если они не загружены
+    if not plan_bot_data:
+        logger.info("Данные планов не загружены, пытаемся загрузить...")
+        data_loaded = init_data()
+        if not data_loaded:
+            logger.error("Не удалось загрузить данные планов")
     
     # Проверяем загрузку данных планов
     if not plan_bot_data or not plan_bot_data.topic_list_for_pagination:
@@ -854,7 +883,7 @@ async def handle_plan_enhanced(update: Update, context: ContextTypes.DEFAULT_TYP
         
         # Сохраняем ID сообщения с результатом
         context.user_data['task24_result_msg_id'] = result_msg.message_id
-        save_result(context, topic_name, evaluation_result.score)
+        save_result(context, topic_name, total_score)
         return states.AWAITING_FEEDBACK
         
     except Exception as e:
