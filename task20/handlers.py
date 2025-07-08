@@ -62,157 +62,124 @@ except ImportError as e:
     UserProgress = None
     SmartRecommendations = None
 
-async def init_task20_data():
+async def clear_task20_cache():
+    """Очистка кэша данных task20."""
+    if cache:
+        try:
+            await cache.delete('task20_data')
+            logger.info("Task20 cache cleared successfully")
+        except Exception as e:
+            logger.error(f"Failed to clear task20 cache: {e}")
+
+
+async def init_task20_data(force_reload=False):
     """Инициализация данных с кэшированием."""
     global task20_data, evaluator, topic_selector
     
+    # Если требуется принудительная перезагрузка, очищаем кэш
+    if force_reload and cache:
+        await clear_task20_cache()
+    
     # Проверяем кэш
-    if cache:
+    if cache and not force_reload:
         cached_data = await cache.get('task20_data')
-        if cached_data:
+        if cached_data and cached_data.get('topics'):
             task20_data = cached_data
             if TopicSelector:
                 topic_selector = TopicSelector(task20_data['topics'])
-            logger.info("Loaded task20 data from cache")
-        else:
-            # Загружаем из файла
-            data_file = os.path.join(os.path.dirname(__file__), "task20_topics.json")
-            
-            # Проверяем наличие файла
-            if not os.path.exists(data_file):
-                logger.error(f"Topics file not found: {data_file}")
-                task20_data = {
-                    "topics": [],
-                    "topic_by_id": {},
-                    "topics_by_block": {},
-                    "blocks": {}
-                }
-                topic_selector = None
-                logger.warning("Task20 initialized with empty data due to missing topics file")
-            else:
-                try:
-                    with open(data_file, "r", encoding="utf-8") as f:
-                        topics_list = json.load(f)
-                    
-                    # Проверяем, что это список
-                    if not isinstance(topics_list, list):
-                        logger.error(f"Invalid topics file format: expected list, got {type(topics_list)}")
-                        topics_list = []
-                    
-                    # Преобразуем список тем в нужную структуру
-                    all_topics = []
-                    topic_by_id = {}
-                    topics_by_block = {}
-                    blocks = {}
-                    
-                    for topic in topics_list:
-                        # Валидация темы
-                        if not isinstance(topic, dict):
-                            logger.warning(f"Skipping invalid topic: {topic}")
-                            continue
-                        
-                        if 'id' not in topic or 'title' not in topic:
-                            logger.warning(f"Skipping topic without id or title: {topic}")
-                            continue
-                        
-                        # Добавляем тему в общий список
-                        all_topics.append(topic)
-                        
-                        # Индексируем по ID
-                        topic_by_id[str(topic["id"])] = topic
-                        
-                        # Группируем по блокам
-                        block_name = topic.get("block", "Без категории")
-                        if block_name not in topics_by_block:
-                            topics_by_block[block_name] = []
-                            blocks[block_name] = {"topics": []}
-                        
-                        topics_by_block[block_name].append(topic)
-                        blocks[block_name]["topics"].append(topic)
-                    
-                    # Формируем итоговую структуру данных
-                    task20_data = {
-                        "topics": all_topics,
-                        "topic_by_id": topic_by_id,
-                        "topics_by_block": topics_by_block,
-                        "blocks": blocks
-                    }
-                    
-                    logger.info(f"Loaded {len(all_topics)} topics for task20")
-                    logger.info(f"Blocks: {list(blocks.keys())}")
-
-                    # Сохраняем в кэш
-                    if cache:
-                        await cache.set('task20_data', task20_data)
-                    
-                    # Создаём селектор
-                    if TopicSelector and all_topics:
-                        topic_selector = TopicSelector(all_topics)
-                    else:
-                        topic_selector = None
-                    
-                except json.JSONDecodeError as e:
-                    logger.error(f"Failed to parse task20 topics JSON: {e}")
-                    task20_data = {"topics": [], "blocks": {}, "topics_by_block": {}, "topic_by_id": {}}
-                    topic_selector = None
-                except Exception as e:
-                    logger.error(f"Failed to load task20 data: {e}")
-                    task20_data = {"topics": [], "blocks": {}, "topics_by_block": {}, "topic_by_id": {}}
-                    topic_selector = None
-    else:
-        # Если кэш недоступен, загружаем напрямую
-        logger.warning("Cache not available, loading data directly")
-        data_file = os.path.join(os.path.dirname(__file__), "task20_topics.json")
+            logger.info(f"Loaded task20 data from cache: {len(task20_data['topics'])} topics")
+            return
+    
+    # Загружаем из файла
+    data_file = os.path.join(os.path.dirname(__file__), "task20_topics.json")
+    
+    if not os.path.exists(data_file):
+        logger.error(f"Topics file not found: {data_file}")
+        task20_data = {
+            "topics": [],
+            "topic_by_id": {},
+            "topics_by_block": {},
+            "blocks": {}
+        }
+        topic_selector = None
+        return
+    
+    try:
+        with open(data_file, "r", encoding="utf-8") as f:
+            topics_list = json.load(f)
         
-        if not os.path.exists(data_file):
-            logger.error(f"Topics file not found: {data_file}")
-            task20_data = {
-                "topics": [],
-                "topic_by_id": {},
-                "topics_by_block": {},
-                "blocks": {}
-            }
-            topic_selector = None
+        if not isinstance(topics_list, list):
+            logger.error(f"Invalid topics file format: expected list, got {type(topics_list)}")
+            topics_list = []
+        
+        # Преобразуем список тем в нужную структуру
+        all_topics = []
+        topic_by_id = {}
+        topics_by_block = {}
+        blocks = {}
+        
+        for topic in topics_list:
+            if not isinstance(topic, dict):
+                logger.warning(f"Skipping invalid topic: {topic}")
+                continue
+            
+            if 'id' not in topic or 'title' not in topic:
+                logger.warning(f"Skipping topic without id or title: {topic}")
+                continue
+            
+            # Проверяем наличие примеров
+            if 'example_arguments' not in topic or not topic['example_arguments']:
+                logger.warning(f"Topic {topic['id']} has no example_arguments")
+            
+            # Добавляем тему в общий список
+            all_topics.append(topic)
+            
+            # Индексируем по ID
+            topic_by_id[str(topic["id"])] = topic
+            
+            # Группируем по блокам
+            block_name = topic.get("block", "Без категории")
+            if block_name not in topics_by_block:
+                topics_by_block[block_name] = []
+                blocks[block_name] = {"topics": []}
+            
+            topics_by_block[block_name].append(topic)
+            blocks[block_name]["topics"].append(topic)
+        
+        # Формируем итоговую структуру данных
+        task20_data = {
+            "topics": all_topics,
+            "topic_by_id": topic_by_id,
+            "topics_by_block": topics_by_block,
+            "blocks": blocks
+        }
+        
+        logger.info(f"Loaded {len(all_topics)} topics for task20")
+        logger.info(f"Blocks: {list(blocks.keys())}")
+        
+        # Проверяем, что данные действительно загружены
+        if not all_topics:
+            logger.warning("No topics loaded from file - check file structure")
+        
+        # Сохраняем в кэш только если есть данные
+        if cache and all_topics:
+            await cache.set('task20_data', task20_data)
+            logger.info("Task20 data cached successfully")
+        
+        # Создаём селектор
+        if TopicSelector and all_topics:
+            topic_selector = TopicSelector(all_topics)
         else:
-            try:
-                with open(data_file, "r", encoding="utf-8") as f:
-                    topics_list = json.load(f)
-                
-                # Та же логика обработки...
-                all_topics = []
-                topic_by_id = {}
-                topics_by_block = {}
-                blocks = {}
-                
-                for topic in topics_list:
-                    if not isinstance(topic, dict) or 'id' not in topic or 'title' not in topic:
-                        continue
-                    
-                    all_topics.append(topic)
-                    topic_by_id[topic["id"]] = topic
-                    
-                    block_name = topic.get("block", "Без категории")
-                    if block_name not in topics_by_block:
-                        topics_by_block[block_name] = []
-                        blocks[block_name] = {"topics": []}
-                    
-                    topics_by_block[block_name].append(topic)
-                    blocks[block_name]["topics"].append(topic)
-                
-                task20_data = {
-                    "topics": all_topics,
-                    "topic_by_id": topic_by_id,
-                    "topics_by_block": topics_by_block,
-                    "blocks": blocks
-                }
-                
-                if TopicSelector and all_topics:
-                    topic_selector = TopicSelector(all_topics)
-                
-            except Exception as e:
-                logger.error(f"Failed to load task20 data: {e}")
-                task20_data = {"topics": [], "blocks": {}, "topics_by_block": {}, "topic_by_id": {}}
-                topic_selector = None
+            topic_selector = None
+            
+    except json.JSONDecodeError as e:
+        logger.error(f"Failed to parse task20 topics JSON: {e}")
+        task20_data = {"topics": [], "topic_by_id": {}, "topics_by_block": {}, "blocks": {}}
+        topic_selector = None
+    except Exception as e:
+        logger.error(f"Failed to load task20 data: {e}")
+        task20_data = {"topics": [], "topic_by_id": {}, "topics_by_block": {}, "blocks": {}}
+        topic_selector = None
     
     # Инициализируем AI evaluator
     # Важно: импортируем здесь, чтобы избежать циклических импортов
@@ -390,78 +357,65 @@ async def handle_achievement_ok(update: Update, context: ContextTypes.DEFAULT_TY
 @safe_handler()
 @validate_state_transition({states.CHOOSING_MODE})
 async def practice_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Режим практики с улучшенным UX."""
+    """Выбор режима практики."""
     query = update.callback_query
     
-    # Проверяем доступность UserProgress
-    if UserProgress:
-        progress = UserProgress(context.user_data)
-        stats = progress.get_stats()
-    else:
-        # Fallback, если UserProgress не доступен
-        stats = {
-            'total_attempts': 0,
-            'average_score': 0,
-            'streak': 0
-        }
-        progress = None
-    
-    text = "💪 <b>Режим практики</b>\n\n"
-    
-    # Показываем мини-статистику
-    if stats['total_attempts'] > 0:
-        avg_visual = create_visual_progress(round(stats['average_score']), 3)
-        text += f"📊 Ваш прогресс: {stats['total_attempts']} попыток, средний балл {avg_visual}\n"
+    # Проверяем загрузку данных
+    if not task20_data or not task20_data.get('topics'):
+        logger.warning("Task20 data not loaded when accessing practice mode")
         
-        if stats['streak'] > 0:
-            text += f"🔥 Серия правильных ответов: {stats['streak']}\n"
+        # Пытаемся перезагрузить данные
+        await query.answer("⏳ Загружаю данные...", show_alert=False)
+        await init_task20_data()
         
-        text += "\n"
-    
-    # Показываем подсказку, если нужно
-    if progress and hasattr(progress, 'should_show_tip'):
-        tip = progress.should_show_tip()
-        if tip:
-            text += f"{tip}\n\n"
-    
-    text += "Выберите способ тренировки:"
-    
-    kb_buttons = []
-    
-    # Кнопка "Продолжить с последней темы"
-    if progress and progress.last_topic_id and topic_selector:
-        last_topic = topic_selector.topics_by_id.get(progress.last_topic_id)
-        if last_topic:
-            kb_buttons.append([
-                InlineKeyboardButton(
-                    f"⏮️ Продолжить: {last_topic['title'][:30]}...", 
-                    callback_data=f"t20_topic:{last_topic['id']}"
-                )
+        # Проверяем еще раз после попытки загрузки
+        if not task20_data or not task20_data.get('topics'):
+            text = """💪 <b>Режим практики</b>
+
+❌ <b>Данные заданий не загружены</b>
+
+<b>Проблема:</b>
+Не удалось загрузить темы для практики.
+
+<b>Возможные причины:</b>
+• Отсутствует файл task20/task20_topics.json
+• Файл содержит ошибки или пустой
+• Проблемы с доступом к файлу
+
+<b>Что делать:</b>
+1. Убедитесь, что файл существует и доступен
+2. Проверьте корректность JSON-структуры
+3. Перезапустите бота
+
+Обратитесь к администратору для решения проблемы."""
+            
+            kb = InlineKeyboardMarkup([
+                [InlineKeyboardButton("🔄 Попробовать снова", callback_data="t20_practice")],
+                [InlineKeyboardButton("⬅️ Назад", callback_data="t20_menu")]
             ])
+            
+            await query.edit_message_text(text, reply_markup=kb, parse_mode=ParseMode.HTML)
+            return states.CHOOSING_MODE
     
-    # Кнопка "Рекомендованная тема"
-    if stats['total_attempts'] >= 3 and topic_selector and SmartRecommendations:
-        recommended = SmartRecommendations.get_next_topic_recommendation(progress, topic_selector)
-        if recommended:
-            kb_buttons.append([
-                InlineKeyboardButton(
-                    "🎯 Рекомендуем эту тему", 
-                    callback_data=f"t20_topic:{recommended['id']}"
-                )
-            ])
+    # Если данные загружены, показываем меню практики
+    results = context.user_data.get('task20_results', [])
+    topics_done = len(set(r['topic_id'] for r in results))
+    total_topics = len(task20_data.get('topics', []))
     
-    # Стандартные кнопки
-    kb_buttons.extend([
-        [InlineKeyboardButton("📚 Выбрать блок тем", callback_data="t20_select_block")],
+    text = f"""💪 <b>Режим практики</b>
+
+📊 Прогресс: {topics_done}/{total_topics} тем изучено
+
+Выберите способ тренировки:"""
+    
+    kb = InlineKeyboardMarkup([
         [InlineKeyboardButton("🎲 Случайная тема", callback_data="t20_random_all")],
+        [InlineKeyboardButton("📚 Выбрать блок", callback_data="t20_choose_block")],
+        [InlineKeyboardButton("📋 Список всех тем", callback_data="t20_list_topics")],
         [InlineKeyboardButton("⬅️ Назад", callback_data="t20_menu")]
     ])
     
-    await query.edit_message_text(
-        text,
-        reply_markup=InlineKeyboardMarkup(kb_buttons),
-        parse_mode=ParseMode.HTML
-    )
+    await query.edit_message_text(text, reply_markup=kb, parse_mode=ParseMode.HTML)
     return states.CHOOSING_MODE
 
 @safe_handler()
@@ -601,7 +555,8 @@ async def view_example(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     text += "<b>Эталонные суждения:</b>\n\n"
     
-    for i, example in enumerate(topic.get('examples', []), 1):
+    # ИСПРАВЛЕНО: используем правильное имя поля - example_arguments вместо examples
+    for i, example in enumerate(topic.get('example_arguments', []), 1):
         text += f"{i}. <b>{example['type']}</b>\n"
         text += f"└ <i>{example['argument']}</i>\n"
         if 'explanation' in example:
@@ -621,7 +576,7 @@ async def view_example(update: Update, context: ContextTypes.DEFAULT_TYPE):
         nav_row.append(InlineKeyboardButton("След. ➡️", callback_data=f"t20_next_example"))
     kb_buttons.append(nav_row)
     
-    # УЛУЧШЕННАЯ кнопка "Отработать тему" - более заметная
+    # Кнопка "Отработать тему"
     kb_buttons.append([InlineKeyboardButton("🎯 Отработать эту тему", callback_data=f"t20_topic:{topic['id']}")])
     
     # Дополнительные действия
@@ -987,7 +942,8 @@ async def safe_handle_answer_task20(update: Update, context: ContextTypes.DEFAUL
             ]])
         )
     
-    return ConversationHandler.END
+    # ВАЖНО: Возвращаем states.CHOOSING_MODE вместо ConversationHandler.END
+    return states.CHOOSING_MODE
     
 @safe_handler()
 async def good_examples(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1168,14 +1124,39 @@ async def examples_bank(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Показ банка примеров с эталонными суждениями."""
     query = update.callback_query
     
+    # Проверяем загрузку данных
+    if not task20_data or not task20_data.get('topics'):
+        logger.warning("Task20 data not loaded when accessing examples bank")
+        
+        # Пытаемся перезагрузить данные
+        await query.answer("⏳ Загружаю данные...", show_alert=False)
+        await init_task20_data()
+    
     # Получаем все темы
     topics = task20_data.get('topics', [])
     
     if not topics:
-        text = "📚 <b>Банк эталонных суждений</b>\n\nБанк примеров пуст."
-        kb = InlineKeyboardMarkup([[
-            InlineKeyboardButton("⬅️ Назад", callback_data="t20_menu")
-        ]])
+        text = """📚 <b>Банк эталонных суждений</b>
+
+❌ <b>Банк примеров пуст</b>
+
+<b>Возможные причины:</b>
+• Файл с данными (task20_topics.json) отсутствует
+• Файл поврежден или имеет неверный формат
+• Проблемы с правами доступа к файлу
+
+<b>Решение:</b>
+1. Проверьте наличие файла task20/task20_topics.json
+2. Убедитесь, что файл содержит корректный JSON
+3. Перезапустите бота после исправления
+
+Обратитесь к администратору для помощи."""
+        
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("🔄 Попробовать снова", callback_data="t20_examples")],
+            [InlineKeyboardButton("⬅️ Назад", callback_data="t20_menu")]
+        ])
+        
         await query.edit_message_text(text, reply_markup=kb, parse_mode=ParseMode.HTML)
         return states.CHOOSING_MODE
     
@@ -1192,33 +1173,23 @@ async def examples_bank(update: Update, context: ContextTypes.DEFAULT_TYPE):
         text += f"{i}. <b>{example['type']}</b>\n"
         text += f"└ <i>{example['argument']}</i>\n\n"
     
-    text += "💡 <b>Обратите внимание:</b>\n"
-    text += "• Суждения носят абстрактный характер\n"
-    text += "• Используются обобщающие слова\n"
-    text += "• Нет конкретных примеров и дат"
-    
     # Навигация
     kb_buttons = []
     nav_row = []
     
-    # Первая тема - кнопка назад неактивна
     nav_row.append(InlineKeyboardButton("⏮️", callback_data="noop"))
+    nav_row.append(InlineKeyboardButton(
+        create_visual_progress(1, len(topics)), 
+        callback_data="noop"
+    ))
     
-    # Прогресс
-    progress_display = create_visual_progress(1, len(topics))
-    nav_row.append(InlineKeyboardButton(progress_display, callback_data="noop"))
-    
-    # Кнопка вперед
     if len(topics) > 1:
         nav_row.append(InlineKeyboardButton("➡️", callback_data="t20_bank_nav:1"))
     else:
         nav_row.append(InlineKeyboardButton("⏭️", callback_data="noop"))
     
     kb_buttons.append(nav_row)
-    
-    # ВАЖНО: ДОБАВЛЯЕМ КНОПКУ "ОТРАБОТАТЬ ТЕМУ"
     kb_buttons.append([InlineKeyboardButton("🎯 Отработать эту тему", callback_data=f"t20_topic:{topic['id']}")])
-    
     kb_buttons.append([InlineKeyboardButton("🔍 Поиск темы", callback_data="t20_bank_search")])
     kb_buttons.append([InlineKeyboardButton("📋 Все темы", callback_data="t20_view_all_examples")])
     kb_buttons.append([InlineKeyboardButton("⬅️ В меню", callback_data="t20_menu")])
@@ -1808,9 +1779,52 @@ def _build_topic_message(topic: Dict) -> str:
     )
 
 @safe_handler()
-async def handle_result_action(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обработка действий после получения результата."""
+async def show_ideal_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Показывает эталонный ответ для текущей темы."""
     query = update.callback_query
+    
+    topic = context.user_data.get('current_topic')
+    if not topic:
+        await query.answer("Тема не найдена", show_alert=True)
+        return states.CHOOSING_MODE
+    
+    text = f"📚 <b>Эталонные суждения</b>\n\n"
+    text += f"<b>Тема:</b> {topic['title']}\n\n"
+    
+    for i, example in enumerate(topic.get('example_arguments', []), 1):
+        text += f"{i}. <b>{example['type']}</b>\n"
+        text += f"└ <i>{example['argument']}</i>\n\n"
+    
+    text += "💡 <b>Обратите внимание:</b>\n"
+    text += "• Суждения носят абстрактный характер\n"
+    text += "• Используются обобщающие слова\n"
+    text += "• Нет конкретных примеров и дат"
+    
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("🔄 Попробовать снова", callback_data="t20_retry")],
+        [InlineKeyboardButton("🎲 Новая тема", callback_data="t20_new")],
+        [InlineKeyboardButton("⬅️ В меню", callback_data="t20_menu")]
+    ])
+    
+    await query.edit_message_text(
+        text,
+        reply_markup=kb,
+        parse_mode=ParseMode.HTML
+    )
+    
+    return states.CHOOSING_MODE
+
+@safe_handler()
+async def handle_result_action(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработка действий после результата."""
+    query = update.callback_query
+    
+    # Отладочное логирование
+    current_state = context.user_data.get('_state', 'unknown')
+    logger.info(f"handle_result_action called with action: {query.data}, current state: {current_state}")
+    
+    # Отвечаем на callback, чтобы убрать "часики"
+    await query.answer()
     
     action = query.data.replace("t20_", "")
     
@@ -1819,18 +1833,32 @@ async def handle_result_action(update: Update, context: ContextTypes.DEFAULT_TYP
         topic = context.user_data.get('current_topic')
         if topic:
             text = _build_topic_message(topic)
+            kb = InlineKeyboardMarkup([
+                [InlineKeyboardButton("❌ Отмена", callback_data="t20_menu")]
+            ])
             await query.edit_message_text(
                 text,
+                reply_markup=kb,
                 parse_mode=ParseMode.HTML
             )
-            return ANSWERING_T20
-    elif action == 'new':  # Обработка новой темы
+            return states.ANSWERING_T20
+        else:
+            await query.answer("Тема не найдена", show_alert=True)
+            return states.CHOOSING_MODE
+            
+    elif action == 'new':
+        # Новая тема
         return await handle_new_task(update, context)
+        
     elif action == 'menu':
+        # В главное меню
         return await return_to_menu(update, context)
+        
     elif action == 'progress':
+        # Показать прогресс
         return await my_progress(update, context)
     
+    # По умолчанию возвращаемся в режим выбора
     return states.CHOOSING_MODE
 
 

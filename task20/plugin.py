@@ -108,6 +108,8 @@ class Task20Plugin(BotPlugin):
                     CallbackQueryHandler(handlers.return_to_menu, pattern="^t20_menu$"),
                     CallbackQueryHandler(handlers.practice_mode, pattern="^t20_practice$"),
                     CallbackQueryHandler(handlers.list_topics, pattern="^t20_list_topics$"),
+                    CallbackQueryHandler(handlers.handle_result_action, pattern="^t20_(new|retry)$"),
+                    CallbackQueryHandler(handlers.my_progress, pattern="^t20_progress$"),
 
                 ],
                 
@@ -122,6 +124,8 @@ class Task20Plugin(BotPlugin):
                     CallbackQueryHandler(handlers.prev_example, pattern="^t20_prev_example$"),
                     CallbackQueryHandler(handlers.back_to_examples, pattern="^t20_back_examples$"),
                     CallbackQueryHandler(handlers.view_all_examples, pattern="^t20_view_all_examples$"),
+                    CallbackQueryHandler(handlers.return_to_menu, pattern="^t20_menu$"),
+                    CallbackQueryHandler(handlers.handle_result_action, pattern="^t20_(new|retry)$"),
                 ],
                 
                 states.CONFIRMING_RESET: [
