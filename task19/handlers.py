@@ -776,7 +776,7 @@ async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
             # ВАЖНО: Обеспечиваем минимальное время показа анимации
             elapsed_time = asyncio.get_event_loop().time() - start_time
-            MIN_ANIMATION_TIME = 5.0  # Минимум 5 секунд
+            MIN_ANIMATION_TIME = 40.0  # Минимум 5 секунд
             
             if elapsed_time < MIN_ANIMATION_TIME:
                 await asyncio.sleep(MIN_ANIMATION_TIME - elapsed_time)
