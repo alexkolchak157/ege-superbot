@@ -32,6 +32,8 @@ from core.ui_helpers import (
 from core.error_handler import safe_handler, auto_answer_callback
 from core.plugin_loader import build_main_menu
 from core.state_validator import validate_state_transition, state_validator
+from payment.decorators import requires_module
+from payment.subscription_manager import SubscriptionManager
 
 TASK19_STRICTNESS = os.getenv('TASK19_STRICTNESS', 'STRICT').upper()
 
@@ -62,8 +64,8 @@ def set_active_module(context: ContextTypes.DEFAULT_TYPE):
     context.user_data['active_module'] = 'task19'
     context.user_data['current_module'] = 'task19'
     
-# Меню выбора уровня строгости (только для админов)
 @safe_handler()
+@requires_module('task19')
 async def strictness_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Показывает меню выбора уровня строгости проверки."""
     query = update.callback_query
@@ -103,6 +105,20 @@ async def strictness_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     
     return states.CHOOSING_MODE
+
+async def existing_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Существующий обработчик без декоратора"""
+    
+    # Проверка доступа вручную
+    user_id = update.effective_user.id
+    subscription_manager = context.bot_data.get('subscription_manager', SubscriptionManager())
+    
+    if not await subscription_manager.check_module_access(user_id, 'task19'):
+        await update.message.reply_text(
+            "🔒 Для доступа к этому заданию необходима подписка.\n"
+            "Используйте /subscribe для оформления."
+        )
+        return
 
 async def delete_previous_messages(context: ContextTypes.DEFAULT_TYPE, chat_id: int, keep_message_id: Optional[int] = None):
     """Удаляет предыдущие сообщения диалога (включая сообщения пользователя)."""
@@ -218,9 +234,9 @@ async def init_task19_data():
 
 
 @safe_handler()
-@validate_state_transition({ConversationHandler.END, None})
+@requires_module('task19')
 async def entry_from_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Вход в задание 19 из главного меню."""
+    """Вход из главного меню."""
     query = update.callback_query
     
     # Устанавливаем активный модуль
@@ -275,7 +291,7 @@ def _build_topic_message(topic: Dict) -> str:
     )
 
 @safe_handler()
-@validate_state_transition({states.CHOOSING_MODE})
+@requires_module('task19')
 async def practice_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Практический режим - случайное задание."""
     query = update.callback_query
@@ -413,6 +429,7 @@ async def block_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 @safe_handler()
+@requires_module('task19')
 async def random_topic_all(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Случайная тема из всех блоков."""
     query = update.callback_query
@@ -438,6 +455,7 @@ async def random_topic_all(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 @safe_handler()
+@requires_module('task19')
 async def random_topic_block(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Случайная тема из выбранного блока."""
     query = update.callback_query
@@ -577,6 +595,7 @@ async def select_topic(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return TASK19_WAITING
 
 @safe_handler()
+@requires_module('task19')
 async def show_progress_enhanced(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Показ прогресса с улучшенным UI."""
     query = update.callback_query
@@ -701,7 +720,7 @@ def _format_evaluation_result(result) -> str:
     return text
 
 @safe_handler()
-@validate_state_transition({TASK19_WAITING})
+@requires_module('task19')
 async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработка ответа пользователя."""
     # Защита от двойной обработки
@@ -863,6 +882,7 @@ async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return states.CHOOSING_MODE  # Возвращаем в меню после обработки ответа
 
 @safe_handler()
+@requires_module('task19')
 async def handle_new_task(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработка кнопки 'Новое задание'."""
     query = update.callback_query
@@ -891,6 +911,7 @@ def _build_topic_message(topic: Dict) -> str:
     return text
 
 @safe_handler()
+@requires_module('task19')
 async def handle_retry(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработка кнопки 'Попробовать снова'."""
     query = update.callback_query
@@ -931,26 +952,31 @@ async def handle_retry(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return await return_to_menu(update, context)
 
 @safe_handler()
+@requires_module('task19')
 async def handle_show_progress(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработка кнопки 'Мой прогресс'."""
     return await show_progress_enhanced(update, context)
 
 @safe_handler()
+@requires_module('task19')
 async def handle_theory(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработка кнопки 'Изучить теорию'."""
     return await theory_mode(update, context)
 
 @safe_handler()
+@requires_module('task19')
 async def handle_examples(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработка кнопки 'Примеры'."""
     return await examples_bank(update, context)
 
 @safe_handler()
+@requires_module('task19')
 async def handle_achievements(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработка кнопки 'Достижения'."""
     return await show_achievements(update, context)
 
 @safe_handler()
+@requires_module('task19')
 async def handle_show_ideal(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработка кнопки 'Посмотреть эталон'."""
     query = update.callback_query
@@ -1076,7 +1102,7 @@ def _format_evaluation_result(result) -> str:
     return feedback.strip()
 
 @safe_handler()
-@validate_state_transition({TASK19_WAITING})
+@requires_module('task19')
 async def handle_answer_document_task19(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработка примеров из документа для task19."""
     
@@ -1128,7 +1154,7 @@ async def handle_answer_document_task19(update: Update, context: ContextTypes.DE
     return await handle_answer(update, context)
 
 @safe_handler()
-@validate_state_transition({states.CHOOSING_MODE})
+@requires_module('task19')
 async def theory_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Показ теории и советов."""
     query = update.callback_query
@@ -1172,7 +1198,7 @@ async def theory_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 @safe_handler()
-@validate_state_transition({states.CHOOSING_MODE})
+@requires_module('task19')
 async def examples_bank(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Показ банка эталонных примеров."""
     query = update.callback_query
@@ -1456,6 +1482,7 @@ async def reset_results(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 @safe_handler()
+@requires_module('task19')
 async def cmd_task19(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Команда /task19."""
     # Устанавливаем активный модуль
@@ -1487,6 +1514,7 @@ async def cmd_task19(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return states.CHOOSING_MODE
 
 @safe_handler()
+@requires_module('task19')
 async def bank_search(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Поиск темы в банке примеров."""
     query = update.callback_query
@@ -1505,6 +1533,7 @@ async def bank_search(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 @safe_handler()
+@requires_module('task19')
 async def handle_bank_search(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработка поискового запроса в банке примеров."""
     if not context.user_data.get('waiting_for_bank_search'):
@@ -1793,7 +1822,7 @@ async def detailed_progress(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return states.CHOOSING_MODE
 
 @safe_handler()
-@validate_state_transition({states.CHOOSING_MODE})
+@requires_module('task19')
 async def settings_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Настройки проверки."""
     query = update.callback_query
@@ -1869,7 +1898,8 @@ async def apply_strictness(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return states.CHOOSING_MODE
 
 @safe_handler()
-async def cmd_task19_settings(update: Update, context: ContextTypes.DEFAULT_TYPE):
+@requires_module('task19')
+async def entry_from_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Команда быстрого доступа к настройкам task19."""
     # Безопасное получение текущего уровня
     if evaluator and hasattr(evaluator, 'strictness'):
@@ -2030,6 +2060,7 @@ async def handle_theory_sections(update: Update, context: ContextTypes.DEFAULT_T
 
 
 @safe_handler()
+@requires_module('task19')
 async def handle_settings_actions(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Placeholder for settings related callbacks."""
     query = update.callback_query
@@ -2361,6 +2392,7 @@ async def mistakes_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 @safe_handler()
+@requires_module('task19')
 async def show_achievements(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Показать достижения пользователя."""
     query = update.callback_query
