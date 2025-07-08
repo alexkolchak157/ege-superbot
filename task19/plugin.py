@@ -25,7 +25,7 @@ async def handle_streak_ok(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 class Task19Plugin(BotPlugin):
     code = "task19"
-    title = "Задание 19 (Примеры)"
+    title = "💡 Задание 19 (Примеры)"
     menu_priority = 15
     
     async def post_init(self, app):
