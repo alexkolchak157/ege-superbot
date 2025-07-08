@@ -178,17 +178,6 @@ async def entry_from_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Точка входа в задание 24 из главного меню."""
     query = update.callback_query
     
-    # Инициализация данных если нужно
-    if not plan_bot_data:
-        await load_data()
-    
-    # Проверка подписки если включена
-    if hasattr(core_utils, 'check_subscription'):
-        from core.config import REQUIRED_CHANNEL
-        if not await core_utils.check_subscription(query.from_user.id, context.bot):
-            await core_utils.send_subscription_required(query, REQUIRED_CHANNEL)
-            return ConversationHandler.END
-    
     # Инициализация времени сессии
     if 'session_start' not in context.user_data:
         context.user_data['session_start'] = datetime.now()
