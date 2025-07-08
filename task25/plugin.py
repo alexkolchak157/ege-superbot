@@ -83,10 +83,10 @@ class Task25Plugin(BotPlugin):
                     CallbackQueryHandler(handlers.search_examples, pattern="^t25_search_examples$"),
                     CallbackQueryHandler(handlers.examples_by_block, pattern="^t25_examples_by_block$"),
                     CallbackQueryHandler(handlers.best_examples, pattern="^t25_best_examples$"),
-                    CallbackQueryHandler(handlers.show_example, pattern="^t25_show_example:"),
+                    CallbackQueryHandler(handlers.show_topic_by_id, pattern="^t25_show_example:"),
                     CallbackQueryHandler(handlers.handle_example_navigation, pattern="^t25_example_nav:"),
                     CallbackQueryHandler(handlers.noop, pattern="^t25_noop$"),
-                    CallbackQueryHandler(handlers.handle_try_topic, pattern="^t25_try_topic:"),
+                    CallbackQueryHandler(handlers.show_topic_by_id, pattern="^t25_try_topic:"),
                     
                     # Теория
                     CallbackQueryHandler(handlers.example_answers, pattern="^t25_example_answers$"),
@@ -134,6 +134,8 @@ class Task25Plugin(BotPlugin):
                     CallbackQueryHandler(handlers.my_progress, pattern="^t25_progress$"),
                     CallbackQueryHandler(handlers.return_to_menu, pattern="^t25_menu$"),
                     CallbackQueryHandler(handlers.back_to_main_menu, pattern="^to_main_menu$"),
+                    CallbackQueryHandler(handlers.another_topic_from_current, pattern="^t25_another_topic$"),
+                    CallbackQueryHandler(handlers.practice_mode, pattern="^t25_practice$"),
                 ],
                 
                 states.SEARCHING: [
