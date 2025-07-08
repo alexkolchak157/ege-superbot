@@ -767,8 +767,8 @@ async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
             duration=40  # 40 секунд для task19
         )
         
-        # Добавляем задержку, чтобы анимация успела начаться и показать первые фазы
-        await asyncio.sleep(1.0)  # 1 секунда гарантирует показ анимации
+        # Запоминаем время начала для контроля минимального времени показа
+        start_time = asyncio.get_event_loop().time()
         
         try:
             # Используем локальный evaluator
@@ -785,7 +785,6 @@ async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 if hasattr(result, 'format_feedback'):
                     feedback = result.format_feedback()
                 else:
-                    # Используем нашу новую функцию форматирования
                     feedback = _format_evaluation_result(result)
 
                 score = int(round(getattr(result, 'total_score', 0)))
@@ -796,12 +795,13 @@ async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 score, feedback = await _basic_evaluation(user_answer, topic)
                 max_score = 3
             
-            # Удаляем сообщение с анимацией
-            try:
-                await thinking_msg.delete()
-            except:
-                pass
+            # ВАЖНО: Обеспечиваем минимальное время показа анимации
+            elapsed_time = asyncio.get_event_loop().time() - start_time
+            MIN_ANIMATION_TIME = 5.0  # Минимум 5 секунд
             
+            if elapsed_time < MIN_ANIMATION_TIME:
+                await asyncio.sleep(MIN_ANIMATION_TIME - elapsed_time)
+           
             # Сохраняем результат
             topic_title = topic.get('title') if isinstance(topic, dict) else str(topic)
             context.user_data.setdefault('task19_results', []).append({
@@ -827,10 +827,8 @@ async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
             logger.info(f"Answer evaluated: {score}/{max_score}")
 
-            # Получаем user_id
-            user_id = update.effective_user.id
-
             # Проверяем новые достижения
+            user_id = update.effective_user.id
             new_achievements = await check_achievements(context, user_id)
 
             # Показываем уведомления о достижениях
