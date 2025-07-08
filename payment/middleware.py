@@ -42,11 +42,71 @@ class SubscriptionMiddleware:
             'main_menu', 'subscribe_', 'plan_', 'check_payment_',
             'check_subscription', 'help_', 'lang_', 'settings_'
         }
-        
+        self.module_patterns = {
+            'task19': {
+                'commands': ['task19'],  # Команды модуля
+                'callbacks': ['t19_', 'task19'],  # Префиксы callback и точные значения
+                'exclude': []  # Исключения (необязательно)
+            },
+            'task20': {
+                'commands': ['task20'],
+                'callbacks': ['t20_', 'task20'],
+                'exclude': []
+            },
+            'task24': {
+                'commands': ['task24'],
+                'callbacks': ['t24_', 'task24'],
+                'exclude': []
+            },
+            'task25': {
+                'commands': ['task25'],
+                'callbacks': ['t25_', 'task25'],
+                'exclude': []
+            },
+            'test_part': {
+                'commands': ['quiz', 'test'],
+                'callbacks': ['test_', 'quiz_', 'test_part'],
+                'exclude': []
+            }
+        }
         self.check_channel = check_channel
         self.channel = channel or config.REQUIRED_CHANNEL
         # НЕ создаем subscription_manager здесь!
+    
+    def _get_module_from_update(self, update: Update) -> Optional[str]:
+        """Определяет модуль по update."""
+        # Для команд
+        if update.message and update.message.text and update.message.text.startswith('/'):
+            command = update.message.text.split()[0][1:].split('@')[0].lower()
+            
+            for module_code, patterns in self.module_patterns.items():
+                if command in patterns['commands']:
+                    logger.debug(f"Command {command} matched module {module_code}")
+                    return module_code
         
+        # Для callback_query
+        elif update.callback_query and update.callback_query.data:
+            callback_data = update.callback_query.data
+            
+            for module_code, patterns in self.module_patterns.items():
+                # Проверяем исключения
+                if any(callback_data == exc or callback_data.startswith(exc) 
+                       for exc in patterns.get('exclude', [])):
+                    continue
+                
+                # Проверяем паттерны
+                for pattern in patterns['callbacks']:
+                    # Если паттерн заканчивается на _, это префикс
+                    if pattern.endswith('_') and callback_data.startswith(pattern):
+                        logger.debug(f"Callback {callback_data} matched module {module_code} by prefix {pattern}")
+                        return module_code
+                    # Иначе проверяем точное совпадение
+                    elif callback_data == pattern:
+                        logger.debug(f"Callback {callback_data} matched module {module_code} exactly")
+                        return module_code
+        
+        return None        
+    
     async def process_update(
         self,
         update: Update,
@@ -54,8 +114,7 @@ class SubscriptionMiddleware:
         check_update: bool,
         context: CallbackContext
     ) -> bool:
-        """
-        Обрабатывает обновление и проверяет подписку.
+        """Обрабатывает обновление и проверяет подписку.
         
         Returns:
             True - есть подписка, продолжить обработку
@@ -86,7 +145,31 @@ class SubscriptionMiddleware:
         # Определяем, нужна ли проверка
         if self._is_free_action(update):
             return True
-        
+            
+        from core import config
+        if hasattr(config, 'SUBSCRIPTION_MODE') and config.SUBSCRIPTION_MODE == 'modular':
+            module_code = self._get_module_from_update(update)
+            
+            if module_code:
+                logger.info(f"Checking module access for user {user_id} to module {module_code}")
+                
+                # Получаем subscription_manager
+                subscription_manager = application.bot_data.get('subscription_manager')
+                if not subscription_manager:
+                    from .subscription_manager import SubscriptionManager
+                    subscription_manager = SubscriptionManager()
+                
+                # Проверяем доступ к модулю
+                has_access = await subscription_manager.check_module_access(user_id, module_code)
+                
+                if not has_access:
+                    logger.warning(f"User {user_id} has no access to module {module_code}")
+                    await self._send_module_subscription_required(update, context, module_code)
+                    raise ApplicationHandlerStop()
+                else:
+                    logger.info(f"User {user_id} has access to module {module_code}")
+                    # Сохраняем информацию о модуле в контексте
+                    context.user_data['current_module'] = module_code
         # Обеспечиваем наличие пользователя в БД
         await db.ensure_user(user_id)
         
@@ -277,6 +360,56 @@ class SubscriptionMiddleware:
         elif update.message:
             await update.message.reply_text(text, reply_markup=reply_markup)
 
+    async def _send_module_subscription_required(
+        self, 
+        update: Update, 
+        context: ContextTypes.DEFAULT_TYPE,
+        module_code: str
+    ):
+        """Отправляет сообщение о необходимости подписки на модуль."""
+        from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+        from telegram.constants import ParseMode
+        
+        module_names = {
+            'task19': 'Задание 19 - Примеры социальных объектов',
+            'task20': 'Задание 20 - Текст с пропусками',
+            'task24': 'Задание 24 - План текста (премиум)',
+            'task25': 'Задание 25 - Понятия и термины',
+            'test_part': 'Тестовая часть ЕГЭ'
+        }
+        
+        module_name = module_names.get(module_code, f'Модуль {module_code}')
+        
+        text = f"""🔒 <b>Требуется подписка на модуль!</b>
+
+    Для доступа к <b>{module_name}</b> необходима активная подписка на этот модуль.
+
+    💡 С модульной системой вы платите только за те задания, которые вам нужны!
+
+    Используйте команду /subscribe для просмотра доступных модулей и оформления подписки."""
+        
+        keyboard = [[
+            InlineKeyboardButton("💳 Оформить подписку", callback_data="to_subscription"),
+            InlineKeyboardButton("ℹ️ Подробнее", callback_data=f"module_info_{module_code}")
+        ]]
+        
+        if update.callback_query:
+            await update.callback_query.answer(
+                f"Требуется подписка на {module_name.split(' - ')[0]}!", 
+                show_alert=True
+            )
+            # Отправляем новое сообщение вместо редактирования
+            await update.callback_query.message.reply_text(
+                text,
+                reply_markup=InlineKeyboardMarkup(keyboard),
+                parse_mode=ParseMode.HTML
+            )
+        elif update.message:
+            await update.message.reply_text(
+                text,
+                reply_markup=InlineKeyboardMarkup(keyboard),
+                parse_mode=ParseMode.HTML
+            )
 
 def setup_subscription_middleware(
     application: Application,
