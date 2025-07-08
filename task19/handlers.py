@@ -197,7 +197,7 @@ _topics_cache = None
 _topics_cache_time = None
 
 async def init_task19_data():
-    """Инициализация данных для задания 19 с улучшенным парсингом структуры."""
+    """Инициализация данных для задания 19 с кэшированием."""
     global task19_data, _topics_cache, _topics_cache_time
     
     # Проверяем кэш (обновляем раз в час)
@@ -209,126 +209,28 @@ async def init_task19_data():
     
     data_file = os.path.join(os.path.dirname(__file__), "task19_topics.json")
     
-    # Проверяем существование файла
-    if not os.path.exists(data_file):
-        logger.error(f"Task19 topics file not found: {data_file}")
-        init_demo_data()
-        return
-    
     try:
         with open(data_file, "r", encoding="utf-8") as f:
             raw = json.load(f)
-        
-        logger.info(f"Loaded JSON structure type: {type(raw)}")
-        
-        # Функция для рекурсивного поиска тем в JSON структуре
-        def extract_topics(data, path="root"):
-            """Рекурсивно извлекает темы из JSON структуры."""
-            topics = []
-            
-            if isinstance(data, list):
-                # Если это список, предполагаем что это список тем
-                for item in data:
-                    if isinstance(item, dict) and any(key in item for key in ['id', 'title', 'task_text']):
-                        topics.append(item)
-                    else:
-                        # Рекурсивно ищем в элементе
-                        topics.extend(extract_topics(item, f"{path}[list_item]"))
-                        
-            elif isinstance(data, dict):
-                # Ищем темы в разных возможных структурах
-                
-                # Вариант 1: прямой список тем в ключе topics
-                if 'topics' in data and isinstance(data['topics'], list):
-                    for topic in data['topics']:
-                        if isinstance(topic, dict):
-                            topics.append(topic)
-                
-                # Вариант 2: блоки с темами
-                if 'blocks' in data and isinstance(data['blocks'], dict):
-                    for block_name, block_data in data['blocks'].items():
-                        if isinstance(block_data, dict) and 'topics' in block_data:
-                            for topic in block_data.get('topics', []):
-                                if isinstance(topic, dict):
-                                    topic['block'] = block_name
-                                    topics.append(topic)
-                        elif isinstance(block_data, list):
-                            # Блок содержит список тем напрямую
-                            for topic in block_data:
-                                if isinstance(topic, dict):
-                                    topic['block'] = block_name
-                                    topics.append(topic)
-                
-                # Вариант 3: task19 -> blocks
-                if 'task19' in data:
-                    topics.extend(extract_topics(data['task19'], f"{path}.task19"))
-                
-                # Вариант 4: рекурсивный поиск во всех значениях
-                for key, value in data.items():
-                    if key not in ['topics', 'blocks', 'task19'] and isinstance(value, (dict, list)):
-                        found = extract_topics(value, f"{path}.{key}")
-                        if found:
-                            # Добавляем блок если его нет
-                            for topic in found:
-                                if 'block' not in topic:
-                                    topic['block'] = key
-                            topics.extend(found)
-            
-            return topics
-        
-        # Извлекаем все темы
-        topics_list = extract_topics(raw)
-        
-        logger.info(f"Extracted {len(topics_list)} topics from JSON")
-        
-        # Если темы не найдены, пробуем другой подход - ищем объекты с нужными полями
-        if not topics_list:
-            logger.warning("No topics found with standard extraction, trying deep search...")
-            
-            def find_topic_objects(obj, parent_key=None):
-                """Ищет объекты похожие на темы."""
-                found = []
-                
-                if isinstance(obj, dict):
-                    # Проверяем, похож ли объект на тему
-                    if any(key in obj for key in ['task_text', 'question', 'задание']):
-                        if parent_key:
-                            obj['block'] = parent_key
-                        found.append(obj)
-                    else:
-                        # Рекурсивно ищем в значениях
-                        for k, v in obj.items():
-                            found.extend(find_topic_objects(v, k))
-                            
-                elif isinstance(obj, list):
-                    for item in obj:
-                        found.extend(find_topic_objects(item, parent_key))
-                        
-                return found
-            
-            topics_list = find_topic_objects(raw)
-            logger.info(f"Deep search found {len(topics_list)} topics")
 
-        # Обрабатываем найденные темы
+        # Поддержка двух форматов данных: список тем или словарь блоков
+        if isinstance(raw, list):
+            topics_list = raw
+        else:
+            topics_list = []
+            for block_name, block in raw.get("blocks", {}).items():
+                for topic in block.get("topics", []):
+                    topic["block"] = block_name
+                    topics_list.append(topic)
+
         all_topics = []
         topic_by_id = {}
         topics_by_block = {}
-        
-        for idx, topic in enumerate(topics_list):
-            # Валидация и нормализация темы
-            if not isinstance(topic, dict):
-                continue
-                
-            # Генерируем ID если его нет
-            if 'id' not in topic:
-                topic['id'] = idx + 1
-                
-            # Определяем блок
-            block_name = topic.get('block', 'Без категории')
-            
-            # Добавляем в коллекции
+
+        for topic in topics_list:
+            block_name = topic.get("block", "Без категории")
             all_topics.append(topic)
-            topic_by_id[topic['id']] = topic
+            topic_by_id[topic["id"]] = topic
             topics_by_block.setdefault(block_name, []).append(topic)
 
         task19_data = {
@@ -338,138 +240,15 @@ async def init_task19_data():
             "blocks": {b: {"topics": t} for b, t in topics_by_block.items()},
         }
 
-        _topics_cache = task19_data
+        _topics_cache = raw
         _topics_cache_time = datetime.now()
         
-        logger.info(f"Successfully initialized task19 with {len(all_topics)} topics")
-        logger.info(f"Blocks found: {list(topics_by_block.keys())}")
-        
-        # Если все еще нет тем, используем демо данные
-        if len(all_topics) == 0:
-            logger.warning("No topics found after all attempts, using demo data")
-            init_demo_data()
-            
-    except json.JSONDecodeError as e:
-        logger.error(f"JSON decode error in task19 data: {e}")
-        logger.error(f"File content preview: {open(data_file, 'r', encoding='utf-8').read()[:200]}...")
-        init_demo_data()
+        logger.info(f"Loaded {len(all_topics)} topics for task19")
     except Exception as e:
-        logger.error(f"Failed to load task19 data: {e}", exc_info=True)
-        init_demo_data()
+        logger.error(f"Failed to load task19 data: {e}")
+        task19_data = {"topics": [], "blocks": {}, "topics_by_block": {}}
 
 
-def init_demo_data():
-    """Инициализирует демонстрационные данные для task19."""
-    global task19_data
-    
-    demo_topics = [
-        {
-            "id": 1,
-            "title": "Функции права в обществе",
-            "task_text": "Назовите и проиллюстрируйте примерами любые три функции права в обществе.",
-            "block": "Право",
-            "key_points": ["Регулятивная функция", "Охранительная функция", "Воспитательная функция"],
-            "example_answers": [
-                {
-                    "type": "Регулятивная функция",
-                    "example": "Трудовой кодекс РФ устанавливает продолжительность рабочего времени не более 40 часов в неделю, регулируя трудовые отношения между работником и работодателем."
-                },
-                {
-                    "type": "Охранительная функция",
-                    "example": "Уголовный кодекс РФ предусматривает наказание за кражу в виде штрафа или лишения свободы до 2 лет, защищая право собственности граждан."
-                },
-                {
-                    "type": "Воспитательная функция",
-                    "example": "Закон об образовании РФ закрепляет обязанность родителей обеспечить получение детьми общего образования, формируя в обществе понимание важности образования."
-                }
-            ]
-        },
-        {
-            "id": 2,
-            "title": "Виды социальных норм",
-            "task_text": "Назовите любые три вида социальных норм и проиллюстрируйте каждый из них примером.",
-            "block": "Социальные отношения",
-            "key_points": ["Правовые нормы", "Моральные нормы", "Религиозные нормы"],
-            "example_answers": [
-                {
-                    "type": "Правовые нормы",
-                    "example": "Статья 20 Конституции РФ гарантирует каждому право на жизнь, и за убийство предусмотрена уголовная ответственность."
-                },
-                {
-                    "type": "Моральные нормы",
-                    "example": "В общественном транспорте принято уступать место пожилым людям, хотя это не закреплено законодательно."
-                },
-                {
-                    "type": "Религиозные нормы",
-                    "example": "В православии существует традиция соблюдения поста перед Пасхой, когда верующие ограничивают себя в пище."
-                }
-            ]
-        },
-        {
-            "id": 3,
-            "title": "Факторы производства",
-            "task_text": "Назовите и проиллюстрируйте примерами любые три фактора производства.",
-            "block": "Экономика",
-            "key_points": ["Труд", "Капитал", "Земля", "Предпринимательские способности"],
-            "example_answers": [
-                {
-                    "type": "Труд",
-                    "example": "Программист Иван работает в IT-компании, создавая мобильные приложения, его знания и навыки являются трудовым ресурсом."
-                },
-                {
-                    "type": "Капитал",
-                    "example": "Фабрика 'Красный Октябрь' использует конвейерные линии и оборудование стоимостью 50 млн рублей для производства шоколада."
-                },
-                {
-                    "type": "Земля",
-                    "example": "Фермерское хозяйство выращивает пшеницу на 500 гектарах плодородной земли в Краснодарском крае."
-                }
-            ]
-        },
-        {
-            "id": 4,
-            "title": "Правоохранительные органы РФ",
-            "task_text": "Назовите любые три правоохранительных органа РФ и проиллюстрируйте примером функцию каждого из них.",
-            "block": "Право",
-            "key_points": ["Полиция", "Прокуратура", "Следственный комитет"],
-            "example_answers": [
-                {
-                    "type": "Полиция",
-                    "example": "Сотрудники патрульно-постовой службы задержали гражданина за распитие алкоголя в общественном месте и составили протокол об административном правонарушении."
-                },
-                {
-                    "type": "Прокуратура",
-                    "example": "Прокурор опротестовал незаконное постановление местной администрации о сносе детской площадки, защитив права жителей микрорайона."
-                },
-                {
-                    "type": "Следственный комитет",
-                    "example": "Следователи СК РФ расследовали уголовное дело о мошенничестве в особо крупном размере, установив схему хищения бюджетных средств."
-                }
-            ]
-        }
-    ]
-    
-    # Формируем структуру данных
-    all_topics = demo_topics
-    topic_by_id = {t["id"]: t for t in all_topics}
-    topics_by_block = {}
-    
-    for topic in all_topics:
-        block = topic.get("block", "Без категории")
-        if block not in topics_by_block:
-            topics_by_block[block] = []
-        topics_by_block[block].append(topic)
-    
-    task19_data = {
-        "topics": all_topics,
-        "topic_by_id": topic_by_id,
-        "topics_by_block": topics_by_block,
-        "blocks": {b: {"topics": topics} for b, topics in topics_by_block.items()},
-    }
-    
-    logger.warning("Using demo data for task19")
-    logger.info(f"Demo data loaded with {len(all_topics)} topics in {len(topics_by_block)} blocks")
-    
 @safe_handler()
 @validate_state_transition({ConversationHandler.END, None})
 async def entry_from_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -530,75 +309,89 @@ def _build_topic_message(topic: Dict) -> str:
 @safe_handler()
 @validate_state_transition({states.CHOOSING_MODE})
 async def practice_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Режим практики - выбор типа задания."""
+    """Режим практики."""
     query = update.callback_query
     
-    # Добавляем отладочную информацию
-    logger.info(f"Practice mode called. task19_data keys: {task19_data.keys() if task19_data else 'None'}")
-    logger.info(f"Number of topics: {len(task19_data.get('topics', [])) if task19_data else 0}")
-    logger.info(f"Number of blocks: {len(task19_data.get('blocks', {})) if task19_data else 0}")
+    # Сразу отвечаем на callback, чтобы убрать "часики"
+    await query.answer()
     
-    # Проверяем наличие данных
-    if not task19_data or not task19_data.get('topics'):
-        logger.warning("No topics in task19_data, attempting to reload...")
-        
-        # Пытаемся загрузить данные еще раз
-        await init_task19_data()
-        
-        # Проверяем снова после загрузки
-        if not task19_data or not task19_data.get('topics'):
-            logger.error("Still no topics after reload attempt")
-            
-            await query.edit_message_text(
-                "⚠️ <b>Данные заданий временно недоступны</b>\n\n"
-                "Проблема может быть связана с:\n"
-                "• Отсутствием или повреждением файла данных\n"
-                "• Неправильной структурой JSON\n\n"
-                "Попробуйте:\n"
-                "• Перезапустить бота командой /start\n"
-                "• Проверить файл task19_topics.json\n"
-                "• Обратиться к администратору\n\n"
-                "А пока вы можете изучить теорию и советы по выполнению задания 19.",
-                reply_markup=InlineKeyboardMarkup([
-                    [InlineKeyboardButton("📚 Теория и советы", callback_data="t19_theory")],
-                    [InlineKeyboardButton("⬅️ Назад", callback_data="t19_menu")]
-                ]),
-                parse_mode=ParseMode.HTML
+    # ВАЖНО: Устанавливаем текущий модуль
+    set_active_module(context)
+    
+    # Удаляем сообщение о проверке, если оно есть
+    if 'checking_message_id' in context.user_data:
+        try:
+            await context.bot.delete_message(
+                chat_id=query.message.chat_id,
+                message_id=context.user_data['checking_message_id']
             )
-            return states.CHOOSING_MODE
+            del context.user_data['checking_message_id']
+        except:
+            pass
     
-    # Логируем информацию о блоках
-    blocks = task19_data.get('blocks', {})
-    logger.info(f"Available blocks: {list(blocks.keys())}")
+    if not task19_data.get("topics"):
+        try:
+            await query.edit_message_text(
+                "❌ Данные заданий не загружены. Попробуйте позже.",
+                reply_markup=InlineKeyboardMarkup(
+                    [[InlineKeyboardButton("⬅️ Назад", callback_data="t19_menu")]]
+                ),
+            )
+        except Exception as e:
+            if "Message is not modified" not in str(e):
+                raise
+        return states.CHOOSING_MODE
     
-    # Если есть блоки, показываем выбор
-    if blocks:
-        kb = [
-            [InlineKeyboardButton("📋 Выбрать блок", callback_data="t19_select_block")],
-            [InlineKeyboardButton("🎲 Случайная тема", callback_data="t19_random_all")],
-            [InlineKeyboardButton("⬅️ Назад", callback_data="t19_menu")],
-        ]
+    # Определение user_stats
+    results = context.user_data.get('task19_results', [])
+    user_stats = {
+        'total_attempts': len(results),
+        'average_score': sum(r.get('score', 0) for r in results) / len(results) if results else 0,
+        'streak': context.user_data.get('correct_streak', 0),
+        'weak_topics_count': 0,
+        'progress_percent': int(len(set(r.get('topic') for r in results)) / 50 * 100) if results else 0
+    }
+    
+    text = "💪 <b>Режим практики</b>\n\n"
+    
+    # Показываем мини-статистику
+    if user_stats['total_attempts'] > 0:
+        avg_visual = UniversalUIComponents.create_score_visual(
+            int(user_stats['average_score']), 
+            3,  # Максимум для task19
+            use_stars=False
+        )
+        text += f"📊 Ваш прогресс: {user_stats['total_attempts']} попыток, средний балл {avg_visual}\n"
         
-        text = f"🎯 <b>Режим практики</b>\n\n"
-        text += f"Доступно тем: {len(task19_data['topics'])}\n"
-        text += f"Блоков: {len(blocks)}\n\n"
-        text += "Выберите способ работы:"
-    else:
-        # Если блоков нет, но есть темы
-        kb = [
-            [InlineKeyboardButton("🎲 Случайная тема", callback_data="t19_random_all")],
-            [InlineKeyboardButton("⬅️ Назад", callback_data="t19_menu")],
-        ]
+        if user_stats['streak'] > 0:
+            text += f"🔥 Серия правильных ответов: {user_stats['streak']}\n"
         
-        text = f"🎯 <b>Режим практики</b>\n\n"
-        text += f"Доступно тем: {len(task19_data['topics'])}\n\n"
-        text += "Выберите действие:"
+        text += "\n"
     
-    await query.edit_message_text(
-        text,
-        reply_markup=InlineKeyboardMarkup(kb),
-        parse_mode=ParseMode.HTML
-    )
+    text += "Выберите способ тренировки:"
+    
+    # ИСПРАВЛЕННЫЕ КНОПКИ
+    kb_buttons = [
+        [InlineKeyboardButton("📚 Выбрать блок тем", callback_data="t19_select_block")],
+        [InlineKeyboardButton("🎲 Случайная тема", callback_data="t19_random_all")],
+        [InlineKeyboardButton("📋 Список всех тем", callback_data="t19_list_topics")],
+        [InlineKeyboardButton("⬅️ Назад", callback_data="t19_menu")]
+    ]
+    
+    # Оборачиваем в try-except для обработки ошибки "Message is not modified"
+    try:
+        await query.edit_message_text(
+            text,
+            reply_markup=InlineKeyboardMarkup(kb_buttons),
+            parse_mode=ParseMode.HTML,
+        )
+    except Exception as e:
+        if "Message is not modified" not in str(e):
+            raise  # Перебрасываем другие ошибки
+    
+    # ВАЖНО: Если пользователь выберет "Выбрать блок", то следующий обработчик
+    # переведет его в состояние CHOOSING_BLOCK
+    # А пока остаемся в CHOOSING_MODE
     return states.CHOOSING_MODE
 
 
@@ -1364,83 +1157,36 @@ async def examples_bank(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Показ банка эталонных примеров."""
     query = update.callback_query
     
-    # Добавляем отладочную информацию
-    logger.info(f"Examples bank called. Topics count: {len(task19_data.get('topics', []))}")
-    
-    # Проверяем наличие данных
-    topics = task19_data.get('topics', [])
-    
-    if not topics:
-        logger.warning("No topics for examples bank, attempting reload...")
-        # Пытаемся загрузить данные еще раз
-        await init_task19_data()
-        topics = task19_data.get('topics', [])
-    
-    if topics:
-        # Находим темы с примерами
-        topics_with_examples = [t for t in topics if t.get('example_answers')]
+    # Показываем первую тему с примерами
+    if task19_data.get('topics'):
+        topic = task19_data['topics'][0]  # Для демонстрации берем первую тему
         
-        if topics_with_examples:
-            # Показываем первую тему с примерами
-            await show_examples_for_topic_message(query.message, context, 0)
-        else:
-            # Есть темы, но нет примеров
-            await query.edit_message_text(
-                "📚 <b>Банк примеров</b>\n\n"
-                "⚠️ В загруженных темах отсутствуют примеры ответов.\n\n"
-                "Проверьте структуру файла task19_topics.json:\n"
-                "Каждая тема должна содержать поле 'example_answers' с примерами.\n\n"
-                "А пока изучите общие рекомендации по написанию примеров.",
-                reply_markup=InlineKeyboardMarkup([
-                    [InlineKeyboardButton("📚 Теория", callback_data="t19_theory")],
-                    [InlineKeyboardButton("⬅️ Назад", callback_data="t19_menu")]
-                ]),
-                parse_mode=ParseMode.HTML
-            )
+        text = f"📚 <b>Банк примеров</b>\n\n"
+        text += f"<b>Тема:</b> {topic['title']}\n"
+        text += f"<b>Задание:</b> {topic['task_text']}\n\n"
+        text += "<b>Эталонные примеры:</b>\n\n"
+        
+        for i, example in enumerate(topic.get('example_answers', []), 1):
+            text += f"{i}. <b>{example['type']}</b>\n"
+            text += f"   {example['example']}\n\n"
+        
+        text += "💡 <i>Обратите внимание на структуру и конкретность примеров!</i>"
+        
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("➡️ Следующая тема", callback_data="t19_bank_nav:1")],  # ИСПРАВЛЕНО!
+            [InlineKeyboardButton("⬅️ Назад", callback_data="t19_menu")]
+        ])
     else:
-        # Нет тем вообще
-        text = """📚 <b>Банк примеров</b>
-
-⚠️ Банк примеров временно недоступен.
-
-Возможные причины:
-• Файл task19_topics.json отсутствует или поврежден
-• Неправильная структура данных в файле
-
-<b>Общие рекомендации по написанию примеров:</b>
-
-<b>1. Конкретность</b>
-• Используйте имена, даты, числа
-• Указывайте конкретные организации
-• Приводите точные данные
-
-<b>2. Актуальность</b>
-• Используйте современные примеры
-• Ссылайтесь на действующие законы
-• Приводите реальные события
-
-<b>3. Разнообразие</b>
-• Примеры из разных сфер жизни
-• Разные регионы России
-• Различные социальные группы
-
-<b>Источники примеров:</b>
-• Новости СМИ (РИА, ТАСС, Интерфакс)
-• Официальная статистика (Росстат)
-• Судебная практика
-• Исторические факты
-• Личный социальный опыт"""
-        
+        text = "📚 <b>Банк примеров</b>\n\nБанк примеров пуст."
         kb = InlineKeyboardMarkup([[
             InlineKeyboardButton("⬅️ Назад", callback_data="t19_menu")
         ]])
-        
-        await query.edit_message_text(
-            text,
-            reply_markup=kb,
-            parse_mode=ParseMode.HTML
-        )
     
+    await query.edit_message_text(
+        text,
+        reply_markup=kb,
+        parse_mode=ParseMode.HTML
+    )
     return states.CHOOSING_MODE
 
 @safe_handler()
@@ -1449,17 +1195,54 @@ async def bank_navigation(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Навигация по банку примеров."""
     query = update.callback_query
     
-    try:
-        current_idx = int(query.data.split(":")[1])
-    except (ValueError, IndexError):
-        logger.error(f"Invalid navigation data: {query.data}")
-        await query.answer("Ошибка навигации", show_alert=True)
-        return states.CHOOSING_MODE
+    current_idx = int(query.data.split(":")[1])
+    topics = task19_data.get('topics', [])
     
-    # Используем функцию для callback queries
-    await show_examples_for_topic(query, context, current_idx)
-    await query.answer()
+    if current_idx >= len(topics):
+        current_idx = 0
     
+    topic = topics[current_idx]
+    
+    # Визуальный прогресс
+    progress_bar = UniversalUIComponents.create_progress_bar(
+        current_idx + 1, len(topics), width=20, show_percentage=True
+    )
+    
+    text = f"📚 <b>Банк примеров</b>\n{progress_bar}\n\n"
+    text += f"<b>Тема:</b> {topic['title']}\n"
+    text += f"<b>Задание:</b> {topic['task_text']}\n\n"
+    text += "<b>Эталонные примеры:</b>\n\n"
+    
+    for i, example in enumerate(topic.get('example_answers', []), 1):
+        # Добавляем визуальные элементы для примеров
+        color = UniversalUIComponents.COLOR_INDICATORS['green']
+        text += f"{color} <b>{example['type']}</b>\n"
+        text += f"   {example['example']}\n\n"
+    
+    # Навигация
+    kb_buttons = []
+    nav_row = []
+    
+    if current_idx > 0:
+        nav_row.append(InlineKeyboardButton("⬅️", callback_data=f"t19_bank_nav:{current_idx-1}"))
+    
+    nav_row.append(
+        InlineKeyboardButton(
+            create_visual_progress(current_idx + 1, len(topics)), callback_data="noop"
+        )
+    )
+    
+    if current_idx < len(topics) - 1:
+        nav_row.append(InlineKeyboardButton("➡️", callback_data=f"t19_bank_nav:{current_idx+1}"))
+    
+    kb_buttons.append(nav_row)
+    kb_buttons.append([InlineKeyboardButton("⬅️ В меню", callback_data="t19_menu")])
+    
+    await query.edit_message_text(
+        text,
+        reply_markup=InlineKeyboardMarkup(kb_buttons),
+        parse_mode=ParseMode.HTML
+    )
     return states.CHOOSING_MODE
 
 
@@ -1586,124 +1369,10 @@ async def cmd_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return await cmd_task19(update, context)
 
 @safe_handler()
-@validate_state_transition({states.CHOOSING_MODE})
-async def bank_search_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Начало поиска в банке примеров."""
-    query = update.callback_query
-    
-    await query.edit_message_text(
-        "🔍 <b>Поиск в банке примеров</b>\n\n"
-        "Отправьте название темы или ключевые слова для поиска:",
-        reply_markup=InlineKeyboardMarkup([[
-            InlineKeyboardButton("❌ Отмена", callback_data="t19_examples")
-        ]]),
-        parse_mode=ParseMode.HTML
-    )
-    
-    # Устанавливаем флаг ожидания поиска
-    context.user_data['waiting_for_bank_search'] = True
-    context.user_data['search_message_id'] = query.message.message_id
-    
-    return states.CHOOSING_MODE
-
-
-@safe_handler()
-async def handle_bank_search_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обработка текстового поиска в банке примеров."""
-    # Проверяем, ожидаем ли мы поисковый запрос
-    if not context.user_data.get('waiting_for_bank_search'):
-        return
-    
-    search_query = update.message.text.lower()
-    context.user_data['waiting_for_bank_search'] = False
-    
-    # Удаляем сообщение пользователя
-    try:
-        await update.message.delete()
-    except:
-        pass
-    
-    # Ищем подходящие темы
-    topics = task19_data.get('topics', [])
-    topics_with_examples = [t for t in topics if t.get('example_answers')]
-    
-    matching_topics = []
-    for idx, topic in enumerate(topics_with_examples):
-        # Поиск в названии, тексте задания и ключевых словах
-        if (search_query in topic.get('title', '').lower() or 
-            search_query in topic.get('task_text', '').lower() or
-            any(search_query in kp.lower() for kp in topic.get('key_points', []))):
-            matching_topics.append((idx, topic))
-    
-    if not matching_topics:
-        # Редактируем исходное сообщение
-        try:
-            search_msg_id = context.user_data.get('search_message_id')
-            await context.bot.edit_message_text(
-                chat_id=update.effective_chat.id,
-                message_id=search_msg_id,
-                text=(
-                    f"🔍 <b>Поиск: </b><code>{update.message.text}</code>\n\n"
-                    "❌ Темы не найдены. Попробуйте другой запрос."
-                ),
-                reply_markup=InlineKeyboardMarkup([
-                    [InlineKeyboardButton("🔍 Искать снова", callback_data="t19_bank_search")],
-                    [InlineKeyboardButton("⬅️ Все темы", callback_data="t19_examples")]
-                ]),
-                parse_mode=ParseMode.HTML
-            )
-        except:
-            pass
-    else:
-        # Показываем первую найденную тему
-        first_idx = matching_topics[0][0]
-        
-        # Создаем объект query для функции show_examples_for_topic
-        class FakeQuery:
-            def __init__(self, message):
-                self.message = message
-                
-            async def edit_message_text(self, *args, **kwargs):
-                await self.message.edit_text(*args, **kwargs)
-        
-        try:
-            search_msg_id = context.user_data.get('search_message_id')
-            message = await context.bot.get_chat(update.effective_chat.id)
-            message = update.effective_message
-            
-            # Создаем фейковый query объект
-            fake_query = FakeQuery(message)
-            
-            # Отправляем новое сообщение с результатом
-            result_text = f"🔍 Найдено тем: {len(matching_topics)}\n\n"
-            
-            msg = await update.message.reply_text(result_text + "Загрузка...")
-            
-            # Удаляем старое сообщение о поиске
-            try:
-                await context.bot.delete_message(
-                    chat_id=update.effective_chat.id,
-                    message_id=search_msg_id
-                )
-            except:
-                pass
-            
-            # Показываем найденную тему
-            fake_query.message = msg
-            await show_examples_for_topic(fake_query, context, first_idx)
-            
-        except Exception as e:
-            logger.error(f"Error showing search results: {e}")
-    
-    return states.CHOOSING_MODE
-
-@safe_handler()
 async def noop(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обработчик для кнопок без действия (например, счетчиков)."""
+    """Пустой обработчик для неактивных кнопок."""
     query = update.callback_query
-    await query.answer()
-    # Возвращаем текущее состояние без изменений
-    return context.user_data.get('conversation_state', states.CHOOSING_MODE)
+    # Ничего не делаем, просто отвечаем на callback
 
 @safe_handler()
 async def reset_results(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1830,91 +1499,52 @@ async def handle_bank_search(update: Update, context: ContextTypes.DEFAULT_TYPE)
     return states.CHOOSING_MODE
 
 
-async def show_examples_for_topic(query, context: ContextTypes.DEFAULT_TYPE, topic_idx: int):
-    """Показывает примеры для темы (для callback queries)."""
+@safe_handler()
+async def show_examples_for_topic_message(message, context: ContextTypes.DEFAULT_TYPE, topic_idx: int):
+    """Показывает примеры для темы (для обычных сообщений, не callback)."""
     topics = task19_data.get('topics', [])
     
-    # Фильтруем только темы с примерами
-    topics_with_examples = [t for t in topics if t.get('example_answers')]
-    
-    if not topics_with_examples:
-        await query.edit_message_text(
-            "📚 <b>Банк примеров</b>\n\n"
-            "❌ Нет тем с примерами.",
-            parse_mode=ParseMode.HTML
-        )
+    if not topics or topic_idx >= len(topics):
+        await message.edit_text("❌ Тема не найдена")
         return
     
-    # Корректируем индекс
-    if topic_idx >= len(topics_with_examples):
-        topic_idx = 0
-    elif topic_idx < 0:
-        topic_idx = len(topics_with_examples) - 1
+    topic = topics[topic_idx]
+    context.user_data['bank_current_idx'] = topic_idx
     
-    topic = topics_with_examples[topic_idx]
-    
-    # Формируем текст
-    text = f"📚 <b>Банк примеров</b>\n"
-    text += f"📍 Тема {topic_idx + 1} из {len(topics_with_examples)}\n\n"
-    text += f"<b>Блок:</b> {topic.get('block', 'Без категории')}\n"
-    text += f"<b>Тема:</b> {topic.get('title', 'Без названия')}\n"
-    text += f"<b>Задание:</b> {topic.get('task_text', 'Текст задания отсутствует')}\n\n"
-    
-    # Добавляем ключевые моменты если есть
-    if topic.get('key_points'):
-        text += "<b>Ключевые аспекты:</b>\n"
-        for point in topic['key_points']:
-            text += f"• {point}\n"
-        text += "\n"
-    
-    text += "<b>Эталонные примеры:</b>\n\n"
-    
-    # Показываем примеры
-    example_answers = topic.get('example_answers', [])
-    if example_answers:
-        for i, example in enumerate(example_answers, 1):
-            if isinstance(example, dict):
-                # Формат с типом и примером
-                text += f"{i}️⃣ <b>{example.get('type', f'Пример {i}')}</b>\n"
-                text += f"{example.get('example', 'Пример не указан')}\n\n"
-            elif isinstance(example, str):
-                # Простой текстовый формат
-                text += f"{i}️⃣ {example}\n\n"
-    else:
-        text += "❌ Примеры отсутствуют для этой темы.\n\n"
-    
-    text += "💡 <i>Обратите внимание на структуру и конкретность примеров!</i>"
+    text = f"""🏦 <b>Банк примеров</b>
+
+<b>Тема:</b> {topic['title']}
+
+<b>Эталонные примеры:</b>
+
+{generate_examples_for_topic(topic)}
+
+💡 <b>Обратите внимание:</b>
+• Каждый пример содержит конкретные детали
+• Примеры взяты из разных сфер жизни
+• Четко показана связь с темой задания"""
     
     # Навигация
     kb_buttons = []
     nav_row = []
     
-    # Кнопки навигации
     if topic_idx > 0:
         nav_row.append(InlineKeyboardButton("⬅️", callback_data=f"t19_bank_nav:{topic_idx-1}"))
     
-    # Счетчик
     nav_row.append(
         InlineKeyboardButton(
-            f"{topic_idx + 1}/{len(topics_with_examples)}", 
-            callback_data="noop"
+            create_visual_progress(topic_idx + 1, len(topics)), callback_data="noop"
         )
     )
     
-    if topic_idx < len(topics_with_examples) - 1:
+    if topic_idx < len(topics) - 1:
         nav_row.append(InlineKeyboardButton("➡️", callback_data=f"t19_bank_nav:{topic_idx+1}"))
     
     kb_buttons.append(nav_row)
+    kb_buttons.append([InlineKeyboardButton("🔍 Поиск темы", callback_data="t19_bank_search")])
+    kb_buttons.append([InlineKeyboardButton("⬅️ В меню", callback_data="t19_menu")])
     
-    # Дополнительные кнопки
-    kb_buttons.append([
-        InlineKeyboardButton("🔍 Поиск темы", callback_data="t19_bank_search")
-    ])
-    kb_buttons.append([
-        InlineKeyboardButton("⬅️ В меню", callback_data="t19_menu")
-    ])
-    
-    await query.edit_message_text(
+    await message.edit_text(
         text,
         reply_markup=InlineKeyboardMarkup(kb_buttons),
         parse_mode=ParseMode.HTML
