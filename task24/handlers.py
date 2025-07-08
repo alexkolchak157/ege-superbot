@@ -254,6 +254,7 @@ async def train_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Режим тренировки."""
     query = update.callback_query
     
+    # Проверяем загрузку данных планов
     if not plan_bot_data or not plan_bot_data.topic_list_for_pagination:
         await query.edit_message_text(
             "❌ Данные планов не загружены. Обратитесь к администратору.",
@@ -261,7 +262,7 @@ async def train_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 InlineKeyboardButton("🏠 Главное меню", callback_data="to_main_menu")
             ]])
         )
-        return ConversationHandler.END  # ← Исправлено: только в случае ошибки
+        return ConversationHandler.END
     
     context.user_data['mode'] = 'train'
     
@@ -272,7 +273,7 @@ async def train_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=kb,
         parse_mode=ParseMode.HTML
     )
-    return states.CHOOSING_TOPIC  # ← Исправлено: возвращаем правильное состояние
+    return states.CHOOSING_TOPIC
 
 
 @safe_handler()
@@ -281,6 +282,7 @@ async def show_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Режим просмотра эталонов."""
     query = update.callback_query
     
+    # Проверяем загрузку данных планов
     if not plan_bot_data or not plan_bot_data.topic_list_for_pagination:
         await query.edit_message_text(
             "❌ Данные планов не загружены. Обратитесь к администратору.",
@@ -288,7 +290,7 @@ async def show_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 InlineKeyboardButton("🏠 Главное меню", callback_data="to_main_menu")
             ]])
         )
-        return ConversationHandler.END  # ← Исправлено: только в случае ошибки
+        return ConversationHandler.END
     
     context.user_data['mode'] = 'show'
     
