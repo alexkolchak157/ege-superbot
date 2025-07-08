@@ -277,10 +277,10 @@ def _build_topic_message(topic: Dict) -> str:
 @safe_handler()
 @validate_state_transition({states.CHOOSING_MODE})
 async def practice_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Практический режим - случайное задание."""
+    """Показывает меню выбора способа практики."""
     query = update.callback_query
     
-    # ДОБАВЛЕНО: Проверка загрузки данных
+    # Проверка загрузки данных
     if not task19_data or not task19_data.get('topics'):
         logger.error("Task19 data not loaded when entering practice mode")
         await query.answer("❌ Данные заданий не загружены", show_alert=True)
@@ -293,11 +293,7 @@ async def practice_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
             text = """❌ <b>Данные заданий не загружены</b>
             
 К сожалению, не удалось загрузить базу заданий.
-Пожалуйста, обратитесь к администратору.
-
-Вы можете попробовать:
-• Вернуться в главное меню
-• Попробовать позже"""
+Пожалуйста, обратитесь к администратору."""
             
             kb = InlineKeyboardMarkup([
                 [InlineKeyboardButton("🔄 Попробовать снова", callback_data="t19_practice")],
@@ -312,55 +308,38 @@ async def practice_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             return states.CHOOSING_MODE
     
-    # Удаляем предыдущие сообщения диалога
-    await delete_previous_messages(context, query.message.chat_id)
-    
-    # Сбрасываем состояние практики
-    context.user_data.pop('current_topic', None)
-    context.user_data.pop('practice_results', None)
-    
-    # Очищаем предыдущие ID сообщений
-    for key in ['task19_question_msg_id', 'task19_answer_msg_id', 
-                'task19_result_msg_id', 'task19_thinking_msg_id']:
-        context.user_data.pop(key, None)
-    
-    # Выбираем случайную тему
-    topic = random.choice(task19_data['topics'])
-    context.user_data['current_topic'] = topic  # Сохраняем весь объект темы
-    context.user_data['current_topic_title'] = topic['title']
-    
-    # Формируем текст задания с улучшенным форматированием
-    task_text = f"""📝 <b>Задание 19</b>
+    # Показываем меню выбора способа практики
+    text = """💪 <b>Режим практики</b>
 
-<b>Тема:</b> {topic['title']}
-
-<b>Задание:</b>
-{topic['task_text']}
-
-<b>Требования:</b>
-• Приведите ТРИ примера
-• Каждый пример должен быть конкретным
-• Используйте имена, даты, места
-• Избегайте общих фраз
-
-💡 <i>Отправьте ваш ответ текстом или документом</i>"""
+Выберите способ выбора темы:"""
     
-    kb = InlineKeyboardMarkup([[
-        InlineKeyboardButton("❌ Отменить", callback_data="t19_menu")
-    ]])
+    kb_buttons = []
     
-    # Отправляем новое сообщение с заданием
-    msg = await query.message.reply_text(
-        task_text,
+    # Кнопка случайной темы
+    kb_buttons.append([
+        InlineKeyboardButton("🎲 Случайная тема", callback_data="t19_random_all")
+    ])
+    
+    # Кнопка выбора по блокам (если есть блоки)
+    if task19_data.get("blocks"):
+        kb_buttons.append([
+            InlineKeyboardButton("📚 По блокам", callback_data="t19_select_block")
+        ])
+    
+    # Кнопка назад
+    kb_buttons.append([
+        InlineKeyboardButton("⬅️ Назад", callback_data="t19_menu")
+    ])
+    
+    kb = InlineKeyboardMarkup(kb_buttons)
+    
+    await query.edit_message_text(
+        text,
         reply_markup=kb,
         parse_mode=ParseMode.HTML
     )
     
-    # Сохраняем ID сообщения с заданием
-    context.user_data['task19_question_msg_id'] = msg.message_id
-    
-    # Переходим в состояние ожидания ответа
-    return TASK19_WAITING
+    return states.CHOOSING_MODE
 
 
 
