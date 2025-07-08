@@ -1,6 +1,7 @@
 # payment/config.py - обновленная конфигурация
 """Конфигурация модуля оплаты с поддержкой модульной системы."""
 import os
+import logging
 from decimal import Decimal
 from datetime import datetime, timedelta, timezone
 from typing import Dict, Any, List
@@ -20,6 +21,10 @@ PAYMENT_ADMIN_CHAT_ID = int(os.getenv('PAYMENT_ADMIN_CHAT_ID', '0'))
 # Режим работы подписок
 SUBSCRIPTION_MODE = os.getenv('SUBSCRIPTION_MODE', 'modular')  # 'unified' или 'modular'
 
+logger = logging.getLogger(__name__)
+
+SUBSCRIPTION_MODE = os.getenv('SUBSCRIPTION_MODE', 'unified')
+logger.info(f"Payment module loaded with SUBSCRIPTION_MODE = {SUBSCRIPTION_MODE}")
 # ========= СТАРЫЕ ПЛАНЫ (для обратной совместимости) =========
 LEGACY_SUBSCRIPTION_PLANS = {
     'basic_month': {

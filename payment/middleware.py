@@ -238,7 +238,7 @@ class SubscriptionMiddleware:
         
         # Проверяем платную подписку
         subscription_info = await subscription_manager.get_subscription_info(user_id)
-        if subscription_info['is_active']:
+        if subscription_info and subscription_info.get('is_active'):
             return True
         
         # Опционально проверяем канал

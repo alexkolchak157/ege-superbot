@@ -25,9 +25,9 @@ class SubscriptionManager:
     async def init_tables(self):
         """Инициализирует таблицы в БД."""
         try:
-            async with aiosqlite.connect(DATABASE_FILE) as db:
+            async with aiosqlite.connect(DATABASE_FILE) as conn:
                 # Существующие таблицы
-                await db.execute("""
+                await conn.execute("""
                     CREATE TABLE IF NOT EXISTS subscriptions (
                         id INTEGER PRIMARY KEY AUTOINCREMENT,
                         user_id INTEGER NOT NULL,
@@ -41,7 +41,7 @@ class SubscriptionManager:
                     )
                 """)
                 
-                await db.execute("""
+                await conn.execute("""
                     CREATE TABLE IF NOT EXISTS payments (
                         id INTEGER PRIMARY KEY AUTOINCREMENT,
                         user_id INTEGER NOT NULL,
@@ -57,7 +57,7 @@ class SubscriptionManager:
                 
                 # Новые таблицы для модульной системы
                 if SUBSCRIPTION_MODE == 'modular':
-                    await db.execute("""
+                    await conn.execute("""
                         CREATE TABLE IF NOT EXISTS module_subscriptions (
                             id INTEGER PRIMARY KEY AUTOINCREMENT,
                             user_id INTEGER NOT NULL,
@@ -72,7 +72,7 @@ class SubscriptionManager:
                         )
                     """)
                     
-                    await db.execute("""
+                    await conn.execute("""
                         CREATE TABLE IF NOT EXISTS trial_history (
                             user_id INTEGER PRIMARY KEY,
                             trial_activated_at TIMESTAMP,
@@ -80,7 +80,7 @@ class SubscriptionManager:
                         )
                     """)
                         # Создаем таблицу для модульных подписок
-                    await db.execute_query("""
+                    await conn.execute("""
                         CREATE TABLE IF NOT EXISTS user_modules (
                             id INTEGER PRIMARY KEY AUTOINCREMENT,
                             user_id INTEGER NOT NULL,
@@ -95,27 +95,27 @@ class SubscriptionManager:
                     """)
                     
                     # Создаем индексы для производительности
-                    await db.execute_query(
+                    await conn.execute(
                         "CREATE INDEX IF NOT EXISTS idx_user_modules_user ON user_modules(user_id)"
                     )
-                    await db.execute_query(
+                    await conn.execute(
                         "CREATE INDEX IF NOT EXISTS idx_user_modules_active ON user_modules(is_active)"
                     )
                     
                     logger.info("User modules table initialized")
                     # Создаем индексы
-                    await db.execute("""
+                    await conn.execute("""
                         CREATE INDEX IF NOT EXISTS idx_module_subs_user 
                         ON module_subscriptions(user_id)
                     """)
-                    await db.execute("""
+                    await conn.execute("""
                         CREATE INDEX IF NOT EXISTS idx_module_subs_expires 
                         ON module_subscriptions(expires_at)
                     """)
                     
                     logger.info("Modular subscription tables created")
                 
-                await db.commit()
+                await conn.commit()
                 logger.info("Payment tables initialized")
                 
         except Exception as e:
@@ -178,8 +178,8 @@ class SubscriptionManager:
     async def _check_unified_subscription(self, user_id: int) -> Optional[Dict[str, Any]]:
         """Проверка единой подписки (старая система)."""
         try:
-            async with aiosqlite.connect(DATABASE_FILE) as db:
-                cursor = await db.execute(
+            async with aiosqlite.connect(DATABASE_FILE) as conn:
+                cursor = await conn.execute(
                     """
                     SELECT plan_id, expires_at, created_at
                     FROM subscriptions
@@ -205,9 +205,9 @@ class SubscriptionManager:
     async def _check_modular_subscriptions(self, user_id: int) -> Optional[Dict[str, Any]]:
         """Проверка модульных подписок."""
         try:
-            async with aiosqlite.connect(DATABASE_FILE) as db:
+            async with aiosqlite.connect(DATABASE_FILE) as conn:
                 # Получаем все активные модули
-                cursor = await db.execute(
+                cursor = await conn.execute(
                     """
                     SELECT DISTINCT module_code, MAX(expires_at) as expires_at
                     FROM module_subscriptions
@@ -271,7 +271,7 @@ class SubscriptionManager:
         # В модульной системе проверяем покупку конкретного модуля
         if self.config.SUBSCRIPTION_MODE == 'modular':
             # Проверяем в таблице user_modules
-            result = await db.fetch_one(
+            result = await conn.fetch_one(
                 """SELECT 1 FROM user_modules 
                    WHERE user_id = ? AND module_code = ? AND is_active = 1
                    AND (expires_at IS NULL OR expires_at > datetime('now'))""",
@@ -324,9 +324,9 @@ class SubscriptionManager:
     async def activate_subscription(self, order_id: str, payment_id: str) -> bool:
         """Активирует подписку после успешной оплаты."""
         try:
-            async with aiosqlite.connect(DATABASE_FILE) as db:
+            async with aiosqlite.connect(DATABASE_FILE) as conn:
                 # Получаем информацию о платеже
-                cursor = await db.execute(
+                cursor = await conn.execute(
                     "SELECT user_id, plan_id, amount_kopecks FROM payments WHERE order_id = ?",
                     (order_id,)
                 )
@@ -344,7 +344,7 @@ class SubscriptionManager:
                     await self._activate_unified_subscription(user_id, plan_id, payment_id)
                 
                 # Обновляем статус платежа
-                await db.execute(
+                await conn.execute(
                     """
                     UPDATE payments 
                     SET status = 'completed', payment_id = ?, completed_at = ?
@@ -353,7 +353,7 @@ class SubscriptionManager:
                     (payment_id, datetime.now(timezone.utc), order_id)
                 )
                 
-                await db.commit()
+                await conn.commit()
                 logger.info(f"Subscription activated for user {user_id}, plan {plan_id}")
                 return True
                 
@@ -365,15 +365,15 @@ class SubscriptionManager:
         """Активация единой подписки."""
         expires_at = get_subscription_end_date(plan_id)
         
-        async with aiosqlite.connect(DATABASE_FILE) as db:
-            await db.execute(
+        async with aiosqlite.connect(DATABASE_FILE) as conn:
+            await conn.execute(
                 """
                 INSERT INTO subscriptions (user_id, plan_id, expires_at, payment_id)
                 VALUES (?, ?, ?, ?)
                 """,
                 (user_id, plan_id, expires_at, payment_id)
             )
-            await db.commit()
+            await conn.commit()
     
     async def _activate_modular_subscription(self, user_id: int, plan_id: str, payment_id: str):
         """Активация модульной подписки."""
@@ -385,10 +385,10 @@ class SubscriptionManager:
         expires_at = get_subscription_end_date(plan_id)
         is_trial = plan.get('type') == 'trial'
         
-        async with aiosqlite.connect(DATABASE_FILE) as db:
+        async with aiosqlite.connect(DATABASE_FILE) as conn:
             # Если это пробный период, проверяем историю
             if is_trial:
-                cursor = await db.execute(
+                cursor = await conn.execute(
                     "SELECT 1 FROM trial_history WHERE user_id = ?",
                     (user_id,)
                 )
@@ -396,7 +396,7 @@ class SubscriptionManager:
                     raise ValueError("Trial already used")
                 
                 # Записываем использование триала
-                await db.execute(
+                await conn.execute(
                     """
                     INSERT INTO trial_history (user_id, trial_activated_at, trial_expires_at)
                     VALUES (?, ?, ?)
@@ -407,7 +407,7 @@ class SubscriptionManager:
             # Активируем каждый модуль
             for module_code in modules:
                 # Проверяем существующую подписку
-                cursor = await db.execute(
+                cursor = await conn.execute(
                     """
                     SELECT expires_at FROM module_subscriptions
                     WHERE user_id = ? AND module_code = ? 
@@ -426,7 +426,7 @@ class SubscriptionManager:
                 else:
                     new_expires = expires_at
                 
-                await db.execute(
+                await conn.execute(
                     """
                     INSERT INTO module_subscriptions 
                     (user_id, module_code, plan_id, expires_at, is_trial, payment_id)
@@ -435,7 +435,7 @@ class SubscriptionManager:
                     (user_id, module_code, plan_id, new_expires, is_trial, payment_id)
                 )
             
-            await db.commit()
+            await conn.commit()
     
     async def has_used_trial(self, user_id: int) -> bool:
         """Проверяет, использовал ли пользователь пробный период."""
@@ -443,8 +443,8 @@ class SubscriptionManager:
             return False
         
         try:
-            async with aiosqlite.connect(DATABASE_FILE) as db:
-                cursor = await db.execute(
+            async with aiosqlite.connect(DATABASE_FILE) as conn:
+                cursor = await conn.execute(
                     "SELECT 1 FROM trial_history WHERE user_id = ?",
                     (user_id,)
                 )
@@ -470,8 +470,8 @@ class SubscriptionManager:
             return []
         
         try:
-            async with aiosqlite.connect(DATABASE_FILE) as db:
-                cursor = await db.execute(
+            async with aiosqlite.connect(DATABASE_FILE) as conn:
+                cursor = await conn.execute(
                     """
                     SELECT module_code, plan_id, expires_at, is_trial
                     FROM module_subscriptions
@@ -502,8 +502,8 @@ class SubscriptionManager:
     async def get_payment_by_order_id(self, order_id: str) -> Optional[Dict[str, Any]]:
         """Получает информацию о платеже по order_id."""
         try:
-            async with aiosqlite.connect(DATABASE_FILE) as db:
-                cursor = await db.execute(
+            async with aiosqlite.connect(DATABASE_FILE) as conn:
+                cursor = await conn.execute(
                     "SELECT user_id, plan_id, amount_kopecks, status FROM payments WHERE order_id = ?",
                     (order_id,)
                 )
