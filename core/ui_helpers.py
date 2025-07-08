@@ -413,7 +413,8 @@ def get_achievement_emoji(achievement_type: str) -> str:
 # Экспорт всех функций
 __all__ = [
     'show_thinking_animation',
-    'show_extended_thinking_animation',  # Добавить эту строку
+    'show_extended_thinking_animation',
+    'show_ai_evaluation_animation',
     'show_streak_notification',
     'get_personalized_greeting',
     'get_motivational_message',
