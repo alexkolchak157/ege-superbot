@@ -486,18 +486,75 @@ async def by_block(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 @safe_handler()
 async def another_topic_from_current(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Другая тема из текущего контекста (блок или все)."""
+    """Другая тема из текущего контекста (блок, сложность или все)."""
     query = update.callback_query
     
     # Проверяем, откуда пришел пользователь
     selected_block = context.user_data.get("selected_block")
+    selected_difficulty = context.user_data.get("selected_difficulty")
     
     if selected_block:
         # Если был выбран блок, показываем случайную из блока
         return await random_topic_block(update, context)
+    elif selected_difficulty:
+        # Если была выбрана сложность, выбираем новую тему той же сложности
+        if topic_selector:
+            user_id = update.effective_user.id
+            topic = topic_selector.get_topic_by_difficulty(user_id, selected_difficulty)
+        else:
+            topics = [t for t in task25_data.get('topics', []) 
+                     if t.get('difficulty', 'medium') == selected_difficulty]
+            topic = random.choice(topics) if topics else None
+        
+        if not topic:
+            return states.CHOOSING_MODE
+        
+        # Сохраняем тему
+        context.user_data['current_topic'] = topic
+        
+        # Показываем тему
+        from .utils import format_topic_for_display
+        topic_text = format_topic_for_display(topic)
+        
+        # Добавляем кнопки навигации
+        kb = InlineKeyboardMarkup(_get_navigation_buttons(context))
+        
+        await query.edit_message_text(
+            f"{topic_text}\n\n"
+            "📝 <b>Напишите развёрнутый ответ:</b>",
+            reply_markup=kb,
+            parse_mode=ParseMode.HTML
+        )
+        
+        return states.ANSWERING
     else:
         # Иначе случайную из всех
         return await random_topic_all(update, context)
+
+def _get_navigation_buttons(context: ContextTypes.DEFAULT_TYPE) -> List[List[InlineKeyboardButton]]:
+    """Определяет кнопки навигации в зависимости от контекста."""
+    buttons = []
+    
+    # Кнопка "Другая тема" всегда присутствует
+    buttons.append([InlineKeyboardButton("🎲 Другая тема", callback_data="t25_another_topic")])
+    
+    # Определяем кнопку "Назад" в зависимости от контекста
+    selected_block = context.user_data.get("selected_block")
+    selected_difficulty = context.user_data.get("selected_difficulty")
+    
+    if selected_block:
+        # Если выбран блок
+        buttons.append([InlineKeyboardButton("⬅️ К блоку", callback_data=f"t25_block:{selected_block}")])
+    elif selected_difficulty:
+        # Если выбрана сложность
+        buttons.append([InlineKeyboardButton("⬅️ К сложности", callback_data="t25_by_difficulty")])
+    else:
+        # По умолчанию - к практике
+        buttons.append([InlineKeyboardButton("⬅️ Назад", callback_data="t25_practice")])
+    
+    return buttons
+
+
 
 @safe_handler()
 async def block_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -2783,6 +2840,9 @@ async def handle_difficulty_selected(update: Update, context: ContextTypes.DEFAU
     # Извлекаем уровень сложности
     _, difficulty = query.data.split(':')
     
+    # Сохраняем выбранную сложность для навигации
+    context.user_data['selected_difficulty'] = difficulty
+    
     if topic_selector:
         user_id = update.effective_user.id
         topic = topic_selector.get_topic_by_difficulty(user_id, difficulty)
@@ -2802,9 +2862,16 @@ async def handle_difficulty_selected(update: Update, context: ContextTypes.DEFAU
     from .utils import format_topic_for_display
     topic_text = format_topic_for_display(topic)
     
+    # Добавляем кнопки навигации
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("🎲 Другая тема", callback_data="t25_another_topic")],
+        [InlineKeyboardButton("⬅️ Назад", callback_data="t25_by_difficulty")]
+    ])
+    
     await query.edit_message_text(
         f"{topic_text}\n\n"
         "📝 <b>Напишите развёрнутый ответ:</b>",
+        reply_markup=kb,
         parse_mode=ParseMode.HTML
     )
     

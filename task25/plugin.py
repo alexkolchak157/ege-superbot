@@ -59,7 +59,8 @@ class Task25Plugin(BotPlugin):
                     CallbackQueryHandler(handlers.list_all_topics, pattern="^t25_all_topics_list$"),
                     CallbackQueryHandler(handlers.list_by_difficulty, pattern="^t25_list_by_diff:"),
                     CallbackQueryHandler(handlers.noop, pattern="^noop$"),
-                    
+                    CallbackQueryHandler(handlers.by_block, pattern="^t25_by_block$"),
+                    CallbackQueryHandler(handlers.handle_difficulty_selected, pattern="^t25_diff:"),
                     # Обработчики для выбора тем
                     CallbackQueryHandler(handlers.select_block, pattern="^t25_select_block$"),
                     CallbackQueryHandler(handlers.handle_result_action, pattern="^t25_(new|retry)$"),
