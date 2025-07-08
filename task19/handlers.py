@@ -802,39 +802,11 @@ async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 return states.CHOOSING_MODE
         
         # Показываем начальное сообщение о проверке
-        thinking_msg = await update.message.reply_text("🔍 Анализирую ваш ответ.")
-        
-        # Запускаем анимацию в фоне
-        async def animate_checking():
-            phases = [
-                ("🔍", "Анализирую ваш ответ"),
-                ("📝", "Проверяю соответствие критериям"),
-                ("🤔", "Оцениваю полноту ответа"),
-                ("💭", "Проверяю фактическую точность"),
-                ("📊", "Подсчитываю баллы"),
-                ("✨", "Формирую обратную связь")
-            ]
-            
-            dots = [".", "..", "..."]
-            
-            for phase_idx, (emoji, text) in enumerate(phases):
-                for dot_idx in range(3):
-                    try:
-                        await thinking_msg.edit_text(f"{emoji} {text}{dots[dot_idx]}")
-                        await asyncio.sleep(1.0)
-                    except Exception:
-                        return  # Сообщение было удалено
-                
-                # Галочка в конце фазы
-                if phase_idx < len(phases) - 1:
-                    try:
-                        await thinking_msg.edit_text(f"{emoji} {text}... ✓")
-                        await asyncio.sleep(0.5)
-                    except Exception:
-                        return
-        
-        # Запускаем анимацию
-        animation_task = asyncio.create_task(animate_checking())
+        # Показываем анимацию проверки (используем единую систему как в task25)
+        thinking_msg = await show_ai_evaluation_animation(
+            update.message,
+            duration=40  # 40 секунд для task19
+        )
         
         try:
             # Используем локальный evaluator
@@ -861,13 +833,6 @@ async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 # Fallback оценка
                 score, feedback = await _basic_evaluation(user_answer, topic)
                 max_score = 3
-            
-            # Останавливаем анимацию
-            animation_task.cancel()
-            try:
-                await animation_task
-            except asyncio.CancelledError:
-                pass
             
             # Удаляем сообщение с анимацией
             try:
@@ -915,13 +880,6 @@ async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 )
         except Exception as e:
             logger.error(f"Error evaluating answer: {e}")
-            
-            # Останавливаем анимацию
-            animation_task.cancel()
-            try:
-                await animation_task
-            except asyncio.CancelledError:
-                pass
             
             # Безопасное удаление сообщения
             try:
