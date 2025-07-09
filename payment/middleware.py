@@ -1,77 +1,67 @@
-# payment/subscription_middleware.py - Централизованная проверка подписок для python-telegram-bot v20
-
+# payment/middleware.py
+"""Middleware для проверки подписок и лимитов использования с поддержкой модулей."""
 import logging
-from typing import Optional, Set, Any
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import (
-    ContextTypes, Application, TypeHandler, 
-    ApplicationHandlerStop, CallbackContext
-)
-from datetime import datetime
+from typing import Optional, Dict, Set
+from datetime import datetime, timezone
 
-from core import config, db
-# НЕ импортируем SubscriptionManager в начале файла!
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.constants import ParseMode
+from telegram.ext import Application, CallbackContext, ApplicationHandlerStop, ContextTypes
+
+from core import db
+from core import config
 
 logger = logging.getLogger(__name__)
 
+
 class SubscriptionMiddleware:
-    """Middleware для автоматической проверки подписок"""
+    """Middleware для проверки подписок с поддержкой модульной системы."""
     
     def __init__(
         self,
         free_commands: Optional[Set[str]] = None,
         free_patterns: Optional[Set[str]] = None,
-        check_channel: bool = False,
-        channel: Optional[str] = None
+        check_channel: bool = False
     ):
-        """
-        Args:
-            free_commands: Команды, доступные без подписки
-            free_patterns: Паттерны callback_data, доступные без подписки
-            check_channel: Также проверять подписку на канал
-            channel: Канал для проверки
-        """
-        # Команды, доступные всем пользователям
         self.free_commands = free_commands or {
-            'start', 'help', 'subscribe', 'subscription', 
-            'grant_subscription', 'revoke_subscription', 'payment_stats'
+            'start', 'help', 'subscribe', 'status', 
+            'my_subscriptions', 'menu', 'cancel', 'support'
         }
         
-        # Паттерны callback_data, доступные без подписки
         self.free_patterns = free_patterns or {
-            'main_menu', 'subscribe_', 'plan_', 'check_payment_',
-            'check_subscription', 'help_', 'lang_', 'settings_'
+            'subscribe', 'subscribe_start', 'payment_', 'pay_',
+            'to_main_menu', 'main_menu', 'check_subscription',
+            'module_info_', 'back_to_main', 'my_subscriptions',
+            'duration_', 'confirm_payment'
         }
+        
+        self.check_channel = check_channel
+        self.channel = config.REQUIRED_CHANNEL if check_channel else None
+        
+        # Паттерны для определения модулей
         self.module_patterns = {
+            'test_part': {
+                'commands': ['test', 'test_stats'],
+                'callbacks': ['to_test_part_menu', 'test_'],
+                'exclude': ['test_back_to_mode']
+            },
             'task19': {
-                'commands': ['task19'],  # Команды модуля
-                'callbacks': ['t19_', 'task19'],  # Префиксы callback и точные значения
-                'exclude': []  # Исключения (необязательно)
+                'commands': ['task19'],
+                'callbacks': ['to_task19_menu', 't19_']
             },
             'task20': {
                 'commands': ['task20'],
-                'callbacks': ['t20_', 'task20'],
-                'exclude': []
+                'callbacks': ['to_task20_menu', 't20_']
             },
             'task24': {
                 'commands': ['task24'],
-                'callbacks': ['t24_', 'task24'],
-                'exclude': []
+                'callbacks': ['to_task24_menu', 't24_']
             },
             'task25': {
                 'commands': ['task25'],
-                'callbacks': ['t25_', 'task25'],
-                'exclude': []
-            },
-            'test_part': {
-                'commands': ['quiz', 'test'],
-                'callbacks': ['test_', 'quiz_', 'test_part'],
-                'exclude': []
+                'callbacks': ['to_task25_menu', 't25_']
             }
         }
-        self.check_channel = check_channel
-        self.channel = channel or config.REQUIRED_CHANNEL
-        # НЕ создаем subscription_manager здесь!
     
     def _get_module_from_update(self, update: Update) -> Optional[str]:
         """Определяет модуль по update."""
@@ -114,74 +104,51 @@ class SubscriptionMiddleware:
         check_update: bool,
         context: CallbackContext
     ) -> bool:
-        """Обрабатывает обновление и проверяет подписку.
-        
-        Returns:
-            True - есть подписка, продолжить обработку
-            False - нет подписки, обработка остановлена
-        """
-        # Пропускаем обновления без пользователя
+        """Обрабатывает обновление и проверяет подписку."""
+        # Пропускаем если нет пользователя
         if not update.effective_user:
             return True
             
         user_id = update.effective_user.id
         
-        # НОВОЕ: Проверяем, является ли пользователь админом
-        from core import config
-        admin_ids = []
-        if hasattr(config, 'ADMIN_IDS') and config.ADMIN_IDS:
-            if isinstance(config.ADMIN_IDS, str):
-                admin_ids = [int(id.strip()) for id in config.ADMIN_IDS.split(',') if id.strip()]
-            elif isinstance(config.ADMIN_IDS, list):
-                admin_ids = config.ADMIN_IDS
-        
-        # Если пользователь админ - пропускаем все проверки
-        if user_id in admin_ids:
-            logger.info(f"Admin {user_id} bypassing subscription check")
-            # Добавляем флаг админа в context для использования в других местах
-            context.user_data['is_admin'] = True
-            return True
-        
-        # Определяем, нужна ли проверка
+        # Проверяем, является ли это бесплатным действием
         if self._is_free_action(update):
+            logger.debug(f"Free action for user {user_id}")
             return True
-            
-        from core import config
-        if hasattr(config, 'SUBSCRIPTION_MODE') and config.SUBSCRIPTION_MODE == 'modular':
-            module_code = self._get_module_from_update(update)
-            
-            if module_code:
-                logger.info(f"Checking module access for user {user_id} to module {module_code}")
-                
-                # Получаем subscription_manager
-                subscription_manager = application.bot_data.get('subscription_manager')
-                if not subscription_manager:
-                    from .subscription_manager import SubscriptionManager
-                    subscription_manager = SubscriptionManager()
-                
-                # Проверяем доступ к модулю
-                has_access = await subscription_manager.check_module_access(user_id, module_code)
-                
-                if not has_access:
-                    logger.warning(f"User {user_id} has no access to module {module_code}")
-                    await self._send_module_subscription_required(update, context, module_code)
-                    raise ApplicationHandlerStop()
+        
+        # Определяем модуль
+        module_code = self._get_module_from_update(update)
+        logger.debug(f"Detected module: {module_code}")
+        
+        # Получаем менеджер подписок
+        subscription_manager = application.bot_data.get('subscription_manager')
+        if not subscription_manager:
+            logger.warning("SubscriptionManager not found in bot_data")
+            return True
+        
+        # Проверяем доступ
+        if module_code:
+            # Проверка доступа к конкретному модулю
+            has_access = await subscription_manager.check_module_access(user_id, module_code)
+            if not has_access:
+                await self._send_module_subscription_required(update, context, module_code)
+                raise ApplicationHandlerStop()
+        else:
+            # Проверка общей подписки
+            subscription = await subscription_manager.check_active_subscription(user_id)
+            if not subscription:
+                # Проверяем подписку на канал
+                if self.check_channel and self.channel:
+                    is_member = await self._check_channel_membership(user_id, application.bot)
+                    if not is_member:
+                        await self._send_channel_required(update, context)
+                        raise ApplicationHandlerStop()
                 else:
-                    logger.info(f"User {user_id} has access to module {module_code}")
-                    # Сохраняем информацию о модуле в контексте
-                    context.user_data['current_module'] = module_code
-        # Обеспечиваем наличие пользователя в БД
-        await db.ensure_user(user_id)
-        
-        # Проверяем подписку
-        has_subscription = await self._check_subscription(user_id, application.bot)
-        
-        if not has_subscription:
-            await self._send_subscription_required(update, context)
-            raise ApplicationHandlerStop()
+                    await self._send_subscription_required(update, context)
+                    raise ApplicationHandlerStop()
         
         # Проверяем лимиты использования
-        can_use, used, limit = await self._check_limits(user_id)
+        can_use, used, limit = await self._check_usage_limit(user_id, subscription_manager)
         
         if not can_use:
             await self._send_limit_exceeded(update, context, used, limit)
@@ -190,9 +157,7 @@ class SubscriptionMiddleware:
         # Увеличиваем счетчик использования
         await self._increment_usage(user_id)
         
-        # Добавляем информацию о подписке в context
-        from payment.subscription_manager import SubscriptionManager
-        subscription_manager = SubscriptionManager()
+        # Сохраняем информацию в context для использования в обработчиках
         context.user_data['subscription_info'] = await subscription_manager.get_subscription_info(user_id)
         context.user_data['usage_info'] = {'used': used + 1, 'limit': limit}
         
@@ -214,6 +179,12 @@ class SubscriptionMiddleware:
                 command = text.split()[0][1:].split('@')[0].lower()
                 if command in self.free_commands:
                     return True
+            else:
+                # ВАЖНО: Проверяем, не является ли это вводом email
+                # Простая проверка на наличие @ в тексте
+                if '@' in text and '.' in text:
+                    logger.debug(f"Detected possible email input: {text[:20]}...")
+                    return True
                     
         # Проверяем callback_query
         elif update.callback_query and update.callback_query.data:
@@ -233,69 +204,76 @@ class SubscriptionMiddleware:
         """Проверяет наличие активной подписки"""
         # Импортируем только когда нужно
         from payment.subscription_manager import SubscriptionManager
-        
         subscription_manager = SubscriptionManager()
         
-        # Проверяем платную подписку
-        subscription_info = await subscription_manager.get_subscription_info(user_id)
-        if subscription_info and subscription_info.get('is_active'):
+        subscription = await subscription_manager.check_active_subscription(user_id)
+        return subscription is not None
+    
+    async def _check_channel_membership(self, user_id: int, bot) -> bool:
+        """Проверяет подписку на канал"""
+        if not self.channel:
             return True
-        
-        # Опционально проверяем канал
-        if self.check_channel and self.channel:
-            try:
-                chat_member = await bot.get_chat_member(self.channel, user_id)
-                if chat_member.status in ['member', 'administrator', 'creator']:
-                    return True
-            except Exception as e:
-                logger.error(f"Ошибка при проверке подписки на канал: {e}")
-        
-        return False
+            
+        try:
+            member = await bot.get_chat_member(self.channel, user_id)
+            return member.status in ['member', 'administrator', 'creator']
+        except Exception as e:
+            logger.error(f"Error checking channel membership: {e}")
+            return False
     
-    async def _check_limits(self, user_id: int) -> tuple[bool, int, int]:
+    async def _check_usage_limit(self, user_id: int, subscription_manager) -> tuple[bool, int, int]:
         """Проверяет лимиты использования"""
-        # Импортируем только когда нужно
-        from payment.subscription_manager import SubscriptionManager
-        
-        subscription_manager = SubscriptionManager()
         subscription_info = await subscription_manager.get_subscription_info(user_id)
         
-        # Безлимитные планы
-        if subscription_info['is_active'] and subscription_info['plan_id'] in ['pro_month', 'pro_ege']:
-            return True, 0, -1
-        
-        # Получаем данные пользователя
-        today = datetime.now().date().isoformat()
-        user_data = await db.get_user(user_id)
-        
-        if not user_data:
-            return False, 0, 0
-        
-        # Сбрасываем дневной счетчик при необходимости
-        if user_data.get('last_usage_date') != today:
-            await db.execute_query(
-                "UPDATE users SET daily_usage_count = 0, last_usage_date = ? WHERE user_id = ?",
-                (today, user_id)
+        if subscription_info and subscription_info.get('is_active'):
+            # Для активной подписки проверяем дневной лимит
+            plan_limits = {
+                'basic_month': 100,
+                'pro_month': -1,  # Неограниченно
+                'pro_ege': -1,    # Неограниченно
+                'trial_7days': -1,
+                'module_test_part': 100,
+                'module_task19': 50,
+                'module_task20': 50,
+                'module_task24': 30,
+                'module_task25': 50,
+                'package_second_part': -1,
+                'package_full': -1
+            }
+            
+            plan_id = subscription_info.get('plan_id', 'basic_month')
+            daily_limit = plan_limits.get(plan_id, 100)
+            
+            if daily_limit == -1:
+                return True, 0, -1
+                
+            # Получаем использование за сегодня
+            today = datetime.now(timezone.utc).date().isoformat()
+            usage_data = await db.get_row(
+                "SELECT daily_usage_count FROM users WHERE user_id = ?",
+                (user_id,)
             )
-            daily_count = 0
+            
+            daily_usage = usage_data['daily_usage_count'] if usage_data else 0
+            
+            return daily_usage < daily_limit, daily_usage, daily_limit
         else:
-            daily_count = user_data.get('daily_usage_count', 0)
-        
-        # Определяем лимит
-        if subscription_info['is_active'] and subscription_info['plan_id'] == 'basic_month':
-            limit = 100  # Базовый план
-        else:
-            # Бесплатный план - месячный лимит
-            monthly_count = user_data.get('monthly_usage_count', 0)
-            if monthly_count >= 50:
-                return False, monthly_count, 50
-            limit = 50 - monthly_count
-        
-        return daily_count < limit, daily_count, limit
+            # Для бесплатных пользователей - месячный лимит
+            usage_data = await db.get_row(
+                "SELECT monthly_usage_count FROM users WHERE user_id = ?",
+                (user_id,)
+            )
+            
+            monthly_usage = usage_data['monthly_usage_count'] if usage_data else 0
+            monthly_limit = 50
+            
+            return monthly_usage < monthly_limit, monthly_usage, monthly_limit
     
-    async def _increment_usage(self, user_id: int) -> None:
-        """Увеличивает счетчики использования"""
-        today = datetime.now().date().isoformat()
+    async def _increment_usage(self, user_id: int):
+        """Увеличивает счетчик использования"""
+        today = datetime.now(timezone.utc).date().isoformat()
+        
+        # Обновляем дневной и месячный счетчики
         await db.execute_query("""
             UPDATE users 
             SET daily_usage_count = daily_usage_count + 1,
@@ -327,8 +305,6 @@ class SubscriptionMiddleware:
             text += f"• {plans['pro_month']['name']} ({plans['pro_month']['price_rub']}₽/мес) - неограниченно\n"
             text += f"• {plans['pro_ege']['name']} ({plans['pro_ege']['price_rub']}₽) - неограниченно до ЕГЭ 2025\n"
         
-        # остальной код без изменений...
-        
         keyboard = [
             [InlineKeyboardButton("💳 Оформить подписку", callback_data="subscribe_start")],
             [InlineKeyboardButton("🔙 Главное меню", callback_data="main_menu")]
@@ -345,11 +321,11 @@ class SubscriptionMiddleware:
         if update.callback_query:
             await update.callback_query.answer("Требуется подписка!", show_alert=True)
             try:
-                await update.callback_query.edit_message_text(text, reply_markup=reply_markup)
+                await update.callback_query.edit_message_text(text, reply_markup=reply_markup, parse_mode=ParseMode.HTML)
             except:
-                await update.callback_query.message.reply_text(text, reply_markup=reply_markup)
+                await update.callback_query.message.reply_text(text, reply_markup=reply_markup, parse_mode=ParseMode.HTML)
         elif update.message:
-            await update.message.reply_text(text, reply_markup=reply_markup)
+            await update.message.reply_text(text, reply_markup=reply_markup, parse_mode=ParseMode.HTML)
     
     async def _send_limit_exceeded(self, update: Update, context: ContextTypes.DEFAULT_TYPE, used: int, limit: int):
         """Отправляет сообщение о превышении лимита"""
@@ -399,14 +375,14 @@ class SubscriptionMiddleware:
         
         text = f"""🔒 <b>Требуется подписка на модуль!</b>
 
-    Для доступа к <b>{module_name}</b> необходима активная подписка на этот модуль.
+Для доступа к <b>{module_name}</b> необходима активная подписка на этот модуль.
 
-    💡 С модульной системой вы платите только за те задания, которые вам нужны!
+💡 С модульной системой вы платите только за те задания, которые вам нужны!
 
-    Используйте команду /subscribe для просмотра доступных модулей и оформления подписки."""
+Используйте команду /subscribe для просмотра доступных модулей и оформления подписки."""
         
         keyboard = [[
-            InlineKeyboardButton("💳 Оформить подписку", callback_data="to_subscription"),
+            InlineKeyboardButton("💳 Оформить подписку", callback_data="subscribe"),
             InlineKeyboardButton("ℹ️ Подробнее", callback_data=f"module_info_{module_code}")
         ]]
         
@@ -427,6 +403,27 @@ class SubscriptionMiddleware:
                 reply_markup=InlineKeyboardMarkup(keyboard),
                 parse_mode=ParseMode.HTML
             )
+    
+    async def _send_channel_required(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Отправляет сообщение о необходимости подписки на канал"""
+        text = f"❌ Для использования бота необходима подписка на канал {self.channel}\n\n"
+        text += "После подписки нажмите кнопку 'Проверить подписку'"
+        
+        keyboard = [
+            [InlineKeyboardButton("📣 Подписаться на канал", url=f"https://t.me/{self.channel[1:]}")],
+            [InlineKeyboardButton("🔄 Проверить подписку", callback_data="check_subscription")]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        if update.callback_query:
+            await update.callback_query.answer("Требуется подписка на канал!", show_alert=True)
+            try:
+                await update.callback_query.edit_message_text(text, reply_markup=reply_markup)
+            except:
+                await update.callback_query.message.reply_text(text, reply_markup=reply_markup)
+        elif update.message:
+            await update.message.reply_text(text, reply_markup=reply_markup)
+
 
 def setup_subscription_middleware(
     application: Application,

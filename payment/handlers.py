@@ -34,9 +34,12 @@ logger = logging.getLogger(__name__)
 
 # Состояния для платежного процесса
 CHOOSING_PLAN = "choosing_plan"
-CHOOSING_DURATION = "choosing_duration"  # Для модульной системы
+CHOOSING_DURATION = "choosing_duration"  
 ENTERING_EMAIL = "entering_email"
 CONFIRMING = "confirming"
+
+# Экспортируем состояния для использования в middleware
+PAYMENT_STATES = [CHOOSING_PLAN, CHOOSING_DURATION, ENTERING_EMAIL, CONFIRMING]
 
 # Инициализация менеджеров
 subscription_manager = SubscriptionManager()
@@ -46,6 +49,11 @@ tinkoff_payment = TinkoffPayment()
 @safe_handler()
 async def cmd_subscribe(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Команда /subscribe - показывает планы подписки."""
+    # Проверяем, что у нас есть message (команда была вызвана через /subscribe)
+    if not update.message:
+        logger.warning("cmd_subscribe called without message")
+        return ConversationHandler.END
+    
     if SUBSCRIPTION_MODE == 'modular':
         return await show_modular_interface(update, context)
     else:
@@ -55,6 +63,7 @@ async def cmd_subscribe(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def show_unified_plans(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Показывает старые единые планы подписки."""
     user_id = update.effective_user.id
+    subscription_manager = context.bot_data.get('subscription_manager', SubscriptionManager())
     
     # Проверяем текущую подписку
     subscription = await subscription_manager.check_active_subscription(user_id)
@@ -68,7 +77,13 @@ async def show_unified_plans(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
 Используйте /status для просмотра детальной информации."""
         
-        await update.message.reply_text(text, parse_mode=ParseMode.HTML)
+        # Отправляем сообщение правильным способом
+        if update.message:
+            await update.message.reply_text(text, parse_mode=ParseMode.HTML)
+        elif update.callback_query:
+            await update.callback_query.answer()
+            await update.callback_query.message.reply_text(text, parse_mode=ParseMode.HTML)
+        
         return ConversationHandler.END
     
     # Показываем доступные планы
@@ -94,11 +109,30 @@ async def show_unified_plans(update: Update, context: ContextTypes.DEFAULT_TYPE)
         InlineKeyboardButton("❌ Отмена", callback_data="pay_cancel")
     ])
     
-    await update.message.reply_text(
-        text,
-        reply_markup=InlineKeyboardMarkup(keyboard),
-        parse_mode=ParseMode.HTML
-    )
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    # Отправляем сообщение правильным способом
+    if update.message:
+        await update.message.reply_text(
+            text,
+            reply_markup=reply_markup,
+            parse_mode=ParseMode.HTML
+        )
+    elif update.callback_query:
+        query = update.callback_query
+        await query.answer()
+        try:
+            await query.edit_message_text(
+                text,
+                reply_markup=reply_markup,
+                parse_mode=ParseMode.HTML
+            )
+        except Exception:
+            await query.message.reply_text(
+                text,
+                reply_markup=reply_markup,
+                parse_mode=ParseMode.HTML
+            )
     
     return CHOOSING_PLAN
 
@@ -106,75 +140,95 @@ async def show_unified_plans(update: Update, context: ContextTypes.DEFAULT_TYPE)
 async def show_modular_interface(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Показывает модульную систему подписок."""
     user_id = update.effective_user.id
+    subscription_manager = context.bot_data.get('subscription_manager', SubscriptionManager())
+    
+    # ВАЖНО: Устанавливаем флаг, что пользователь в процессе оплаты
+    context.user_data['in_payment_process'] = True
     
     # Проверяем пробный период
     has_trial = await subscription_manager.has_used_trial(user_id)
     
-    # Получаем активные модули
-    user_modules = await subscription_manager.get_user_modules(user_id)
-    active_module_codes = [m['module_code'] for m in user_modules]
+    # Проверяем активные модули
+    active_modules = await subscription_manager.get_user_modules(user_id)
     
-    text = "🎓 <b>Выберите подписку для подготовки к ЕГЭ</b>\n\n"
+    text = "💎 <b>Модульная система подписок</b>\n\n"
     
-    if user_modules:
-        text += "📋 <b>Ваши активные модули:</b>\n"
-        for module in user_modules:
-            text += f"• {module['module_code']} (до {module['expires_at'].strftime('%d.%m.%Y')})\n"
+    if active_modules:
+        text += "✅ <b>Ваши активные модули:</b>\n"
+        module_names = {
+            'test_part': '📝 Тестовая часть',
+            'task19': '🎯 Задание 19',
+            'task20': '📖 Задание 20',
+            'task24': '💎 Задание 24',
+            'task25': '✍️ Задание 25'
+        }
+        for module in active_modules:
+            name = module_names.get(module['module_code'], module['module_code'])
+            expires = module['expires_at'].strftime('%d.%m.%Y')
+            text += f"• {name} (до {expires})\n"
         text += "\n"
+    
+    text += "Выберите тариф или модуль:\n\n"
     
     keyboard = []
     
-    # Пробный период (если не использован)
+    # Пробный период
     if not has_trial:
-        trial_plan = MODULE_PLANS.get('trial_7days')
-        if trial_plan:
-            keyboard.append([
-                InlineKeyboardButton(
-                    f"🎁 {trial_plan['name']} - {trial_plan['price_rub']}₽",
-                    callback_data="pay_trial"
-                )
-            ])
-    
-    # Пакетные предложения
-    keyboard.append([
-        InlineKeyboardButton(
-            "👑 Полный доступ - 999₽/мес",
-            callback_data="pay_package_full"
-        )
-    ])
-    keyboard.append([
-        InlineKeyboardButton(
-            "🎯 Пакет 'Вторая часть' - 499₽/мес",
-            callback_data="pay_package_second"
-        )
-    ])
-    
-    # Кнопка для выбора отдельных модулей
-    keyboard.append([
-        InlineKeyboardButton(
-            "📚 Выбрать отдельные модули",
-            callback_data="pay_individual_modules"
-        )
-    ])
-    
-    # Управление подписками (если есть активные)
-    if user_modules:
         keyboard.append([
             InlineKeyboardButton(
-                "📋 Мои подписки",
-                callback_data="my_subscriptions"
+                "🎁 Пробный период - 1₽ (7 дней)",
+                callback_data="pay_trial"
             )
         ])
     
+    # Пакетные предложения
+    keyboard.extend([
+        [InlineKeyboardButton(
+            "👑 Полный доступ - 999₽/мес",
+            callback_data="pay_package_full"
+        )],
+        [InlineKeyboardButton(
+            "🎯 Пакет 'Вторая часть' - 499₽/мес",
+            callback_data="pay_package_second_part"
+        )],
+        [InlineKeyboardButton(
+            "📚 Выбрать отдельные модули",
+            callback_data="pay_individual_modules"
+        )]
+    ])
+    
+    # Кнопка отмены
     keyboard.append([
         InlineKeyboardButton("❌ Отмена", callback_data="pay_cancel")
     ])
     
-    await update.message.reply_text(
-        text,
-        reply_markup=InlineKeyboardMarkup(keyboard),
-        parse_mode=ParseMode.HTML
-    )
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    # Проверяем, откуда пришел вызов - из команды или из callback
+    if update.message:
+        # Вызов через команду /subscribe
+        await update.message.reply_text(
+            text,
+            reply_markup=reply_markup,
+            parse_mode=ParseMode.HTML
+        )
+    elif update.callback_query:
+        # Вызов через callback кнопки
+        query = update.callback_query
+        await query.answer()
+        try:
+            await query.edit_message_text(
+                text,
+                reply_markup=reply_markup,
+                parse_mode=ParseMode.HTML
+            )
+        except Exception as e:
+            # Если не удалось отредактировать, отправляем новое сообщение
+            await query.message.reply_text(
+                text,
+                reply_markup=reply_markup,
+                parse_mode=ParseMode.HTML
+            )
     
     return CHOOSING_PLAN
 
@@ -185,7 +239,12 @@ async def handle_plan_selection(update: Update, context: ContextTypes.DEFAULT_TY
     query = update.callback_query
     await query.answer()
     
+    # ВАЖНО: Устанавливаем флаг, что пользователь в процессе оплаты
+    context.user_data['in_payment_process'] = True
+    
     if query.data == "pay_cancel":
+        # Очищаем флаг при отмене
+        context.user_data.pop('in_payment_process', None)
         await query.edit_message_text("❌ Оформление подписки отменено.")
         return ConversationHandler.END
     
@@ -194,11 +253,18 @@ async def handle_plan_selection(update: Update, context: ContextTypes.DEFAULT_TY
         if query.data == "pay_individual_modules":
             return await show_individual_modules(update, context)
         elif query.data == "pay_trial":
+            # ВАЖНО: Сохраняем все данные для пробного периода
             context.user_data['selected_plan'] = 'trial_7days'
             context.user_data['duration_months'] = 0
+            context.user_data['is_trial'] = True  # Дополнительный флаг
             return await request_email(update, context)
         elif query.data.startswith("pay_package_"):
-            package = query.data.replace("pay_package_", "package_")
+            # Исправляем обработку package_second -> package_second_part
+            package_name = query.data.replace("pay_package_", "")
+            if package_name == "second":
+                package = "package_second_part"
+            else:
+                package = f"package_{package_name}"
             context.user_data['selected_plan'] = package
             return await show_duration_options(update, context)
         elif query.data.startswith("pay_module_"):
@@ -210,6 +276,8 @@ async def handle_plan_selection(update: Update, context: ContextTypes.DEFAULT_TY
     plan_id = query.data.replace("pay_plan_", "")
     
     if plan_id not in SUBSCRIPTION_PLANS:
+        # Очищаем флаг при ошибке
+        context.user_data.pop('in_payment_process', None)
         await query.edit_message_text("❌ Неверный план подписки.")
         return ConversationHandler.END
     
@@ -222,6 +290,9 @@ async def handle_plan_selection(update: Update, context: ContextTypes.DEFAULT_TY
 async def show_individual_modules(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Показывает список отдельных модулей."""
     query = update.callback_query
+    
+    # ВАЖНО: Устанавливаем флаг процесса оплаты
+    context.user_data['in_payment_process'] = True
     
     text = "📚 <b>Выберите модуль:</b>\n\n"
     
@@ -261,6 +332,9 @@ async def show_individual_modules(update: Update, context: ContextTypes.DEFAULT_
 async def show_duration_options(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Показывает варианты длительности подписки."""
     query = update.callback_query
+    
+    # ВАЖНО: Устанавливаем флаг процесса оплаты
+    context.user_data['in_payment_process'] = True
     
     plan_id = context.user_data['selected_plan']
     plan = MODULE_PLANS.get(plan_id, SUBSCRIPTION_PLANS.get(plan_id))
@@ -308,6 +382,9 @@ async def handle_duration_selection(update: Update, context: ContextTypes.DEFAUL
     query = update.callback_query
     await query.answer()
     
+    # ВАЖНО: Подтверждаем флаг процесса оплаты
+    context.user_data['in_payment_process'] = True
+    
     if query.data == "back_to_plans":
         # Возвращаемся к выбору планов
         return await show_modular_interface(update, context)
@@ -323,6 +400,9 @@ async def request_email(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Запрашивает email пользователя."""
     query = update.callback_query
     
+    # ВАЖНО: Устанавливаем/подтверждаем флаг процесса оплаты
+    context.user_data['in_payment_process'] = True
+    
     text = """📧 <b>Введите ваш email для чека:</b>
 
 Email нужен для отправки электронного чека согласно 54-ФЗ.
@@ -334,6 +414,13 @@ Email нужен для отправки электронного чека со�
 @safe_handler()
 async def handle_email_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработка ввода email."""
+    # ВАЖНО: Подтверждаем флаг процесса оплаты
+    context.user_data['in_payment_process'] = True
+    
+    # Добавляем отладочный вывод
+    logger.info(f"handle_email_input called for user {update.effective_user.id}")
+    logger.info(f"Context data: {list(context.user_data.keys())}")
+    
     email = update.message.text.strip()
     
     # Простая проверка email
@@ -355,6 +442,8 @@ async def handle_email_input(update: Update, context: ContextTypes.DEFAULT_TYPE)
     plan = MODULE_PLANS.get(plan_id, SUBSCRIPTION_PLANS.get(plan_id))
     
     if not plan:
+        # Очищаем флаг при ошибке
+        context.user_data.pop('in_payment_process', None)
         await update.message.reply_text("❌ Ошибка: план не найден")
         return ConversationHandler.END
     
@@ -398,6 +487,8 @@ async def handle_payment_confirmation(update: Update, context: ContextTypes.DEFA
     await query.answer()
     
     if query.data == "pay_cancel":
+        # Очищаем флаг при отмене
+        context.user_data.pop('in_payment_process', None)
         await query.edit_message_text("❌ Оформление подписки отменено.")
         return ConversationHandler.END
     
@@ -411,6 +502,8 @@ async def handle_payment_confirmation(update: Update, context: ContextTypes.DEFA
     
     plan = MODULE_PLANS.get(plan_id, SUBSCRIPTION_PLANS.get(plan_id))
     if not plan:
+        # Очищаем флаг при ошибке
+        context.user_data.pop('in_payment_process', None)
         await query.edit_message_text("❌ Ошибка: план не найден")
         return ConversationHandler.END
     
@@ -470,12 +563,18 @@ async def handle_payment_confirmation(update: Update, context: ContextTypes.DEFA
                 )
             ]]
             
+            # Очищаем флаг после успешного создания платежа
+            context.user_data.pop('in_payment_process', None)
+            
             await query.edit_message_text(
                 text,
                 parse_mode=ParseMode.HTML,
                 reply_markup=InlineKeyboardMarkup(keyboard)
             )
         else:
+            # Очищаем флаг при ошибке
+            context.user_data.pop('in_payment_process', None)
+            
             error = result.get('error', 'Неизвестная ошибка')
             await query.edit_message_text(
                 f"❌ Ошибка создания платежа:\n{error}\n\n"
@@ -486,6 +585,10 @@ async def handle_payment_confirmation(update: Update, context: ContextTypes.DEFA
         
     except Exception as e:
         logger.error(f"Error creating payment: {e}")
+        
+        # Очищаем флаг при ошибке
+        context.user_data.pop('in_payment_process', None)
+        
         await query.edit_message_text(
             "❌ Произошла ошибка при создании платежа.\n"
             "Попробуйте позже или обратитесь в поддержку."
@@ -607,7 +710,98 @@ async def handle_my_subscriptions(update: Update, context: ContextTypes.DEFAULT_
         reply_markup=InlineKeyboardMarkup(keyboard)
     )
 
-# Экспорт обработчиков для регистрации
+@safe_handler()
+async def handle_module_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Показывает информацию о модуле."""
+    query = update.callback_query
+    await query.answer()
+    
+    # Извлекаем код модуля из callback_data
+    module_code = query.data.replace("module_info_", "")
+    
+    module_info = {
+        'test_part': {
+            'name': '📝 Тестовая часть ЕГЭ',
+            'description': 'Полный доступ к банку заданий тестовой части',
+            'features': [
+                '✅ Все задания 1-16',
+                '✅ Подробные объяснения',
+                '✅ Статистика прогресса',
+                '✅ Работа над ошибками'
+            ],
+            'price': '149₽/мес'
+        },
+        'task19': {
+            'name': '🎯 Задание 19',
+            'description': 'Примеры социальных объектов и явлений',
+            'features': [
+                '✅ База примеров по всем темам',
+                '✅ Интерактивные тренажеры',
+                '✅ Проверка ответов'
+            ],
+            'price': '199₽/мес'
+        },
+        'task20': {
+            'name': '📖 Задание 20',
+            'description': 'Текст с пропущенными словами',
+            'features': [
+                '✅ Тексты по всем разделам',
+                '✅ Подробные пояснения',
+                '✅ Тренировка навыков'
+            ],
+            'price': '199₽/мес'
+        },
+        'task24': {
+            'name': '💎 Задание 24 (Премиум)',
+            'description': 'Составление сложного плана',
+            'features': [
+                '✅ База готовых планов',
+                '✅ Экспертная проверка',
+                '✅ Персональные рекомендации',
+                '✅ VIP поддержка'
+            ],
+            'price': '399₽/мес'
+        },
+        'task25': {
+            'name': '✍️ Задание 25',
+            'description': 'Понятия и термины',
+            'features': [
+                '✅ Полная база понятий',
+                '✅ Интерактивная проверка',
+                '✅ Адаптивная сложность'
+            ],
+            'price': '199₽/мес'
+        }
+    }
+    
+    info = module_info.get(module_code)
+    if not info:
+        await query.edit_message_text(
+            "❌ Информация о модуле не найдена",
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("⬅️ Назад", callback_data="subscribe")
+            ]])
+        )
+        return
+    
+    text = f"<b>{info['name']}</b>\n\n"
+    text += f"{info['description']}\n\n"
+    text += "<b>Что входит:</b>\n"
+    for feature in info['features']:
+        text += f"{feature}\n"
+    text += f"\n💰 <b>Стоимость:</b> {info['price']}"
+    
+    keyboard = [
+        [InlineKeyboardButton("💳 Оформить подписку", callback_data="subscribe")],
+        [InlineKeyboardButton("⬅️ Назад", callback_data="subscribe")]
+    ]
+    
+    await query.edit_message_text(
+        text,
+        parse_mode=ParseMode.HTML,
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
+
 def register_payment_handlers(app):
     """Регистрирует обработчики платежей."""
     
@@ -615,7 +809,8 @@ def register_payment_handlers(app):
     payment_conv = ConversationHandler(
         entry_points=[
             CommandHandler("subscribe", cmd_subscribe),
-            CallbackQueryHandler(show_modular_interface, pattern="^subscribe$")
+            CallbackQueryHandler(show_modular_interface, pattern="^subscribe$"),
+            CallbackQueryHandler(show_modular_interface, pattern="^subscribe_start$")
         ],
         states={
             CHOOSING_PLAN: [
@@ -642,10 +837,14 @@ def register_payment_handlers(app):
         allow_reentry=True
     )
     
-    app.add_handler(payment_conv)
+    # ВАЖНО: Регистрируем с приоритетом -50, чтобы обработчик срабатывал ДО middleware (-100)
+    app.add_handler(payment_conv, group=-50)
     
-    # Дополнительные команды
-    app.add_handler(CommandHandler("my_subscriptions", cmd_my_subscriptions))
-    app.add_handler(CallbackQueryHandler(handle_my_subscriptions, pattern="^my_subscriptions$"))
+    # Дополнительные команды тоже с приоритетом
+    app.add_handler(CommandHandler("my_subscriptions", cmd_my_subscriptions), group=-50)
+    app.add_handler(CallbackQueryHandler(handle_my_subscriptions, pattern="^my_subscriptions$"), group=-50)
     
-    logger.info("Payment handlers registered")
+    # Обработчик информации о модулях
+    app.add_handler(CallbackQueryHandler(handle_module_info, pattern="^module_info_"), group=-50)
+    
+    logger.info("Payment handlers registered with priority")
