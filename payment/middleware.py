@@ -1,7 +1,7 @@
 # payment/middleware.py
 """Middleware для проверки подписок и лимитов использования с поддержкой модулей."""
 import logging
-from typing import Optional, Dict, Set
+from typing import Optional, Dict, Set, Tuple
 from datetime import datetime, timezone
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
@@ -229,66 +229,42 @@ class SubscriptionMiddleware:
             logger.error(f"Error checking channel membership: {e}")
             return False
     
-    async def _check_usage_limit(self, user_id: int, subscription_manager) -> tuple[bool, int, int]:
-        """Проверяет лимиты использования"""
-        subscription_info = await subscription_manager.get_subscription_info(user_id)
+    async def _check_usage_limit(self, user_id: int, subscription_manager) -> Tuple[bool, int, int]:
+        """
+        Проверяет лимиты использования.
         
-        if subscription_info and subscription_info.get('is_active'):
-            # Для активной подписки проверяем дневной лимит
-            plan_limits = {
-                'basic_month': 100,
-                'pro_month': -1,  # Неограниченно
-                'pro_ege': -1,    # Неограниченно
-                'trial_7days': -1,
-                'module_test_part': 100,
-                'module_task19': 50,
-                'module_task20': 50,
-                'module_task24': 30,
-                'module_task25': 50,
-                'package_second_part': -1,
-                'package_full': -1
-            }
-            
-            plan_id = subscription_info.get('plan_id', 'basic_month')
-            daily_limit = plan_limits.get(plan_id, 100)
-            
-            if daily_limit == -1:
-                return True, 0, -1
-                
-            # Получаем использование за сегодня
-            today = datetime.now(timezone.utc).date().isoformat()
-            usage_data = await db.get_row(
-                "SELECT daily_usage_count FROM users WHERE user_id = ?",
-                (user_id,)
-            )
-            
-            daily_usage = usage_data['daily_usage_count'] if usage_data else 0
-            
-            return daily_usage < daily_limit, daily_usage, daily_limit
-        else:
-            # Для бесплатных пользователей - месячный лимит
-            usage_data = await db.get_row(
-                "SELECT monthly_usage_count FROM users WHERE user_id = ?",
-                (user_id,)
-            )
-            
-            monthly_usage = usage_data['monthly_usage_count'] if usage_data else 0
-            monthly_limit = 50
-            
-            return monthly_usage < monthly_limit, monthly_usage, monthly_limit
-    
+        Returns:
+            (can_use, used_count, limit)
+        """
+        # Получаем данные пользователя
+        user_data = await db.get_or_create_user_status(user_id)
+        usage_count = user_data.get('monthly_usage_count', 0)
+        
+        # Проверяем подписку
+        subscription = await subscription_manager.check_active_subscription(user_id)
+        
+        if subscription:
+            # Для активной подписки нет лимитов
+            return (True, usage_count, -1)
+        
+        # Для бесплатных пользователей - лимит
+        FREE_LIMIT = 50  # или другой лимит
+        
+        if usage_count >= FREE_LIMIT:
+            return (False, usage_count, FREE_LIMIT)
+        
+        return (True, usage_count, FREE_LIMIT)
+
     async def _increment_usage(self, user_id: int):
-        """Увеличивает счетчик использования"""
-        today = datetime.now(timezone.utc).date().isoformat()
-        
-        # Обновляем дневной и месячный счетчики
-        await db.execute_query("""
-            UPDATE users 
-            SET daily_usage_count = daily_usage_count + 1,
-                monthly_usage_count = monthly_usage_count + 1,
-                last_usage_date = ?
-            WHERE user_id = ?
-        """, (today, user_id))
+        """Увеличивает счетчик использования."""
+        try:
+            # Используем execute_with_retry из core.db
+            await db.execute_with_retry(
+                "UPDATE users SET monthly_usage_count = monthly_usage_count + 1 WHERE user_id = ?",
+                (user_id,)
+            )
+        except Exception as e:
+            logger.error(f"Error incrementing usage for user {user_id}: {e}")
     
     async def _send_subscription_required(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Отправляет сообщение о необходимости подписки"""
@@ -443,8 +419,24 @@ def setup_subscription_middleware(
     Настраивает middleware для проверки подписок.
     Должен вызываться в post_init после инициализации БД.
     """
+    # Расширяем список бесплатных команд, включая админские
+    default_free_commands = {
+        # Базовые команды
+        'start', 'help', 'subscribe', 'status', 
+        'my_subscriptions', 'menu', 'cancel', 'support',
+        
+        # ВАЖНО: Админские команды должны быть доступны без подписки!
+        'grant_subscription', 'activate_payment', 'check_webhook',
+        'list_subscriptions', 'check_user_subscription', 'revoke',
+        'payment_stats', 'check_admin', 'grant', 'revoke_subscription'
+    }
+    
+    # Объединяем с пользовательскими командами если есть
+    if free_commands:
+        default_free_commands.update(free_commands)
+    
     middleware = SubscriptionMiddleware(
-        free_commands=free_commands,
+        free_commands=default_free_commands,
         free_patterns=free_patterns,
         check_channel=check_channel
     )
@@ -469,4 +461,4 @@ def setup_subscription_middleware(
         group=-100
     )
     
-    logger.info("Subscription middleware установлен")
+    logger.info("Subscription middleware установлен с админскими командами в whitelist")

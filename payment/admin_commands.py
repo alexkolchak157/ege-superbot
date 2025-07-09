@@ -38,6 +38,10 @@ def admin_only(func):
 @admin_only
 async def cmd_grant_subscription(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Выдает подписку пользователю вручную. Использование: /grant_subscription <user_id> <plan_id>"""
+    # Импортируем здесь, если не импортировано выше
+    from .config import SUBSCRIPTION_PLANS, SUBSCRIPTION_MODE
+    from datetime import datetime
+    
     if not context.args or len(context.args) < 2:
         await update.message.reply_text(
             "Использование: /grant_subscription <user_id> <plan_id>\n\n"
@@ -62,16 +66,25 @@ async def cmd_grant_subscription(update: Update, context: ContextTypes.DEFAULT_T
             await update.message.reply_text(f"❌ Неизвестный план: {plan_id}")
             return
         
-        subscription_manager = context.bot_data.get('subscription_manager', SubscriptionManager())
+        subscription_manager = context.bot_data.get('subscription_manager')
+        if not subscription_manager:
+            # Создаем новый экземпляр если не найден
+            from .subscription_manager import SubscriptionManager
+            subscription_manager = SubscriptionManager()
         
         # Создаем фиктивный payment_id
-        payment_id = f"ADMIN_GRANT_{datetime.now().timestamp()}"
+        payment_id = f"ADMIN_GRANT_{int(datetime.now().timestamp())}"
         
         # Активируем подписку
-        if SUBSCRIPTION_MODE == 'modular':
-            await subscription_manager._activate_modular_subscription(user_id, plan_id, payment_id)
-        else:
-            await subscription_manager._activate_unified_subscription(user_id, plan_id, payment_id)
+        try:
+            if SUBSCRIPTION_MODE == 'modular':
+                await subscription_manager._activate_modular_subscription(user_id, plan_id, payment_id)
+            else:
+                await subscription_manager._activate_unified_subscription(user_id, plan_id, payment_id)
+        except Exception as e:
+            logger.error(f"Error activating subscription: {e}")
+            await update.message.reply_text(f"❌ Ошибка при активации: {e}")
+            return
         
         # Получаем информацию о подписке
         subscription_info = await subscription_manager.get_subscription_info(user_id)
@@ -82,7 +95,9 @@ async def cmd_grant_subscription(update: Update, context: ContextTypes.DEFAULT_T
         
         if subscription_info:
             if SUBSCRIPTION_MODE == 'modular':
-                text += f"Модули: {', '.join(subscription_info.get('modules', []))}\n"
+                modules = subscription_info.get('modules', [])
+                if modules:
+                    text += f"Модули: {', '.join(modules)}\n"
             text += f"Действует до: {subscription_info.get('expires_at')}"
         
         await update.message.reply_text(text, parse_mode=ParseMode.HTML)
@@ -96,13 +111,16 @@ async def cmd_grant_subscription(update: Update, context: ContextTypes.DEFAULT_T
                 f"Используйте /my_subscriptions для просмотра деталей."
             )
         except Exception as e:
-            logger.error(f"Failed to notify user: {e}")
+            logger.error(f"Failed to notify user {user_id}: {e}")
+            await update.message.reply_text(
+                f"⚠️ Подписка активирована, но не удалось отправить уведомление пользователю"
+            )
             
     except ValueError:
-        await update.message.reply_text("❌ Неверный ID пользователя")
+        await update.message.reply_text("❌ Неверный формат user_id. Используйте числовой ID.")
     except Exception as e:
-        logger.error(f"Error granting subscription: {e}")
-        await update.message.reply_text(f"❌ Ошибка: {str(e)}")
+        logger.exception(f"Error granting subscription: {e}")
+        await update.message.reply_text(f"❌ Ошибка: {e}")
 
 @admin_only
 async def cmd_check_user_subscription(update: Update, context: ContextTypes.DEFAULT_TYPE):

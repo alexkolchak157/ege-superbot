@@ -492,6 +492,7 @@ class SubscriptionManager:
         
         expires_at = get_subscription_end_date(plan_id)
         is_trial = plan.get('type') == 'trial'
+        now = datetime.now(timezone.utc)
         
         async with aiosqlite.connect(DATABASE_FILE) as conn:
             # Если это пробный период, проверяем историю
@@ -509,7 +510,7 @@ class SubscriptionManager:
                     INSERT INTO trial_history (user_id, trial_activated_at, trial_expires_at)
                     VALUES (?, ?, ?)
                     """,
-                    (user_id, datetime.now(timezone.utc), expires_at)
+                    (user_id, now, expires_at)
                 )
             
             # Активируем каждый модуль из плана
@@ -551,13 +552,14 @@ class SubscriptionManager:
                     logger.info(f"Activated module {module_code} for user {user_id} until {expires_at}")
             
             # Также создаем запись в user_subscriptions для совместимости
+            # ИСПРАВЛЕНО: Добавляем starts_at
             await conn.execute(
                 """
                 INSERT OR REPLACE INTO user_subscriptions 
-                (user_id, plan_id, payment_id, status, expires_at, activated_at)
-                VALUES (?, ?, ?, 'active', ?, ?)
+                (user_id, plan_id, payment_id, status, starts_at, expires_at, activated_at)
+                VALUES (?, ?, ?, 'active', ?, ?, ?)
                 """,
-                (user_id, plan_id, payment_id, expires_at, datetime.now(timezone.utc))
+                (user_id, plan_id, payment_id, now, expires_at, now)
             )
             
             await conn.commit()
