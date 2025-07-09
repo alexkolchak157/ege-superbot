@@ -128,11 +128,19 @@ class SubscriptionMiddleware:
         
         # Проверяем доступ
         if module_code:
+            logger.info(f"Checking access for user {user_id} to module {module_code}")
+            
             # Проверка доступа к конкретному модулю
             has_access = await subscription_manager.check_module_access(user_id, module_code)
+            
+            logger.info(f"Access check result for user {user_id}, module {module_code}: {has_access}")
+            
             if not has_access:
+                logger.warning(f"Access denied for user {user_id} to module {module_code}")
                 await self._send_module_subscription_required(update, context, module_code)
                 raise ApplicationHandlerStop()
+            else:
+                logger.info(f"Access granted for user {user_id} to module {module_code}")
         else:
             # Проверка общей подписки
             subscription = await subscription_manager.check_active_subscription(user_id)

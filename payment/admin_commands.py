@@ -37,11 +37,19 @@ def admin_only(func):
 
 @admin_only
 async def cmd_grant_subscription(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Выдает подписку пользователю."""
-    if len(context.args) < 2:
+    """Выдает подписку пользователю вручную. Использование: /grant_subscription <user_id> <plan_id>"""
+    if not context.args or len(context.args) < 2:
         await update.message.reply_text(
-            "Использование: /grant <user_id> <plan_id>\n"
-            "Планы: basic_month, pro_month, pro_ege"
+            "Использование: /grant_subscription <user_id> <plan_id>\n\n"
+            "Доступные планы:\n"
+            "• trial_7days - пробный период\n"
+            "• package_second_part - пакет 'Вторая часть'\n"
+            "• package_full - полный доступ\n"
+            "• module_test_part - только тестовая часть\n"
+            "• module_task19 - только задание 19\n"
+            "• module_task20 - только задание 20\n"
+            "• module_task25 - только задание 25\n"
+            "• module_task24 - только задание 24"
         )
         return
     
@@ -49,33 +57,51 @@ async def cmd_grant_subscription(update: Update, context: ContextTypes.DEFAULT_T
         user_id = int(context.args[0])
         plan_id = context.args[1]
         
-        subscription_manager = SubscriptionManager()
+        # Проверяем, существует ли план
+        if plan_id not in SUBSCRIPTION_PLANS:
+            await update.message.reply_text(f"❌ Неизвестный план: {plan_id}")
+            return
         
-        # Создаем фиктивный платеж
-        from datetime import datetime, timedelta, timezone
-        payment = await subscription_manager.create_payment(
-            user_id=user_id,
-            plan_id=plan_id,
-            amount_kopecks=0  # Бесплатная выдача
-        )
+        subscription_manager = context.bot_data.get('subscription_manager', SubscriptionManager())
+        
+        # Создаем фиктивный payment_id
+        payment_id = f"ADMIN_GRANT_{datetime.now().timestamp()}"
         
         # Активируем подписку
-        success = await subscription_manager.activate_subscription(
-            order_id=payment['order_id'],
-            payment_id=f'ADMIN_GRANT_{datetime.now().timestamp()}'
-        )
-        
-        if success:
-            await update.message.reply_text(
-                f"✅ Подписка {plan_id} выдана пользователю {user_id}"
-            )
+        if SUBSCRIPTION_MODE == 'modular':
+            await subscription_manager._activate_modular_subscription(user_id, plan_id, payment_id)
         else:
-            await update.message.reply_text("❌ Ошибка при выдаче подписки")
+            await subscription_manager._activate_unified_subscription(user_id, plan_id, payment_id)
+        
+        # Получаем информацию о подписке
+        subscription_info = await subscription_manager.get_subscription_info(user_id)
+        
+        text = f"✅ Подписка выдана успешно!\n\n"
+        text += f"Пользователь: {user_id}\n"
+        text += f"План: {SUBSCRIPTION_PLANS[plan_id]['name']}\n"
+        
+        if subscription_info:
+            if SUBSCRIPTION_MODE == 'modular':
+                text += f"Модули: {', '.join(subscription_info.get('modules', []))}\n"
+            text += f"Действует до: {subscription_info.get('expires_at')}"
+        
+        await update.message.reply_text(text, parse_mode=ParseMode.HTML)
+        
+        # Уведомляем пользователя
+        try:
+            await context.bot.send_message(
+                user_id,
+                f"🎁 Вам выдана подписка!\n\n"
+                f"План: {SUBSCRIPTION_PLANS[plan_id]['name']}\n"
+                f"Используйте /my_subscriptions для просмотра деталей."
+            )
+        except Exception as e:
+            logger.error(f"Failed to notify user: {e}")
             
     except ValueError:
         await update.message.reply_text("❌ Неверный ID пользователя")
     except Exception as e:
-        logger.exception(f"Error granting subscription: {e}")
+        logger.error(f"Error granting subscription: {e}")
         await update.message.reply_text(f"❌ Ошибка: {str(e)}")
 
 
@@ -172,7 +198,7 @@ async def cmd_check_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 def register_admin_commands(app: Application):
     """Регистрирует админские команды."""
-    app.add_handler(CommandHandler("grant", cmd_grant_subscription))
+    app.add_handler(CommandHandler("grant_subscription", cmd_grant_subscription))
     app.add_handler(CommandHandler("revoke", cmd_revoke_subscription))
     app.add_handler(CommandHandler("payment_stats", cmd_payment_stats))
     app.add_handler(CommandHandler("check_admin", cmd_check_admin))

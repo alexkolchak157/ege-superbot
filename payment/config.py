@@ -22,8 +22,6 @@ PAYMENT_ADMIN_CHAT_ID = int(os.getenv('PAYMENT_ADMIN_CHAT_ID', '0'))
 SUBSCRIPTION_MODE = os.getenv('SUBSCRIPTION_MODE', 'modular')  # 'unified' или 'modular'
 
 logger = logging.getLogger(__name__)
-
-SUBSCRIPTION_MODE = os.getenv('SUBSCRIPTION_MODE', 'unified')
 logger.info(f"Payment module loaded with SUBSCRIPTION_MODE = {SUBSCRIPTION_MODE}")
 # ========= СТАРЫЕ ПЛАНЫ (для обратной совместимости) =========
 LEGACY_SUBSCRIPTION_PLANS = {
@@ -154,8 +152,13 @@ DURATION_DISCOUNTS = {
 # Выбираем активную систему планов
 if SUBSCRIPTION_MODE == 'modular':
     SUBSCRIPTION_PLANS = MODULE_PLANS
+    logger.info(f"Using MODULE_PLANS with {len(MODULE_PLANS)} plans")
 else:
     SUBSCRIPTION_PLANS = LEGACY_SUBSCRIPTION_PLANS
+    logger.info(f"Using LEGACY_SUBSCRIPTION_PLANS with {len(LEGACY_SUBSCRIPTION_PLANS)} plans")
+
+# Для отладки выведем доступные планы
+logger.info(f"Available plans: {list(SUBSCRIPTION_PLANS.keys())}")
 
 def get_plan_price_kopecks(plan_id: str, months: int = 1) -> int:
     """Возвращает цену плана в копейках с учетом длительности."""

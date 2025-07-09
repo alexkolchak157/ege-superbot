@@ -286,6 +286,63 @@ async def handle_plan_selection(update: Update, context: ContextTypes.DEFAULT_TY
     # Запрашиваем email
     return await request_email(update, context)
 
+@safe_handler()
+async def cmd_debug_subscription(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Команда для отладки подписки пользователя."""
+    user_id = update.effective_user.id
+    subscription_manager = context.bot_data.get('subscription_manager', SubscriptionManager())
+    
+    text = f"🔍 <b>Отладочная информация для пользователя {user_id}</b>\n\n"
+    text += f"SUBSCRIPTION_MODE: {SUBSCRIPTION_MODE}\n\n"
+    
+    # Проверяем общую подписку
+    subscription = await subscription_manager.check_active_subscription(user_id)
+    if subscription:
+        text += "✅ <b>Активная подписка найдена:</b>\n"
+        text += f"План: {subscription.get('plan_id')}\n"
+        text += f"Истекает: {subscription.get('expires_at')}\n"
+        text += f"Активные модули: {subscription.get('active_modules', [])}\n\n"
+    else:
+        text += "❌ <b>Активная подписка не найдена</b>\n\n"
+    
+    # Проверяем модули
+    if SUBSCRIPTION_MODE == 'modular':
+        modules = await subscription_manager.get_user_modules(user_id)
+        if modules:
+            text += "📦 <b>Активные модули:</b>\n"
+            for module in modules:
+                text += f"• {module['module_code']} до {module['expires_at']}\n"
+        else:
+            text += "📦 <b>Нет активных модулей</b>\n"
+        
+        text += "\n<b>Проверка доступа к модулям:</b>\n"
+        for module_code in ['test_part', 'task19', 'task20', 'task24', 'task25']:
+            has_access = await subscription_manager.check_module_access(user_id, module_code)
+            text += f"• {module_code}: {'✅' if has_access else '❌'}\n"
+    
+    # Проверяем последние платежи
+    try:
+        async with aiosqlite.connect(DATABASE_FILE) as conn:
+            cursor = await conn.execute(
+                """
+                SELECT order_id, plan_id, status, created_at 
+                FROM payments 
+                WHERE user_id = ? 
+                ORDER BY created_at DESC 
+                LIMIT 5
+                """,
+                (user_id,)
+            )
+            payments = await cursor.fetchall()
+            
+            if payments:
+                text += "\n💳 <b>Последние платежи:</b>\n"
+                for payment in payments:
+                    text += f"• {payment[1]} - {payment[2]} ({payment[3]})\n"
+    except Exception as e:
+        logger.error(f"Error getting payments: {e}")
+    
+    await update.message.reply_text(text, parse_mode=ParseMode.HTML)
 
 async def show_individual_modules(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Показывает список отдельных модулей."""
@@ -846,5 +903,6 @@ def register_payment_handlers(app):
     
     # Обработчик информации о модулях
     app.add_handler(CallbackQueryHandler(handle_module_info, pattern="^module_info_"), group=-50)
+    app.add_handler(CommandHandler("debug_subscription", cmd_debug_subscription), group=-50)
     
     logger.info("Payment handlers registered with priority")

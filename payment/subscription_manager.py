@@ -22,6 +22,13 @@ logger = logging.getLogger(__name__)
 class SubscriptionManager:
     """Управление подписками пользователей."""
     
+    def __init__(self):
+        """Инициализация менеджера подписок."""
+        self.config = type('Config', (), {
+            'SUBSCRIPTION_MODE': SUBSCRIPTION_MODE
+        })()
+        logger.info(f"SubscriptionManager initialized with mode: {SUBSCRIPTION_MODE}")
+    
     async def init_tables(self):
         """Инициализирует таблицы в БД."""
         try:
@@ -269,25 +276,63 @@ class SubscriptionManager:
                 return True
         
         # В модульной системе проверяем покупку конкретного модуля
-        if self.config.SUBSCRIPTION_MODE == 'modular':
-            # Проверяем в таблице user_modules
-            result = await conn.fetch_one(
-                """SELECT 1 FROM user_modules 
-                   WHERE user_id = ? AND module_code = ? AND is_active = 1
-                   AND (expires_at IS NULL OR expires_at > datetime('now'))""",
-                (user_id, module_code)
-            )
+        if SUBSCRIPTION_MODE == 'modular':
+            try:
+                async with aiosqlite.connect(DATABASE_FILE) as conn:
+                    # Проверяем в таблице module_subscriptions
+                    cursor = await conn.execute(
+                        """
+                        SELECT 1 FROM module_subscriptions 
+                        WHERE user_id = ? AND module_code = ? AND is_active = 1
+                        AND expires_at > ?
+                        """,
+                        (user_id, module_code, datetime.now(timezone.utc))
+                    )
+                    result = await cursor.fetchone()
+                    
+                    if result:
+                        logger.info(f"User {user_id} has active module subscription for {module_code}")
+                        return True
+                    
+                    # Также проверяем в таблице user_modules (для обратной совместимости)
+                    cursor = await conn.execute(
+                        """
+                        SELECT 1 FROM user_modules 
+                        WHERE user_id = ? AND module_code = ? AND is_active = 1
+                        AND (expires_at IS NULL OR expires_at > datetime('now'))
+                        """,
+                        (user_id, module_code)
+                    )
+                    result = await cursor.fetchone()
+                    
+                    if result:
+                        logger.info(f"User {user_id} has active module in user_modules for {module_code}")
+                        return True
+            except Exception as e:
+                logger.error(f"Error checking module access: {e}")
             
-            if result:
-                logger.info(f"User {user_id} has active module subscription for {module_code}")
-                return True
-            
-            # Проверяем общую Pro подписку (дает доступ ко всем модулям)
+            # Проверяем общую подписку (Pro/Full дают доступ ко всем модулям)
             subscription = await self.check_active_subscription(user_id)
-            if subscription and subscription['plan_id'] in ['pro_month', 'pro_ege']:
-                logger.info(f"User {user_id} has Pro subscription, access to {module_code} granted")
-                return True
+            if subscription:
+                # Проверяем, входит ли модуль в активную подписку
+                active_modules = subscription.get('active_modules', [])
+                if module_code in active_modules:
+                    logger.info(f"User {user_id} has access to {module_code} through active subscription")
+                    return True
                 
+                # Проверяем план подписки
+                plan_id = subscription.get('plan_id')
+                if plan_id in ['package_full', 'trial_7days']:
+                    logger.info(f"User {user_id} has full access plan: {plan_id}")
+                    return True
+                elif plan_id == 'package_second_part' and module_code in ['task19', 'task20', 'task25']:
+                    logger.info(f"User {user_id} has second part package, access to {module_code}")
+                    return True
+                
+                # Старые планы pro_month и pro_ege
+                if plan_id in ['pro_month', 'pro_ege'] and module_code != 'task24':
+                    logger.info(f"User {user_id} has Pro subscription, access to {module_code} granted")
+                    return True
         else:
             # В обычном режиме проверяем любую активную подписку
             subscription = await self.check_active_subscription(user_id)
@@ -323,6 +368,9 @@ class SubscriptionManager:
     
     async def activate_subscription(self, order_id: str, payment_id: str) -> bool:
         """Активирует подписку после успешной оплаты."""
+        logger.info(f"Activating subscription for order {order_id}, payment {payment_id}")
+        logger.info(f"Current SUBSCRIPTION_MODE: {SUBSCRIPTION_MODE}")
+        
         try:
             async with aiosqlite.connect(DATABASE_FILE) as conn:
                 # Получаем информацию о платеже
@@ -337,10 +385,13 @@ class SubscriptionManager:
                     return False
                 
                 user_id, plan_id, amount = payment
+                logger.info(f"Found payment: user_id={user_id}, plan_id={plan_id}, amount={amount}")
                 
                 if SUBSCRIPTION_MODE == 'modular':
+                    logger.info("Using modular subscription system")
                     await self._activate_modular_subscription(user_id, plan_id, payment_id)
                 else:
+                    logger.info("Using unified subscription system")
                     await self._activate_unified_subscription(user_id, plan_id, payment_id)
                 
                 # Обновляем статус платежа
@@ -354,7 +405,7 @@ class SubscriptionManager:
                 )
                 
                 await conn.commit()
-                logger.info(f"Subscription activated for user {user_id}, plan {plan_id}")
+                logger.info(f"Subscription activated successfully for user {user_id}, plan {plan_id}")
                 return True
                 
         except Exception as e:
@@ -377,11 +428,16 @@ class SubscriptionManager:
     
     async def _activate_modular_subscription(self, user_id: int, plan_id: str, payment_id: str):
         """Активация модульной подписки."""
+        logger.info(f"Activating modular subscription for user {user_id}, plan {plan_id}")
+        
         plan = SUBSCRIPTION_PLANS.get(plan_id)
         if not plan:
+            logger.error(f"Unknown plan: {plan_id}")
             raise ValueError(f"Unknown plan: {plan_id}")
         
         modules = plan.get('modules', [])
+        logger.info(f"Plan {plan_id} includes modules: {modules}")
+        
         expires_at = get_subscription_end_date(plan_id)
         is_trial = plan.get('type') == 'trial'
         
@@ -403,9 +459,12 @@ class SubscriptionManager:
                     """,
                     (user_id, datetime.now(timezone.utc), expires_at)
                 )
+                logger.info(f"Trial period recorded for user {user_id}")
             
             # Активируем каждый модуль
             for module_code in modules:
+                logger.info(f"Activating module {module_code} for user {user_id}")
+                
                 # Проверяем существующую подписку
                 cursor = await conn.execute(
                     """
@@ -423,8 +482,10 @@ class SubscriptionManager:
                 if existing:
                     start_from = datetime.fromisoformat(existing[0])
                     new_expires = start_from + (expires_at - datetime.now(timezone.utc))
+                    logger.info(f"Extending existing subscription for module {module_code}")
                 else:
                     new_expires = expires_at
+                    logger.info(f"Creating new subscription for module {module_code}")
                 
                 await conn.execute(
                     """
@@ -434,8 +495,10 @@ class SubscriptionManager:
                     """,
                     (user_id, module_code, plan_id, new_expires, is_trial, payment_id)
                 )
+                logger.info(f"Module {module_code} activated for user {user_id} until {new_expires}")
             
             await conn.commit()
+            logger.info(f"All modules activated successfully for user {user_id}")
     
     async def has_used_trial(self, user_id: int) -> bool:
         """Проверяет, использовал ли пользователь пробный период."""
