@@ -183,6 +183,9 @@ async def get_or_create_user_status(user_id: int) -> Dict[str, Any]:
         today = now.date()
         
         async with aiosqlite.connect(DATABASE_FILE) as db:
+            # ВАЖНО: Устанавливаем row_factory для получения словарей
+            db.row_factory = aiosqlite.Row
+            
             # Создаем пользователя если не существует
             await db.execute(
                 f"INSERT OR IGNORE INTO {TABLE_USERS} (user_id) VALUES (?)",
@@ -199,17 +202,21 @@ async def get_or_create_user_status(user_id: int) -> Dict[str, Any]:
             row = await cursor.fetchone()
             
             if not row:
+                await db.commit()
                 return {"is_subscribed": False, "monthly_usage_count": 0}
             
+            # Преобразуем Row в словарь
+            row_dict = dict(row)
+            
             # Обновляем last_activity_date
-            if row['last_activity_date'] != str(today):
+            if row_dict.get('last_activity_date') != str(today):
                 await db.execute(
                     f"UPDATE {TABLE_USERS} SET last_activity_date = ? WHERE user_id = ?",
                     (today, user_id)
                 )
             
             # Сброс месячного счетчика если новый месяц
-            month_start = row['current_month_start']
+            month_start = row_dict.get('current_month_start')
             if month_start:
                 month_start_dt = datetime.fromisoformat(month_start)
                 if month_start_dt.month != now.month or month_start_dt.year != now.year:
@@ -220,7 +227,7 @@ async def get_or_create_user_status(user_id: int) -> Dict[str, Any]:
                         (now.isoformat(), user_id)
                     )
                     await db.commit()
-                    return {"is_subscribed": row['is_subscribed'], "monthly_usage_count": 0}
+                    return {"is_subscribed": row_dict.get('is_subscribed', False), "monthly_usage_count": 0}
             else:
                 await db.execute(
                     f"UPDATE {TABLE_USERS} SET current_month_start = ? WHERE user_id = ?",
@@ -229,27 +236,29 @@ async def get_or_create_user_status(user_id: int) -> Dict[str, Any]:
             
             await db.commit()
             
-            # Проверка срока подписки
-            is_subscribed = row['is_subscribed']
-            if is_subscribed and row['subscription_expires']:
-                expires_dt = datetime.fromisoformat(row['subscription_expires'])
+            # Проверяем срок подписки
+            is_subscribed = row_dict.get('is_subscribed', False)
+            expires = row_dict.get('subscription_expires')
+            
+            if is_subscribed and expires:
+                expires_dt = datetime.fromisoformat(expires).replace(tzinfo=timezone.utc)
                 if expires_dt < now:
+                    # Подписка истекла
                     is_subscribed = False
-                    await db.execute(
-                        f"UPDATE {TABLE_USERS} SET is_subscribed = ? WHERE user_id = ?",
-                        (False, user_id)
+                    await execute_with_retry(
+                        f"UPDATE {TABLE_USERS} SET is_subscribed = FALSE WHERE user_id = ?",
+                        (user_id,)
                     )
-                    await db.commit()
             
             return {
                 "is_subscribed": is_subscribed,
-                "monthly_usage_count": row['monthly_usage_count'] or 0
+                "monthly_usage_count": row_dict.get('monthly_usage_count', 0),
+                "subscription_expires": expires
             }
             
     except Exception as e:
         logger.exception(f"Ошибка получения статуса user {user_id}: {e}")
         return {"is_subscribed": False, "monthly_usage_count": 0}
-
 
 async def increment_usage(user_id: int):
     """Увеличивает счетчик использования. Безопасно от SQL injection."""

@@ -213,8 +213,8 @@ def main():
         builder.token(config.BOT_TOKEN)
         
         # Добавляем persistence для сохранения состояний
-        persistence = PicklePersistence(filepath="bot_persistence.pickle")
-        builder.persistence(persistence)
+        #persistence = PicklePersistence(filepath="bot_persistence.pickle")
+        #builder.persistence(persistence)
         
         # Настройка параметров
         builder.post_init(post_init)
