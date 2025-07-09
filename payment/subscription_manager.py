@@ -24,46 +24,77 @@ class SubscriptionManager:
     
     def __init__(self):
         """Инициализация менеджера подписок."""
-        self.config = type('Config', (), {
-            'SUBSCRIPTION_MODE': SUBSCRIPTION_MODE
-        })()
-        logger.info(f"SubscriptionManager initialized with mode: {SUBSCRIPTION_MODE}")
+        # Не используем динамический класс, чтобы избежать проблем с pickle
+        self.subscription_mode = SUBSCRIPTION_MODE
+        logger.info(f"SubscriptionManager initialized with mode: {self.subscription_mode}")
+    
+    @property
+    def config(self):
+        """Совместимость со старым кодом."""
+        return {'SUBSCRIPTION_MODE': self.subscription_mode}
     
     async def init_tables(self):
         """Инициализирует таблицы в БД."""
         try:
             async with aiosqlite.connect(DATABASE_FILE) as conn:
-                # Существующие таблицы
-                await conn.execute("""
-                    CREATE TABLE IF NOT EXISTS subscriptions (
-                        id INTEGER PRIMARY KEY AUTOINCREMENT,
-                        user_id INTEGER NOT NULL,
-                        plan_id TEXT NOT NULL,
-                        expires_at TIMESTAMP NOT NULL,
-                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                        is_active BOOLEAN DEFAULT 1,
-                        payment_id TEXT,
-                        amount_kopecks INTEGER,
-                        UNIQUE(user_id, plan_id, expires_at)
-                    )
-                """)
-                
+                # Основная таблица платежей
                 await conn.execute("""
                     CREATE TABLE IF NOT EXISTS payments (
                         id INTEGER PRIMARY KEY AUTOINCREMENT,
-                        user_id INTEGER NOT NULL,
                         order_id TEXT UNIQUE NOT NULL,
+                        user_id INTEGER NOT NULL,
                         plan_id TEXT NOT NULL,
                         amount_kopecks INTEGER NOT NULL,
                         status TEXT DEFAULT 'pending',
                         payment_id TEXT,
+                        payment_url TEXT,
                         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                        completed_at TIMESTAMP
+                        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        confirmed_at TIMESTAMP,
+                        metadata TEXT
                     )
                 """)
                 
-                # Новые таблицы для модульной системы
+                # Индекс для payments
+                await conn.execute("""
+                    CREATE INDEX IF NOT EXISTS idx_payments_user 
+                    ON payments(user_id)
+                """)
+                await conn.execute("""
+                    CREATE INDEX IF NOT EXISTS idx_payments_status 
+                    ON payments(status)
+                """)
+                
+                # Единая таблица подписок (для обычного режима)
+                await conn.execute("""
+                    CREATE TABLE IF NOT EXISTS user_subscriptions (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        user_id INTEGER NOT NULL,
+                        plan_id TEXT NOT NULL,
+                        payment_id TEXT,
+                        status TEXT DEFAULT 'active',
+                        starts_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        expires_at TIMESTAMP NOT NULL,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        activated_at TIMESTAMP,
+                        cancelled_at TIMESTAMP,
+                        UNIQUE(user_id, plan_id, expires_at)
+                    )
+                """)
+                
+                # Индексы для user_subscriptions
+                await conn.execute("""
+                    CREATE INDEX IF NOT EXISTS idx_user_subs_user 
+                    ON user_subscriptions(user_id)
+                """)
+                await conn.execute("""
+                    CREATE INDEX IF NOT EXISTS idx_user_subs_expires 
+                    ON user_subscriptions(expires_at)
+                """)
+                
+                # Таблицы для модульной системы
                 if SUBSCRIPTION_MODE == 'modular':
+                    # Основная таблица модульных подписок
                     await conn.execute("""
                         CREATE TABLE IF NOT EXISTS module_subscriptions (
                             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -75,42 +106,11 @@ class SubscriptionManager:
                             is_active BOOLEAN DEFAULT 1,
                             is_trial BOOLEAN DEFAULT 0,
                             payment_id TEXT,
-                            UNIQUE(user_id, module_code, expires_at)
-                        )
-                    """)
-                    
-                    await conn.execute("""
-                        CREATE TABLE IF NOT EXISTS trial_history (
-                            user_id INTEGER PRIMARY KEY,
-                            trial_activated_at TIMESTAMP,
-                            trial_expires_at TIMESTAMP
-                        )
-                    """)
-                        # Создаем таблицу для модульных подписок
-                    await conn.execute("""
-                        CREATE TABLE IF NOT EXISTS user_modules (
-                            id INTEGER PRIMARY KEY AUTOINCREMENT,
-                            user_id INTEGER NOT NULL,
-                            module_code TEXT NOT NULL,
-                            is_active INTEGER DEFAULT 1,
-                            expires_at TEXT,
-                            purchase_date TEXT DEFAULT CURRENT_TIMESTAMP,
-                            created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-                            updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
                             UNIQUE(user_id, module_code)
                         )
                     """)
                     
-                    # Создаем индексы для производительности
-                    await conn.execute(
-                        "CREATE INDEX IF NOT EXISTS idx_user_modules_user ON user_modules(user_id)"
-                    )
-                    await conn.execute(
-                        "CREATE INDEX IF NOT EXISTS idx_user_modules_active ON user_modules(is_active)"
-                    )
-                    
-                    logger.info("User modules table initialized")
-                    # Создаем индексы
+                    # Индексы для module_subscriptions
                     await conn.execute("""
                         CREATE INDEX IF NOT EXISTS idx_module_subs_user 
                         ON module_subscriptions(user_id)
@@ -119,11 +119,50 @@ class SubscriptionManager:
                         CREATE INDEX IF NOT EXISTS idx_module_subs_expires 
                         ON module_subscriptions(expires_at)
                     """)
+                    await conn.execute("""
+                        CREATE INDEX IF NOT EXISTS idx_module_subs_active 
+                        ON module_subscriptions(is_active)
+                    """)
+                    
+                    # История пробных периодов
+                    await conn.execute("""
+                        CREATE TABLE IF NOT EXISTS trial_history (
+                            user_id INTEGER PRIMARY KEY,
+                            trial_activated_at TIMESTAMP,
+                            trial_expires_at TIMESTAMP
+                        )
+                    """)
                     
                     logger.info("Modular subscription tables created")
                 
+                # Миграция: удаляем дублирующую таблицу user_modules если она существует
+                # (она дублирует функционал module_subscriptions)
+                cursor = await conn.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table' AND name='user_modules'"
+                )
+                if await cursor.fetchone():
+                    logger.warning("Found duplicate table 'user_modules', migrating data...")
+                    
+                    # Переносим данные из user_modules в module_subscriptions если нужно
+                    try:
+                        await conn.execute("""
+                            INSERT OR IGNORE INTO module_subscriptions 
+                            (user_id, module_code, plan_id, expires_at, is_active, created_at)
+                            SELECT user_id, module_code, 
+                                   COALESCE(plan_id, 'module_' || module_code),
+                                   expires_at, is_active, created_at
+                            FROM user_modules
+                            WHERE expires_at IS NOT NULL
+                        """)
+                        
+                        # Удаляем старую таблицу
+                        await conn.execute("DROP TABLE user_modules")
+                        logger.info("Successfully migrated and removed user_modules table")
+                    except Exception as e:
+                        logger.error(f"Error during migration: {e}")
+                
                 await conn.commit()
-                logger.info("Payment tables initialized")
+                logger.info("Payment tables initialized successfully")
                 
         except Exception as e:
             logger.exception(f"Error initializing payment tables: {e}")
@@ -183,9 +222,32 @@ class SubscriptionManager:
             return await self._check_unified_subscription(user_id)
     
     async def _check_unified_subscription(self, user_id: int) -> Optional[Dict[str, Any]]:
-        """Проверка единой подписки (старая система)."""
+        """Проверка единой подписки - ИСПРАВЛЕННАЯ версия."""
         try:
             async with aiosqlite.connect(DATABASE_FILE) as conn:
+                # Проверяем в правильной таблице user_subscriptions
+                cursor = await conn.execute(
+                    """
+                    SELECT plan_id, expires_at, activated_at
+                    FROM user_subscriptions
+                    WHERE user_id = ? AND status = 'active' AND expires_at > ?
+                    ORDER BY expires_at DESC
+                    LIMIT 1
+                    """,
+                    (user_id, datetime.now(timezone.utc))
+                )
+                row = await cursor.fetchone()
+                
+                if row:
+                    plan_id, expires_at, activated_at = row
+                    return {
+                        'plan_id': plan_id,
+                        'expires_at': datetime.fromisoformat(expires_at),
+                        'activated_at': datetime.fromisoformat(activated_at) if activated_at else None,
+                        'active_modules': get_plan_modules(plan_id)  # Для совместимости
+                    }
+                
+                # Проверяем также старую таблицу subscriptions для обратной совместимости
                 cursor = await conn.execute(
                     """
                     SELECT plan_id, expires_at, created_at
@@ -199,14 +261,18 @@ class SubscriptionManager:
                 row = await cursor.fetchone()
                 
                 if row:
+                    plan_id, expires_at, created_at = row
                     return {
-                        'plan_id': row[0],
-                        'expires_at': datetime.fromisoformat(row[1]),
-                        'created_at': datetime.fromisoformat(row[2])
+                        'plan_id': plan_id,
+                        'expires_at': datetime.fromisoformat(expires_at),
+                        'created_at': datetime.fromisoformat(created_at),
+                        'active_modules': get_plan_modules(plan_id)
                     }
+                
                 return None
+                
         except Exception as e:
-            logger.error(f"Error checking subscription: {e}")
+            logger.error(f"Error checking unified subscription: {e}")
             return None
     
     async def _check_modular_subscriptions(self, user_id: int) -> Optional[Dict[str, Any]]:
@@ -253,40 +319,30 @@ class SubscriptionManager:
     
     async def check_module_access(self, user_id: int, module_code: str) -> bool:
         """
-        Проверяет доступ пользователя к модулю в модульной системе подписок.
+        Проверяет доступ пользователя к конкретному модулю.
         
         Args:
             user_id: ID пользователя
-            module_code: Код модуля (task19, task20, etc.)
+            module_code: Код модуля (например, 'test_part', 'task19', etc.)
         
         Returns:
-            True если есть доступ, False иначе
+            True если есть доступ, False если нет
         """
-        # Админы имеют доступ ко всем модулям
-        from core import config
-        if hasattr(config, 'ADMIN_IDS'):
-            admin_ids = []
-            if isinstance(config.ADMIN_IDS, str):
-                admin_ids = [int(id.strip()) for id in config.ADMIN_IDS.split(',') if id.strip()]
-            elif isinstance(config.ADMIN_IDS, list):
-                admin_ids = config.ADMIN_IDS
-            
-            if user_id in admin_ids:
-                logger.info(f"Admin {user_id} has access to module {module_code}")
-                return True
+        logger.info(f"Checking module access for user {user_id}, module {module_code}")
         
-        # В модульной системе проверяем покупку конкретного модуля
         if SUBSCRIPTION_MODE == 'modular':
             try:
                 async with aiosqlite.connect(DATABASE_FILE) as conn:
                     # Проверяем в таблице module_subscriptions
                     cursor = await conn.execute(
                         """
-                        SELECT 1 FROM module_subscriptions 
-                        WHERE user_id = ? AND module_code = ? AND is_active = 1
-                        AND expires_at > ?
+                        SELECT id FROM module_subscriptions 
+                        WHERE user_id = ? 
+                        AND module_code = ? 
+                        AND is_active = 1
+                        AND expires_at > datetime('now')
                         """,
-                        (user_id, module_code, datetime.now(timezone.utc))
+                        (user_id, module_code)
                     )
                     result = await cursor.fetchone()
                     
@@ -294,50 +350,43 @@ class SubscriptionManager:
                         logger.info(f"User {user_id} has active module subscription for {module_code}")
                         return True
                     
-                    # Также проверяем в таблице user_modules (для обратной совместимости)
+                    # Проверяем общую подписку (некоторые планы дают доступ ко всем модулям)
                     cursor = await conn.execute(
                         """
-                        SELECT 1 FROM user_modules 
-                        WHERE user_id = ? AND module_code = ? AND is_active = 1
-                        AND (expires_at IS NULL OR expires_at > datetime('now'))
+                        SELECT plan_id FROM user_subscriptions
+                        WHERE user_id = ?
+                        AND status = 'active'
+                        AND expires_at > datetime('now')
                         """,
-                        (user_id, module_code)
+                        (user_id,)
                     )
-                    result = await cursor.fetchone()
+                    subscription = await cursor.fetchone()
                     
-                    if result:
-                        logger.info(f"User {user_id} has active module in user_modules for {module_code}")
-                        return True
+                    if subscription:
+                        plan_id = subscription[0]
+                        
+                        # Полный доступ
+                        if plan_id in ['package_full', 'trial_7days']:
+                            logger.info(f"User {user_id} has full access plan: {plan_id}")
+                            return True
+                        
+                        # Пакет "Вторая часть"
+                        elif plan_id == 'package_second_part' and module_code in ['task19', 'task20', 'task25']:
+                            logger.info(f"User {user_id} has second part package, access to {module_code}")
+                            return True
+                        
+                        # Старые планы pro_month и pro_ege (доступ ко всему кроме task24)
+                        elif plan_id in ['pro_month', 'pro_ege'] and module_code != 'task24':
+                            logger.info(f"User {user_id} has Pro subscription, access to {module_code} granted")
+                            return True
+                    
             except Exception as e:
                 logger.error(f"Error checking module access: {e}")
-            
-            # Проверяем общую подписку (Pro/Full дают доступ ко всем модулям)
-            subscription = await self.check_active_subscription(user_id)
-            if subscription:
-                # Проверяем, входит ли модуль в активную подписку
-                active_modules = subscription.get('active_modules', [])
-                if module_code in active_modules:
-                    logger.info(f"User {user_id} has access to {module_code} through active subscription")
-                    return True
-                
-                # Проверяем план подписки
-                plan_id = subscription.get('plan_id')
-                if plan_id in ['package_full', 'trial_7days']:
-                    logger.info(f"User {user_id} has full access plan: {plan_id}")
-                    return True
-                elif plan_id == 'package_second_part' and module_code in ['task19', 'task20', 'task25']:
-                    logger.info(f"User {user_id} has second part package, access to {module_code}")
-                    return True
-                
-                # Старые планы pro_month и pro_ege
-                if plan_id in ['pro_month', 'pro_ege'] and module_code != 'task24':
-                    logger.info(f"User {user_id} has Pro subscription, access to {module_code} granted")
-                    return True
+                return False
         else:
             # В обычном режиме проверяем любую активную подписку
             subscription = await self.check_active_subscription(user_id)
-            if subscription:
-                return True
+            return bool(subscription)
         
         logger.info(f"User {user_id} has no access to module {module_code}")
         return False
@@ -413,21 +462,24 @@ class SubscriptionManager:
             return False
     
     async def _activate_unified_subscription(self, user_id: int, plan_id: str, payment_id: str):
-        """Активация единой подписки."""
+        """Активация единой подписки - ИСПРАВЛЕННАЯ версия."""
         expires_at = get_subscription_end_date(plan_id)
         
         async with aiosqlite.connect(DATABASE_FILE) as conn:
+            # Используем правильную таблицу user_subscriptions
             await conn.execute(
                 """
-                INSERT INTO subscriptions (user_id, plan_id, expires_at, payment_id)
-                VALUES (?, ?, ?, ?)
+                INSERT INTO user_subscriptions 
+                (user_id, plan_id, payment_id, status, expires_at, activated_at)
+                VALUES (?, ?, ?, 'active', ?, ?)
                 """,
-                (user_id, plan_id, expires_at, payment_id)
+                (user_id, plan_id, payment_id, expires_at, datetime.now(timezone.utc))
             )
             await conn.commit()
+            logger.info(f"Unified subscription activated for user {user_id}, plan {plan_id}")
     
     async def _activate_modular_subscription(self, user_id: int, plan_id: str, payment_id: str):
-        """Активация модульной подписки."""
+        """Активация модульной подписки - ИСПРАВЛЕННАЯ версия."""
         logger.info(f"Activating modular subscription for user {user_id}, plan {plan_id}")
         
         plan = SUBSCRIPTION_PLANS.get(plan_id)
@@ -459,46 +511,57 @@ class SubscriptionManager:
                     """,
                     (user_id, datetime.now(timezone.utc), expires_at)
                 )
-                logger.info(f"Trial period recorded for user {user_id}")
             
-            # Активируем каждый модуль
+            # Активируем каждый модуль из плана
             for module_code in modules:
-                logger.info(f"Activating module {module_code} for user {user_id}")
-                
-                # Проверяем существующую подписку
+                # Проверяем, есть ли уже активная подписка на этот модуль
                 cursor = await conn.execute(
                     """
-                    SELECT expires_at FROM module_subscriptions
-                    WHERE user_id = ? AND module_code = ? 
-                    AND is_active = 1 AND expires_at > ?
-                    ORDER BY expires_at DESC
-                    LIMIT 1
+                    SELECT id, expires_at FROM module_subscriptions
+                    WHERE user_id = ? AND module_code = ? AND is_active = 1
                     """,
-                    (user_id, module_code, datetime.now(timezone.utc))
+                    (user_id, module_code)
                 )
                 existing = await cursor.fetchone()
                 
-                # Если есть активная подписка, продлеваем от её окончания
                 if existing:
-                    start_from = datetime.fromisoformat(existing[0])
-                    new_expires = start_from + (expires_at - datetime.now(timezone.utc))
-                    logger.info(f"Extending existing subscription for module {module_code}")
+                    # Обновляем существующую подписку
+                    existing_id, existing_expires = existing
+                    new_expires = max(expires_at, datetime.fromisoformat(existing_expires))
+                    
+                    await conn.execute(
+                        """
+                        UPDATE module_subscriptions
+                        SET expires_at = ?, plan_id = ?, payment_id = ?
+                        WHERE id = ?
+                        """,
+                        (new_expires, plan_id, payment_id, existing_id)
+                    )
+                    logger.info(f"Extended module {module_code} for user {user_id} until {new_expires}")
                 else:
-                    new_expires = expires_at
-                    logger.info(f"Creating new subscription for module {module_code}")
-                
-                await conn.execute(
-                    """
-                    INSERT INTO module_subscriptions 
-                    (user_id, module_code, plan_id, expires_at, is_trial, payment_id)
-                    VALUES (?, ?, ?, ?, ?, ?)
-                    """,
-                    (user_id, module_code, plan_id, new_expires, is_trial, payment_id)
-                )
-                logger.info(f"Module {module_code} activated for user {user_id} until {new_expires}")
+                    # Создаем новую подписку на модуль
+                    await conn.execute(
+                        """
+                        INSERT INTO module_subscriptions
+                        (user_id, module_code, plan_id, expires_at, is_trial, payment_id)
+                        VALUES (?, ?, ?, ?, ?, ?)
+                        """,
+                        (user_id, module_code, plan_id, expires_at, is_trial, payment_id)
+                    )
+                    logger.info(f"Activated module {module_code} for user {user_id} until {expires_at}")
+            
+            # Также создаем запись в user_subscriptions для совместимости
+            await conn.execute(
+                """
+                INSERT OR REPLACE INTO user_subscriptions 
+                (user_id, plan_id, payment_id, status, expires_at, activated_at)
+                VALUES (?, ?, ?, 'active', ?, ?)
+                """,
+                (user_id, plan_id, payment_id, expires_at, datetime.now(timezone.utc))
+            )
             
             await conn.commit()
-            logger.info(f"All modules activated successfully for user {user_id}")
+            logger.info(f"All modules activated for user {user_id}")
     
     async def has_used_trial(self, user_id: int) -> bool:
         """Проверяет, использовал ли пользователь пробный период."""

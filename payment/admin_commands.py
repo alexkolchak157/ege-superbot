@@ -104,6 +104,78 @@ async def cmd_grant_subscription(update: Update, context: ContextTypes.DEFAULT_T
         logger.error(f"Error granting subscription: {e}")
         await update.message.reply_text(f"❌ Ошибка: {str(e)}")
 
+@admin_only
+async def cmd_check_user_subscription(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Проверяет подписку конкретного пользователя. Использование: /check_user_subscription <user_id>"""
+    if not context.args:
+        await update.message.reply_text(
+            "Использование: /check_user_subscription <user_id>\n"
+            "Например: /check_user_subscription 7390670490"
+        )
+        return
+    
+    try:
+        user_id = int(context.args[0])
+        subscription_manager = context.bot_data.get('subscription_manager', SubscriptionManager())
+        
+        text = f"🔍 <b>Проверка подписки для пользователя {user_id}</b>\n\n"
+        
+        # Проверяем общую подписку
+        subscription = await subscription_manager.check_active_subscription(user_id)
+        if subscription:
+            text += "✅ <b>Активная подписка найдена:</b>\n"
+            text += f"План: {subscription.get('plan_id')}\n"
+            text += f"Истекает: {subscription.get('expires_at')}\n"
+            
+            if SUBSCRIPTION_MODE == 'modular':
+                text += f"Активные модули: {', '.join(subscription.get('active_modules', []))}\n"
+        else:
+            text += "❌ <b>Активная подписка не найдена</b>\n"
+        
+        # Проверяем модули (если модульная система)
+        if SUBSCRIPTION_MODE == 'modular':
+            text += "\n📦 <b>Проверка доступа к модулям:</b>\n"
+            modules = await subscription_manager.get_user_modules(user_id)
+            
+            if modules:
+                for module in modules:
+                    text += f"• {module['module_code']} до {module['expires_at']}\n"
+            else:
+                text += "Нет активных модулей\n"
+        
+        # Проверяем историю платежей
+        text += "\n💳 <b>История платежей:</b>\n"
+        try:
+            async with aiosqlite.connect(DATABASE_FILE) as conn:
+                cursor = await conn.execute(
+                    """
+                    SELECT order_id, plan_id, status, amount_kopecks, created_at 
+                    FROM payments 
+                    WHERE user_id = ? 
+                    ORDER BY created_at DESC 
+                    LIMIT 5
+                    """,
+                    (user_id,)
+                )
+                payments = await cursor.fetchall()
+                
+                if payments:
+                    for payment in payments:
+                        order_id, plan_id, status, amount, created_at = payment
+                        text += f"• {plan_id} - {status} - {amount/100:.2f}₽ ({created_at})\n"
+                else:
+                    text += "Нет платежей\n"
+        except Exception as e:
+            logger.error(f"Error getting payment history: {e}")
+            text += f"Ошибка при получении истории: {e}\n"
+        
+        await update.message.reply_text(text, parse_mode=ParseMode.HTML)
+        
+    except ValueError:
+        await update.message.reply_text("❌ Неверный формат user_id")
+    except Exception as e:
+        logger.exception(f"Error checking user subscription: {e}")
+        await update.message.reply_text(f"❌ Ошибка: {e}")
 
 @admin_only
 async def cmd_revoke_subscription(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -131,7 +203,141 @@ async def cmd_revoke_subscription(update: Update, context: ContextTypes.DEFAULT_
         logger.exception(f"Error revoking subscription: {e}")
         await update.message.reply_text(f"❌ Ошибка: {str(e)}")
 
+@admin_only
+async def cmd_activate_payment(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Активирует pending платеж вручную. Использование: /activate_payment <order_id>"""
+    if not context.args:
+        # Показываем список pending платежей
+        try:
+            async with aiosqlite.connect(DATABASE_FILE) as conn:
+                cursor = await conn.execute(
+                    """
+                    SELECT order_id, user_id, plan_id, amount_kopecks, created_at
+                    FROM payments 
+                    WHERE status = 'pending'
+                    ORDER BY created_at DESC
+                    LIMIT 10
+                    """
+                )
+                pending_payments = await cursor.fetchall()
+                
+                if not pending_payments:
+                    await update.message.reply_text("✅ Нет неподтвержденных платежей")
+                    return
+                
+                text = "⚠️ <b>Неподтвержденные платежи:</b>\n\n"
+                for payment in pending_payments:
+                    order_id, user_id, plan_id, amount, created_at = payment
+                    text += f"<code>{order_id}</code>\n"
+                    text += f"├ User: {user_id}\n"
+                    text += f"├ План: {plan_id}\n"
+                    text += f"├ Сумма: {amount/100:.2f} руб.\n"
+                    text += f"└ Создан: {created_at}\n\n"
+                
+                text += "Для активации используйте:\n"
+                text += "<code>/activate_payment ORDER_ID</code>"
+                
+                await update.message.reply_text(text, parse_mode=ParseMode.HTML)
+                
+        except Exception as e:
+            logger.error(f"Error listing pending payments: {e}")
+            await update.message.reply_text(f"❌ Ошибка: {e}")
+        return
+    
+    order_id = context.args[0]
+    
+    try:
+        subscription_manager = context.bot_data.get('subscription_manager', SubscriptionManager())
+        
+        # Проверяем, существует ли платеж
+        async with aiosqlite.connect(DATABASE_FILE) as conn:
+            cursor = await conn.execute(
+                "SELECT user_id, plan_id, status FROM payments WHERE order_id = ?",
+                (order_id,)
+            )
+            payment = await cursor.fetchone()
+            
+            if not payment:
+                await update.message.reply_text(f"❌ Платеж {order_id} не найден")
+                return
+            
+            user_id, plan_id, status = payment
+            
+            if status != 'pending':
+                await update.message.reply_text(
+                    f"⚠️ Платеж {order_id} уже имеет статус: {status}"
+                )
+                return
+        
+        # Активируем подписку
+        payment_id = f"ADMIN_ACTIVATE_{datetime.now().timestamp()}"
+        success = await subscription_manager.activate_subscription(
+            order_id=order_id,
+            payment_id=payment_id
+        )
+        
+        if success:
+            text = f"✅ Платеж активирован успешно!\n\n"
+            text += f"Order ID: <code>{order_id}</code>\n"
+            text += f"User ID: {user_id}\n"
+            text += f"План: {plan_id}\n\n"
+            
+            # Получаем информацию о подписке
+            subscription_info = await subscription_manager.get_subscription_info(user_id)
+            if subscription_info:
+                if SUBSCRIPTION_MODE == 'modular':
+                    text += f"Модули: {', '.join(subscription_info.get('modules', []))}\n"
+                text += f"Действует до: {subscription_info.get('expires_at')}"
+            
+            await update.message.reply_text(text, parse_mode=ParseMode.HTML)
+            
+            # Уведомляем пользователя
+            try:
+                await context.bot.send_message(
+                    user_id,
+                    f"✅ Ваш платеж подтвержден!\n\n"
+                    f"План: {SUBSCRIPTION_PLANS[plan_id]['name']}\n"
+                    f"Подписка активирована.\n\n"
+                    f"Используйте /my_subscriptions для просмотра деталей."
+                )
+            except Exception as e:
+                logger.error(f"Failed to notify user {user_id}: {e}")
+        else:
+            await update.message.reply_text(
+                f"❌ Ошибка при активации платежа {order_id}\n"
+                f"Проверьте логи для деталей."
+            )
+            
+    except Exception as e:
+        logger.exception(f"Error activating payment: {e}")
+        await update.message.reply_text(f"❌ Ошибка: {e}")
 
+
+@admin_only
+async def cmd_check_webhook(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Проверяет настройки webhook."""
+    from payment.config import WEBHOOK_BASE_URL, WEBHOOK_PATH, TINKOFF_TERMINAL_KEY
+    
+    text = "🔧 <b>Настройки Webhook:</b>\n\n"
+    
+    if WEBHOOK_BASE_URL:
+        webhook_url = f"{WEBHOOK_BASE_URL}{WEBHOOK_PATH}"
+        text += f"✅ URL: <code>{webhook_url}</code>\n"
+        text += f"✅ Terminal Key: <code>{TINKOFF_TERMINAL_KEY[:8]}...</code>\n\n"
+        text += "⚠️ <b>Убедитесь, что этот URL:</b>\n"
+        text += "• Добавлен в настройках Tinkoff\n"
+        text += "• Доступен из интернета\n"
+        text += "• Использует HTTPS\n\n"
+        text += f"<b>Для проверки выполните:</b>\n"
+        text += f"<code>curl -X POST {webhook_url}</code>"
+    else:
+        text += "❌ <b>WEBHOOK_BASE_URL не настроен!</b>\n\n"
+        text += "Добавьте в .env:\n"
+        text += "<code>WEBHOOK_BASE_URL=https://yourdomain.com</code>\n\n"
+        text += "⚠️ Без webhook платежи не будут активироваться автоматически!"
+    
+    await update.message.reply_text(text, parse_mode=ParseMode.HTML)
+    
 @admin_only
 async def cmd_payment_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Показывает статистику платежей."""
@@ -197,9 +403,14 @@ async def cmd_check_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
 def register_admin_commands(app: Application):
-    """Регистрирует админские команды."""
+    """Регистрирует админские команды для управления подписками."""
     app.add_handler(CommandHandler("grant_subscription", cmd_grant_subscription))
+    # app.add_handler(CommandHandler("check_user_subscription", cmd_check_user_subscription))
+    # app.add_handler(CommandHandler("list_subscriptions", cmd_list_subscriptions))
+    app.add_handler(CommandHandler("activate_payment", cmd_activate_payment))
+    app.add_handler(CommandHandler("check_webhook", cmd_check_webhook))
     app.add_handler(CommandHandler("revoke", cmd_revoke_subscription))
     app.add_handler(CommandHandler("payment_stats", cmd_payment_stats))
     app.add_handler(CommandHandler("check_admin", cmd_check_admin))
-    logger.info("Admin commands registered")
+    
+    logger.info("Admin payment commands registered")
