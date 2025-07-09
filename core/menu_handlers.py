@@ -1,7 +1,7 @@
 # core/menu_handlers.py
 """Универсальные обработчики для главного меню."""
 
-from telegram import Update
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes, ConversationHandler, CallbackQueryHandler
 from core.plugin_loader import build_main_menu
 
@@ -11,7 +11,17 @@ async def handle_to_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE
     if query:
         await query.answer()
         
-        kb = build_main_menu()
+        user_id = update.effective_user.id
+        
+        # Проверяем, есть ли функция show_main_menu_with_access
+        try:
+            from core.app import show_main_menu_with_access
+            kb = await show_main_menu_with_access(context, user_id)
+        except ImportError:
+            # Если функция еще не добавлена, используем стандартное меню
+            from core.plugin_loader import build_main_menu
+            kb = build_main_menu()
+        
         try:
             await query.edit_message_text(
                 "👋 Что хотите потренировать?", 

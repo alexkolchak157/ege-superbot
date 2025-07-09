@@ -2,8 +2,10 @@
 
 import asyncio
 import logging
-from telegram import Update
-from telegram.ext import Application, CommandHandler, CallbackQueryHandler, PicklePersistence
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from typing import Optional, Dict, Any
+from datetime import datetime
+from telegram.ext import Application, CommandHandler, CallbackQueryHandler, PicklePersistence, ContextTypes
 from telegram.constants import ParseMode
 import sys
 import os
@@ -27,7 +29,7 @@ async def post_init(application: Application) -> None:
     application.add_handler(CommandHandler("start", start_command))
     application.add_handler(CommandHandler("help", help_command))
     application.add_handler(CommandHandler("menu", menu_command))
-    
+    application.add_handler(CallbackQueryHandler(handle_my_subscription, pattern="^my_subscription$"))
     # Инициализация модуля платежей
     # Модуль сам регистрирует все обработчики и запускает webhook
     await init_payment_module(application)
@@ -79,8 +81,24 @@ async def start_command(update: Update, context):
     subscription_manager = context.bot_data.get('subscription_manager')
     if subscription_manager:
         subscription_info = await subscription_manager.get_subscription_info(user_id)
-        if subscription_info and subscription_info.get('is_active'):
-            status_text = f"✅ У вас активная подписка: {subscription_info.get('plan_name', 'Неизвестный план')}"
+        
+        # ИСПРАВЛЕНИЕ: Правильная проверка для модульной системы
+        if subscription_info:
+            if subscription_info.get('type') == 'modular':
+                # Для модульной системы
+                modules = subscription_info.get('modules', [])
+                if modules:
+                    status_text = f"✅ У вас активная подписка на модули:\n"
+                    for module in modules:
+                        status_text += f"   • {module}\n"
+                    status_text += f"\nДействует до: {subscription_info.get('expires_at').strftime('%d.%m.%Y')}"
+                else:
+                    status_text = "❌ У вас нет активной подписки"
+            else:
+                # Для единой системы подписок
+                plan_name = subscription_info.get('plan_name', 'Подписка')
+                status_text = f"✅ У вас активная подписка: {plan_name}"
+                status_text += f"\nДействует до: {subscription_info.get('expires_at').strftime('%d.%m.%Y')}"
         else:
             status_text = "❌ У вас нет активной подписки"
     else:
@@ -91,25 +109,141 @@ async def start_command(update: Update, context):
 
 {status_text}
 
-Доступные команды:
-/help - справка по командам
-/menu - главное меню
-/subscribe - оформить подписку
-/status - статус подписки
-
-Выберите раздел для начала работы:
-    """
+Используйте кнопки ниже для навигации:
+"""
     
-    # Показываем главное меню если есть плагины
-    try:
-        from core import plugin_loader
-        if hasattr(plugin_loader, 'build_main_menu'):
-            menu = plugin_loader.build_main_menu()
-            await update.message.reply_text(welcome_text, reply_markup=menu, parse_mode=ParseMode.HTML)
+    # Получаем меню с проверкой доступа
+    menu_keyboard = await show_main_menu_with_access(context, user_id)
+    
+    await update.message.reply_text(
+        welcome_text,
+        reply_markup=menu_keyboard,
+        parse_mode="HTML"
+    )
+
+async def show_main_menu_with_access(context: ContextTypes.DEFAULT_TYPE, user_id: int) -> InlineKeyboardMarkup:
+    """Показывает главное меню с индикацией доступа к модулям."""
+    from core.plugin_loader import PLUGINS
+    from payment.config import SUBSCRIPTION_MODE
+    
+    subscription_manager = context.bot_data.get('subscription_manager')
+    buttons = []
+    
+    # Соответствие кодов плагинов и модулей
+    plugin_to_module = {
+        'test_part': 'test_part',
+        'task19': 'task19', 
+        'task20': 'task20',
+        'task24': 'task24',
+        'task25': 'task25'
+    }
+    
+    for plugin in PLUGINS:
+        module_code = plugin_to_module.get(plugin.code)
+        
+        if module_code and subscription_manager and SUBSCRIPTION_MODE == 'modular':
+            # Проверяем доступ к модулю
+            has_access = await subscription_manager.check_module_access(user_id, module_code)
+            
+            if has_access:
+                # Доступ есть - показываем с галочкой
+                button_text = f"✅ {plugin.title}"
+            else:
+                # Доступа нет - показываем с замком
+                button_text = f"🔒 {plugin.title}"
         else:
-            await update.message.reply_text(welcome_text, parse_mode=ParseMode.HTML)
-    except:
-        await update.message.reply_text(welcome_text, parse_mode=ParseMode.HTML)
+            # Если не модульная система или модуль не требует проверки
+            button_text = plugin.title
+        
+        buttons.append([InlineKeyboardButton(
+            button_text,
+            callback_data=f"choose_{plugin.code}"
+        )])
+    
+    # Добавляем дополнительные кнопки
+    buttons.extend([
+        [InlineKeyboardButton("💳 Моя подписка", callback_data="my_subscription")],
+        [InlineKeyboardButton("⚙️ Настройки", callback_data="settings")]
+    ])
+    
+    return InlineKeyboardMarkup(buttons)
+
+async def handle_my_subscription(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Показывает информацию о подписке пользователя."""
+    query = update.callback_query
+    await query.answer()
+    
+    user_id = update.effective_user.id
+    subscription_manager = context.bot_data.get('subscription_manager')
+    
+    if not subscription_manager:
+        await query.edit_message_text("❌ Сервис подписок временно недоступен")
+        return
+    
+    subscription_info = await subscription_manager.get_subscription_info(user_id)
+    
+    if subscription_info:
+        if subscription_info.get('type') == 'modular':
+            # Модульная подписка
+            text = "💳 <b>Ваша подписка</b>\n\n"
+            text += "✅ <b>Активные модули:</b>\n"
+            
+            for module in subscription_info.get('modules', []):
+                text += f"   • {module}\n"
+            
+            text += f"\n📅 <b>Действует до:</b> {subscription_info.get('expires_at').strftime('%d.%m.%Y')}\n"
+            
+            # Проверяем доступ к каждому модулю для детальной информации
+            text += "\n📊 <b>Детали доступа:</b>\n"
+            modules_to_check = ['test_part', 'task19', 'task20', 'task24', 'task25']
+            module_names = {
+                'test_part': 'Тестовая часть',
+                'task19': 'Задание 19',
+                'task20': 'Задание 20',
+                'task24': 'Задание 24',
+                'task25': 'Задание 25'
+            }
+            
+            for module_code in modules_to_check:
+                has_access = await subscription_manager.check_module_access(user_id, module_code)
+                status = "✅" if has_access else "❌"
+                text += f"   {status} {module_names.get(module_code, module_code)}\n"
+        else:
+            # Единая подписка
+            text = "💳 <b>Ваша подписка</b>\n\n"
+            text += f"✅ <b>План:</b> {subscription_info.get('plan_name')}\n"
+            text += f"📅 <b>Действует до:</b> {subscription_info.get('expires_at').strftime('%d.%m.%Y')}\n"
+    else:
+        text = "❌ <b>У вас нет активной подписки</b>\n\n"
+        text += "Оформите подписку, чтобы получить доступ ко всем модулям:\n\n"
+        text += "📚 <b>Доступные планы:</b>\n"
+        text += "• Пакет «Вторая часть» - задания 19, 20, 25\n"
+        text += "• Полный доступ - все модули\n"
+        text += "• Пробный период - 7 дней\n"
+    
+    buttons = []
+    
+    if not subscription_info:
+        buttons.append([InlineKeyboardButton("💳 Оформить подписку", callback_data="show_payment_plans")])
+    
+    buttons.extend([
+        [InlineKeyboardButton("📊 Моя статистика", callback_data="my_statistics")],
+        [InlineKeyboardButton("⬅️ Главное меню", callback_data="to_main_menu")]
+    ])
+    
+    await query.edit_message_text(
+        text,
+        reply_markup=InlineKeyboardMarkup(buttons),
+        parse_mode="HTML"
+    )
+
+# Исправленная функция show_main_menu
+def show_main_menu(context: ContextTypes.DEFAULT_TYPE) -> InlineKeyboardMarkup:
+    """Синхронная обертка для совместимости."""
+    # Возвращаем базовое меню без проверки доступа
+    # Асинхронную версию нужно вызывать отдельно
+    from core.plugin_loader import build_main_menu
+    return build_main_menu()
 
 async def help_command(update: Update, context):
     """Обработчик команды /help"""
@@ -157,7 +291,7 @@ async def help_command(update: Update, context):
 
 По всем вопросам: @your_support_bot
     """
-    await update.message.reply_text(help_text, parse_mode=ParseMode.HTML)
+    await update.message.reply_text(help_text, parse_mode="HTML")
 
 async def menu_command(update: Update, context):
     """Обработчик команды /menu"""
