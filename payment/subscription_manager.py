@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from typing import Optional, Dict, Any, List
 import json
 from functools import wraps
+from payment.config import SUBSCRIPTION_MODE, SUBSCRIPTION_PLANS
 import aiosqlite
 
 # Используем ваши функции из core.db
@@ -169,7 +170,7 @@ class SubscriptionManager:
             raise
     
     async def get_subscription_info(self, user_id: int) -> Optional[Dict[str, Any]]:
-        """Получает информацию о подписке для отображения."""
+        """Получает информацию о подписке пользователя для отображения."""
         if SUBSCRIPTION_MODE == 'modular':
             # Модульная система
             modules = await self.get_user_modules(user_id)
@@ -195,11 +196,13 @@ class SubscriptionManager:
                 if min_expires is None or module['expires_at'] < min_expires:
                     min_expires = module['expires_at']
             
+            # ИСПРАВЛЕНИЕ: Добавляем поле is_active
             return {
                 'type': 'modular',
                 'modules': active_modules,
                 'expires_at': min_expires,
-                'modules_count': len(modules)
+                'modules_count': len(modules),
+                'is_active': True  # Если есть модули, значит подписка активна
             }
         else:
             # Старая система
@@ -210,9 +213,10 @@ class SubscriptionManager:
                     'type': 'unified',
                     'plan_name': plan.get('name', 'Подписка'),
                     'plan_id': subscription['plan_id'],
-                    'expires_at': subscription['expires_at']
+                    'expires_at': subscription['expires_at'],
+                    'is_active': True  # Подписка активна
                 }
-            return None    
+            return None  # Возвращаем None если подписки нет
     
     async def check_active_subscription(self, user_id: int) -> Optional[Dict[str, Any]]:
         """Проверяет активную подписку пользователя."""

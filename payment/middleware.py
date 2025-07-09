@@ -42,24 +42,24 @@ class SubscriptionMiddleware:
         self.module_patterns = {
             'test_part': {
                 'commands': ['test', 'test_stats'],
-                'callbacks': ['to_test_part_menu', 'test_'],
+                'callbacks': ['choose_test_part', 'to_test_part_menu', 'test_'],
                 'exclude': ['test_back_to_mode']
             },
             'task19': {
                 'commands': ['task19'],
-                'callbacks': ['to_task19_menu', 't19_']
+                'callbacks': ['choose_task19', 'to_task19_menu', 't19_', 'task19_'],
             },
             'task20': {
                 'commands': ['task20'],
-                'callbacks': ['to_task20_menu', 't20_']
+                'callbacks': ['choose_task20', 'to_task20_menu', 't20_', 'task20_'],
             },
             'task24': {
                 'commands': ['task24'],
-                'callbacks': ['to_task24_menu', 't24_']
+                'callbacks': ['choose_task24', 'to_task24_menu', 't24_'],
             },
             'task25': {
                 'commands': ['task25'],
-                'callbacks': ['to_task25_menu', 't25_']
+                'callbacks': ['choose_task25', 'to_task25_menu', 't25_', 'task25_'],
             }
         }
     
