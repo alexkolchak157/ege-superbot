@@ -1666,38 +1666,38 @@ async def back_to_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Возврат в главное меню бота."""
     query = update.callback_query
     
+    # Очищаем состояние пользователя
+    from core.state_validator import state_validator
+    state_validator.clear_state(query.from_user.id)
+    
+    # Очищаем данные модуля
+    context.user_data.clear()
+    context.user_data['active_module'] = None
+    
+    # Получаем меню
+    user_id = update.effective_user.id
+    
     try:
-        # Удаляем все сообщения task24 перед переходом в главное меню
-        await delete_previous_messages(context, query.message.chat_id)
-        
-        # Очищаем контекст пользователя от данных task24
-        keys_to_remove = [
-            'current_topic_index', 'current_topic', 'exam_mode',
-            'mode', 'practiced_topics', 'last_plan_result',
-            'task24_topic_msg_id', 'task24_plan_msg_id',
-            'task24_thinking_msg_id', 'task24_result_msg_id'
-        ]
-        for key in keys_to_remove:
-            context.user_data.pop(key, None)
-        
-        # Показываем главное меню
+        from core.app import show_main_menu_with_access
+        kb = await show_main_menu_with_access(context, user_id)
+    except ImportError:
+        from core.plugin_loader import build_main_menu
         kb = build_main_menu()
-        
-        # Отправляем новое сообщение с главным меню
-        await query.message.chat.send_message(
+    
+    # Сначала пытаемся отредактировать сообщение
+    try:
+        await query.edit_message_text(
             "👋 Что хотите потренировать?",
-            reply_markup=kb
+            reply_markup=kb,
+            parse_mode="HTML"
         )
-        
-        return ConversationHandler.END
-        
     except Exception as e:
-        logger.error(f"Ошибка при возврате в главное меню: {e}")
-        # В случае ошибки просто показываем текст
-        await query.message.reply_text(
-            "Произошла ошибка. Используйте /start для возврата в главное меню."
-        )
-        return ConversationHandler.END
+        # Если не удается отредактировать (например, сообщение не изменилось),
+        # просто отвечаем на callback без создания нового сообщения
+        await query.answer()
+        logger.debug(f"Could not edit message in back_to_main_menu: {e}")
+    
+    return ConversationHandler.END
 
 async def t24_retry(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Повторить попытку составления плана для той же темы."""
