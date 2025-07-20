@@ -139,6 +139,15 @@ async def show_unified_plans(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
 async def show_modular_interface(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Показывает модульный интерфейс подписок."""
+    # Определяем источник вызова
+    if update.callback_query:
+        query = update.callback_query
+        await query.answer()
+        edit_func = query.edit_message_text
+    else:
+        # Вызов из команды /subscribe
+        edit_func = update.message.reply_text
+    
     user_id = update.effective_user.id
     subscription_manager = context.bot_data.get('subscription_manager', SubscriptionManager())
     
@@ -158,7 +167,7 @@ async def show_modular_interface(update: Update, context: ContextTypes.DEFAULT_T
         module_names = {
             'test_part': '📝 Тестовая часть',
             'task19': '🎯 Задание 19',
-            'task20': '📖 Задание 20',
+            'task20': '📖 Задание 20',  # ИСПРАВЛЕНО: добавлена иконка
             'task24': '💎 Задание 24',
             'task25': '✍️ Задание 25'
         }
@@ -176,11 +185,11 @@ async def show_modular_interface(update: Update, context: ContextTypes.DEFAULT_T
         text += "   • Полный доступ на 7 дней\n"
         text += "   • Все модули включены\n\n"
     
-    # Пакетные предложения с подробным описанием
+    # ИСПРАВЛЕНО: Обновленные описания заданий для ЕГЭ-2025
     text += "🎯 <b>Пакет «Вторая часть»</b> — 499₽/мес\n"
-    text += "   • Задание 19 (анализ суждений)\n"
-    text += "   • Задание 20 (пропущенные слова)\n"
-    text += "   • Задание 25 (определения и примеры)\n"
+    text += "   • Задание 19 (Примеры)\n"  # Исправлено с "анализ суждений"
+    text += "   • Задание 20 (Суждения)\n"  # Исправлено с "пропущенные слова"
+    text += "   • Задание 25 (Развёрнутый ответ)\n"  # Исправлено с "определения и примеры"
     text += "   <i>Экономия 98₽ по сравнению с покупкой по отдельности</i>\n\n"
     
     text += "👑 <b>Полный доступ</b> — 999₽/мес\n"
@@ -209,7 +218,7 @@ async def show_modular_interface(update: Update, context: ContextTypes.DEFAULT_T
         )],
         [InlineKeyboardButton(
             "🎯 Пакет «Вторая часть» - 499₽/мес",
-            callback_data="pay_package_second"  # Исправлено название
+            callback_data="pay_package_second"
         )],
         [InlineKeyboardButton(
             "📚 Выбрать отдельные модули",
@@ -217,34 +226,20 @@ async def show_modular_interface(update: Update, context: ContextTypes.DEFAULT_T
         )]
     ])
     
+    if active_modules:
+        keyboard.append([
+            InlineKeyboardButton("📋 Мои подписки", callback_data="my_subscriptions")
+        ])
+    
     keyboard.append([
         InlineKeyboardButton("❌ Отмена", callback_data="pay_cancel")
     ])
     
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    
-    # Проверяем, откуда пришел вызов
-    if update.message:
-        await update.message.reply_text(
-            text,
-            reply_markup=reply_markup,
-            parse_mode=ParseMode.HTML
-        )
-    elif update.callback_query:
-        query = update.callback_query
-        await query.answer()
-        try:
-            await query.edit_message_text(
-                text,
-                reply_markup=reply_markup,
-                parse_mode=ParseMode.HTML
-            )
-        except Exception as e:
-            await query.message.reply_text(
-                text,
-                reply_markup=reply_markup,
-                parse_mode=ParseMode.HTML
-            )
+    await edit_func(
+        text,
+        reply_markup=InlineKeyboardMarkup(keyboard),
+        parse_mode=ParseMode.HTML
+    )
     
     return CHOOSING_PLAN
 
@@ -378,10 +373,24 @@ async def show_individual_modules(update: Update, context: ContextTypes.DEFAULT_
         if v.get('type') == 'individual'
     }
     
+    # ИСПРАВЛЕНО: Обновленные описания для каждого модуля
+    module_descriptions = {
+        'module_test_part': '• Задания 1-16 первой части ЕГЭ\n• Автоматическая проверка ответов\n• Подробный разбор ошибок',
+        'module_task19': '• Примеры социальных объектов\n• Проверка ИИ с обратной связью\n• База эталонных примеров',
+        'module_task20': '• Суждения различного характера\n• Анализ теоретических положений\n• Банк типовых формулировок',
+        'module_task25': '• Развёрнутый ответ по теме\n• Обоснование и аргументация\n• Примеры из различных сфер',
+        'module_task24': '• Составление плана доклада\n• Экспертная проверка структуры\n• Детальный разбор пунктов'
+    }
+    
     for module_id, module in individual_modules.items():
         text += f"<b>{module['name']}</b>\n"
         text += f"💰 {module['price_rub']}₽/месяц\n"
-        text += f"📝 {module['description']}\n\n"
+        
+        # Добавляем расширенное описание
+        if module_id in module_descriptions:
+            text += module_descriptions[module_id] + "\n"
+        else:
+            text += f"📝 {module['description']}\n\n"
         
         keyboard.append([
             InlineKeyboardButton(
