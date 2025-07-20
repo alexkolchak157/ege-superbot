@@ -5,7 +5,8 @@ import logging
 from decimal import Decimal
 from datetime import datetime, timedelta, timezone
 from typing import Dict, Any, List
-
+from dotenv import load_dotenv
+load_dotenv()
 # Существующие настройки Tinkoff
 TINKOFF_TERMINAL_KEY = os.getenv('TINKOFF_TERMINAL_KEY')
 TINKOFF_SECRET_KEY = os.getenv('TINKOFF_SECRET_KEY')
@@ -14,9 +15,12 @@ TINKOFF_API_URL = 'https://securepay.tinkoff.ru/v2/'
 # Webhook settings
 WEBHOOK_BASE_URL = os.getenv('WEBHOOK_BASE_URL', 'https://your-domain.com')
 WEBHOOK_PATH = '/payment/webhook'
-
+WEBHOOK_HOST = '0.0.0.0'
+WEBHOOK_PORT = 8080
 # Admin notifications
 PAYMENT_ADMIN_CHAT_ID = int(os.getenv('PAYMENT_ADMIN_CHAT_ID', '0'))
+DATABASE_PATH = 'quiz_async.db'  # Укажите путь к вашей БД
+WEBHOOK_URL = 'https://xn--80aaabfr9bnfdntn4cn1bzd.xn--p1ai/payment-notification'
 
 # Режим работы подписок
 SUBSCRIPTION_MODE = os.getenv('SUBSCRIPTION_MODE', 'modular')  # 'unified' или 'modular'
