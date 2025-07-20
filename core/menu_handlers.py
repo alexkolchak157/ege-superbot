@@ -28,11 +28,8 @@ async def handle_to_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE
                 reply_markup=kb
             )
         except Exception as e:
-            # Если не удалось отредактировать - отправим новое сообщение
-            await query.message.reply_text(
-                "👋 Что хотите потренировать?", 
-                reply_markup=kb
-            )
+            # Просто отвечаем на callback без создания нового сообщения
+            logger.debug(f"Could not edit message in handle_to_main_menu: {e}")
     
     # Очищаем данные пользователя
     context.user_data.clear()

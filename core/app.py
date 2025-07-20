@@ -18,6 +18,85 @@ from payment import init_payment_module
 
 logger = logging.getLogger(__name__)
 
+async def handle_my_subscription(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Показывает информацию о подписке пользователя."""
+    query = update.callback_query
+    await query.answer()
+    
+    user_id = update.effective_user.id
+    subscription_manager = context.bot_data.get('subscription_manager')
+    
+    if not subscription_manager:
+        await query.edit_message_text("❌ Сервис подписок временно недоступен")
+        return
+    
+    subscription_info = await subscription_manager.get_subscription_info(user_id)
+    
+    if subscription_info:
+        if subscription_info.get('type') == 'modular':
+            # Модульная подписка
+            text = "💳 <b>Ваша подписка</b>\n\n"
+            text += "✅ <b>Активные модули:</b>\n"
+            
+            for module in subscription_info.get('modules', []):
+                text += f"   • {module}\n"
+            
+            text += f"\n📅 <b>Действует до:</b> {subscription_info.get('expires_at').strftime('%d.%m.%Y')}\n"
+            
+            # Проверяем доступ к каждому модулю для детальной информации
+            text += "\n📊 <b>Детали доступа:</b>\n"
+            modules_to_check = ['test_part', 'task19', 'task20', 'task24', 'task25']
+            module_names = {
+                'test_part': '📝 Тестовая часть',
+                'task19': '🎯 Задание 19',
+                'task20': '📖 Задание 20',  # ИСПРАВЛЕНО: добавлена иконка
+                'task24': '💎 Задание 24',
+                'task25': '✍️ Задание 25'
+            }
+            
+            for module_code in modules_to_check:
+                has_access = await subscription_manager.check_module_access(user_id, module_code)
+                status = "✅" if has_access else "❌"
+                text += f"   {status} {module_names.get(module_code, module_code)}\n"
+        else:
+            # Единая подписка
+            text = "💳 <b>Ваша подписка</b>\n\n"
+            text += f"✅ <b>План:</b> {subscription_info.get('plan_name')}\n"
+            text += f"📅 <b>Действует до:</b> {subscription_info.get('expires_at').strftime('%d.%m.%Y')}\n"
+    else:
+        # ИСПРАВЛЕНО: Используем такое же оформление, как в "Оформить подписку"
+        text = "❌ <b>У вас нет активной подписки</b>\n\n"
+        text += "Для доступа к этой функции необходима подписка!\n\n"
+        text += "💎 <b>Выберите подходящий план:</b>\n\n"
+        text += "🎁 <b>Пробный период</b> — 1₽\n"
+        text += "• Полный доступ на 7 дней\n"
+        text += "• Все модули включены\n\n"
+        text += "🎯 <b>Пакет «Вторая часть»</b> — 499₽/мес\n" 
+        text += "• Задание 19 (Примеры)\n"
+        text += "• Задание 20 (Суждения)\n"
+        text += "• Задание 25 (Развёрнутый ответ)\n"
+        text += "<i>Экономия 98₽ по сравнению с покупкой по отдельности</i>\n\n"
+        text += "👑 <b>Полный доступ</b> — 999₽/мес\n"
+        text += "• Все модули тестовой части\n"
+        text += "• Все задания второй части (19, 20, 24, 25)\n"
+        text += "• Приоритетная поддержка\n"
+        text += "<i>Экономия 346₽ по сравнению с покупкой по отдельности</i>\n"
+    
+    buttons = []
+    
+    if not subscription_info:
+        buttons.append([InlineKeyboardButton("💳 Оформить подписку", callback_data="subscribe")])
+    else:
+        buttons.append([InlineKeyboardButton("📋 Моя статистика", callback_data="my_statistics")])
+    
+    buttons.append([InlineKeyboardButton("🏠 Главное меню", callback_data="to_main_menu")])
+    
+    await query.edit_message_text(
+        text,
+        reply_markup=InlineKeyboardMarkup(buttons),
+        parse_mode="HTML"
+    )
+
 async def post_init(application: Application) -> None:
     """Инициализация после запуска бота"""
     logger.info("Выполняется post-init...")
