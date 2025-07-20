@@ -419,6 +419,21 @@ def setup_subscription_middleware(
     Настраивает middleware для проверки подписок.
     Должен вызываться в post_init после инициализации БД.
     """
+    default_free_patterns = {
+        # Базовые паттерны
+        'main_menu', 'to_main_menu', 'start_', 'help_',
+        'subscribe', 'pay_', 'confirm_', 'cancel_',
+        'module_info_', 'duration_', 'back_to_',
+        'check_subscription', 'support_', 'settings_',
+        
+        # ВАЖНО: Добавляем паттерн для "Моя подписка"
+        'my_subscription',
+        
+        # Админские паттерны
+        'admin_', 'broadcast_', 'stats_', 'test_',
+        'add_user_', 'remove_user_', 'list_users_',
+        'refresh_'
+    }
     # Расширяем список бесплатных команд, включая админские
     default_free_commands = {
         # Базовые команды

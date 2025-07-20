@@ -138,7 +138,7 @@ async def show_unified_plans(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
 
 async def show_modular_interface(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Показывает модульную систему подписок."""
+    """Показывает модульный интерфейс подписок."""
     user_id = update.effective_user.id
     subscription_manager = context.bot_data.get('subscription_manager', SubscriptionManager())
     
@@ -168,11 +168,32 @@ async def show_modular_interface(update: Update, context: ContextTypes.DEFAULT_T
             text += f"• {name} (до {expires})\n"
         text += "\n"
     
-    text += "Выберите тариф или модуль:\n\n"
+    text += "<b>Доступные тарифы:</b>\n\n"
+    
+    # Пробный период
+    if not has_trial:
+        text += "🎁 <b>Пробный период</b> — 1₽\n"
+        text += "   • Полный доступ на 7 дней\n"
+        text += "   • Все модули включены\n\n"
+    
+    # Пакетные предложения с подробным описанием
+    text += "🎯 <b>Пакет «Вторая часть»</b> — 499₽/мес\n"
+    text += "   • Задание 19 (анализ суждений)\n"
+    text += "   • Задание 20 (пропущенные слова)\n"
+    text += "   • Задание 25 (определения и примеры)\n"
+    text += "   <i>Экономия 98₽ по сравнению с покупкой по отдельности</i>\n\n"
+    
+    text += "👑 <b>Полный доступ</b> — 999₽/мес\n"
+    text += "   • Все модули тестовой части\n"
+    text += "   • Все задания второй части (19, 20, 24, 25)\n"
+    text += "   • Приоритетная поддержка\n"
+    text += "   <i>Экономия 346₽ по сравнению с покупкой по отдельности</i>\n\n"
+    
+    text += "📚 Или выберите отдельные модули\n"
     
     keyboard = []
     
-    # Пробный период
+    # Кнопки
     if not has_trial:
         keyboard.append([
             InlineKeyboardButton(
@@ -181,15 +202,14 @@ async def show_modular_interface(update: Update, context: ContextTypes.DEFAULT_T
             )
         ])
     
-    # Пакетные предложения
     keyboard.extend([
         [InlineKeyboardButton(
             "👑 Полный доступ - 999₽/мес",
             callback_data="pay_package_full"
         )],
         [InlineKeyboardButton(
-            "🎯 Пакет 'Вторая часть' - 499₽/мес",
-            callback_data="pay_package_second_part"
+            "🎯 Пакет «Вторая часть» - 499₽/мес",
+            callback_data="pay_package_second"  # Исправлено название
         )],
         [InlineKeyboardButton(
             "📚 Выбрать отдельные модули",
@@ -197,23 +217,20 @@ async def show_modular_interface(update: Update, context: ContextTypes.DEFAULT_T
         )]
     ])
     
-    # Кнопка отмены
     keyboard.append([
         InlineKeyboardButton("❌ Отмена", callback_data="pay_cancel")
     ])
     
     reply_markup = InlineKeyboardMarkup(keyboard)
     
-    # Проверяем, откуда пришел вызов - из команды или из callback
+    # Проверяем, откуда пришел вызов
     if update.message:
-        # Вызов через команду /subscribe
         await update.message.reply_text(
             text,
             reply_markup=reply_markup,
             parse_mode=ParseMode.HTML
         )
     elif update.callback_query:
-        # Вызов через callback кнопки
         query = update.callback_query
         await query.answer()
         try:
@@ -223,7 +240,6 @@ async def show_modular_interface(update: Update, context: ContextTypes.DEFAULT_T
                 parse_mode=ParseMode.HTML
             )
         except Exception as e:
-            # Если не удалось отредактировать, отправляем новое сообщение
             await query.message.reply_text(
                 text,
                 reply_markup=reply_markup,
@@ -255,8 +271,9 @@ async def handle_plan_selection(update: Update, context: ContextTypes.DEFAULT_TY
         elif query.data == "pay_trial":
             # ВАЖНО: Сохраняем все данные для пробного периода
             context.user_data['selected_plan'] = 'trial_7days'
-            context.user_data['duration_months'] = 0
-            context.user_data['is_trial'] = True  # Дополнительный флаг
+            context.user_data['duration_months'] = 1  # ИЗМЕНЕНО с 0 на 1
+            context.user_data['is_trial'] = True
+            context.user_data['trial_price'] = 100  # Цена в копейках (1 рубль)
             return await request_email(update, context)
         elif query.data.startswith("pay_package_"):
             # Исправляем обработку package_second -> package_second_part
@@ -456,14 +473,36 @@ async def handle_duration_selection(update: Update, context: ContextTypes.DEFAUL
 async def request_email(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Запрашивает email пользователя."""
     query = update.callback_query
+    await query.answer()
     
-    # ВАЖНО: Устанавливаем/подтверждаем флаг процесса оплаты
-    context.user_data['in_payment_process'] = True
+    plan_id = context.user_data.get('selected_plan')
+    duration = context.user_data.get('duration_months', 1)
     
-    text = """📧 <b>Введите ваш email для чека:</b>
+    plan = MODULE_PLANS.get(plan_id, SUBSCRIPTION_PLANS.get(plan_id))
+    if not plan:
+        await query.edit_message_text("❌ Ошибка: план не найден")
+        return ConversationHandler.END
+    
+    # Специальное отображение для пробного периода
+    if context.user_data.get('is_trial'):
+        text = f"""📝 <b>Оформление пробного периода</b>
 
-Email нужен для отправки электронного чека согласно 54-ФЗ.
-Мы не будем использовать его для рассылок."""
+План: {plan['name']}
+Срок: 7 дней
+Стоимость: 1 ₽
+
+Для оформления подписки введите ваш email:"""
+    else:
+        # Обычное отображение для других планов
+        text = f"""📝 <b>Оформление подписки</b>
+
+План: {plan['name']}"""
+        
+        if SUBSCRIPTION_MODE == 'modular' and duration > 1:
+            discount_info = DURATION_DISCOUNTS.get(duration, {})
+            text += f"\nСрок: {discount_info.get('label', f'{duration} мес.')}"
+        
+        text += f"\n\nДля оформления подписки введите ваш email:"
     
     await query.edit_message_text(text, parse_mode=ParseMode.HTML)
     return ENTERING_EMAIL
@@ -491,49 +530,66 @@ async def handle_email_input(update: Update, context: ContextTypes.DEFAULT_TYPE)
         )
         return ENTERING_EMAIL
     
-    # Сохраняем email
+    # После сохранения email
     context.user_data['user_email'] = email
-    
-    # Показываем подтверждение
+
+    # Показываем подтверждение заказа
     plan_id = context.user_data.get('selected_plan')
+    duration = context.user_data.get('duration_months', 1)
+    is_trial = context.user_data.get('is_trial', False)
+
     plan = MODULE_PLANS.get(plan_id, SUBSCRIPTION_PLANS.get(plan_id))
-    
     if not plan:
-        # Очищаем флаг при ошибке
-        context.user_data.pop('in_payment_process', None)
         await update.message.reply_text("❌ Ошибка: план не найден")
         return ConversationHandler.END
-    
-    # Рассчитываем финальную цену
-    duration = context.user_data.get('duration_months', 1)
-    
-    if SUBSCRIPTION_MODE == 'modular' and duration > 1:
-        from .config import DURATION_DISCOUNTS
-        multiplier = DURATION_DISCOUNTS.get(duration, {}).get('multiplier', duration)
-        total_price = int(plan['price_rub'] * multiplier)
+
+    # Специальное отображение для пробного периода
+    if is_trial:
+        text = f"""📋 <b>Подтверждение заказа</b>
+
+    ✅ План: {plan['name']}
+    📧 Email: {email}
+    📅 Срок: 7 дней
+    💰 К оплате: 1 ₽
+
+    Все верно?"""
     else:
-        total_price = plan['price_rub'] * duration
-    
-    text = f"""📋 <b>Подтверждение заказа</b>
+        # Обычное отображение
+        if SUBSCRIPTION_MODE == 'modular' and duration > 1:
+            from .config import DURATION_DISCOUNTS, get_plan_price_kopecks
+            total_price = get_plan_price_kopecks(plan_id, duration) // 100
+            discount_info = DURATION_DISCOUNTS.get(duration, {})
+            
+            text = f"""📋 <b>Подтверждение заказа</b>
 
-📦 План: {plan['name']}
-📧 Email: {email}
-⏱ Срок: {duration} мес.
-💰 К оплате: {total_price} ₽
+    ✅ План: {plan['name']}
+    📧 Email: {email}
+    📅 Срок: {discount_info.get('label', f'{duration} мес.')}
+    💰 К оплате: {total_price} ₽
 
-Все верно?"""
-    
+    Все верно?"""
+        else:
+            total_price = plan['price_rub'] * duration
+            text = f"""📋 <b>Подтверждение заказа</b>
+
+    ✅ План: {plan['name']}
+    📧 Email: {email}
+    📅 Срок: {duration} мес.
+    💰 К оплате: {total_price} ₽
+
+    Все верно?"""
+
     keyboard = [
         [InlineKeyboardButton("✅ Подтвердить и оплатить", callback_data="confirm_payment")],
         [InlineKeyboardButton("❌ Отмена", callback_data="pay_cancel")]
     ]
-    
+
     await update.message.reply_text(
         text,
         parse_mode=ParseMode.HTML,
         reply_markup=InlineKeyboardMarkup(keyboard)
     )
-    
+
     return CONFIRMING
 
 
@@ -566,11 +622,23 @@ async def handle_payment_confirmation(update: Update, context: ContextTypes.DEFA
     
     try:
         # Рассчитываем финальную цену в копейках
-        if SUBSCRIPTION_MODE == 'modular' and duration > 1:
+        if context.user_data.get('is_trial'):
+            # Для пробного периода всегда 1 рубль
+            amount_kopecks = 100  # 1 рубль в копейках
+        elif SUBSCRIPTION_MODE == 'modular' and duration > 1:
             from .config import DURATION_DISCOUNTS, get_plan_price_kopecks
             amount_kopecks = get_plan_price_kopecks(plan_id, duration)
         else:
             amount_kopecks = plan['price_rub'] * duration * 100
+        
+        # Проверка минимальной суммы для Тинькофф
+        if amount_kopecks < 100:
+            logger.error(f"Amount too small: {amount_kopecks} kopecks")
+            await query.edit_message_text(
+                "❌ Ошибка: сумма платежа слишком мала.\n"
+                "Минимальная сумма - 1 рубль."
+            )
+            return ConversationHandler.END
         
         # Создаем запись о платеже
         payment_data = await subscription_manager.create_payment(
@@ -809,7 +877,7 @@ async def handle_module_info(update: Update, context: ContextTypes.DEFAULT_TYPE)
             'price': '199₽/мес'
         },
         'task24': {
-            'name': '💎 Задание 24 (Премиум)',
+            'name': '💎 Задание 24',
             'description': 'Составление сложного плана',
             'features': [
                 '✅ База готовых планов',
