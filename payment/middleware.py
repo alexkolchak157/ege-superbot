@@ -111,6 +111,20 @@ class SubscriptionMiddleware:
             
         user_id = update.effective_user.id
         
+        # ИСПРАВЛЕНИЕ: Проверяем админов ДО проверки подписки
+        from core import config
+        admin_ids = []
+        if hasattr(config, 'ADMIN_IDS') and config.ADMIN_IDS:
+            if isinstance(config.ADMIN_IDS, str):
+                admin_ids = [int(id.strip()) for id in config.ADMIN_IDS.split(',') if id.strip()]
+            elif isinstance(config.ADMIN_IDS, list):
+                admin_ids = config.ADMIN_IDS
+        
+        # Если пользователь админ - пропускаем все проверки
+        if user_id in admin_ids:
+            logger.debug(f"Admin user {user_id} - skipping subscription check")
+            return True
+        
         # Проверяем, является ли это бесплатным действием
         if self._is_free_action(update):
             logger.debug(f"Free action for user {user_id}")
@@ -415,10 +429,7 @@ def setup_subscription_middleware(
     free_patterns: Optional[Set[str]] = None,
     check_channel: bool = False
 ) -> None:
-    """
-    Настраивает middleware для проверки подписок.
-    Должен вызываться в post_init после инициализации БД.
-    """
+    """Настраивает middleware для проверки подписок."""
     default_free_patterns = {
         # Базовые паттерны
         'main_menu', 'to_main_menu', 'start_', 'help_',
@@ -426,7 +437,7 @@ def setup_subscription_middleware(
         'module_info_', 'duration_', 'back_to_',
         'check_subscription', 'support_', 'settings_',
         
-        # ВАЖНО: Добавляем паттерн для "Моя подписка"
+        # ВАЖНО: my_subscription уже добавлен в список!
         'my_subscription',
         
         # Админские паттерны

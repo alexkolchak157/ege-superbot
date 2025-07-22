@@ -81,17 +81,22 @@ class TinkoffPayment:
     ) -> Dict[str, Any]:
         """Инициирует платеж в Tinkoff."""
         
+        # ИСПРАВЛЕНИЕ: Используем deep link для возврата в бота
+        bot_username = "@ege_superpuper_bot"  # Имя вашего бота
+        success_deep_link = f"https://t.me/{bot_username[1:]}?start=payment_success_{order_id}"
+        fail_deep_link = f"https://t.me/{bot_username[1:]}?start=payment_fail_{order_id}"
+        
         payload = {
             "TerminalKey": self.terminal_key,
             "Amount": amount_kopecks,
             "OrderId": order_id,
             "Description": description[:250],
-            "SuccessURL": f"{WEBHOOK_BASE_URL}/payment/success?order={order_id}",
-            "FailURL": f"{WEBHOOK_BASE_URL}/payment/fail?order={order_id}",
+            "SuccessURL": success_deep_link,  # Изменено
+            "FailURL": fail_deep_link,        # Изменено
             "NotificationURL": f"{WEBHOOK_BASE_URL}{WEBHOOK_PATH}",
             "Receipt": {
                 "Email": user_email,
-                "Taxation": "usn_income",  # УСН доходы
+                "Taxation": "usn_income",
                 "Items": receipt_items
             }
         }
