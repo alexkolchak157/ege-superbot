@@ -8,7 +8,7 @@ from .subscription_manager import SubscriptionManager
 from .handlers import register_payment_handlers
 from .middleware import setup_subscription_middleware
 from .decorators import requires_subscription
-from .webhook import start_webhook_server
+from .webhook import start_webhook_server, stop_webhook_server
 from .admin_commands import register_admin_commands
 from core import config
 
@@ -23,12 +23,12 @@ __all__ = [
 
 # Глобальные объекты
 subscription_manager = None
-webhook_runner = None
+webhook_task = None
 
 
 async def init_payment_module(app: Application):
     """Инициализирует модуль платежей."""
-    global subscription_manager
+    global subscription_manager, webhook_task
     
     logger.info("Initializing payment module...")
     
@@ -52,8 +52,16 @@ async def init_payment_module(app: Application):
     # Регистрируем middleware для проверки подписок
     setup_subscription_middleware(app)
     
-    # Запускаем webhook сервер в фоне
-    webhook_task = asyncio.create_task(start_webhook_server())
+    # ИСПРАВЛЕНИЕ: Передаем объект бота в webhook сервер
+    webhook_task = asyncio.create_task(start_webhook_server(bot=app.bot))
+    
+    # Добавляем обработчик для корректной остановки webhook при завершении
+    async def shutdown_webhook():
+        """Останавливает webhook сервер при завершении приложения."""
+        if webhook_task and not webhook_task.done():
+            await stop_webhook_server()
+    
+    app.post_shutdown.append(shutdown_webhook)
     
     logger.info("Payment module initialized successfully")
     

@@ -214,24 +214,54 @@ async def notify_user_success(bot, order_id: str):
         subscription_manager = SubscriptionManager()
         payment_info = await subscription_manager.get_payment_by_order_id(order_id)
         
-        if payment_info:
-            plan_names = {
-                'package_second_part': 'Вторая часть ЕГЭ',
-                'package_full': 'Полный доступ',
-                'trial_7days': 'Пробный период на 7 дней'
-            }
+        if not payment_info:
+            logger.error(f"Payment info not found for order {order_id}")
+            return
             
-            plan_name = plan_names.get(payment_info['plan_id'], payment_info['plan_id'])
-            
-            await bot.send_message(
-                payment_info['user_id'],
-                f"✅ Подписка «{plan_name}» успешно активирована!\n\n"
-                f"Теперь вам доступны все материалы выбранного плана.\n"
-                f"Приятной подготовки к ЕГЭ! 📚\n\n"
-                f"Используйте /status для просмотра информации о подписке."
-            )
+        # Получаем информацию о плане
+        from .config import SUBSCRIPTION_PLANS
+        plan = SUBSCRIPTION_PLANS.get(payment_info['plan_id'], {})
+        plan_name = plan.get('name', payment_info['plan_id'])
+        
+        # Формируем сообщение в зависимости от типа подписки
+        message = f"✅ <b>Оплата прошла успешно!</b>\n\n"
+        message += f"План: {plan_name}\n"
+        
+        # Получаем детальную информацию о подписке
+        subscription_info = await subscription_manager.get_subscription_info(payment_info['user_id'])
+        
+        if subscription_info and subscription_info.get('type') == 'modular':
+            # Модульная подписка
+            modules = subscription_info.get('modules', [])
+            if modules:
+                message += "\n<b>Активированные модули:</b>\n"
+                module_names = {
+                    'test_part': '📝 Тестовая часть',
+                    'task19': '🎯 Задание 19',
+                    'task20': '📖 Задание 20',
+                    'task24': '💎 Задание 24',
+                    'task25': '✍️ Задание 25'
+                }
+                for module in modules:
+                    message += f"• {module_names.get(module, module)}\n"
+        
+        if subscription_info and subscription_info.get('expires_at'):
+            message += f"\n📅 Действует до: {subscription_info['expires_at'].strftime('%d.%m.%Y')}\n"
+        
+        message += "\n🎉 Теперь вам доступны все материалы выбранного плана!"
+        message += "\n\nИспользуйте /my_subscriptions для просмотра деталей."
+        
+        # Отправляем сообщение
+        await bot.send_message(
+            chat_id=payment_info['user_id'],
+            text=message,
+            parse_mode='HTML'
+        )
+        
+        logger.info(f"Successfully notified user {payment_info['user_id']} about payment {order_id}")
+        
     except Exception as e:
-        logger.error(f"Failed to notify user: {e}")
+        logger.exception(f"Failed to notify user about successful payment: {e}")
 
 async def notify_user_rejected(bot, order_id: str):
     """Уведомляет об отклоненном платеже."""
