@@ -124,7 +124,13 @@ class SubscriptionManager:
                         CREATE INDEX IF NOT EXISTS idx_module_subs_active 
                         ON module_subscriptions(is_active)
                     """)
-                    
+                    # Проверяем и добавляем недостающие колонки
+                    cursor = await conn.execute("PRAGMA table_info(payments)")
+                    columns = await cursor.fetchall()
+                    column_names = [col[1] for col in columns]
+
+                    if 'completed_at' not in column_names:
+                        await conn.execute("ALTER TABLE payments ADD COLUMN completed_at TIMESTAMP")
                     # История пробных периодов
                     await conn.execute("""
                         CREATE TABLE IF NOT EXISTS trial_history (

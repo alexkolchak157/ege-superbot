@@ -48,14 +48,40 @@ def verify_tinkoff_signature(data: dict, token: str, terminal_key: str, secret_k
     check_data['Password'] = secret_key
     check_data['TerminalKey'] = terminal_key
     
+    # ИСПРАВЛЕНИЕ: Преобразуем булевые значения в строки с маленькой буквы
+    for key, value in check_data.items():
+        if isinstance(value, bool):
+            check_data[key] = 'true' if value else 'false'
+    
+    # ДЕТАЛЬНОЕ ЛОГИРОВАНИЕ
+    logger.info(f"=== SIGNATURE VERIFICATION DEBUG ===")
+    logger.info(f"Secret key: {secret_key[:4]}...{secret_key[-4:]}")
+    logger.info(f"Terminal key: {terminal_key}")
+    logger.info(f"Received token: {received_token}")
+    
+    # Логируем все поля для проверки
+    logger.info("Fields for signature:")
+    for key, value in sorted(check_data.items()):
+        logger.info(f"  {key}: {value} (type: {type(value).__name__})")
+    
     # Сортируем по ключам
     sorted_data = sorted(check_data.items())
     
     # Конкатенируем значения
     concat_values = ''.join(str(value) for key, value in sorted_data)
     
+    # Логируем конкатенированную строку
+    logger.info(f"Concatenated string: {concat_values}")
+    logger.info(f"String length: {len(concat_values)}")
+    
     # Вычисляем SHA256
     calculated_token = hashlib.sha256(concat_values.encode()).hexdigest()
+    
+    # Сравниваем токены
+    logger.info(f"Calculated token: {calculated_token.upper()}")
+    logger.info(f"Received token:   {received_token.upper()}")
+    logger.info(f"Tokens match: {calculated_token.upper() == received_token.upper()}")
+    logger.info(f"=== END DEBUG ===")
     
     return calculated_token.upper() == received_token.upper()
 

@@ -402,19 +402,140 @@ async def cmd_check_webhook(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
 @admin_only
 async def cmd_payment_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Показывает статистику платежей."""
+    """Показывает подробную статистику платежей и подписок."""
     try:
-        await update.message.reply_text(
-            "📊 <b>Статистика платежей</b>\n\n"
-            "🚧 Функция в разработке...\n\n"
-            "Используйте:\n"
-            "/grant <user_id> <plan> - выдать подписку\n"
-            "/revoke <user_id> - отозвать подписку",
-            parse_mode=ParseMode.HTML
-        )
+        import aiosqlite
+        from payment.config import DATABASE_PATH, SUBSCRIPTION_MODE
+        from datetime import datetime, timedelta, timezone
+        
+        await update.message.reply_text("⏳ Собираю статистику...")
+        
+        async with aiosqlite.connect(DATABASE_PATH) as db:
+            # Общая статистика
+            cursor = await db.execute("""
+                SELECT 
+                    COUNT(DISTINCT user_id) as total_users,
+                    COUNT(*) as total_payments,
+                    SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) as completed_payments,
+                    SUM(CASE WHEN status = 'completed' THEN amount_kopecks ELSE 0 END) as total_revenue
+                FROM payments
+            """)
+            stats = await cursor.fetchone()
+            total_users, total_payments, completed_payments, total_revenue = stats
+            
+            # Статистика по планам
+            cursor = await db.execute("""
+                SELECT plan_id, COUNT(*) as count, SUM(amount_kopecks) as revenue
+                FROM payments
+                WHERE status = 'completed'
+                GROUP BY plan_id
+                ORDER BY count DESC
+            """)
+            plan_stats = await cursor.fetchall()
+            
+            # Активные подписки
+            if SUBSCRIPTION_MODE == 'modular':
+                # Для модульной системы
+                cursor = await db.execute("""
+                    SELECT COUNT(DISTINCT user_id) as active_users
+                    FROM module_subscriptions
+                    WHERE is_active = 1 AND expires_at > datetime('now')
+                """)
+                active_subs = await cursor.fetchone()
+                active_users = active_subs[0]
+                
+                # Статистика по модулям
+                cursor = await db.execute("""
+                    SELECT module_code, COUNT(DISTINCT user_id) as users
+                    FROM module_subscriptions
+                    WHERE is_active = 1 AND expires_at > datetime('now')
+                    GROUP BY module_code
+                """)
+                module_stats = await cursor.fetchall()
+            else:
+                # Для единой системы
+                cursor = await db.execute("""
+                    SELECT COUNT(DISTINCT user_id) as active_users
+                    FROM user_subscriptions
+                    WHERE status = 'active' AND expires_at > datetime('now')
+                """)
+                active_subs = await cursor.fetchone()
+                active_users = active_subs[0]
+                module_stats = []
+            
+            # Платежи за последние 30 дней
+            cursor = await db.execute("""
+                SELECT 
+                    COUNT(*) as recent_payments,
+                    SUM(CASE WHEN status = 'completed' THEN amount_kopecks ELSE 0 END) as recent_revenue
+                FROM payments
+                WHERE created_at > datetime('now', '-30 days')
+            """)
+            recent = await cursor.fetchone()
+            recent_payments, recent_revenue = recent
+            
+            # Формируем сообщение
+            text = "📊 <b>Статистика платежей</b>\n\n"
+            
+            text += "📈 <b>Общая статистика:</b>\n"
+            text += f"👥 Всего пользователей: {total_users}\n"
+            text += f"💳 Всего платежей: {total_payments}\n"
+            text += f"✅ Успешных платежей: {completed_payments}\n"
+            text += f"💰 Общий доход: {total_revenue/100:.2f}₽\n\n"
+            
+            text += "🎯 <b>Активные подписки:</b>\n"
+            text += f"👤 Активных пользователей: {active_users}\n"
+            
+            if module_stats:
+                text += "\n<b>По модулям:</b>\n"
+                module_names = {
+                    'test_part': '📝 Тестовая часть',
+                    'task19': '🎯 Задание 19',
+                    'task20': '📖 Задание 20',
+                    'task24': '💎 Задание 24',
+                    'task25': '✍️ Задание 25'
+                }
+                for module_code, users in module_stats:
+                    name = module_names.get(module_code, module_code)
+                    text += f"• {name}: {users} польз.\n"
+            
+            text += f"\n📅 <b>За последние 30 дней:</b>\n"
+            text += f"💳 Платежей: {recent_payments}\n"
+            text += f"💰 Доход: {recent_revenue/100:.2f}₽\n"
+            
+            if plan_stats:
+                text += "\n💎 <b>Популярные планы:</b>\n"
+                plan_names = {
+                    'trial_7days': '🎁 Пробный период',
+                    'package_second_part': '🎯 Вторая часть',
+                    'package_full': '👑 Полный доступ',
+                    'module_test_part': '📝 Тестовая часть',
+                    'module_task19': '💡 Задание 19',
+                    'module_task20': '📖 Задание 20',
+                    'module_task24': '💎 Задание 24',
+                    'module_task25': '✍️ Задание 25'
+                }
+                for plan_id, count, revenue in plan_stats[:5]:  # Топ-5 планов
+                    name = plan_names.get(plan_id, plan_id)
+                    text += f"• {name}: {count} шт. ({revenue/100:.0f}₽)\n"
+            
+            # Добавляем кнопки для дополнительных действий
+            keyboard = [
+                [InlineKeyboardButton("📋 Экспорт в CSV", callback_data="admin:export_payments")],
+                [InlineKeyboardButton("👥 Список активных", callback_data="admin:list_active_users")],
+                [InlineKeyboardButton("🔄 Обновить", callback_data="admin:refresh_stats")]
+            ]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            
+            await update.message.reply_text(
+                text, 
+                parse_mode=ParseMode.HTML,
+                reply_markup=reply_markup
+            )
+            
     except Exception as e:
         logger.exception(f"Error getting payment stats: {e}")
-        await update.message.reply_text("❌ Ошибка получения статистики")
+        await update.message.reply_text(f"❌ Ошибка получения статистики: {e}")
 
 async def cmd_check_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Проверяет админские права пользователя."""
@@ -464,15 +585,169 @@ async def cmd_check_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
             parse_mode=ParseMode.HTML
         )
 
+@admin_only
+async def cmd_subscribers_count(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Быстрая проверка количества активных подписчиков."""
+    try:
+        import aiosqlite
+        from payment.config import DATABASE_PATH, SUBSCRIPTION_MODE
+        
+        async with aiosqlite.connect(DATABASE_PATH) as db:
+            # Количество активных подписчиков
+            if SUBSCRIPTION_MODE == 'modular':
+                cursor = await db.execute("""
+                    SELECT COUNT(DISTINCT user_id) 
+                    FROM module_subscriptions
+                    WHERE is_active = 1 AND expires_at > datetime('now')
+                """)
+            else:
+                cursor = await db.execute("""
+                    SELECT COUNT(DISTINCT user_id)
+                    FROM user_subscriptions
+                    WHERE status = 'active' AND expires_at > datetime('now')
+                """)
+            
+            active_count = (await cursor.fetchone())[0]
+            
+            # Доход за сегодня
+            cursor = await db.execute("""
+                SELECT 
+                    COUNT(*) as today_payments,
+                    SUM(CASE WHEN status = 'completed' THEN amount_kopecks ELSE 0 END) as today_revenue
+                FROM payments
+                WHERE date(created_at) = date('now')
+            """)
+            today_payments, today_revenue = await cursor.fetchone()
+            today_revenue = today_revenue or 0
+            
+            # Доход за месяц
+            cursor = await db.execute("""
+                SELECT SUM(amount_kopecks)
+                FROM payments
+                WHERE status = 'completed' 
+                AND created_at > datetime('now', '-30 days')
+            """)
+            month_revenue = (await cursor.fetchone())[0] or 0
+            
+            text = f"""📊 <b>Быстрая статистика</b>
+
+👥 Активных подписчиков: <b>{active_count}</b>
+
+💰 <b>Сегодня:</b>
+• Платежей: {today_payments}
+• Доход: {today_revenue/100:.2f}₽
+
+📅 <b>За 30 дней:</b>
+• Доход: {month_revenue/100:.2f}₽
+• Средний чек: {month_revenue/100/max(active_count, 1):.2f}₽
+
+Используйте /payment_stats для подробной статистики"""
+            
+            await update.message.reply_text(text, parse_mode=ParseMode.HTML)
+            
+    except Exception as e:
+        logger.exception(f"Error getting quick stats: {e}")
+        await update.message.reply_text(f"❌ Ошибка: {e}")
+
+@admin_only
+async def cmd_list_active_subscribers(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Показывает список всех активных подписчиков."""
+    try:
+        import aiosqlite
+        from payment.config import DATABASE_PATH, SUBSCRIPTION_MODE
+        from datetime import datetime
+        
+        async with aiosqlite.connect(DATABASE_PATH) as db:
+            if SUBSCRIPTION_MODE == 'modular':
+                # Для модульной системы
+                cursor = await db.execute("""
+                    SELECT DISTINCT 
+                        ms.user_id,
+                        GROUP_CONCAT(ms.module_code) as modules,
+                        MIN(ms.expires_at) as earliest_expiry,
+                        MAX(ms.expires_at) as latest_expiry
+                    FROM module_subscriptions ms
+                    WHERE ms.is_active = 1 AND ms.expires_at > datetime('now')
+                    GROUP BY ms.user_id
+                    ORDER BY ms.user_id
+                """)
+            else:
+                # Для единой системы
+                cursor = await db.execute("""
+                    SELECT 
+                        us.user_id,
+                        us.plan_id,
+                        us.expires_at
+                    FROM user_subscriptions us
+                    WHERE us.status = 'active' AND us.expires_at > datetime('now')
+                    ORDER BY us.user_id
+                """)
+            
+            subscribers = await cursor.fetchall()
+            
+            if not subscribers:
+                await update.message.reply_text("📭 Нет активных подписчиков")
+                return
+            
+            # Формируем сообщение
+            text = f"👥 <b>Активные подписчики ({len(subscribers)} чел.)</b>\n\n"
+            
+            # Если подписчиков много, показываем первых 20
+            for i, sub in enumerate(subscribers[:20]):
+                if SUBSCRIPTION_MODE == 'modular':
+                    user_id, modules, earliest, latest = sub
+                    text += f"{i+1}. User {user_id}\n"
+                    text += f"   Модули: {modules}\n"
+                    text += f"   До: {latest[:10]}\n\n"
+                else:
+                    user_id, plan_id, expires_at = sub
+                    text += f"{i+1}. User {user_id}\n"
+                    text += f"   План: {plan_id}\n"
+                    text += f"   До: {expires_at[:10]}\n\n"
+            
+            if len(subscribers) > 20:
+                text += f"... и еще {len(subscribers) - 20} подписчиков\n"
+            
+            # Кнопка для экспорта полного списка
+            keyboard = [[
+                InlineKeyboardButton(
+                    "📥 Скачать полный список", 
+                    callback_data="admin:export_subscribers"
+                )
+            ]]
+            
+            await update.message.reply_text(
+                text,
+                parse_mode=ParseMode.HTML,
+                reply_markup=InlineKeyboardMarkup(keyboard)
+            )
+            
+    except Exception as e:
+        logger.exception(f"Error listing subscribers: {e}")
+        await update.message.reply_text(f"❌ Ошибка: {e}")
+
+
+# Добавьте эту функцию в register_admin_commands:
 def register_admin_commands(app: Application):
     """Регистрирует админские команды для управления подписками."""
     app.add_handler(CommandHandler("grant_subscription", cmd_grant_subscription))
-    # app.add_handler(CommandHandler("check_user_subscription", cmd_check_user_subscription))
-    # app.add_handler(CommandHandler("list_subscriptions", cmd_list_subscriptions))
     app.add_handler(CommandHandler("activate_payment", cmd_activate_payment))
     app.add_handler(CommandHandler("check_webhook", cmd_check_webhook))
     app.add_handler(CommandHandler("revoke", cmd_revoke_subscription))
     app.add_handler(CommandHandler("payment_stats", cmd_payment_stats))
+    app.add_handler(CommandHandler("stats", cmd_subscribers_count))
     app.add_handler(CommandHandler("check_admin", cmd_check_admin))
+    app.add_handler(CommandHandler("list_subscribers", cmd_list_active_subscribers))
+    
+    # Обработчики для callback кнопок
+    app.add_handler(CallbackQueryHandler(
+        handle_export_payments, pattern="^admin:export_payments$"
+    ))
+    app.add_handler(CallbackQueryHandler(
+        handle_list_active_users, pattern="^admin:list_active_users$"
+    ))
+    app.add_handler(CallbackQueryHandler(
+        handle_refresh_stats, pattern="^admin:refresh_stats$"
+    ))
     
     logger.info("Admin payment commands registered")
