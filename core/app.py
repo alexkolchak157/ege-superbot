@@ -33,8 +33,8 @@ async def handle_my_subscription(update: Update, context: ContextTypes.DEFAULT_T
     subscription_info = await subscription_manager.get_subscription_info(user_id)
     
     if subscription_info:
+        # Код для активной подписки остается без изменений
         if subscription_info.get('type') == 'modular':
-            # Модульная подписка
             text = "💳 <b>Ваша подписка</b>\n\n"
             text += "✅ <b>Активные модули:</b>\n"
             
@@ -64,32 +64,38 @@ async def handle_my_subscription(update: Update, context: ContextTypes.DEFAULT_T
             text += f"✅ <b>План:</b> {subscription_info.get('plan_name')}\n"
             text += f"📅 <b>Действует до:</b> {subscription_info.get('expires_at').strftime('%d.%m.%Y')}\n"
     else:
-        # ИСПРАВЛЕНО: Используем такое же оформление, как в "Оформить подписку"
-        text = "❌ <b>У вас нет активной подписки</b>\n\n"
-        text += "Для доступа к этой функции необходима подписка!\n\n"
-        text += "💎 <b>Выберите подходящий план:</b>\n\n"
+        # ИСПРАВЛЕНИЕ: Используем то же оформление, что и в show_modular_interface
+        text = "💎 <b>Модульная система подписок</b>\n\n"
+        text += "У вас пока нет активной подписки.\n\n"
+        text += "<b>Доступные тарифы:</b>\n\n"
+        
+        # Добавляем информацию о доступных планах
         text += "🎁 <b>Пробный период</b> — 1₽\n"
-        text += "• Полный доступ на 7 дней\n"
-        text += "• Все модули включены\n\n"
-        text += "🎯 <b>Пакет «Вторая часть»</b> — 499₽/мес\n" 
-        text += "• Задание 19 (Примеры)\n"
-        text += "• Задание 20 (Суждения)\n"
-        text += "• Задание 25 (Развёрнутый ответ)\n"
-        text += "<i>Экономия 98₽ по сравнению с покупкой по отдельности</i>\n\n"
+        text += "   • Полный доступ на 7 дней\n"
+        text += "   • Все модули включены\n\n"
+        
+        text += "🎯 <b>Пакет «Вторая часть»</b> — 499₽/мес\n"
+        text += "   • Задание 19, 20, 25\n"
+        text += "   <i>Экономия 98₽</i>\n\n"
+        
         text += "👑 <b>Полный доступ</b> — 999₽/мес\n"
-        text += "• Все модули тестовой части\n"
-        text += "• Все задания второй части (19, 20, 24, 25)\n"
-        text += "• Приоритетная поддержка\n"
-        text += "<i>Экономия 346₽ по сравнению с покупкой по отдельности</i>\n"
+        text += "   • Все модули\n"
+        text += "   • Приоритетная поддержка\n"
+        text += "   <i>Экономия 346₽</i>\n\n"
+        
+        text += "📚 Или выберите отдельные модули"
     
     buttons = []
     
     if not subscription_info:
         buttons.append([InlineKeyboardButton("💳 Оформить подписку", callback_data="subscribe")])
     else:
-        buttons.append([InlineKeyboardButton("📋 Моя статистика", callback_data="my_statistics")])
+        buttons.append([InlineKeyboardButton("🔄 Продлить подписку", callback_data="subscribe")])
     
-    buttons.append([InlineKeyboardButton("🏠 Главное меню", callback_data="to_main_menu")])
+    buttons.extend([
+        [InlineKeyboardButton("📊 Моя статистика", callback_data="my_statistics")],
+        [InlineKeyboardButton("⬅️ Главное меню", callback_data="to_main_menu")]
+    ])
     
     await query.edit_message_text(
         text,
@@ -152,7 +158,31 @@ async def post_shutdown(application: Application) -> None:
 async def start_command(update: Update, context):
     """Обработчик команды /start"""
     user_id = update.effective_user.id
+    args = context.args
     
+    if args and len(args) > 0:
+        param = args[0]
+        
+        # Обработка возврата после оплаты
+        if param.startswith('payment_success_'):
+            order_id = param.replace('payment_success_', '')
+            await update.message.reply_text(
+                "✅ <b>Спасибо за оплату!</b>\n\n"
+                "Ваша подписка будет активирована в течение нескольких минут.\n"
+                "Используйте /my_subscriptions для проверки статуса.",
+                parse_mode=ParseMode.HTML
+            )
+            return
+            
+        elif param.startswith('payment_fail_'):
+            order_id = param.replace('payment_fail_', '')
+            await update.message.reply_text(
+                "❌ <b>Оплата не прошла</b>\n\n"
+                "Попробуйте оформить подписку еще раз.\n"
+                "Используйте /subscribe для выбора плана.",
+                parse_mode=ParseMode.HTML
+            )
+            return
     # Проверяем/создаем пользователя в БД
     await db.ensure_user(user_id)
     
