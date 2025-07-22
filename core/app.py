@@ -88,7 +88,7 @@ async def handle_my_subscription(update: Update, context: ContextTypes.DEFAULT_T
     buttons = []
     
     if not subscription_info:
-        buttons.append([InlineKeyboardButton("💳 Оформить подписку", callback_data="subscribe")])
+        buttons.append([InlineKeyboardButton("💳 Оформить подписку", callback_data="subscribe_start")])  # Изменить с "show_payment_plans"
     else:
         buttons.append([InlineKeyboardButton("🔄 Продлить подписку", callback_data="subscribe")])
     
@@ -109,7 +109,6 @@ async def post_init(application: Application) -> None:
     
     # Инициализация БД
     await db.init_db()
-    
     # Добавляем базовые команды
     application.add_handler(CommandHandler("start", start_command))
     application.add_handler(CommandHandler("help", help_command))
@@ -243,6 +242,7 @@ async def show_main_menu_with_access(context: ContextTypes.DEFAULT_TYPE, user_id
         'test_part': 'test_part',
         'task19': 'task19', 
         'task20': 'task20',
+        't20': 'task20',
         'task24': 'task24',
         'task25': 'task25'
     }
@@ -333,12 +333,11 @@ async def handle_my_subscription(update: Update, context: ContextTypes.DEFAULT_T
     buttons = []
     
     if not subscription_info:
-        buttons.append([InlineKeyboardButton("💳 Оформить подписку", callback_data="show_payment_plans")])
-    
-    buttons.extend([
-        [InlineKeyboardButton("📊 Моя статистика", callback_data="my_statistics")],
-        [InlineKeyboardButton("⬅️ Главное меню", callback_data="to_main_menu")]
-    ])
+        buttons.append([InlineKeyboardButton("💳 Оформить подписку", callback_data="subscribe_start")])
+
+    # Удалить кнопку "Моя статистика", так как для неё нет обработчика
+    # Или создать заглушку
+    buttons.append([InlineKeyboardButton("⬅️ Главное меню", callback_data="^to_main_menu$")])
     
     await query.edit_message_text(
         text,

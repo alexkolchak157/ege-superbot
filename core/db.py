@@ -336,7 +336,6 @@ async def record_mistake(user_id: int, question_id: str):
     except Exception as e:
         logger.exception(f"Ошибка записи ошибки user {user_id}, question {question_id}: {e}")
 
-
 async def get_mistake_ids(user_id: int) -> List[str]:
     """Возвращает список ID вопросов с ошибками. Защищено от SQL injection."""
     if not isinstance(user_id, int) or user_id <= 0:

@@ -1,6 +1,6 @@
 # core/menu_handlers.py
 """Универсальные обработчики для главного меню."""
-
+import logging
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes, ConversationHandler, CallbackQueryHandler
 from core.plugin_loader import build_main_menu
@@ -13,7 +13,7 @@ async def handle_to_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE
         
         user_id = update.effective_user.id
         
-        # Проверяем, есть ли функция show_main_menu_with_access
+        # Используем функцию с проверкой доступа
         try:
             from core.app import show_main_menu_with_access
             kb = await show_main_menu_with_access(context, user_id)
@@ -28,8 +28,12 @@ async def handle_to_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE
                 reply_markup=kb
             )
         except Exception as e:
-            # Просто отвечаем на callback без создания нового сообщения
+            # Если не удалось отредактировать, отправляем новое сообщение
             logger.debug(f"Could not edit message in handle_to_main_menu: {e}")
+            await query.message.reply_text(
+                "👋 Что хотите потренировать?", 
+                reply_markup=kb
+            )
     
     # Очищаем данные пользователя
     context.user_data.clear()
@@ -56,11 +60,11 @@ async def handle_plugin_choice(update: Update, context: ContextTypes.DEFAULT_TYP
 def register_global_handlers(app):
     """Регистрирует глобальные обработчики, работающие во всех плагинах."""
     
-    # Универсальный возврат в главное меню
+    # Универсальный возврат в главное меню с высоким приоритетом
     app.add_handler(
         CallbackQueryHandler(
             handle_to_main_menu, 
             pattern="^to_main_menu$"
         ),
-        group=0  # Высокий приоритет
+        group=-1  # Высокий приоритет, чтобы обработчик срабатывал раньше других
     )
