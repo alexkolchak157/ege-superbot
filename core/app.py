@@ -109,13 +109,34 @@ async def post_init(application: Application) -> None:
     
     # Инициализация БД
     await db.init_db()
-    
+        # Добавляем глобальную команду cancel
+    async def global_cancel(update: Update, context):
+        """Глобальный обработчик команды /cancel"""
+        # Очищаем состояние пользователя
+        context.user_data.clear()
+        
+        # Пробуем получить меню
+        try:
+            from core.plugin_loader import build_main_menu
+            kb = build_main_menu()
+            
+            await update.message.reply_text(
+                "❌ Действие отменено.\n\n"
+                "📚 Выберите раздел для подготовки:",
+                reply_markup=kb,
+                parse_mode=ParseMode.HTML
+            )
+        except:
+            await update.message.reply_text(
+                "❌ Действие отменено.\n\n"
+                "Используйте /menu для возврата в главное меню."
+            )
     # Добавляем базовые команды
     application.add_handler(CommandHandler("start", start_command))
     application.add_handler(CommandHandler("help", help_command))
     application.add_handler(CommandHandler("menu", menu_command))
     application.add_handler(CallbackQueryHandler(handle_my_subscription, pattern="^my_subscription$"))
-    
+    application.add_handler(CommandHandler("cancel", global_cancel), group=10)
     # ВАЖНО: Регистрируем глобальные обработчики меню
     try:
         from core.menu_handlers import register_global_handlers
@@ -125,6 +146,16 @@ async def post_init(application: Application) -> None:
         logger.error(f"Could not import menu_handlers: {e}")
     except Exception as e:
         logger.error(f"Error registering global handlers: {e}")
+    
+    # Регистрируем админские обработчики
+    try:
+        from core.admin_tools import register_admin_handlers
+        register_admin_handlers(application)
+        logger.info("Admin handlers registered")
+    except ImportError as e:
+        logger.error(f"Could not import admin_tools: {e}")
+    except Exception as e:
+        logger.error(f"Error registering admin handlers: {e}")
     
     # Инициализация модуля платежей
     await init_payment_module(application)
@@ -408,28 +439,40 @@ async def help_command(update: Update, context):
 
 {pricing_text}
 
-По всем вопросам: @your_support_bot
+По всем вопросам: @obshestvonapalcahsupport
     """
     await update.message.reply_text(help_text, parse_mode="HTML")
 
 async def menu_command(update: Update, context):
     """Обработчик команды /menu"""
     try:
-        from core import plugin_loader
-        if hasattr(plugin_loader, 'build_main_menu'):
-            menu = plugin_loader.build_main_menu()
-            await update.message.reply_text(
-                "📚 Выберите раздел для подготовки:",
-                reply_markup=menu
-            )
-        else:
-            await update.message.reply_text(
-                "📚 Главное меню временно недоступно.\n"
-                "Используйте /help для просмотра доступных команд."
-            )
+        # Пробуем использовать меню с проверкой доступа
+        user_id = update.effective_user.id
+        try:
+            from core.app import show_main_menu_with_access
+            kb = await show_main_menu_with_access(context, user_id)
+        except:
+            # Если функция недоступна, используем базовое меню
+            from core.plugin_loader import build_main_menu
+            kb = build_main_menu()
+        
+        text = "📚 Выберите раздел для подготовки к ЕГЭ:"
+        
+        # Добавим приветствие с именем если доступно
+        if update.effective_user.first_name:
+            text = f"👋 Привет, {update.effective_user.first_name}!\n\n" + text
+        
+        await update.message.reply_text(
+            text,
+            reply_markup=kb,
+            parse_mode=ParseMode.HTML
+        )
     except Exception as e:
-        logger.error(f"Error showing menu: {e}")
-        await update.message.reply_text("❌ Ошибка при загрузке меню")
+        logger.error(f"Error in menu_command: {e}")
+        await update.message.reply_text(
+            "❌ Произошла ошибка при загрузке меню.\n"
+            "Попробуйте /start для перезапуска бота."
+        )
 
 async def show_plugin_menu(update: Update, context):
     """Показывает меню плагинов"""
