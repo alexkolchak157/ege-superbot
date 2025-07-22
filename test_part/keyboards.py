@@ -172,10 +172,7 @@ def get_mistakes_nav_keyboard() -> InlineKeyboardMarkup:
             )
         ],
         [
-            InlineKeyboardButton(
-                "🏠 Главное меню", 
-                callback_data="test_next_change_block"
-            )
+            InlineKeyboardButton("🏠 Главное меню", callback_data="to_main_menu")
         ],
     ])
 
@@ -238,10 +235,7 @@ def get_next_action_keyboard(last_mode: str, has_explanation: bool = False) -> I
     
     # Четвертый ряд - главное меню
     keyboard.append([
-        InlineKeyboardButton(
-            "🏠 Главное меню", 
-            callback_data=CallbackData.TEST_NEXT_CHANGE_BLOCK
-        )
+        InlineKeyboardButton("🏠 Главное меню", callback_data="to_main_menu")
     ])
     
     return InlineKeyboardMarkup(keyboard)
