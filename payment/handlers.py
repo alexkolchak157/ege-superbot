@@ -667,6 +667,10 @@ async def handle_payment_confirmation(update: Update, context: ContextTypes.DEFA
             "PaymentObject": "service"
         }]
         
+        bot = context.bot
+        bot_info = await bot.get_me()
+        bot_username = bot_info.username
+        
         # Инициируем платеж в Tinkoff
         result = await tinkoff_payment.init_payment(
             order_id=payment_data['order_id'],
@@ -678,7 +682,8 @@ async def handle_payment_confirmation(update: Update, context: ContextTypes.DEFA
                 "user_id": str(user_id),
                 "plan_id": plan_id,
                 "duration_months": str(duration)
-            }
+            },
+            bot_username=bot_username  # Добавляем эту строку
         )
         
         if result['success']:

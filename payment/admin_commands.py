@@ -34,6 +34,50 @@ def admin_only(func):
     
     return wrapper
 
+@admin_only
+async def cmd_test_webhook(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Тестирует webhook, отправляя тестовый запрос."""
+    import aiohttp
+    
+    # Создаем тестовый платеж
+    test_order_id = f"TEST_{int(datetime.now().timestamp())}"
+    user_id = update.effective_user.id
+    
+    subscription_manager = context.bot_data.get('subscription_manager')
+    
+    # Создаем запись о платеже
+    await subscription_manager.create_payment(
+        user_id=user_id,
+        plan_id='trial_7days',
+        amount_kopecks=100
+    )
+    
+    # Симулируем webhook от Tinkoff
+    webhook_data = {
+        "TerminalKey": config.TINKOFF_TERMINAL_KEY,
+        "OrderId": test_order_id,
+        "Status": "CONFIRMED",
+        "PaymentId": "12345",
+        "Token": "test_token"  # В реальности нужен правильный токен
+    }
+    
+    webhook_url = f"http://localhost:8080/webhook"  # Или ваш webhook URL
+    
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.post(webhook_url, json=webhook_data) as response:
+                result = await response.text()
+                status = response.status
+        
+        await update.message.reply_text(
+            f"🧪 Тест webhook:\n"
+            f"Status: {status}\n"
+            f"Response: {result}\n"
+            f"Order ID: {test_order_id}"
+        )
+    except Exception as e:
+        await update.message.reply_text(f"❌ Ошибка теста: {e}")
+
 
 @admin_only
 async def cmd_grant_subscription(update: Update, context: ContextTypes.DEFAULT_TYPE):

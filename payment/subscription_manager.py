@@ -169,6 +169,71 @@ class SubscriptionManager:
             logger.exception(f"Error initializing payment tables: {e}")
             raise
     
+    async def deactivate_subscription(self, user_id: int, plan_id: str) -> bool:
+        """
+        Деактивация подписки пользователя (при возврате средств)
+        
+        Args:
+            user_id: ID пользователя
+            plan_id: ID плана подписки
+            
+        Returns:
+            bool: Успешность операции
+        """
+        try:
+            async with aiosqlite.connect(self.db_path) as db:
+                # Получаем модули, связанные с планом
+                modules = self.SUBSCRIPTION_PLANS.get(plan_id, {}).get('modules', [])
+                
+                if plan_id == 'package_full':
+                    # Для полного пакета деактивируем все модули
+                    await db.execute("""
+                        DELETE FROM user_subscriptions 
+                        WHERE user_id = ?
+                    """, (user_id,))
+                else:
+                    # Для остальных планов деактивируем только конкретные модули
+                    for module in modules:
+                        await db.execute("""
+                            DELETE FROM user_subscriptions 
+                            WHERE user_id = ? AND module_id = ?
+                        """, (user_id, module))
+                
+                # Обновляем статус в module_subscriptions
+                await db.execute("""
+                    UPDATE module_subscriptions 
+                    SET status = 'refunded', 
+                        end_date = CURRENT_TIMESTAMP,
+                        updated_at = CURRENT_TIMESTAMP
+                    WHERE user_id = ? AND plan_id = ? AND status = 'active'
+                """, (user_id, plan_id))
+                
+                await db.commit()
+                
+                logger.info(f"Подписка {plan_id} деактивирована для пользователя {user_id}")
+                return True
+                
+        except Exception as e:
+            logger.error(f"Ошибка деактивации подписки: {e}")
+            return False
+
+    # Добавьте этот метод для получения информации о платеже:
+    async def get_payment_by_order_id(self, order_id: str) -> Optional[dict]:
+        """Получает информацию о платеже по order_id."""
+        try:
+            async with aiosqlite.connect(self.db_path) as db:
+                db.row_factory = aiosqlite.Row
+                cursor = await db.execute("""
+                    SELECT * FROM payments WHERE order_id = ?
+                """, (order_id,))
+                
+                row = await cursor.fetchone()
+                return dict(row) if row else None
+                
+        except Exception as e:
+            logger.error(f"Error getting payment info: {e}")
+            return None
+    
     async def get_subscription_info(self, user_id: int) -> Optional[Dict[str, Any]]:
         """Получает информацию о подписке пользователя для отображения."""
         if SUBSCRIPTION_MODE == 'modular':
@@ -421,11 +486,25 @@ class SubscriptionManager:
     
     async def activate_subscription(self, order_id: str, payment_id: str) -> bool:
         """Активирует подписку после успешной оплаты."""
-        logger.info(f"Activating subscription for order {order_id}, payment {payment_id}")
+        logger.info(f"Starting activation for order {order_id}, payment {payment_id}")
         logger.info(f"Current SUBSCRIPTION_MODE: {SUBSCRIPTION_MODE}")
         
         try:
             async with aiosqlite.connect(DATABASE_FILE) as conn:
+                # Включаем автокоммит для немедленной записи
+                await conn.execute("PRAGMA journal_mode=WAL")
+                
+                # Проверяем, не была ли подписка уже активирована
+                cursor = await conn.execute(
+                    "SELECT status FROM payments WHERE order_id = ?",
+                    (order_id,)
+                )
+                existing = await cursor.fetchone()
+                
+                if existing and existing[0] == 'completed':
+                    logger.warning(f"Order {order_id} already completed, skipping activation")
+                    return True  # Возвращаем True, так как подписка уже активна
+                
                 # Получаем информацию о платеже
                 cursor = await conn.execute(
                     "SELECT user_id, plan_id, amount_kopecks FROM payments WHERE order_id = ?",
@@ -440,27 +519,38 @@ class SubscriptionManager:
                 user_id, plan_id, amount = payment
                 logger.info(f"Found payment: user_id={user_id}, plan_id={plan_id}, amount={amount}")
                 
-                if SUBSCRIPTION_MODE == 'modular':
-                    logger.info("Using modular subscription system")
-                    await self._activate_modular_subscription(user_id, plan_id, payment_id)
-                else:
-                    logger.info("Using unified subscription system")
-                    await self._activate_unified_subscription(user_id, plan_id, payment_id)
+                # Начинаем транзакцию
+                await conn.execute("BEGIN TRANSACTION")
                 
-                # Обновляем статус платежа
-                await conn.execute(
-                    """
-                    UPDATE payments 
-                    SET status = 'completed', payment_id = ?, completed_at = ?
-                    WHERE order_id = ?
-                    """,
-                    (payment_id, datetime.now(timezone.utc), order_id)
-                )
-                
-                await conn.commit()
-                logger.info(f"Subscription activated successfully for user {user_id}, plan {plan_id}")
-                return True
-                
+                try:
+                    if SUBSCRIPTION_MODE == 'modular':
+                        logger.info("Using modular subscription system")
+                        await self._activate_modular_subscription(user_id, plan_id, payment_id)
+                    else:
+                        logger.info("Using unified subscription system")
+                        await self._activate_unified_subscription(user_id, plan_id, payment_id)
+                    
+                    # Обновляем статус платежа
+                    await conn.execute(
+                        """
+                        UPDATE payments 
+                        SET status = 'completed', payment_id = ?, completed_at = ?
+                        WHERE order_id = ?
+                        """,
+                        (payment_id, datetime.now(timezone.utc), order_id)
+                    )
+                    
+                    # Коммитим транзакцию
+                    await conn.commit()
+                    logger.info(f"✅ Subscription activated successfully for user {user_id}, plan {plan_id}")
+                    return True
+                    
+                except Exception as e:
+                    # Откатываем транзакцию при ошибке
+                    await conn.rollback()
+                    logger.exception(f"Error during activation, rolling back: {e}")
+                    raise
+                    
         except Exception as e:
             logger.exception(f"Error activating subscription: {e}")
             return False

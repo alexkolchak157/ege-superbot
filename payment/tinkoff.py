@@ -5,6 +5,7 @@ import json
 import logging
 from typing import Dict, Any, Optional
 import aiohttp
+import os
 
 from .config import (
     TINKOFF_TERMINAL_KEY,
@@ -77,22 +78,29 @@ class TinkoffPayment:
         description: str,
         user_email: str,
         receipt_items: list,
-        user_data: Optional[Dict[str, str]] = None
+        user_data: Optional[Dict[str, str]] = None,
+        bot_username: str = None  # Добавляем параметр
     ) -> Dict[str, Any]:
         """Инициирует платеж в Tinkoff."""
         
-        # ИСПРАВЛЕНИЕ: Используем deep link для возврата в бота
-        bot_username = "@ege_superpuper_bot"  # Имя вашего бота
-        success_deep_link = f"https://t.me/{bot_username[1:]}?start=payment_success_{order_id}"
-        fail_deep_link = f"https://t.me/{bot_username[1:]}?start=payment_fail_{order_id}"
+        # ИСПРАВЛЕНИЕ: Получаем username бота динамически
+        if not bot_username:
+            # Попробуйте получить из конфига или переменной окружения
+            bot_username = os.getenv("BOT_USERNAME", "ege_superpuper_bot")
+        
+        # Убираем @ если он есть
+        bot_username = bot_username.lstrip('@')
+        
+        success_deep_link = f"https://t.me/{bot_username}?start=payment_success_{order_id}"
+        fail_deep_link = f"https://t.me/{bot_username}?start=payment_fail_{order_id}"
         
         payload = {
             "TerminalKey": self.terminal_key,
             "Amount": amount_kopecks,
             "OrderId": order_id,
             "Description": description[:250],
-            "SuccessURL": success_deep_link,  # Изменено
-            "FailURL": fail_deep_link,        # Изменено
+            "SuccessURL": success_deep_link,
+            "FailURL": fail_deep_link,
             "NotificationURL": f"{WEBHOOK_BASE_URL}{WEBHOOK_PATH}",
             "Receipt": {
                 "Email": user_email,
