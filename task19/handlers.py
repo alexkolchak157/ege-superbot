@@ -1292,26 +1292,40 @@ async def bank_navigation(update: Update, context: ContextTypes.DEFAULT_TYPE):
 @safe_handler()
 @validate_state_transition({states.CHOOSING_MODE, states.CHOOSING_BLOCK, states.CHOOSING_TOPIC, TASK19_WAITING})
 async def back_to_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Возврат в главное меню с очисткой контекста."""
+    """Возврат в главное меню бота."""
     query = update.callback_query
     
-    # Очищаем ВСЕ связанные с модулем данные
-    keys_to_clear = [
-        'current_module',
-        'active_module', 
-        'current_topic',
-        'answer_processing',
-        'current_block',
-        'waiting_for_bank_search'
-    ]
+    # Очищаем состояние пользователя
+    from core.state_validator import state_validator
+    state_validator.clear_state(query.from_user.id)
     
-    for key in keys_to_clear:
-        context.user_data.pop(key, None)
+    # Очищаем данные модуля
+    context.user_data.clear()
+    context.user_data['active_module'] = None
     
-    await query.edit_message_text(
-        "👋 Выберите раздел для изучения:",
-        reply_markup=build_main_menu()
-    )
+    # Получаем меню
+    user_id = update.effective_user.id
+    
+    try:
+        from core.app import show_main_menu_with_access
+        kb = await show_main_menu_with_access(context, user_id)
+    except ImportError:
+        from core.plugin_loader import build_main_menu
+        kb = build_main_menu()
+    
+    # Сначала пытаемся отредактировать сообщение
+    try:
+        await query.edit_message_text(
+            "👋 Что хотите потренировать?",
+            reply_markup=kb,
+            parse_mode="HTML"
+        )
+    except Exception as e:
+        # Если не удается отредактировать (например, сообщение не изменилось),
+        # просто отвечаем на callback без создания нового сообщения
+        await query.answer()
+        logger.debug(f"Could not edit message in back_to_main_menu: {e}")
+    
     return ConversationHandler.END
 
 
