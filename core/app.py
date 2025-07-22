@@ -93,7 +93,7 @@ async def handle_my_subscription(update: Update, context: ContextTypes.DEFAULT_T
         buttons.append([InlineKeyboardButton("🔄 Продлить подписку", callback_data="subscribe")])
     
     buttons.extend([
-        [InlineKeyboardButton("📊 Моя статистика", callback_data="my_statistics")],
+        #[InlineKeyboardButton("📊 Моя статистика", callback_data="my_statistics")],
         [InlineKeyboardButton("⬅️ Главное меню", callback_data="to_main_menu")]
     ])
     
@@ -109,13 +109,24 @@ async def post_init(application: Application) -> None:
     
     # Инициализация БД
     await db.init_db()
+    
     # Добавляем базовые команды
     application.add_handler(CommandHandler("start", start_command))
     application.add_handler(CommandHandler("help", help_command))
     application.add_handler(CommandHandler("menu", menu_command))
     application.add_handler(CallbackQueryHandler(handle_my_subscription, pattern="^my_subscription$"))
+    
+    # ВАЖНО: Регистрируем глобальные обработчики меню
+    try:
+        from core.menu_handlers import register_global_handlers
+        register_global_handlers(application)
+        logger.info("Registered global menu handlers")
+    except ImportError as e:
+        logger.error(f"Could not import menu_handlers: {e}")
+    except Exception as e:
+        logger.error(f"Error registering global handlers: {e}")
+    
     # Инициализация модуля платежей
-    # Модуль сам регистрирует все обработчики и запускает webhook
     await init_payment_module(application)
     
     # Загрузка модулей-плагинов
@@ -254,19 +265,15 @@ async def show_main_menu_with_access(context: ContextTypes.DEFAULT_TYPE, user_id
             # Проверяем доступ к модулю
             has_access = await subscription_manager.check_module_access(user_id, module_code)
             
-            # Получаем иконку модуля
-            icon = module_icons.get(module_code, '')
-            
             if has_access:
-                # Доступ есть - показываем с иконкой модуля
-                button_text = f"{icon} {plugin.title}"
+                # Доступ есть - используем оригинальный title плагина (с иконкой)
+                button_text = plugin.title
             else:
                 # Доступа нет - показываем с замком
                 button_text = f"🔒 {plugin.title}"
         else:
             # Если не модульная система или модуль не требует проверки
-            icon = module_icons.get(plugin.code, '')
-            button_text = f"{icon} {plugin.title}"
+            button_text = plugin.title
         
         buttons.append([InlineKeyboardButton(
             button_text,
@@ -276,7 +283,7 @@ async def show_main_menu_with_access(context: ContextTypes.DEFAULT_TYPE, user_id
     # Добавляем дополнительные кнопки
     buttons.extend([
         [InlineKeyboardButton("💳 Моя подписка", callback_data="my_subscription")],
-        [InlineKeyboardButton("⚙️ Настройки", callback_data="settings")]
+        #[InlineKeyboardButton("⚙️ Настройки", callback_data="settings")]
     ])
     
     return InlineKeyboardMarkup(buttons)

@@ -101,5 +101,14 @@ def register_global_handlers(app):
             handle_to_main_menu, 
             pattern="^to_main_menu$"
         ),
-        group=-1  # Высокий приоритет, чтобы обработчик срабатывал раньше других
+        group=-1  # Высокий приоритет
+    )
+    
+    # Для обратной совместимости
+    app.add_handler(
+        CallbackQueryHandler(
+            handle_to_main_menu, 
+            pattern="^main_menu$"
+        ),
+        group=-1
     )
