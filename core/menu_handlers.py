@@ -13,6 +13,39 @@ async def handle_to_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE
         
         user_id = update.effective_user.id
         
+        # Проверяем подписку для правильного отображения статуса
+        subscription_manager = context.bot_data.get('subscription_manager')
+        if subscription_manager:
+            subscription_info = await subscription_manager.get_subscription_info(user_id)
+            
+            if subscription_info:
+                if subscription_info.get('type') == 'modular':
+                    modules = subscription_info.get('modules', [])
+                    if modules:
+                        status_text = f"✅ У вас активная подписка на модули:\n"
+                        for module in modules:
+                            status_text += f"   • {module}\n"
+                        status_text += f"\nДействует до: {subscription_info.get('expires_at').strftime('%d.%m.%Y')}"
+                    else:
+                        status_text = "❌ У вас нет активной подписки"
+                else:
+                    plan_name = subscription_info.get('plan_name', 'Подписка')
+                    status_text = f"✅ У вас активная подписка: {plan_name}"
+                    status_text += f"\nДействует до: {subscription_info.get('expires_at').strftime('%d.%m.%Y')}"
+            else:
+                status_text = "❌ У вас нет активной подписки"
+        else:
+            status_text = ""
+        
+        # Используем тот же текст, что и в start_command
+        welcome_text = f"""
+👋 Добро пожаловать в бот для подготовки к ЕГЭ по обществознанию!
+
+{status_text}
+
+Используйте кнопки ниже для навигации:
+"""
+        
         # Используем функцию с проверкой доступа
         try:
             from core.app import show_main_menu_with_access
@@ -24,15 +57,17 @@ async def handle_to_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE
         
         try:
             await query.edit_message_text(
-                "👋 Что хотите потренировать?", 
-                reply_markup=kb
+                welcome_text, 
+                reply_markup=kb,
+                parse_mode="HTML"
             )
         except Exception as e:
             # Если не удалось отредактировать, отправляем новое сообщение
             logger.debug(f"Could not edit message in handle_to_main_menu: {e}")
             await query.message.reply_text(
-                "👋 Что хотите потренировать?", 
-                reply_markup=kb
+                welcome_text, 
+                reply_markup=kb,
+                parse_mode="HTML"
             )
     
     # Очищаем данные пользователя

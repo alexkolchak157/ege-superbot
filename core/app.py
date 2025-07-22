@@ -254,15 +254,19 @@ async def show_main_menu_with_access(context: ContextTypes.DEFAULT_TYPE, user_id
             # Проверяем доступ к модулю
             has_access = await subscription_manager.check_module_access(user_id, module_code)
             
+            # Получаем иконку модуля
+            icon = module_icons.get(module_code, '')
+            
             if has_access:
-                # Доступ есть - показываем с галочкой
-                button_text = f"✅ {plugin.title}"
+                # Доступ есть - показываем с иконкой модуля
+                button_text = f"{icon} {plugin.title}"
             else:
                 # Доступа нет - показываем с замком
                 button_text = f"🔒 {plugin.title}"
         else:
             # Если не модульная система или модуль не требует проверки
-            button_text = plugin.title
+            icon = module_icons.get(plugin.code, '')
+            button_text = f"{icon} {plugin.title}"
         
         buttons.append([InlineKeyboardButton(
             button_text,
@@ -337,7 +341,7 @@ async def handle_my_subscription(update: Update, context: ContextTypes.DEFAULT_T
 
     # Удалить кнопку "Моя статистика", так как для неё нет обработчика
     # Или создать заглушку
-    buttons.append([InlineKeyboardButton("⬅️ Главное меню", callback_data="^to_main_menu$")])
+    buttons.append([InlineKeyboardButton("⬅️ Главное меню", callback_data="to_main_menu")])
     
     await query.edit_message_text(
         text,
