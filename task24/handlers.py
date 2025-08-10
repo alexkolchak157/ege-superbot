@@ -228,40 +228,72 @@ async def entry_from_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return states.CHOOSING_MODE
 
 async def cmd_start_plan(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Команда /start_plan."""
-    # Инициализация данных если нужно
+    """Команда /start_plan - быстрый старт тренировки."""
+    
+    # Проверяем загрузку данных
     if not plan_bot_data:
-        await load_data()
+        logger.info("Первый вход в модуль task24, загружаем данные...")
+        data_loaded = init_data()
+        if not data_loaded:
+            await update.message.reply_text(
+                "❌ Не удалось загрузить данные планов.\n\n"
+                "Проверьте наличие файла plans_data_with_blocks.json в папке data/\n\n"
+                "Обратитесь к администратору."
+            )
+            return ConversationHandler.END
     
-    # Получаем статистику пользователя
-    practiced_indices = context.user_data.get('practiced_topics', set())
-    total_topics = len(plan_bot_data.topic_list_for_pagination) if plan_bot_data else 0
-    results = context.user_data.get('task24_results', [])
+    # Выбираем случайную тему
+    import random
+    topics = plan_bot_data.topic_list_for_pagination
+    if not topics:
+        await update.message.reply_text(
+            "❌ Нет доступных тем для тренировки.",
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("🏠 Главное меню", callback_data="to_main_menu")
+            ]])
+        )
+        return ConversationHandler.END
     
-    user_stats = {
-        'total_attempts': len(results),
-        'average_score': sum(r.get('score', 0) for r in results) / len(results) if results else 0,
-        'streak': context.user_data.get('correct_streak', 0),
-        'weak_topics_count': 0,
-        'progress_percent': int(len(practiced_indices) / total_topics * 100) if total_topics > 0 else 0
-    }
+    topic_idx, topic_name = random.choice(topics)
+    context.user_data['current_topic_index'] = topic_idx
+    context.user_data['current_topic'] = topic_name
+    context.user_data['mode'] = 'train'
     
-    # Персонализированное приветствие
-    greeting = get_personalized_greeting(user_stats)
-    text = greeting + MessageFormatter.format_welcome_message(
-        "задание 24",
-        is_new_user=user_stats['total_attempts'] == 0
-    )
+    # Получаем данные плана
+    plan_data = plan_bot_data.get_plan_by_index(topic_idx)
     
-    # Строим унифицированную клавиатуру
-    kb = keyboards.build_main_menu_keyboard(user_stats)
+    if not plan_data:
+        await update.message.reply_text(
+            "❌ Не удалось загрузить данные темы.",
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("🏠 Главное меню", callback_data="to_main_menu")
+            ]])
+        )
+        return ConversationHandler.END
     
+    # Формируем текст задания
+    task_text = f"""📚 <b>{topic_name}</b>
+
+Составьте сложный план, который позволит наиболее полно раскрыть тему.
+
+План должен содержать не менее трёх пунктов, непосредственно раскрывающих тему, из которых два и более детализированы в подпунктах.
+
+Формат ответа:
+<code>1. Первый пункт
+2. Второй пункт:
+   а) подпункт
+   б) подпункт
+3. Третий пункт</code>
+
+💡 <i>Отправьте ваш план одним сообщением</i>"""
+    
+    # ИСПРАВЛЕНО: используем update.message вместо query.message
     await update.message.reply_text(
-        text,
-        reply_markup=kb,
+        task_text,
         parse_mode=ParseMode.HTML
     )
-    return states.CHOOSING_MODE
+    
+    return states.AWAITING_PLAN
 
 @safe_handler()
 @validate_state_transition({states.CHOOSING_MODE})
@@ -1479,6 +1511,72 @@ async def search_topics(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode=ParseMode.HTML
     )
     return states.AWAITING_SEARCH
+
+async def cmd_task24(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Команда /task24 - прямой вход в модуль."""
+    
+    # Проверяем загрузку данных
+    if not plan_bot_data:
+        logger.info("Первый вход в модуль task24, загружаем данные...")
+        data_loaded = init_data()
+        if not data_loaded:
+            await update.message.reply_text(
+                "❌ Не удалось загрузить данные планов.\n\n"
+                "Проверьте наличие файла plans_data_with_blocks.json в папке data/\n\n"
+                "Обратитесь к администратору.",
+                reply_markup=InlineKeyboardMarkup([[
+                    InlineKeyboardButton("🏠 Главное меню", callback_data="to_main_menu")
+                ]])
+            )
+            return ConversationHandler.END
+    
+    # Очищаем контекст от данных других модулей
+    keys_to_remove = [
+        'current_topic',
+        'task19_current_topic', 
+        'task20_current_topic',
+        'task25_current_topic'
+    ]
+    
+    for key in keys_to_remove:
+        context.user_data.pop(key, None)
+    
+    # Устанавливаем активный модуль
+    context.user_data['active_module'] = 'task24'
+    
+    # Инициализация времени сессии
+    if 'session_start' not in context.user_data:
+        context.user_data['session_start'] = datetime.now()
+    
+    # Получаем статистику пользователя
+    practiced_indices = context.user_data.get('practiced_topics', set())
+    total_topics = len(plan_bot_data.topic_list_for_pagination) if plan_bot_data else 0
+    results = context.user_data.get('task24_results', [])
+    
+    user_stats = {
+        'total_attempts': len(results),
+        'average_score': sum(r.get('score', 0) for r in results) / len(results) if results else 0,
+        'streak': context.user_data.get('correct_streak', 0),
+        'weak_topics_count': 0,
+        'progress_percent': int(len(practiced_indices) / total_topics * 100) if total_topics > 0 else 0
+    }
+    
+    # Персонализированное приветствие
+    greeting = get_personalized_greeting(user_stats)
+    text = greeting + MessageFormatter.format_welcome_message(
+        "задание 24",
+        is_new_user=user_stats['total_attempts'] == 0
+    )
+    
+    # Строим унифицированную клавиатуру
+    kb = keyboards.build_main_menu_keyboard(user_stats)
+    
+    await update.message.reply_text(
+        text,
+        reply_markup=kb,
+        parse_mode=ParseMode.HTML
+    )
+    return states.CHOOSING_MODE
 
 def _format_evaluation_feedback(k1: int, k2: int, missing: list, topic_name: str) -> str:
     """Форматирует отзыв о плане используя универсальные компоненты."""

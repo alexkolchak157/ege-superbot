@@ -13,8 +13,8 @@ logger = logging.getLogger(__name__)
 
 class Task24Plugin(BotPlugin):
     code = "task24"
-    title = "Задание 24 (План)"
-    menu_priority = 20
+    title = "📋 Задание 24 (План)"
+    menu_priority = 17
     
     async def post_init(self, app):
         """Загрузка данных планов."""
@@ -38,6 +38,7 @@ class Task24Plugin(BotPlugin):
                     pattern=f"^choose_{self.code}$"
                 ),
                 CommandHandler("start_plan", handlers.cmd_start_plan),
+                CommandHandler("task24", handlers.cmd_task24),
             ],
             states={
                 states.CHOOSING_MODE: [
