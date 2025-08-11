@@ -371,6 +371,352 @@ class AdminStats:
         
         return stats
     
+    @admin_only
+    async def activity_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Показ статистики активности."""
+        query = update.callback_query
+        await query.answer("Загрузка активности...")
+        
+        from core import db
+        
+        text = "📈 <b>Статистика активности</b>\n\n"
+        
+        try:
+            conn = await db.get_db()
+            
+            # Активность за последние 30 дней
+            cursor = await conn.execute("""
+                SELECT 
+                    DATE(last_activity_date) as day,
+                    COUNT(DISTINCT user_id) as active_users
+                FROM users
+                WHERE last_activity_date > datetime('now', '-30 days')
+                GROUP BY DATE(last_activity_date)
+                ORDER BY day DESC
+                LIMIT 14
+            """)
+            daily_activity = await cursor.fetchall()
+            
+            if daily_activity:
+                text += "📊 <b>Активность за последние 14 дней:</b>\n\n"
+                
+                # Находим максимум для масштабирования графика
+                max_users = max(row[1] for row in daily_activity) if daily_activity else 1
+                
+                for day, users in daily_activity:
+                    # Создаем визуальный график
+                    bar_length = int((users / max_users) * 20) if max_users > 0 else 0
+                    bar = "▓" * bar_length + "░" * (20 - bar_length)
+                    
+                    # Форматируем дату
+                    date_str = datetime.strptime(day, "%Y-%m-%d").strftime("%d.%m")
+                    text += f"<code>{date_str} {bar} {users}</code>\n"
+            
+            # Статистика по времени суток
+            cursor = await conn.execute("""
+                SELECT 
+                    strftime('%H', last_activity_date) as hour,
+                    COUNT(*) as activity_count
+                FROM users
+                WHERE last_activity_date > datetime('now', '-7 days')
+                GROUP BY hour
+                ORDER BY activity_count DESC
+                LIMIT 5
+            """)
+            peak_hours = await cursor.fetchall()
+            
+            if peak_hours:
+                text += "\n⏰ <b>Пиковые часы активности:</b>\n"
+                for hour, count in peak_hours[:3]:
+                    text += f"• {hour}:00 - {count} действий\n"
+            
+            # Статистика роста
+            cursor = await conn.execute("""
+                SELECT 
+                    (SELECT COUNT(*) FROM users WHERE created_at > datetime('now', '-7 days')) as week_users,
+                    (SELECT COUNT(*) FROM users WHERE created_at > datetime('now', '-30 days')) as month_users,
+                    (SELECT COUNT(*) FROM users) as total_users
+            """)
+            growth = await cursor.fetchone()
+            
+            if growth:
+                week_users, month_users, total_users = growth
+                text += f"\n📈 <b>Рост аудитории:</b>\n"
+                text += f"• За неделю: +{week_users} польз.\n"
+                text += f"• За месяц: +{month_users} польз.\n"
+                text += f"• Всего: {total_users} польз.\n"
+            
+        except Exception as e:
+            logger.error(f"Ошибка при получении статистики активности: {e}")
+            text += "❌ Ошибка при загрузке данных"
+        
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("🔄 Обновить", callback_data="admin:activity_stats")],
+            [InlineKeyboardButton("⬅️ Назад", callback_data="admin:stats_menu")]
+        ])
+        
+        await query.edit_message_text(text, reply_markup=kb, parse_mode=ParseMode.HTML)
+
+
+    @admin_only
+    async def module_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Статистика по модулям."""
+        query = update.callback_query
+        await query.answer("Загрузка статистики модулей...")
+        
+        from core import db
+        
+        text = "📚 <b>Статистика по модулям</b>\n\n"
+        
+        try:
+            # Собираем статистику из bot_data
+            app = context.application
+            bot_data = app.bot_data
+            
+            module_stats = {
+                'test_part': {'name': '📝 Тестовая часть', 'users': 0, 'attempts': 0, 'avg_score': 0},
+                'task19': {'name': '🎯 Задание 19', 'users': 0, 'attempts': 0, 'avg_score': 0},
+                'task20': {'name': '📖 Задание 20', 'users': 0, 'attempts': 0, 'avg_score': 0},
+                'task24': {'name': '💎 Задание 24', 'users': 0, 'attempts': 0, 'avg_score': 0},
+                'task25': {'name': '✍️ Задание 25', 'users': 0, 'attempts': 0, 'avg_score': 0}
+            }
+            
+            all_scores = {'test_part': [], 'task19': [], 'task20': [], 'task24': [], 'task25': []}
+            
+            for user_id, user_data in bot_data.items():
+                if not isinstance(user_data, dict):
+                    continue
+                
+                # Test part
+                if 'quiz_stats' in user_data:
+                    module_stats['test_part']['users'] += 1
+                    quiz_stats = user_data.get('quiz_stats', {})
+                    module_stats['test_part']['attempts'] += quiz_stats.get('total_questions', 0)
+                    if quiz_stats.get('correct_answers', 0) > 0:
+                        score_pct = (quiz_stats.get('correct_answers', 0) / quiz_stats.get('total_questions', 1)) * 100
+                        all_scores['test_part'].append(score_pct)
+                
+                # Task19
+                if 'task19_results' in user_data:
+                    results = user_data.get('task19_results', [])
+                    if results:
+                        module_stats['task19']['users'] += 1
+                        module_stats['task19']['attempts'] += len(results)
+                        scores = [r.get('score', 0) for r in results]
+                        if scores:
+                            all_scores['task19'].extend(scores)
+                
+                # Task20
+                if 'task20_results' in user_data:
+                    results = user_data.get('task20_results', [])
+                    if results:
+                        module_stats['task20']['users'] += 1
+                        module_stats['task20']['attempts'] += len(results)
+                        scores = [r.get('score', 0) for r in results]
+                        if scores:
+                            all_scores['task20'].extend(scores)
+                
+                # Task24
+                if 'practiced_topics' in user_data or 'scores_history' in user_data:
+                    module_stats['task24']['users'] += 1
+                    scores_history = user_data.get('scores_history', [])
+                    module_stats['task24']['attempts'] += len(scores_history)
+                    if scores_history:
+                        scores = [s.get('total', 0) for s in scores_history]
+                        all_scores['task24'].extend(scores)
+                
+                # Task25
+                if 'task25_results' in user_data:
+                    results = user_data.get('task25_results', [])
+                    if results:
+                        module_stats['task25']['users'] += 1
+                        module_stats['task25']['attempts'] += len(results)
+                        scores = [r.get('score', 0) for r in results]
+                        if scores:
+                            all_scores['task25'].extend(scores)
+            
+            # Вычисляем средние баллы
+            for module_code, scores in all_scores.items():
+                if scores:
+                    module_stats[module_code]['avg_score'] = sum(scores) / len(scores)
+            
+            # Форматируем вывод
+            for module_code, stats in module_stats.items():
+                if stats['users'] > 0:
+                    text += f"<b>{stats['name']}</b>\n"
+                    text += f"👥 Пользователей: {stats['users']}\n"
+                    text += f"📝 Попыток: {stats['attempts']}\n"
+                    
+                    if stats['avg_score'] > 0:
+                        # Визуальная шкала успеха
+                        score_pct = stats['avg_score']
+                        if module_code == 'test_part':
+                            # Для тестовой части показываем процент
+                            text += f"📊 Средний результат: {score_pct:.1f}%\n"
+                        elif module_code == 'task24':
+                            # Для task24 максимум 4 балла
+                            text += f"📊 Средний балл: {stats['avg_score']:.2f}/4\n"
+                        else:
+                            # Для остальных максимум 3 балла
+                            text += f"📊 Средний балл: {stats['avg_score']:.2f}/3\n"
+                        
+                        # Прогресс-бар
+                        if module_code == 'test_part':
+                            progress = int(score_pct / 10)
+                        elif module_code == 'task24':
+                            progress = int(stats['avg_score'] * 2.5)  # Масштабируем 4 балла до 10
+                        else:
+                            progress = int(stats['avg_score'] * 3.33)  # Масштабируем 3 балла до 10
+                        
+                        bar = "🟩" * progress + "⬜" * (10 - progress)
+                        text += f"{bar}\n"
+                    
+                    text += "\n"
+            
+            # Добавляем сводку
+            total_users = sum(s['users'] for s in module_stats.values())
+            total_attempts = sum(s['attempts'] for s in module_stats.values())
+            
+            text += f"📊 <b>Общая статистика:</b>\n"
+            text += f"• Уникальных пользователей: {total_users}\n"
+            text += f"• Всего попыток: {total_attempts}\n"
+            
+        except Exception as e:
+            logger.error(f"Ошибка при получении статистики модулей: {e}")
+            text += "❌ Ошибка при загрузке данных"
+        
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("🔄 Обновить", callback_data="admin:module_stats")],
+            [InlineKeyboardButton("⬅️ Назад", callback_data="admin:stats_menu")]
+        ])
+        
+        await query.edit_message_text(text, reply_markup=kb, parse_mode=ParseMode.HTML)
+
+
+    @admin_only
+    async def top_users(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Топ активных пользователей."""
+        query = update.callback_query
+        await query.answer("Загрузка топа пользователей...")
+        
+        from core import db
+        
+        text = "🏆 <b>Топ активных пользователей</b>\n\n"
+        
+        try:
+            # Собираем данные о пользователях
+            app = context.application
+            bot_data = app.bot_data
+            
+            user_scores = []
+            
+            for user_id, user_data in bot_data.items():
+                if not isinstance(user_data, dict):
+                    continue
+                
+                # Считаем общую активность
+                total_score = 0
+                modules_used = 0
+                total_attempts = 0
+                
+                # Test part
+                if 'quiz_stats' in user_data:
+                    quiz_stats = user_data.get('quiz_stats', {})
+                    if quiz_stats.get('total_questions', 0) > 0:
+                        modules_used += 1
+                        total_attempts += quiz_stats.get('total_questions', 0)
+                        total_score += quiz_stats.get('correct_answers', 0)
+                
+                # Task19
+                if 'task19_results' in user_data:
+                    results = user_data.get('task19_results', [])
+                    if results:
+                        modules_used += 1
+                        total_attempts += len(results)
+                        total_score += sum(r.get('score', 0) for r in results)
+                
+                # Task20
+                if 'task20_results' in user_data:
+                    results = user_data.get('task20_results', [])
+                    if results:
+                        modules_used += 1
+                        total_attempts += len(results)
+                        total_score += sum(r.get('score', 0) for r in results)
+                
+                # Task24
+                if 'scores_history' in user_data:
+                    scores_history = user_data.get('scores_history', [])
+                    if scores_history:
+                        modules_used += 1
+                        total_attempts += len(scores_history)
+                        total_score += sum(s.get('total', 0) for s in scores_history)
+                
+                # Task25
+                if 'task25_results' in user_data:
+                    results = user_data.get('task25_results', [])
+                    if results:
+                        modules_used += 1
+                        total_attempts += len(results)
+                        total_score += sum(r.get('score', 0) for r in results)
+                
+                if total_attempts > 0:
+                    # Получаем информацию о пользователе из БД
+                    conn = await db.get_db()
+                    cursor = await conn.execute(
+                        "SELECT first_name, username FROM users WHERE user_id = ?",
+                        (user_id,)
+                    )
+                    user_info = await cursor.fetchone()
+                    
+                    if user_info:
+                        user_scores.append({
+                            'user_id': user_id,
+                            'name': user_info[0] or "Пользователь",
+                            'username': user_info[1],
+                            'total_score': total_score,
+                            'attempts': total_attempts,
+                            'modules': modules_used,
+                            'avg_score': total_score / total_attempts if total_attempts > 0 else 0
+                        })
+            
+            # Сортируем по общему количеству попыток
+            user_scores.sort(key=lambda x: x['attempts'], reverse=True)
+            
+            # Показываем топ-10
+            if user_scores:
+                for i, user in enumerate(user_scores[:10], 1):
+                    medal = "🥇" if i == 1 else "🥈" if i == 2 else "🥉" if i == 3 else f"{i}."
+                    
+                    text += f"{medal} <b>{user['name']}</b>"
+                    if user['username']:
+                        text += f" (@{user['username']})"
+                    text += "\n"
+                    
+                    text += f"   📝 Попыток: {user['attempts']}\n"
+                    text += f"   📚 Модулей: {user['modules']}/5\n"
+                    text += f"   ⭐ Средний балл: {user['avg_score']:.2f}\n\n"
+            else:
+                text += "Пока нет активных пользователей"
+            
+            # Добавляем общую статистику
+            if user_scores:
+                text += f"\n📊 <b>Общая информация:</b>\n"
+                text += f"• Активных пользователей: {len(user_scores)}\n"
+                text += f"• Всего попыток: {sum(u['attempts'] for u in user_scores)}\n"
+                avg_modules = sum(u['modules'] for u in user_scores) / len(user_scores)
+                text += f"• Среднее кол-во модулей: {avg_modules:.1f}\n"
+            
+        except Exception as e:
+            logger.error(f"Ошибка при получении топа пользователей: {e}")
+            text += "❌ Ошибка при загрузке данных"
+        
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("🔄 Обновить", callback_data="admin:top_users")],
+            [InlineKeyboardButton("⬅️ Назад", callback_data="admin:stats_menu")]
+        ])
+        
+        await query.edit_message_text(text, reply_markup=kb, parse_mode=ParseMode.HTML)
+    
     @staticmethod
     async def get_user_detailed_stats(user_id: int, user_data: Dict) -> Dict[str, Any]:
         """Детальная статистика конкретного пользователя."""
@@ -558,14 +904,28 @@ async def security_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 def register_admin_handlers(app):
     """Регистрация админских обработчиков."""
+    from telegram.ext import CommandHandler, CallbackQueryHandler
+    
     # Команда /admin
-    from telegram.ext import CommandHandler
     app.add_handler(CommandHandler("admin", admin_panel))
     
-    # Callback обработчики
+    # Основные обработчики
     app.add_handler(CallbackQueryHandler(admin_panel, pattern="^admin:main$"))
+    app.add_handler(CallbackQueryHandler(stats_menu, pattern="^admin:stats_menu$"))
     app.add_handler(CallbackQueryHandler(global_stats, pattern="^admin:global_stats$"))
     app.add_handler(CallbackQueryHandler(security_report, pattern="^admin:security$"))
+    
+    # НОВЫЕ обработчики для статистики
+    app.add_handler(CallbackQueryHandler(activity_stats, pattern="^admin:activity_stats$"))
+    app.add_handler(CallbackQueryHandler(module_stats, pattern="^admin:module_stats$"))
+    app.add_handler(CallbackQueryHandler(top_users, pattern="^admin:top_users$"))
+    
+    # Обработчики для других разделов
+    app.add_handler(CallbackQueryHandler(handle_users, pattern="^admin:users$"))
+    app.add_handler(CallbackQueryHandler(handle_broadcast, pattern="^admin:broadcast$"))
+    app.add_handler(CallbackQueryHandler(handle_settings, pattern="^admin:settings$"))
+    app.add_handler(CallbackQueryHandler(handle_export, pattern="^admin:export$"))
+    app.add_handler(CallbackQueryHandler(stats_menu, pattern="^admin:stats$"))
     
     # Закрытие панели
     async def close_admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -573,6 +933,8 @@ def register_admin_handlers(app):
         await update.callback_query.delete_message()
     
     app.add_handler(CallbackQueryHandler(close_admin_panel, pattern="^admin:close$"))
+    
+    logger.info("Admin handlers registered successfully")
     
     
     
