@@ -491,32 +491,60 @@ async def show_module_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Показывает детальную информацию о модуле."""
     query = update.callback_query
     
+    # Сразу отвечаем на callback чтобы убрать "часики"
+    await query.answer()
+    
     # Получаем module_id из callback_data
     module_id = query.data.replace("info_", "")
+    
+    # Ищем модуль в MODULE_PLANS
     module = MODULE_PLANS.get(module_id)
     
     if not module:
-        await query.answer("Модуль не найден", show_alert=True)
+        await query.answer("❌ Модуль не найден", show_alert=True)
         return CHOOSING_MODULES
     
-    # Формируем текст с информацией
-    info_text = f"📚 {module['name']}\n\n"
-    info_text += f"{module['description']}\n\n"
+    # Формируем подробное описание
+    info_lines = []
+    info_lines.append(f"📚 <b>{module['name']}</b>\n")
+    info_lines.append(f"<i>{module.get('description', '')}</i>\n")
     
     # Добавляем детальное описание если есть
     if 'detailed_description' in module:
-        info_text += "Что включено:\n"
-        for item in module['detailed_description']:
-            info_text += f"{item}\n"
+        info_lines.append("\n<b>Что включено:</b>")
+        for item in module.get('detailed_description', []):
+            info_lines.append(f"{item}")
     
-    info_text += f"\n💰 Стоимость: {module['price_rub']}₽/месяц"
+    info_lines.append(f"\n💰 <b>Стоимость:</b> {module['price_rub']}₽/месяц")
     
-    # Показываем как всплывающее уведомление
-    await query.answer(info_text[:200], show_alert=True)
+    # Собираем текст
+    full_text = "\n".join(info_lines)
+    
+    # Создаем клавиатуру с кнопкой возврата
+    keyboard = [[
+        InlineKeyboardButton("⬅️ Назад к выбору", callback_data="back_to_module_selection")
+    ]]
+    
+    # Отправляем как новое сообщение или редактируем существующее
+    try:
+        await query.edit_message_text(
+            full_text,
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode=ParseMode.HTML
+        )
+    except Exception as e:
+        # Если не удалось отредактировать, отправляем alert
+        alert_text = full_text.replace("<b>", "").replace("</b>", "").replace("<i>", "").replace("</i>", "")
+        await query.answer(alert_text[:200], show_alert=True)
     
     return CHOOSING_MODULES
 
-
+@safe_handler()
+async def back_to_module_selection(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Возврат к выбору модулей из информации о модуле."""
+    # Вызываем show_individual_modules для возврата к списку
+    return await show_individual_modules(update, context)
+    
 # Добавьте обработчик для продолжения с выбранными модулями:
 
 @safe_handler()
@@ -1048,6 +1076,7 @@ def register_payment_handlers(app: Application):
             CHOOSING_MODULES: [  # НОВОЕ СОСТОЯНИЕ
                 CallbackQueryHandler(toggle_module_selection, pattern="^toggle_"),
                 CallbackQueryHandler(show_module_info, pattern="^info_"),
+                CallbackQueryHandler(back_to_module_selection, pattern="^back_to_module_selection$"),
                 CallbackQueryHandler(proceed_with_selected_modules, pattern="^proceed_with_modules$"),
                 CallbackQueryHandler(handle_plan_selection, pattern="^pay_package_"),
                 CallbackQueryHandler(show_modular_interface, pattern="^back_to_main$")
@@ -1079,7 +1108,6 @@ def register_payment_handlers(app: Application):
     app.add_handler(CallbackQueryHandler(handle_my_subscriptions, pattern="^my_subscriptions$"), group=-50)
     
     # Обработчик информации о модулях
-    app.add_handler(CallbackQueryHandler(handle_module_info, pattern="^module_info_"), group=-50)
     app.add_handler(CommandHandler("debug_subscription", cmd_debug_subscription), group=-50)
     
     logger.info("Payment handlers registered with priority")
