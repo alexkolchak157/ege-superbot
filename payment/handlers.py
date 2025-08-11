@@ -3,7 +3,7 @@
 import logging
 from datetime import datetime
 from typing import Optional
-
+import json
 from telegram import (
     InlineKeyboardButton, 
     InlineKeyboardMarkup, 
@@ -11,6 +11,7 @@ from telegram import (
 )
 from telegram.constants import ParseMode
 from telegram.ext import (
+    Application,
     ContextTypes, 
     ConversationHandler,
     CommandHandler,
@@ -37,9 +38,8 @@ CHOOSING_PLAN = "choosing_plan"
 CHOOSING_DURATION = "choosing_duration"  
 ENTERING_EMAIL = "entering_email"
 CONFIRMING = "confirming"
-
-# Экспортируем состояния для использования в middleware
-PAYMENT_STATES = [CHOOSING_PLAN, CHOOSING_DURATION, ENTERING_EMAIL, CONFIRMING]
+CHOOSING_MODULES = "choosing_modules"  # Новое состояние
+PAYMENT_STATES = [CHOOSING_PLAN, CHOOSING_MODULES, CHOOSING_DURATION, ENTERING_EMAIL, CONFIRMING]
 
 # Инициализация менеджеров
 subscription_manager = SubscriptionManager()
@@ -357,15 +357,20 @@ async def cmd_debug_subscription(update: Update, context: ContextTypes.DEFAULT_T
     await update.message.reply_text(text, parse_mode=ParseMode.HTML)
 
 async def show_individual_modules(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Показывает список отдельных модулей."""
+    """Показывает модули для множественного выбора."""
     query = update.callback_query
     
-    # ВАЖНО: Устанавливаем флаг процесса оплаты
-    context.user_data['in_payment_process'] = True
+    # Инициализируем список выбранных модулей если его нет
+    if 'selected_modules' not in context.user_data:
+        context.user_data['selected_modules'] = []
     
-    text = "📚 <b>Выберите модуль:</b>\n\n"
+    selected = context.user_data['selected_modules']
+    
+    text = "📚 <b>Выберите модули для подписки</b>\n\n"
+    text += "Нажмите на модуль чтобы добавить/убрать его из корзины:\n\n"
     
     keyboard = []
+    total_price = 0
     
     # Группируем модули по типам
     individual_modules = {
@@ -373,32 +378,79 @@ async def show_individual_modules(update: Update, context: ContextTypes.DEFAULT_
         if v.get('type') == 'individual'
     }
     
-    # ИСПРАВЛЕНО: Обновленные описания для каждого модуля
-    module_descriptions = {
-        'module_test_part': '• Задания 1-16 первой части ЕГЭ\n• Автоматическая проверка ответов\n• Подробный разбор ошибок',
-        'module_task19': '• Примеры социальных объектов\n• Проверка ИИ с обратной связью\n• База эталонных примеров',
-        'module_task20': '• Суждения различного характера\n• Анализ теоретических положений\n• Банк типовых формулировок',
-        'module_task25': '• Развёрнутый ответ по теме\n• Обоснование и аргументация\n• Примеры из различных сфер',
-        'module_task24': '• Составление плана доклада\n• Экспертная проверка структуры\n• Детальный разбор пунктов'
-    }
+    # Порядок отображения модулей
+    module_order = [
+        'module_test_part',
+        'module_task19', 
+        'module_task20',
+        'module_task25',
+        'module_task24'
+    ]
     
-    for module_id, module in individual_modules.items():
-        text += f"<b>{module['name']}</b>\n"
-        text += f"💰 {module['price_rub']}₽/месяц\n"
+    for module_id in module_order:
+        if module_id not in individual_modules:
+            continue
+            
+        module = individual_modules[module_id]
+        is_selected = module_id in selected
         
-        # Добавляем расширенное описание
-        if module_id in module_descriptions:
-            text += module_descriptions[module_id] + "\n"
+        # Показываем статус выбора
+        if is_selected:
+            status = "✅"
+            total_price += module['price_rub']
         else:
-            text += f"📝 {module['description']}\n\n"
+            status = "⬜"
+        
+        # Краткое описание для кнопки
+        button_text = f"{status} {module['name']} - {module['price_rub']}₽"
         
         keyboard.append([
             InlineKeyboardButton(
-                f"{module['name']} - {module['price_rub']}₽",
-                callback_data=f"pay_{module_id}"
+                button_text,
+                callback_data=f"toggle_{module_id}"
+            ),
+            InlineKeyboardButton(
+                "ℹ️",
+                callback_data=f"info_{module_id}"
             )
         ])
     
+    # Показываем выбранные модули и общую стоимость
+    if selected:
+        text += "<b>Выбрано:</b>\n"
+        for module_id in selected:
+            module = MODULE_PLANS[module_id]
+            text += f"• {module['name']} - {module['price_rub']}₽\n"
+        
+        text += f"\n💰 <b>Итого: {total_price}₽/мес</b>\n"
+        
+        # Проверяем, не выгоднее ли взять пакет
+        if len(selected) >= 3:
+            if total_price > 499 and len(selected) == 3:
+                text += "\n💡 <i>Совет: Пакет «Вторая часть» за 499₽ включает задания 19, 20, 25!</i>"
+            elif total_price > 999:
+                text += "\n💡 <i>Совет: «Полный доступ» за 999₽ включает все модули!</i>"
+    else:
+        text += "<i>Выберите хотя бы один модуль</i>\n"
+    
+    # Кнопки навигации
+    nav_buttons = []
+    
+    if selected:
+        nav_buttons.append(
+            InlineKeyboardButton(
+                f"✅ Далее (выбрано: {len(selected)})",
+                callback_data="proceed_with_modules"
+            )
+        )
+    
+    keyboard.append(nav_buttons)
+    keyboard.append([
+        InlineKeyboardButton("🎯 Пакет «Вторая часть» - 499₽", callback_data="pay_package_second")
+    ])
+    keyboard.append([
+        InlineKeyboardButton("👑 Полный доступ - 999₽", callback_data="pay_package_full")
+    ])
     keyboard.append([
         InlineKeyboardButton("⬅️ Назад", callback_data="back_to_main")
     ])
@@ -409,18 +461,107 @@ async def show_individual_modules(update: Update, context: ContextTypes.DEFAULT_
         parse_mode=ParseMode.HTML
     )
     
-    return CHOOSING_PLAN
+    return CHOOSING_MODULES
 
+@safe_handler()
+async def toggle_module_selection(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Переключает выбор модуля."""
+    query = update.callback_query
+    
+    module_id = query.data.replace("toggle_", "")
+    
+    if 'selected_modules' not in context.user_data:
+        context.user_data['selected_modules'] = []
+    
+    selected = context.user_data['selected_modules']
+    
+    if module_id in selected:
+        selected.remove(module_id)
+        await query.answer(f"❌ Модуль удален из корзины")
+    else:
+        selected.append(module_id)
+        module = MODULE_PLANS[module_id]
+        await query.answer(f"✅ {module['name']} добавлен в корзину")
+    
+    # Обновляем интерфейс
+    return await show_individual_modules(update, context)
+
+@safe_handler()
+async def show_module_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Показывает детальную информацию о модуле."""
+    query = update.callback_query
+    
+    # Получаем module_id из callback_data
+    module_id = query.data.replace("info_", "")
+    module = MODULE_PLANS.get(module_id)
+    
+    if not module:
+        await query.answer("Модуль не найден", show_alert=True)
+        return CHOOSING_MODULES
+    
+    # Формируем текст с информацией
+    info_text = f"📚 {module['name']}\n\n"
+    info_text += f"{module['description']}\n\n"
+    
+    # Добавляем детальное описание если есть
+    if 'detailed_description' in module:
+        info_text += "Что включено:\n"
+        for item in module['detailed_description']:
+            info_text += f"{item}\n"
+    
+    info_text += f"\n💰 Стоимость: {module['price_rub']}₽/месяц"
+    
+    # Показываем как всплывающее уведомление
+    await query.answer(info_text[:200], show_alert=True)
+    
+    return CHOOSING_MODULES
+
+
+# Добавьте обработчик для продолжения с выбранными модулями:
+
+@safe_handler()
+async def proceed_with_selected_modules(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Продолжает оформление с выбранными модулями."""
+    query = update.callback_query
+    
+    selected = context.user_data.get('selected_modules', [])
+    
+    if not selected:
+        await query.answer("Выберите хотя бы один модуль", show_alert=True)
+        return CHOOSING_MODULES
+    
+    # Создаем комбинированный план из выбранных модулей
+    total_price = sum(MODULE_PLANS[m]['price_rub'] for m in selected)
+    module_names = [MODULE_PLANS[m]['name'] for m in selected]
+    
+    # Сохраняем как custom план
+    custom_plan_id = f"custom_{'_'.join([m.replace('module_', '') for m in selected])}"
+    
+    context.user_data['selected_plan'] = custom_plan_id
+    context.user_data['custom_plan'] = {
+        'name': f"Комплект: {', '.join(module_names)}",
+        'price_rub': total_price,
+        'modules': [m.replace('module_', '') for m in selected],
+        'type': 'custom',
+        'duration_days': 30
+    }
+    
+    # Переходим к выбору длительности
+    return await show_duration_options(update, context)
 
 async def show_duration_options(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Показывает варианты длительности подписки."""
     query = update.callback_query
     
-    # ВАЖНО: Устанавливаем флаг процесса оплаты
     context.user_data['in_payment_process'] = True
     
     plan_id = context.user_data['selected_plan']
-    plan = MODULE_PLANS.get(plan_id, SUBSCRIPTION_PLANS.get(plan_id))
+    
+    # Проверяем custom план
+    if plan_id.startswith('custom_'):
+        plan = context.user_data['custom_plan']
+    else:
+        plan = MODULE_PLANS.get(plan_id, SUBSCRIPTION_PLANS.get(plan_id))
     
     text = f"<b>{plan['name']}</b>\n\n"
     text += "⏱ <b>Выберите срок подписки:</b>\n\n"
@@ -440,15 +581,18 @@ async def show_duration_options(update: Update, context: ContextTypes.DEFAULT_TY
             button_text = f"{label} - {total_price}₽"
         
         keyboard.append([
-            InlineKeyboardButton(
-                button_text,
-                callback_data=f"duration_{months}"
-            )
+            InlineKeyboardButton(button_text, callback_data=f"duration_{months}")
         ])
     
-    keyboard.append([
-        InlineKeyboardButton("⬅️ Назад", callback_data="back_to_plans")
-    ])
+    # Кнопка назад в зависимости от типа плана
+    if plan_id.startswith('custom_'):
+        keyboard.append([
+            InlineKeyboardButton("⬅️ Назад к выбору модулей", callback_data="back_to_modules")
+        ])
+    else:
+        keyboard.append([
+            InlineKeyboardButton("⬅️ Назад", callback_data="back_to_plans")
+        ])
     
     await query.edit_message_text(
         text,
@@ -465,10 +609,12 @@ async def handle_duration_selection(update: Update, context: ContextTypes.DEFAUL
     query = update.callback_query
     await query.answer()
     
-    # ВАЖНО: Подтверждаем флаг процесса оплаты
     context.user_data['in_payment_process'] = True
     
-    if query.data == "back_to_plans":
+    if query.data == "back_to_modules":
+        # Возвращаемся к выбору модулей
+        return await show_individual_modules(update, context)
+    elif query.data == "back_to_plans":
         # Возвращаемся к выбору планов
         return await show_modular_interface(update, context)
     
@@ -604,135 +750,78 @@ async def handle_email_input(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
 @safe_handler()
 async def handle_payment_confirmation(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обработка подтверждения платежа."""
+    """Обработка подтверждения платежа с поддержкой custom планов."""
     query = update.callback_query
     await query.answer()
     
     if query.data == "pay_cancel":
-        # Очищаем флаг при отмене
         context.user_data.pop('in_payment_process', None)
         await query.edit_message_text("❌ Оформление подписки отменено.")
         return ConversationHandler.END
     
-    # Показываем анимацию загрузки
-    await query.edit_message_text("⏳ Создаю платеж...")
-    
-    user_id = query.from_user.id
-    plan_id = context.user_data.get('selected_plan')
-    email = context.user_data.get('user_email', f"user{user_id}@example.com")
+    user_id = update.effective_user.id
+    plan_id = context.user_data['selected_plan']
     duration = context.user_data.get('duration_months', 1)
+    email = context.user_data['user_email']
     
-    plan = MODULE_PLANS.get(plan_id, SUBSCRIPTION_PLANS.get(plan_id))
-    if not plan:
-        # Очищаем флаг при ошибке
-        context.user_data.pop('in_payment_process', None)
-        await query.edit_message_text("❌ Ошибка: план не найден")
-        return ConversationHandler.END
+    # Получаем план (обычный или custom)
+    if plan_id.startswith('custom_'):
+        plan = context.user_data['custom_plan']
+        # Для custom плана нужно будет создать несколько подписок
+        modules_to_activate = plan['modules']
+    else:
+        plan = MODULE_PLANS.get(plan_id, SUBSCRIPTION_PLANS.get(plan_id))
+        modules_to_activate = plan.get('modules', [])
     
+    # Рассчитываем стоимость
+    if context.user_data.get('is_trial'):
+        amount_kopecks = 100  # 1 рубль для пробного периода
+    else:
+        amount_kopecks = get_plan_price_kopecks(plan_id, duration) if not plan_id.startswith('custom_') else int(plan['price_rub'] * DURATION_DISCOUNTS[duration]['multiplier'] * 100)
+    
+    # Создаем платеж
     try:
-        # Рассчитываем финальную цену в копейках
-        if context.user_data.get('is_trial'):
-            # Для пробного периода всегда 1 рубль
-            amount_kopecks = 100  # 1 рубль в копейках
-        elif SUBSCRIPTION_MODE == 'modular' and duration > 1:
-            from .config import DURATION_DISCOUNTS, get_plan_price_kopecks
-            amount_kopecks = get_plan_price_kopecks(plan_id, duration)
-        else:
-            amount_kopecks = plan['price_rub'] * duration * 100
-        
-        # Проверка минимальной суммы для Тинькофф
-        if amount_kopecks < 100:
-            logger.error(f"Amount too small: {amount_kopecks} kopecks")
-            await query.edit_message_text(
-                "❌ Ошибка: сумма платежа слишком мала.\n"
-                "Минимальная сумма - 1 рубль."
-            )
-            return ConversationHandler.END
-        
-        # Создаем запись о платеже
-        payment_data = await subscription_manager.create_payment(
-            user_id=user_id,
-            plan_id=plan_id,
-            amount_kopecks=amount_kopecks
-        )
-        
-        # Создаем чек для Tinkoff
-        receipt_items = [{
-            "Name": plan['description'],
-            "Price": amount_kopecks,
-            "Quantity": 1,
-            "Amount": amount_kopecks,
-            "Tax": "none",
-            "PaymentMethod": "advance",
-            "PaymentObject": "service"
-        }]
-        
-        bot = context.bot
-        bot_info = await bot.get_me()
-        bot_username = bot_info.username
-        
-        # Инициируем платеж в Tinkoff
-        result = await tinkoff_payment.init_payment(
-            order_id=payment_data['order_id'],
+        payment_url, order_id = await tinkoff_payment.create_payment(
             amount_kopecks=amount_kopecks,
-            description=plan['description'],
-            user_email=email,
-            receipt_items=receipt_items,
-            user_data={
-                "user_id": str(user_id),
-                "plan_id": plan_id,
-                "duration_months": str(duration)
-            },
-            bot_username=bot_username  # Добавляем эту строку
+            order_id=f"{user_id}_{plan_id}_{int(datetime.now().timestamp())}",
+            description=f"Подписка: {plan['name']}",
+            customer_email=email,
+            user_id=user_id
         )
         
-        if result['success']:
-            # Успешно создан платеж
-            text = f"""✅ <b>Платеж создан!</b>
-
-Нажмите кнопку ниже для перехода к оплате.
-После успешной оплаты подписка будет активирована автоматически.
-
-Сумма: {amount_kopecks // 100} ₽"""
-            
-            keyboard = [[
-                InlineKeyboardButton(
-                    "💳 Перейти к оплате",
-                    url=result['payment_url']
-                )
-            ]]
-            
-            # Очищаем флаг после успешного создания платежа
-            context.user_data.pop('in_payment_process', None)
-            
-            await query.edit_message_text(
-                text,
-                parse_mode=ParseMode.HTML,
-                reply_markup=InlineKeyboardMarkup(keyboard)
-            )
-        else:
-            # Очищаем флаг при ошибке
-            context.user_data.pop('in_payment_process', None)
-            
-            error = result.get('error', 'Неизвестная ошибка')
-            await query.edit_message_text(
-                f"❌ Ошибка создания платежа:\n{error}\n\n"
-                "Попробуйте позже или обратитесь в поддержку."
-            )
+        # Сохраняем информацию о платеже
+        await subscription_manager.save_payment_info(
+            user_id=user_id,
+            order_id=order_id,
+            plan_id=plan_id if not plan_id.startswith('custom_') else 'custom',
+            amount=amount_kopecks // 100,
+            email=email,
+            modules=modules_to_activate  # Сохраняем список модулей
+        )
         
-        return ConversationHandler.END
+        # Отправляем ссылку на оплату
+        text = "✅ <b>Платеж создан!</b>\n\n"
+        text += f"Сумма к оплате: {amount_kopecks // 100} ₽\n\n"
+        text += "Нажмите кнопку ниже для перехода к оплате:"
+        
+        keyboard = [[
+            InlineKeyboardButton("💳 Оплатить", url=payment_url)
+        ]]
+        
+        await query.edit_message_text(
+            text,
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode=ParseMode.HTML
+        )
         
     except Exception as e:
         logger.error(f"Error creating payment: {e}")
-        
-        # Очищаем флаг при ошибке
-        context.user_data.pop('in_payment_process', None)
-        
         await query.edit_message_text(
-            "❌ Произошла ошибка при создании платежа.\n"
-            "Попробуйте позже или обратитесь в поддержку."
+            "❌ Ошибка при создании платежа. Попробуйте позже."
         )
-        return ConversationHandler.END
+    
+    context.user_data.pop('in_payment_process', None)
+    return ConversationHandler.END
 
 
 async def cancel_payment(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -941,10 +1030,9 @@ async def handle_module_info(update: Update, context: ContextTypes.DEFAULT_TYPE)
         reply_markup=InlineKeyboardMarkup(keyboard)
     )
 
-def register_payment_handlers(app):
+def register_payment_handlers(app: Application):
     """Регистрирует обработчики платежей."""
     
-    # ConversationHandler для процесса оплаты
     payment_conv = ConversationHandler(
         entry_points=[
             CommandHandler("subscribe", cmd_subscribe),
@@ -957,8 +1045,16 @@ def register_payment_handlers(app):
                 CallbackQueryHandler(show_individual_modules, pattern="^pay_individual_modules$"),
                 CallbackQueryHandler(show_modular_interface, pattern="^back_to_main$")
             ],
+            CHOOSING_MODULES: [  # НОВОЕ СОСТОЯНИЕ
+                CallbackQueryHandler(toggle_module_selection, pattern="^toggle_"),
+                CallbackQueryHandler(show_module_info, pattern="^info_"),
+                CallbackQueryHandler(proceed_with_selected_modules, pattern="^proceed_with_modules$"),
+                CallbackQueryHandler(handle_plan_selection, pattern="^pay_package_"),
+                CallbackQueryHandler(show_modular_interface, pattern="^back_to_main$")
+            ],
             CHOOSING_DURATION: [
                 CallbackQueryHandler(handle_duration_selection, pattern="^duration_"),
+                CallbackQueryHandler(show_individual_modules, pattern="^back_to_modules$"),
                 CallbackQueryHandler(show_modular_interface, pattern="^back_to_plans$")
             ],
             ENTERING_EMAIL: [
@@ -976,7 +1072,6 @@ def register_payment_handlers(app):
         allow_reentry=True
     )
     
-    # ВАЖНО: Регистрируем с приоритетом -50, чтобы обработчик срабатывал ДО middleware (-100)
     app.add_handler(payment_conv, group=-50)
     
     # Дополнительные команды тоже с приоритетом

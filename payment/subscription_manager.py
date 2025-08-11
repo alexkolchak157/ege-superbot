@@ -38,24 +38,33 @@ class SubscriptionManager:
         """Инициализирует таблицы в БД."""
         try:
             async with aiosqlite.connect(DATABASE_FILE) as conn:
-                # Основная таблица платежей
+                # Создаем таблицу payments если её нет
                 await conn.execute("""
                     CREATE TABLE IF NOT EXISTS payments (
                         id INTEGER PRIMARY KEY AUTOINCREMENT,
-                        order_id TEXT UNIQUE NOT NULL,
                         user_id INTEGER NOT NULL,
+                        order_id TEXT UNIQUE NOT NULL,
                         plan_id TEXT NOT NULL,
                         amount_kopecks INTEGER NOT NULL,
                         status TEXT DEFAULT 'pending',
                         payment_id TEXT,
-                        payment_url TEXT,
+                        metadata TEXT,  -- Для хранения дополнительных данных (модули для custom планов)
                         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                        confirmed_at TIMESTAMP,
-                        metadata TEXT
+                        completed_at TIMESTAMP
                     )
                 """)
                 
+                # Проверяем наличие колонки metadata и добавляем если нет
+                cursor = await conn.execute("PRAGMA table_info(payments)")
+                columns = await cursor.fetchall()
+                column_names = [col[1] for col in columns]
+                
+                if 'metadata' not in column_names:
+                    await conn.execute("ALTER TABLE payments ADD COLUMN metadata TEXT")
+                    logger.info("Added metadata column to payments table")
+                
+                await conn.commit()
+                    
                 # Индекс для payments
                 await conn.execute("""
                     CREATE INDEX IF NOT EXISTS idx_payments_user 
@@ -490,30 +499,13 @@ class SubscriptionManager:
             logger.error(f"Error creating payment: {e}")
             raise
     
-    async def activate_subscription(self, order_id: str, payment_id: str) -> bool:
-        """Активирует подписку после успешной оплаты."""
-        logger.info(f"Starting activation for order {order_id}, payment {payment_id}")
-        logger.info(f"Current SUBSCRIPTION_MODE: {SUBSCRIPTION_MODE}")
-        
+    async def activate_subscription(self, order_id: str, payment_id: str = None) -> bool:
+        """Активирует подписку после успешной оплаты с поддержкой custom планов."""
         try:
             async with aiosqlite.connect(DATABASE_FILE) as conn:
-                # Включаем автокоммит для немедленной записи
-                await conn.execute("PRAGMA journal_mode=WAL")
-                
-                # Проверяем, не была ли подписка уже активирована
-                cursor = await conn.execute(
-                    "SELECT status FROM payments WHERE order_id = ?",
-                    (order_id,)
-                )
-                existing = await cursor.fetchone()
-                
-                if existing and existing[0] == 'completed':
-                    logger.warning(f"Order {order_id} already completed, skipping activation")
-                    return True  # Возвращаем True, так как подписка уже активна
-                
                 # Получаем информацию о платеже
                 cursor = await conn.execute(
-                    "SELECT user_id, plan_id, amount_kopecks FROM payments WHERE order_id = ?",
+                    "SELECT user_id, plan_id, metadata FROM payments WHERE order_id = ?",
                     (order_id,)
                 )
                 payment = await cursor.fetchone()
@@ -522,41 +514,39 @@ class SubscriptionManager:
                     logger.error(f"Payment not found for order {order_id}")
                     return False
                 
-                user_id, plan_id, amount = payment
-                logger.info(f"Found payment: user_id={user_id}, plan_id={plan_id}, amount={amount}")
+                user_id, plan_id, metadata = payment
                 
-                # Начинаем транзакцию
-                await conn.execute("BEGIN TRANSACTION")
-                
-                try:
+                # Обработка custom плана
+                if plan_id == 'custom' and metadata:
+                    # Получаем список модулей из metadata
+                    import json
+                    modules = json.loads(metadata)
+                    logger.info(f"Activating custom plan with modules: {modules}")
+                    
+                    # Активируем каждый модуль
+                    for module_code in modules:
+                        await self._activate_modular_subscription(
+                            user_id, 
+                            f"module_{module_code}" if not module_code.startswith('module_') else module_code,
+                            payment_id
+                        )
+                else:
+                    # Стандартная активация
                     if SUBSCRIPTION_MODE == 'modular':
-                        logger.info("Using modular subscription system")
                         await self._activate_modular_subscription(user_id, plan_id, payment_id)
                     else:
-                        logger.info("Using unified subscription system")
                         await self._activate_unified_subscription(user_id, plan_id, payment_id)
-                    
-                    # Обновляем статус платежа
-                    await conn.execute(
-                        """
-                        UPDATE payments 
-                        SET status = 'completed', payment_id = ?, completed_at = ?
-                        WHERE order_id = ?
-                        """,
-                        (payment_id, datetime.now(timezone.utc), order_id)
-                    )
-                    
-                    # Коммитим транзакцию
-                    await conn.commit()
-                    logger.info(f"✅ Subscription activated successfully for user {user_id}, plan {plan_id}")
-                    return True
-                    
-                except Exception as e:
-                    # Откатываем транзакцию при ошибке
-                    await conn.rollback()
-                    logger.exception(f"Error during activation, rolling back: {e}")
-                    raise
-                    
+                
+                # Обновляем статус платежа
+                await conn.execute(
+                    "UPDATE payments SET status = 'completed' WHERE order_id = ?",
+                    (order_id,)
+                )
+                await conn.commit()
+                
+                logger.info(f"✅ Subscription activated for user {user_id}, order {order_id}")
+                return True
+                
         except Exception as e:
             logger.exception(f"Error activating subscription: {e}")
             return False
