@@ -556,6 +556,7 @@ async def security_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.edit_message_text(text, reply_markup=kb, parse_mode=ParseMode.HTML)
 
 
+
 @admin_only
 async def activity_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Показ статистики активности."""
@@ -902,6 +903,87 @@ async def top_users(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     await query.edit_message_text(text, reply_markup=kb, parse_mode=ParseMode.HTML)
 
+    # Дополнительные обработчики админской панели
+    
+async def stats_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Меню статистики."""
+    query = update.callback_query
+    await query.answer()
+    
+    text = "📊 <b>Статистика</b>\n\nВыберите тип статистики:"
+    kb = AdminKeyboards.stats_menu()
+    
+    await query.edit_message_text(text, reply_markup=kb, parse_mode=ParseMode.HTML)
+
+async def handle_users(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Управление пользователями."""
+    query = update.callback_query
+    await query.answer()
+    
+    # Простая заглушка
+    text = (
+        "👥 <b>Управление пользователями</b>\n\n"
+        "Функция в разработке.\n\n"
+        "Доступные действия будут добавлены в следующей версии."
+    )
+    
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("⬅️ Назад", callback_data="admin:main")]
+    ])
+    
+    await query.edit_message_text(text, reply_markup=kb, parse_mode=ParseMode.HTML)
+
+async def handle_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Рассылка сообщений."""
+    query = update.callback_query
+    await query.answer()
+    
+    text = (
+        "📨 <b>Рассылка</b>\n\n"
+        "Функция в разработке.\n\n"
+        "Массовая рассылка будет доступна в следующей версии."
+    )
+    
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("⬅️ Назад", callback_data="admin:main")]
+    ])
+    
+    await query.edit_message_text(text, reply_markup=kb, parse_mode=ParseMode.HTML)
+
+async def handle_settings(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Настройки бота."""
+    query = update.callback_query
+    await query.answer()
+    
+    text = (
+        "⚙️ <b>Настройки</b>\n\n"
+        "Функция в разработке.\n\n"
+        "Настройки бота будут доступны в следующей версии."
+    )
+    
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("⬅️ Назад", callback_data="admin:main")]
+    ])
+    
+    await query.edit_message_text(text, reply_markup=kb, parse_mode=ParseMode.HTML)
+
+async def handle_export(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Экспорт данных."""
+    query = update.callback_query
+    await query.answer()
+    
+    text = (
+        "📤 <b>Экспорт данных</b>\n\n"
+        "Функция в разработке.\n\n"
+        "Экспорт статистики будет доступен в следующей версии."
+    )
+    
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("⬅️ Назад", callback_data="admin:main")]
+    ])
+    
+    await query.edit_message_text(text, reply_markup=kb, parse_mode=ParseMode.HTML)
+
 def register_admin_handlers(app):
     """Регистрация админских обработчиков."""
     from telegram.ext import CommandHandler, CallbackQueryHandler
@@ -909,133 +991,21 @@ def register_admin_handlers(app):
     # Команда /admin
     app.add_handler(CommandHandler("admin", admin_panel))
     
-    # Основные обработчики
+    # Главное меню - ТОЛЬКО ПО ОДНОЙ РЕГИСТРАЦИИ!
     app.add_handler(CallbackQueryHandler(admin_panel, pattern="^admin:main$"))
-    app.add_handler(CallbackQueryHandler(stats_menu, pattern="^admin:stats_menu$"))
-    app.add_handler(CallbackQueryHandler(global_stats, pattern="^admin:global_stats$"))
-    app.add_handler(CallbackQueryHandler(security_report, pattern="^admin:security$"))
-    
-    # НОВЫЕ обработчики для статистики
-    app.add_handler(CallbackQueryHandler(activity_stats, pattern="^admin:activity_stats$"))
-    app.add_handler(CallbackQueryHandler(module_stats, pattern="^admin:module_stats$"))
-    app.add_handler(CallbackQueryHandler(top_users, pattern="^admin:top_users$"))
-    
-    # Обработчики для других разделов
+    app.add_handler(CallbackQueryHandler(stats_menu, pattern="^admin:stats$"))  # ← ОДНА для stats
     app.add_handler(CallbackQueryHandler(handle_users, pattern="^admin:users$"))
     app.add_handler(CallbackQueryHandler(handle_broadcast, pattern="^admin:broadcast$"))
     app.add_handler(CallbackQueryHandler(handle_settings, pattern="^admin:settings$"))
     app.add_handler(CallbackQueryHandler(handle_export, pattern="^admin:export$"))
-    app.add_handler(CallbackQueryHandler(stats_menu, pattern="^admin:stats$"))
-    
-    # Закрытие панели
-    async def close_admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
-        await update.callback_query.answer()
-        await update.callback_query.delete_message()
-    
+    app.add_handler(CallbackQueryHandler(security_report, pattern="^admin:security$"))
     app.add_handler(CallbackQueryHandler(close_admin_panel, pattern="^admin:close$"))
     
+    # Меню статистики
+    app.add_handler(CallbackQueryHandler(stats_menu, pattern="^admin:stats_menu$"))  # ← ОДНА для stats_menu
+    app.add_handler(CallbackQueryHandler(global_stats, pattern="^admin:global_stats$"))
+    app.add_handler(CallbackQueryHandler(activity_stats, pattern="^admin:activity_stats$"))
+    app.add_handler(CallbackQueryHandler(module_stats, pattern="^admin:module_stats$"))
+    app.add_handler(CallbackQueryHandler(top_users, pattern="^admin:top_users$"))
+    
     logger.info("Admin handlers registered successfully")
-    
-    
-    
-    # Дополнительные обработчики админской панели
-    
-    async def stats_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Меню статистики."""
-        query = update.callback_query
-        await query.answer()
-        
-        text = "📊 <b>Статистика</b>\n\nВыберите тип статистики:"
-        kb = AdminKeyboards.stats_menu()
-        
-        await query.edit_message_text(text, reply_markup=kb, parse_mode=ParseMode.HTML)
-    
-    async def handle_users(update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Управление пользователями."""
-        query = update.callback_query
-        await query.answer()
-        
-        # Простая заглушка
-        text = (
-            "👥 <b>Управление пользователями</b>\n\n"
-            "Функция в разработке.\n\n"
-            "Доступные действия будут добавлены в следующей версии."
-        )
-        
-        kb = InlineKeyboardMarkup([
-            [InlineKeyboardButton("⬅️ Назад", callback_data="admin:main")]
-        ])
-        
-        await query.edit_message_text(text, reply_markup=kb, parse_mode=ParseMode.HTML)
-    
-    async def handle_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Рассылка сообщений."""
-        query = update.callback_query
-        await query.answer()
-        
-        text = (
-            "📨 <b>Рассылка</b>\n\n"
-            "Функция в разработке.\n\n"
-            "Массовая рассылка будет доступна в следующей версии."
-        )
-        
-        kb = InlineKeyboardMarkup([
-            [InlineKeyboardButton("⬅️ Назад", callback_data="admin:main")]
-        ])
-        
-        await query.edit_message_text(text, reply_markup=kb, parse_mode=ParseMode.HTML)
-    
-    async def handle_settings(update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Настройки бота."""
-        query = update.callback_query
-        await query.answer()
-        
-        text = (
-            "⚙️ <b>Настройки</b>\n\n"
-            "Функция в разработке.\n\n"
-            "Настройки бота будут доступны в следующей версии."
-        )
-        
-        kb = InlineKeyboardMarkup([
-            [InlineKeyboardButton("⬅️ Назад", callback_data="admin:main")]
-        ])
-        
-        await query.edit_message_text(text, reply_markup=kb, parse_mode=ParseMode.HTML)
-    
-    async def handle_export(update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Экспорт данных."""
-        query = update.callback_query
-        await query.answer()
-        
-        text = (
-            "📤 <b>Экспорт данных</b>\n\n"
-            "Функция в разработке.\n\n"
-            "Экспорт статистики будет доступен в следующей версии."
-        )
-        
-        kb = InlineKeyboardMarkup([
-            [InlineKeyboardButton("⬅️ Назад", callback_data="admin:main")]
-        ])
-        
-        await query.edit_message_text(text, reply_markup=kb, parse_mode=ParseMode.HTML)
-    
-    # Регистрируем дополнительные обработчики
-    app.add_handler(CallbackQueryHandler(
-        admin_only(stats_menu), pattern="^admin:stats$"
-    ))
-    app.add_handler(CallbackQueryHandler(
-        admin_only(handle_users), pattern="^admin:users$"
-    ))
-    app.add_handler(CallbackQueryHandler(
-        admin_only(handle_broadcast), pattern="^admin:broadcast$"
-    ))
-    app.add_handler(CallbackQueryHandler(
-        admin_only(handle_settings), pattern="^admin:settings$"
-    ))
-    app.add_handler(CallbackQueryHandler(
-        admin_only(handle_export), pattern="^admin:export$"
-    ))
-    app.add_handler(CallbackQueryHandler(
-        admin_only(stats_menu), pattern="^admin:stats_menu$"
-    ))
-    logger.info("Админские обработчики зарегистрированы")
