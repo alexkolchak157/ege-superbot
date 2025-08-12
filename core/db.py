@@ -799,3 +799,40 @@ async def fetch_one(query: str, params: tuple = ()) -> Optional[Dict[str, Any]]:
 async def get_user(user_id: int) -> Optional[Dict[str, Any]]:
     """Получает данные пользователя."""
     return await get_or_create_user_status(user_id)
+
+async def update_user_info(user_id: int, username: str = None, first_name: str = None, last_name: str = None):
+    """Обновляет информацию о пользователе из Telegram."""
+    try:
+        async with aiosqlite.connect(DATABASE_FILE) as db:
+            # Проверяем, существует ли пользователь
+            cursor = await db.execute(
+                f"SELECT user_id FROM {TABLE_USERS} WHERE user_id = ?",
+                (user_id,)
+            )
+            user_exists = await cursor.fetchone()
+            
+            if user_exists:
+                # Обновляем существующего пользователя
+                await db.execute(f"""
+                    UPDATE {TABLE_USERS} 
+                    SET username = COALESCE(?, username),
+                        first_name = COALESCE(?, first_name),
+                        last_name = COALESCE(?, last_name),
+                        last_activity_date = date('now'),
+                        created_at = COALESCE(created_at, CURRENT_TIMESTAMP)
+                    WHERE user_id = ?
+                """, (username, first_name, last_name, user_id))
+            else:
+                # Создаём нового пользователя со всеми данными
+                await db.execute(f"""
+                    INSERT INTO {TABLE_USERS} (
+                        user_id, username, first_name, last_name, 
+                        created_at, first_seen, last_activity_date
+                    ) VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, date('now'))
+                """, (user_id, username, first_name, last_name))
+            
+            await db.commit()
+            logger.info(f"Updated user info for {user_id}: {first_name} (@{username})")
+            
+    except Exception as e:
+        logger.error(f"Error updating user info for {user_id}: {e}")

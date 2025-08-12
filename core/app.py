@@ -109,6 +109,18 @@ async def post_init(application: Application) -> None:
     
     # Инициализация БД
     await db.init_db()
+    try:
+        from core.admin_tools import init_price_tables
+        await init_price_tables()
+        logger.info("Price tables initialized")
+    except Exception as e:
+        logger.error(f"Failed to initialize price tables: {e}")
+    try:
+        from core.user_middleware import register_user_middleware
+        register_user_middleware(application)
+        logger.info("User middleware registered")
+    except Exception as e:
+        logger.error(f"Failed to register user middleware: {e}")
         # Добавляем глобальную команду cancel
     async def global_cancel(update: Update, context):
         """Глобальный обработчик команды /cancel"""
@@ -199,6 +211,16 @@ async def post_shutdown(application: Application) -> None:
 async def start_command(update: Update, context):
     """Обработчик команды /start"""
     user_id = update.effective_user.id
+    user = update.effective_user
+    
+    # НОВОЕ: Сохраняем/обновляем информацию о пользователе
+    await db.update_user_info(
+        user_id=user.id,
+        username=user.username,
+        first_name=user.first_name,
+        last_name=user.last_name
+    )
+    
     args = context.args
     
     if args and len(args) > 0:
@@ -224,6 +246,7 @@ async def start_command(update: Update, context):
                 parse_mode=ParseMode.HTML
             )
             return
+    
     # Проверяем/создаем пользователя в БД
     await db.ensure_user(user_id)
     
@@ -232,10 +255,8 @@ async def start_command(update: Update, context):
     if subscription_manager:
         subscription_info = await subscription_manager.get_subscription_info(user_id)
         
-        # ИСПРАВЛЕНИЕ: Правильная проверка для модульной системы
         if subscription_info:
             if subscription_info.get('type') == 'modular':
-                # Для модульной системы
                 modules = subscription_info.get('modules', [])
                 if modules:
                     status_text = f"✅ У вас активная подписка на модули:\n"
@@ -245,7 +266,6 @@ async def start_command(update: Update, context):
                 else:
                     status_text = "❌ У вас нет активной подписки"
             else:
-                # Для единой системы подписок
                 plan_name = subscription_info.get('plan_name', 'Подписка')
                 status_text = f"✅ У вас активная подписка: {plan_name}"
                 status_text += f"\nДействует до: {subscription_info.get('expires_at').strftime('%d.%m.%Y')}"
@@ -254,8 +274,12 @@ async def start_command(update: Update, context):
     else:
         status_text = ""
     
+    # НОВОЕ: Используем имя пользователя в приветствии
+    welcome_name = user.first_name or "друг"
     welcome_text = f"""
-👋 Добро пожаловать в бот для подготовки к ЕГЭ по обществознанию!
+👋 Добро пожаловать, {welcome_name}!
+
+Это бот для подготовки к ЕГЭ по обществознанию.
 
 {status_text}
 
@@ -445,6 +469,16 @@ async def help_command(update: Update, context):
 
 async def menu_command(update: Update, context):
     """Обработчик команды /menu"""
+    user = update.effective_user
+    
+    # НОВОЕ: Обновляем информацию о пользователе при каждом вызове /menu
+    await db.update_user_info(
+        user_id=user.id,
+        username=user.username,
+        first_name=user.first_name,
+        last_name=user.last_name
+    )
+    
     try:
         # Пробуем использовать меню с проверкой доступа
         user_id = update.effective_user.id
@@ -459,8 +493,8 @@ async def menu_command(update: Update, context):
         text = "📚 Выберите раздел для подготовки к ЕГЭ:"
         
         # Добавим приветствие с именем если доступно
-        if update.effective_user.first_name:
-            text = f"👋 Привет, {update.effective_user.first_name}!\n\n" + text
+        if user.first_name:
+            text = f"👋 Привет, {user.first_name}!\n\n" + text
         
         await update.message.reply_text(
             text,
