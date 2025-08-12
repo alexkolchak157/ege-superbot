@@ -2,7 +2,7 @@
 """Админские команды для управления подписками."""
 import logging
 from telegram import Update
-from telegram.ext import ContextTypes, CommandHandler, Application
+from telegram.ext import ContextTypes, CommandHandler, Application, CallbackQueryHandler
 from telegram.constants import ParseMode
 from functools import wraps
 
@@ -22,7 +22,7 @@ def admin_only(func):
         admin_ids = []
         if hasattr(config, 'ADMIN_IDS') and config.ADMIN_IDS:
             if isinstance(config.ADMIN_IDS, str):
-                admin_ids = [int(id.strip()) for id in config.ADMIN_IDS.split(',') if id.strip()]
+                admin_ids = config.ADMIN_IDS if isinstance(config.ADMIN_IDS, list) else []
             elif isinstance(config.ADMIN_IDS, list):
                 admin_ids = [int(id) for id in config.ADMIN_IDS]
         
@@ -545,18 +545,20 @@ async def cmd_check_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
     admin_ids = []
     if hasattr(config, 'ADMIN_IDS') and config.ADMIN_IDS:
         if isinstance(config.ADMIN_IDS, str):
-            admin_ids = [int(id.strip()) for id in config.ADMIN_IDS.split(',') if id.strip()]
+            admin_ids = config.ADMIN_IDS if isinstance(config.ADMIN_IDS, list) else []
         elif isinstance(config.ADMIN_IDS, list):
             admin_ids = config.ADMIN_IDS
     
     # Также проверяем BOT_ADMIN_IDS если есть
-    if hasattr(config, 'BOT_ADMIN_IDS') and config.BOT_ADMIN_IDS:
-        bot_admin_ids = []
-        if isinstance(config.BOT_ADMIN_IDS, str):
-            bot_admin_ids = [int(id.strip()) for id in config.BOT_ADMIN_IDS.split(',') if id.strip()]
-        elif isinstance(config.BOT_ADMIN_IDS, list):
+    if hasattr(config, 'BOT_ADMIN_IDS'):
+        if isinstance(config.BOT_ADMIN_IDS, list):
             bot_admin_ids = config.BOT_ADMIN_IDS
-        admin_ids.extend(bot_admin_ids)
+        elif isinstance(config.BOT_ADMIN_IDS, str):
+            bot_admin_ids = [int(id.strip()) for id in config.BOT_ADMIN_IDS.split(',') if id.strip()]
+        else:
+            bot_admin_ids = []
+    else:
+        bot_admin_ids = admin_ids  # Используем обычный ADMIN_IDS
     
     # Убираем дубликаты
     admin_ids = list(set(admin_ids))
