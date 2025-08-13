@@ -1462,106 +1462,192 @@ async def my_progress(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Показ прогресса пользователя."""
     query = update.callback_query
     
+    # ИСПРАВЛЕНИЕ: Проверяем ОБА источника данных
+    stats = context.user_data.get('practice_stats', {})
     results = context.user_data.get('task25_results', [])
     
-    if not results:
-        text = MessageFormatter.format_welcome_message(
-            "задание 25",
-            is_new_user=True
+    # Если нет данных ни в одном источнике
+    if not stats and not results:
+        text = (
+            "📊 <b>Ваш прогресс</b>\n\n"
+            "Вы ещё не решали задания. Начните практику!"
         )
-        kb = InlineKeyboardMarkup([[
-            InlineKeyboardButton("💪 Начать практику", callback_data="t25_practice"),
-            InlineKeyboardButton("⬅️ Назад", callback_data="t25_menu")
-        ]])
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("💪 Начать практику", callback_data="t25_practice")],
+            [InlineKeyboardButton("⬅️ Назад", callback_data="t25_menu")]
+        ])
     else:
-        # Собираем статистику
-        total_attempts = len(results)
-        scores = [r['score'] for r in results]
-        average_score = sum(scores) / len(scores)
-        unique_topics = len(set(r['topic_id'] for r in results))
+        text = "📊 <b>Ваш прогресс</b>\n\n"
         
-        # Топ результаты
-        topic_scores = {}
-        for result in results:
-            topic_id = result.get('topic_id', 0)  # Используем topic_id с дефолтным значением
-            if topic_id not in topic_scores or result['score'] > topic_scores[topic_id]['score']:
-                topic_scores[topic_id] = {
-                    'topic': result.get('topic_title', 'Неизвестная тема'),  # Используем topic_title
-                    'score': result['score'],
-                    'max_score': 6
-                }
-        def save_result(context: ContextTypes.DEFAULT_TYPE, topic: Dict, score: int):
-            """Сохраняет результат проверки."""
-            # Инициализируем структуру результатов если нужно
-            if 'task25_results' not in context.user_data:
-                context.user_data['task25_results'] = []
-            
-            # Сохраняем результат с правильными ключами
-            result = {
-                'topic_id': topic.get('id'),  # Добавляем topic_id
-                'topic_title': topic.get('title', 'Неизвестная тема'),
-                'block': topic.get('block', 'Общие темы'),
-                'score': score,
-                'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-            }
-            
-            context.user_data['task25_results'].append(result)
-            
-            # Обновляем также practice_stats для обратной совместимости
-            if 'practice_stats' not in context.user_data:
-                context.user_data['practice_stats'] = {}
-            
-            topic_id_str = str(topic.get('id', 0))
-            if topic_id_str not in context.user_data['practice_stats']:
-                context.user_data['practice_stats'][topic_id_str] = {
-                    'attempts': 0,
-                    'scores': []
-                }
-            
-            context.user_data['practice_stats'][topic_id_str]['attempts'] += 1
-            context.user_data['practice_stats'][topic_id_str]['scores'].append(score)
-            
-            # Обновляем общую статистику (остальной код без изменений)
-            stats = context.user_data.get('task25_stats', {
-                'total_attempts': 0,
-                'topics_completed': [],
-                'scores': [],
-                'blocks_progress': {}
-            })
-            
-            stats['total_attempts'] += 1
-            
-            topic_id = topic.get('id')
-            if topic_id and topic_id not in stats['topics_completed']:
-                stats['topics_completed'].append(topic_id)
-            
-            stats['scores'].append(score)
-        top_results = sorted(topic_scores.values(), key=lambda x: x['score'], reverse=True)[:3]
+        # Собираем статистику из ОБОИХ источников
+        total_attempts = 0
+        total_score = 0
+        topics_tried = 0
         
-        # Форматируем сообщение
-        text = MessageFormatter.format_progress_message({
-            'total_attempts': total_attempts,
-            'average_score': average_score,
-            'completed': unique_topics,
-            'total': len(task25_data.get('topics', [])),
-            'total_time': 0,
-            'top_results': top_results,
-            'current_average': average_score / 6 * 100,
-            'previous_average': (average_score / 6 * 100) - 5
-        }, "заданию 25")
+        # Сначала обрабатываем данные из practice_stats
+        for topic_id, topic_stats in stats.items():
+            if topic_stats.get('attempts', 0) > 0:
+                topics_tried += 1
+                total_attempts += topic_stats['attempts']
+                if topic_stats.get('scores'):
+                    # Берём лучший результат по теме
+                    best_score = max(topic_stats['scores'])
+                    total_score += best_score
         
-        kb = AdaptiveKeyboards.create_progress_keyboard(
-            has_detailed_stats=True,
-            can_export=True,
-            module_code="t25"
-        )
+        # Если practice_stats пустой, но есть results - используем их
+        if not stats and results:
+            total_attempts = len(results)
+            total_score = sum(r['score'] for r in results)
+            topics_tried = len(set(r.get('topic_id') for r in results if r.get('topic_id')))
+        
+        # Если есть и stats и results - синхронизируем
+        elif stats and results:
+            # Проверяем, есть ли в results темы, которых нет в stats
+            for result in results:
+                topic_id_str = str(result.get('topic_id', 0))
+                if topic_id_str not in stats:
+                    # Добавляем недостающую тему в подсчет
+                    topics_tried += 1
+                    total_attempts += 1
+                    total_score += result['score']
+        
+        # Вычисляем средний балл
+        if topics_tried > 0:
+            avg_score = total_score / topics_tried
+            text += f"<b>Тем изучено:</b> {topics_tried}\n"
+            text += f"<b>Всего попыток:</b> {total_attempts}\n"
+            text += f"<b>Средний балл:</b> {avg_score:.1f}/6\n"
+            
+            # Добавляем информацию о серии
+            streak = context.user_data.get('correct_streak', 0)
+            if streak > 0:
+                text += f"<b>🔥 Текущая серия:</b> {streak}\n"
+            
+            text += "\n"
+            
+            # Детализация по темам
+            text += "<b>По темам:</b>\n"
+            
+            # Собираем информацию о темах из обоих источников
+            topics_info = {}
+            
+            # Из practice_stats
+            for topic_id, topic_stats in stats.items():
+                if topic_stats['attempts'] > 0:
+                    # Пытаемся найти название темы
+                    topic_title = topic_stats.get('topic_title')
+                    if not topic_title:
+                        # Ищем в results
+                        for r in results:
+                            if str(r.get('topic_id')) == topic_id:
+                                topic_title = r.get('topic_title', f'Тема {topic_id}')
+                                break
+                    if not topic_title:
+                        topic_title = f'Тема {topic_id}'
+                    
+                    topics_info[topic_id] = {
+                        'title': topic_title[:30],
+                        'best': max(topic_stats['scores']) if topic_stats['scores'] else 0,
+                        'attempts': topic_stats['attempts']
+                    }
+            
+            # Добавляем темы из results, которых нет в stats
+            for result in results:
+                topic_id_str = str(result.get('topic_id', 0))
+                if topic_id_str not in topics_info:
+                    topics_info[topic_id_str] = {
+                        'title': result.get('topic_title', f'Тема {topic_id_str}')[:30],
+                        'best': result['score'],
+                        'attempts': 1
+                    }
+            
+            # Выводим топ-5 тем
+            sorted_topics = sorted(topics_info.items(), key=lambda x: x[1]['best'], reverse=True)
+            for topic_id, info in sorted_topics[:5]:
+                text += f"• {info['title']}: {info['best']}/6 (попыток: {info['attempts']})\n"
+            
+            if len(topics_info) > 5:
+                text += f"\n<i>Показаны 5 лучших из {len(topics_info)} тем</i>\n"
+        else:
+            text += "Начните практику для отслеживания прогресса!"
+    
+    # Формируем клавиатуру
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("📈 Подробнее", callback_data="t25_detailed_progress")],
+        [InlineKeyboardButton("🔄 Сбросить прогресс", callback_data="t25_reset_confirm")],
+        [InlineKeyboardButton("⬅️ Назад", callback_data="t25_menu")]
+    ])
     
     await query.edit_message_text(
         text,
         reply_markup=kb,
         parse_mode=ParseMode.HTML
     )
+    
     return states.CHOOSING_MODE
+
+def save_result(context: ContextTypes.DEFAULT_TYPE, topic: Dict, score: int):
+    """Сохраняет результат проверки."""
+    from datetime import datetime
+    
+    # Инициализируем структуру результатов если нужно
+    if 'task25_results' not in context.user_data:
+        context.user_data['task25_results'] = []
+    
+    # Сохраняем результат с правильными ключами
+    result = {
+        'topic_id': topic.get('id'),  # Добавляем topic_id
+        'topic_title': topic.get('title', 'Неизвестная тема'),
+        'block': topic.get('block', 'Общие темы'),
+        'score': score,
+        'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    }
+    
+    context.user_data['task25_results'].append(result)
+    
+    # Обновляем также practice_stats для обратной совместимости
+    if 'practice_stats' not in context.user_data:
+        context.user_data['practice_stats'] = {}
+    
+    topic_id_str = str(topic.get('id', 0))
+    
+    # ИСПРАВЛЕНИЕ КРИТИЧЕСКОГО БАГА - правильная инициализация структуры
+    if topic_id_str not in context.user_data['practice_stats']:
+        context.user_data['practice_stats'][topic_id_str] = {
+            'attempts': 0,
+            'scores': [],
+            'last_attempt': None,
+            'best_score': 0,
+            'topic_title': topic.get('title', 'Неизвестная тема'),
+            'topic_id': topic.get('id')
+        }
+    
+    # Обновляем статистику по теме
+    topic_stats = context.user_data['practice_stats'][topic_id_str]
+    topic_stats['attempts'] += 1
+    topic_stats['scores'].append(score)
+    topic_stats['last_attempt'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    
+    # Обновляем лучший результат
+    if score > topic_stats.get('best_score', 0):
+        topic_stats['best_score'] = score
+    
+    # Сохраняем название темы если оно обновилось
+    if topic.get('title'):
+        topic_stats['topic_title'] = topic.get('title')
+    
+    # Обновляем серию правильных ответов
+    if score >= 5:  # Для task25 хорошим считается 5+ баллов из 6
+        context.user_data['correct_streak'] = context.user_data.get('correct_streak', 0) + 1
+    else:
+        context.user_data['correct_streak'] = 0
+    
+    # Логируем для отладки
+    import logging
+    logger = logging.getLogger(__name__)
+    logger.info(f"Saved result for topic {topic_id_str}: score={score}, total_attempts={topic_stats['attempts']}")
+    
+    return result
 
 @safe_handler()
 @validate_state_transition({states.CHOOSING_MODE})
