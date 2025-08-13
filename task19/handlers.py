@@ -2320,17 +2320,16 @@ async def show_achievement_details(update: Update, context: ContextTypes.DEFAULT
     return states.CHOOSING_MODE
 
 @safe_handler()
-@auto_answer_callback
 async def achievement_ok(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Закрыть уведомление о достижении."""
+    """Обработчик кнопки OK в уведомлении о достижении."""
     query = update.callback_query
     
-    # Просто удаляем сообщение
     try:
         await query.message.delete()
     except:
         pass
     
+    await query.answer()
     return None  # Не меняем состояние
 
 @safe_handler()
@@ -2373,6 +2372,61 @@ async def show_ideal_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     
     return states.CHOOSING_MODE
+
+@safe_handler()
+async def reset_results(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Сброс результатов - показывает подтверждение."""
+    query = update.callback_query
+    
+    results = context.user_data.get('task19_results', [])
+    achievements = context.user_data.get('task19_achievements', set())
+    
+    if not results:
+        await query.answer("Нет данных для сброса", show_alert=True)
+        return states.CHOOSING_MODE
+    
+    text = (
+        "⚠️ <b>Сброс прогресса</b>\n\n"
+        "Вы уверены, что хотите сбросить весь прогресс?\n\n"
+        f"Будет удалено:\n"
+        f"• {len(results)} результатов\n"
+        f"• {len(achievements)} достижений\n"
+        f"• Вся статистика\n\n"
+        "Это действие нельзя отменить!"
+    )
+    
+    kb = InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("✅ Да, сбросить", callback_data="t19_confirm_reset"),
+            InlineKeyboardButton("❌ Отмена", callback_data="t19_settings")
+        ]
+    ])
+    
+    await query.edit_message_text(
+        text,
+        reply_markup=kb,
+        parse_mode=ParseMode.HTML
+    )
+    
+    return states.CHOOSING_MODE
+
+@safe_handler()
+async def confirm_reset(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Подтверждение и выполнение сброса."""
+    query = update.callback_query
+    
+    # Полный сброс данных
+    context.user_data.pop('task19_results', None)
+    context.user_data.pop('task19_achievements', None)
+    context.user_data.pop('correct_streak', None)
+    context.user_data.pop('practice_stats', None)
+    context.user_data.pop('current_topic', None)
+    context.user_data.pop('task19_current_topic', None)
+    
+    await query.answer("✅ Прогресс успешно сброшен!", show_alert=True)
+    
+    # Возвращаемся в меню
+    return await return_to_menu(update, context)
 
 async def show_achievement_notification(
     message: Message, 
