@@ -867,16 +867,33 @@ async def handle_users(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     # Получаем статистику
     from core import db
+    from payment.config import SUBSCRIPTION_MODE
+    
     conn = await db.get_db()
     
+    # Общее количество пользователей
     cursor = await conn.execute("SELECT COUNT(*) FROM users")
     total_users = (await cursor.fetchone())[0]
     
-    cursor = await conn.execute("""
-        SELECT COUNT(DISTINCT user_id) FROM subscriptions 
-        WHERE expires_at > datetime('now')
-    """)
-    premium_users = (await cursor.fetchone())[0]
+    # Подсчет пользователей с подпиской в зависимости от режима
+    if SUBSCRIPTION_MODE == 'modular':
+        # Для модульной системы проверяем module_subscriptions
+        cursor = await conn.execute("""
+            SELECT COUNT(DISTINCT user_id) 
+            FROM module_subscriptions 
+            WHERE is_active = 1 
+            AND expires_at > datetime('now')
+        """)
+        premium_users = (await cursor.fetchone())[0]
+    else:
+        # Для единой системы проверяем user_subscriptions
+        cursor = await conn.execute("""
+            SELECT COUNT(DISTINCT user_id) 
+            FROM user_subscriptions 
+            WHERE status = 'active' 
+            AND expires_at > datetime('now')
+        """)
+        premium_users = (await cursor.fetchone())[0]
     
     text = (
         "👥 <b>Управление пользователями</b>\n\n"
@@ -956,15 +973,43 @@ async def users_premium(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer("Загрузка...")
     
     from core import db
+    from payment.config import SUBSCRIPTION_MODE
+    
     conn = await db.get_db()
     
-    cursor = await conn.execute("""
-        SELECT u.user_id, u.username, u.first_name, s.plan_id, s.expires_at
-        FROM users u
-        INNER JOIN subscriptions s ON u.user_id = s.user_id
-        WHERE s.expires_at > datetime('now')
-        ORDER BY s.expires_at DESC
-    """)
+    if SUBSCRIPTION_MODE == 'modular':
+        # Для модульной системы
+        cursor = await conn.execute("""
+            SELECT DISTINCT 
+                u.user_id, 
+                u.username, 
+                u.first_name,
+                GROUP_CONCAT(ms.module_code) as modules,
+                MAX(ms.expires_at) as expires_at
+            FROM users u
+            INNER JOIN module_subscriptions ms ON u.user_id = ms.user_id
+            WHERE ms.is_active = 1 
+            AND ms.expires_at > datetime('now')
+            GROUP BY u.user_id
+            ORDER BY expires_at DESC
+            LIMIT 20
+        """)
+    else:
+        # Для единой системы
+        cursor = await conn.execute("""
+            SELECT 
+                u.user_id, 
+                u.username, 
+                u.first_name, 
+                us.plan_id, 
+                us.expires_at
+            FROM users u
+            INNER JOIN user_subscriptions us ON u.user_id = us.user_id
+            WHERE us.status = 'active' 
+            AND us.expires_at > datetime('now')
+            ORDER BY us.expires_at DESC
+            LIMIT 20
+        """)
     
     premium_users = await cursor.fetchall()
     
@@ -973,14 +1018,28 @@ async def users_premium(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         text = f"💎 <b>Пользователи с подпиской</b> ({len(premium_users)})\n\n"
         
-        for user_id, username, first_name, plan_id, expires_at in premium_users[:20]:
-            name = first_name or "Без имени"
-            username_str = f"@{username}" if username else ""
-            expires = datetime.fromisoformat(expires_at).strftime("%d.%m.%Y")
-            
-            text += f"• {name} {username_str}\n"
-            text += f"  ID: <code>{user_id}</code>\n"
-            text += f"  План: {plan_id} | До: {expires}\n\n"
+        if SUBSCRIPTION_MODE == 'modular':
+            # Отображение для модульной системы
+            for user_id, username, first_name, modules, expires_at in premium_users:
+                name = first_name or "Без имени"
+                username_str = f"@{username}" if username else ""
+                expires = datetime.fromisoformat(expires_at).strftime("%d.%m.%Y")
+                modules_list = modules.split(',') if modules else []
+                
+                text += f"• {name} {username_str}\n"
+                text += f"  ID: <code>{user_id}</code>\n"
+                text += f"  Модули: {', '.join(modules_list)}\n"
+                text += f"  До: {expires}\n\n"
+        else:
+            # Отображение для единой системы
+            for user_id, username, first_name, plan_id, expires_at in premium_users:
+                name = first_name or "Без имени"
+                username_str = f"@{username}" if username else ""
+                expires = datetime.fromisoformat(expires_at).strftime("%d.%m.%Y")
+                
+                text += f"• {name} {username_str}\n"
+                text += f"  ID: <code>{user_id}</code>\n"
+                text += f"  План: {plan_id} | До: {expires}\n\n"
     
     kb = InlineKeyboardMarkup([
         [InlineKeyboardButton("⬅️ Назад", callback_data="admin:users")]
@@ -3469,7 +3528,7 @@ def register_admin_handlers(app):
     app.add_handler(CallbackQueryHandler(grant_subscription, pattern="^admin:grant_sub:"))
     app.add_handler(CallbackQueryHandler(revoke_subscription, pattern="^admin:revoke_sub:"))
     app.add_handler(CallbackQueryHandler(
-        lambda u, c: (setattr(c.user_data, 'users_page', int(u.callback_query.data.split(':')[-1])), 
+        lambda u, c: (c.user_data.__setitem__('users_page', int(u.callback_query.data.split(':')[-1])), 
                      users_list(u, c))[1],
         pattern="^admin:users_page:"
     ))
