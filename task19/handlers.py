@@ -582,9 +582,12 @@ async def show_progress_enhanced(update: Update, context: ContextTypes.DEFAULT_T
     """Показ прогресса с улучшенным UI."""
     query = update.callback_query
     
+    # ИСПРАВЛЕНИЕ: Проверяем ОБА источника данных
     results = context.user_data.get('task19_results', [])
+    stats = context.user_data.get('practice_stats', {})
     
-    if not results:
+    # Если нет данных ни в одном источнике
+    if not results and not stats:
         text = MessageFormatter.format_welcome_message(
             "задание 19", 
             is_new_user=True
@@ -594,54 +597,119 @@ async def show_progress_enhanced(update: Update, context: ContextTypes.DEFAULT_T
             InlineKeyboardButton("⬅️ Назад", callback_data="t19_menu")
         ]])
     else:
-        # Собираем статистику
-        total_attempts = len(results)
-        total_score = sum(r['score'] for r in results)
-        max_possible = sum(r['max_score'] for r in results)
-        avg_score = total_score / total_attempts
+        # Собираем полную статистику из ОБОИХ источников
+        total_attempts = 0
+        total_score = 0
+        max_possible = 0
+        topic_stats_combined = {}
         
-        # Анализ по темам
-        topic_stats = {}
-        for result in results:
-            topic = result['topic']
-            if topic not in topic_stats:
-                topic_stats[topic] = []
-            topic_stats[topic].append(result['score'])
+        # Обрабатываем results
+        if results:
+            total_attempts = len(results)
+            total_score = sum(r['score'] for r in results)
+            max_possible = sum(r.get('max_score', 3) for r in results)
+            
+            # Группируем по темам
+            for result in results:
+                topic_key = result.get('topic', result.get('topic_title', 'Неизвестная тема'))
+                if topic_key not in topic_stats_combined:
+                    topic_stats_combined[topic_key] = {
+                        'scores': [],
+                        'topic_id': result.get('topic_id'),
+                        'attempts': 0
+                    }
+                topic_stats_combined[topic_key]['scores'].append(result['score'])
+                topic_stats_combined[topic_key]['attempts'] += 1
         
-        # Топ темы (С ОКРУГЛЕНИЕМ!)
+        # Дополняем из practice_stats если есть данные, которых нет в results
+        if stats:
+            for topic_id_str, topic_data in stats.items():
+                topic_title = topic_data.get('topic_title', f'Тема {topic_id_str}')
+                
+                # Если этой темы нет в results - добавляем из stats
+                if topic_title not in topic_stats_combined and topic_data.get('attempts', 0) > 0:
+                    topic_stats_combined[topic_title] = {
+                        'scores': topic_data.get('scores', []),
+                        'topic_id': topic_data.get('topic_id', topic_id_str),
+                        'attempts': topic_data.get('attempts', 0)
+                    }
+                    # Обновляем общую статистику
+                    total_attempts += topic_data['attempts']
+                    total_score += sum(topic_data.get('scores', []))
+                    max_possible += topic_data['attempts'] * 3
+        
+        # Вычисляем средний балл
+        avg_score = total_score / total_attempts if total_attempts > 0 else 0
+        
+        # Формируем топ результаты
         top_results = []
-        for topic, scores in topic_stats.items():
-            avg = sum(scores) / len(scores)
-            top_results.append({
-                'topic': topic,
-                'score': round(avg),  # ОКРУГЛЯЕМ ДО ЦЕЛОГО!
-                'max_score': 3
-            })
+        for topic_name, topic_data in topic_stats_combined.items():
+            if topic_data['scores']:
+                avg = sum(topic_data['scores']) / len(topic_data['scores'])
+                top_results.append({
+                    'topic': topic_name[:30],
+                    'score': round(avg, 1),  # Округляем до 1 знака
+                    'max_score': 3,
+                    'attempts': topic_data['attempts']
+                })
+        
+        # Сортируем по среднему баллу
         top_results.sort(key=lambda x: x['score'], reverse=True)
         
-        # Форматируем сообщение
-        text = MessageFormatter.format_progress_message({
+        # Используем универсальное форматирование сообщения
+        stats_for_formatter = {
             'total_attempts': total_attempts,
             'average_score': avg_score,
-            'completed': len(topic_stats),
-            'total': 50,  # Предполагаем 50 тем
-            'total_time': 0,  # Добавить подсчет времени
+            'completed': len(topic_stats_combined),
+            'total': 50,  # Примерное количество возможных тем
+            'total_time': context.user_data.get('total_time_minutes', 0),
             'top_results': top_results[:3]
-        }, "заданию 19")
+        }
         
-        # Клавиатура прогресса
-        kb = AdaptiveKeyboards.create_progress_keyboard(
-            has_detailed_stats=True,
-            can_export=True,
-            module_code="t19"
-        )
+        text = MessageFormatter.format_progress_message(stats_for_formatter, "заданию 19")
+        
+        # Добавляем информацию о серии
+        streak = context.user_data.get('correct_streak', 0)
+        if streak > 0:
+            text += f"\n🔥 <b>Текущая серия:</b> {streak}"
+        
+        # Проверяем достижения
+        achievements = context.user_data.get('task19_achievements', set())
+        if achievements:
+            text += f"\n🏅 <b>Получено достижений:</b> {len(achievements)}"
+        
+        # Формируем клавиатуру
+        kb_buttons = []
+        
+        # Первая строка кнопок
+        if total_attempts >= 5:
+            kb_buttons.append([
+                InlineKeyboardButton("📈 Детальная статистика", callback_data="t19_detailed"),
+                InlineKeyboardButton("📤 Экспорт", callback_data="t19_export")
+            ])
+        
+        # Вторая строка
+        kb_buttons.append([
+            InlineKeyboardButton("🏅 Достижения", callback_data="t19_achievements"),
+            InlineKeyboardButton("💪 Продолжить", callback_data="t19_practice")
+        ])
+        
+        # Третья строка
+        kb_buttons.append([
+            InlineKeyboardButton("🔄 Сбросить прогресс", callback_data="t19_reset_confirm"),
+            InlineKeyboardButton("⬅️ Назад", callback_data="t19_menu")
+        ])
+        
+        kb = InlineKeyboardMarkup(kb_buttons)
     
     await query.edit_message_text(
         text,
         reply_markup=kb,
         parse_mode=ParseMode.HTML
     )
+    
     return states.CHOOSING_MODE
+
 
 def _format_evaluation_result(result) -> str:
     """Форматирует результат оценки для отображения пользователю."""
@@ -704,164 +772,238 @@ def _format_evaluation_result(result) -> str:
 @safe_handler()
 @validate_state_transition({TASK19_WAITING})
 async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обработка ответа пользователя."""
-    # Защита от двойной обработки
-    if context.user_data.get('processing_answer'):
+    """Обработка ответа на задание 19."""
+    
+    # Получаем текст ответа
+    if 'document_text' in context.user_data:
+        user_answer = context.user_data.pop('document_text')
+    else:
+        user_answer = update.message.text.strip()
+    
+    # Получаем текущую тему
+    topic = context.user_data.get('current_topic')
+    if not topic:
+        await update.message.reply_text(
+            "❌ Ошибка: тема не выбрана.",
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("⬅️ В меню", callback_data="t19_menu")
+            ]])
+        )
+        return states.CHOOSING_MODE
+    
+    # Проверяем минимальную длину
+    if len(user_answer) < 50:
+        await update.message.reply_text(
+            "❌ Ответ слишком короткий. Приведите три развернутых примера.",
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("❌ Отменить", callback_data="t19_menu")
+            ]])
+        )
         return TASK19_WAITING
     
-    context.user_data['processing_answer'] = True
+    # Показываем анимацию обработки
+    thinking_msg = await show_ai_evaluation_animation(
+        update.message,
+        duration=30  # 30 секунд для task19
+    )
     
     try:
-        user_answer = update.message.text.strip()
-        
-        if not user_answer or len(user_answer) < 50:
-            await update.message.reply_text(
-                "❌ Слишком короткий ответ. Задание 19 требует три конкретных примера.\n\n"
-                "💡 Отправьте примеры текстом или документом.",
-                reply_markup=InlineKeyboardMarkup([[
-                    InlineKeyboardButton("🔄 Попробовать снова", callback_data="t19_retry")
-                ]])
-            )
-            context.user_data['processing_answer'] = False
-            return TASK19_WAITING
-        
-        topic = context.user_data.get('current_topic')
-
-        # Проверяем, что topic существует
-        if not topic:
-            await update.message.reply_text(
-                "❌ Ошибка: тема не выбрана. Начните заново.",
-                reply_markup=InlineKeyboardMarkup([[
-                    InlineKeyboardButton("📝 К заданиям", callback_data="t19_practice")
-                ]])
-            )
-            context.user_data['processing_answer'] = False
-            return states.CHOOSING_MODE
-
-        # Если topic - это строка (старый формат), пытаемся найти полный объект
-        if isinstance(topic, str):
-            logger.warning(f"Topic stored as string: {topic}, attempting to find full topic object")
-            # Ищем тему по названию
-            found_topic = None
-            for t in task19_data.get('topics', []):
-                if t.get('title') == topic:
-                    found_topic = t
-                    break
-            
-            if found_topic:
-                topic = found_topic
-                # Обновляем контекст правильным объектом
-                context.user_data['current_topic'] = topic
-            else:
-                await update.message.reply_text(
-                    "❌ Ошибка: не удалось найти данные темы. Начните заново.",
-                    reply_markup=InlineKeyboardMarkup([[
-                        InlineKeyboardButton("📝 К заданиям", callback_data="t19_practice")
-                    ]])
-                )
-                context.user_data['processing_answer'] = False
-                return states.CHOOSING_MODE
-        
-        # Показываем анимацию проверки (используем единую систему)
-        thinking_msg = await show_ai_evaluation_animation(
-            update.message,
-            duration=40  # 40 секунд для task19
-        )
-        
-        # Запоминаем время начала для контроля минимального времени показа
-        start_time = asyncio.get_event_loop().time()
-        
-        try:
-            # Используем локальный evaluator
-            if evaluator and hasattr(evaluator, 'evaluate'):
-                # Вызываем evaluate с правильными параметрами для task19
+        # Оцениваем ответ (AI или базовая оценка)
+        if evaluator and AI_EVALUATOR_AVAILABLE:
+            try:
                 result = await evaluator.evaluate(
                     answer=user_answer,
                     topic=topic.get('title', ''),
                     task_text=topic.get('task_text', ''),
-                    topic_data=topic
+                    user_id=update.effective_user.id
                 )
+                score = result.total_score if hasattr(result, 'total_score') else result.get('score', 0)
+                feedback_text = _format_evaluation_result(result)
                 
-                # Форматируем результат
-                if hasattr(result, 'format_feedback'):
-                    feedback = result.format_feedback()
-                else:
-                    feedback = _format_evaluation_result(result)
-
-                score = int(round(getattr(result, 'total_score', 0)))
-                max_score = int(getattr(result, 'max_score', 3))
-                
-            else:
-                # Fallback оценка
+            except Exception as e:
+                logger.error(f"AI evaluation error: {e}")
+                # Fallback к базовой оценке
                 score, feedback = await _basic_evaluation(user_answer, topic)
-                max_score = 3
-            
-            # ВАЖНО: Обеспечиваем минимальное время показа анимации
-            elapsed_time = asyncio.get_event_loop().time() - start_time
-            MIN_ANIMATION_TIME = 5.0  # Минимум 5 секунд
-            
-            if elapsed_time < MIN_ANIMATION_TIME:
-                await asyncio.sleep(MIN_ANIMATION_TIME - elapsed_time)
-           
-            # Сохраняем результат
-            topic_title = topic.get('title') if isinstance(topic, dict) else str(topic)
-            context.user_data.setdefault('task19_results', []).append({
-                'topic': topic_title,
-                'score': int(round(score)),
-                'max_score': int(max_score),
-                'timestamp': datetime.now().isoformat()
-            })
-            
-            # Показываем результат
-            msg = await update.message.reply_text(
-                feedback,
-                reply_markup=AdaptiveKeyboards.create_result_keyboard(
-                    score=score,
-                    max_score=max_score,
-                    module_code="t19"
-                ),
-                parse_mode=ParseMode.HTML
-            )
-            
-            # Сохраняем ID сообщения с результатом
-            context.user_data['task19_result_msg_id'] = msg.message_id
-            
-            logger.info(f"Answer evaluated: {score}/{max_score}")
-
-            # Проверяем новые достижения
-            user_id = update.effective_user.id
-            new_achievements = await check_achievements(context, user_id)
-
-            # Показываем уведомления о достижениях
-            if new_achievements:
-                await show_achievement_notification(
-                    update.message,
-                    new_achievements,
-                    context
-                )
-        except Exception as e:
-            logger.error(f"Error evaluating answer: {e}")
-            
-            # Безопасное удаление сообщения
-            try:
-                await thinking_msg.delete()
-            except:
-                pass
-            
-            await update.message.reply_text(
-                "❌ Произошла ошибка при проверке. Попробуйте еще раз.",
-                reply_markup=InlineKeyboardMarkup([[
-                    InlineKeyboardButton("🔄 Попробовать снова", callback_data="t19_retry")
-                ]])
-            )
-            context.user_data['processing_answer'] = False
-            return TASK19_WAITING
-
-    finally:
-        # Сбрасываем флаг обработки в любом случае
-        context.user_data['processing_answer'] = False
+                feedback_text = feedback
+        else:
+            # Базовая оценка без AI
+            score, feedback_text = await _basic_evaluation(user_answer, topic)
         
-    return states.CHOOSING_MODE  # Возвращаем в меню после обработки ответа
+        # Удаляем анимацию
+        await thinking_msg.delete()
+        
+        # === ИСПРАВЛЕННОЕ СОХРАНЕНИЕ РЕЗУЛЬТАТА ===
+        from datetime import datetime
+        
+        # Инициализируем результаты если нужно
+        if 'task19_results' not in context.user_data:
+            context.user_data['task19_results'] = []
+        
+        # Определяем параметры темы
+        if isinstance(topic, dict):
+            topic_id = topic.get('id', 0)
+            topic_title = topic.get('title', 'Неизвестная тема')
+            block = topic.get('block', 'Общие темы')
+        else:
+            topic_id = hash(str(topic)) % 10000
+            topic_title = str(topic)
+            block = 'Общие темы'
+        
+        # Сохраняем результат
+        result_data = {
+            'topic_id': topic_id,
+            'topic': topic_title,  # Для обратной совместимости
+            'topic_title': topic_title,
+            'block': block,
+            'score': score,
+            'max_score': 3,
+            'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        }
+        
+        context.user_data['task19_results'].append(result_data)
+        
+        # ВАЖНО: Синхронизируем с practice_stats
+        if 'practice_stats' not in context.user_data:
+            context.user_data['practice_stats'] = {}
+        
+        topic_id_str = str(topic_id)
+        if topic_id_str not in context.user_data['practice_stats']:
+            context.user_data['practice_stats'][topic_id_str] = {
+                'attempts': 0,
+                'scores': [],
+                'last_attempt': None,
+                'best_score': 0,
+                'topic_title': topic_title,
+                'topic_id': topic_id
+            }
+        
+        # Обновляем статистику
+        topic_stats = context.user_data['practice_stats'][topic_id_str]
+        topic_stats['attempts'] += 1
+        topic_stats['scores'].append(score)
+        topic_stats['last_attempt'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        topic_stats['best_score'] = max(topic_stats.get('best_score', 0), score)
+        
+        # Обновляем серию
+        if score >= 2:  # Хороший результат для task19
+            context.user_data['correct_streak'] = context.user_data.get('correct_streak', 0) + 1
+            
+            # Показываем уведомление о серии
+            if context.user_data['correct_streak'] % 3 == 0:
+                await show_streak_notification(
+                    update.message,
+                    context.user_data['correct_streak']
+                )
+        else:
+            context.user_data['correct_streak'] = 0
+        
+        # Проверяем достижения
+        achievements_before = len(context.user_data.get('task19_achievements', set()))
+        new_achievements = await check_achievements(context, update.effective_user.id)
+        
+        # Если есть новые достижения, добавляем в текст
+        if new_achievements:
+            feedback_text += "\n\n🏅 <b>Новые достижения:</b>"
+            for ach in new_achievements:
+                feedback_text += f"\n• {ach['name']}"
+        
+        # Формируем клавиатуру
+        kb = AdaptiveKeyboards.create_result_keyboard(
+            score=score,
+            max_score=3,
+            module_code="t19"
+        )
+        
+        # Отправляем результат
+        await update.message.reply_text(
+            feedback_text,
+            reply_markup=kb,
+            parse_mode=ParseMode.HTML
+        )
+        
+        # Возвращаем состояние для продолжения
+        return states.CHOOSING_MODE
+        
+    except Exception as e:
+        logger.error(f"Error in handle_answer: {e}")
+        await thinking_msg.delete()
+        
+        await update.message.reply_text(
+            "❌ Произошла ошибка при проверке. Попробуйте еще раз.",
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("🔄 Попробовать снова", callback_data="t19_practice"),
+                InlineKeyboardButton("📝 В меню", callback_data="t19_menu")
+            ]])
+        )
+        return states.CHOOSING_MODE
+
+def save_result_task19(context: ContextTypes.DEFAULT_TYPE, topic: Dict, score: int):
+    """Сохраняет результат проверки для task19."""
+    from datetime import datetime
+    
+    # Инициализируем структуру результатов если нужно
+    if 'task19_results' not in context.user_data:
+        context.user_data['task19_results'] = []
+    
+    # Определяем topic_id и topic_title в зависимости от формата topic
+    if isinstance(topic, dict):
+        topic_id = topic.get('id', 0)
+        topic_title = topic.get('title', 'Неизвестная тема')
+        block = topic.get('block', 'Общие темы')
+        task_text = topic.get('task_text', '')
+    else:
+        # Если topic - строка (обратная совместимость)
+        topic_id = hash(str(topic)) % 10000  # Генерируем псевдо-id
+        topic_title = str(topic)
+        block = 'Общие темы'
+        task_text = ''
+    
+    # Сохраняем результат
+    result = {
+        'topic_id': topic_id,
+        'topic': topic_title,  # Для обратной совместимости
+        'topic_title': topic_title,
+        'block': block,
+        'score': score,
+        'max_score': 3,
+        'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+        'task_text': task_text[:100] if task_text else ''
+    }
+    
+    context.user_data['task19_results'].append(result)
+    
+    # ВАЖНО: Синхронизируем с practice_stats для единообразия с другими модулями
+    if 'practice_stats' not in context.user_data:
+        context.user_data['practice_stats'] = {}
+    
+    topic_id_str = str(topic_id)
+    
+    # Инициализируем статистику по теме если её нет
+    if topic_id_str not in context.user_data['practice_stats']:
+        context.user_data['practice_stats'][topic_id_str] = {
+            'attempts': 0,
+            'scores': [],
+            'last_attempt': None,
+            'best_score': 0,
+            'topic_title': topic_title,
+            'topic_id': topic_id
+        }
+    
+    # Обновляем статистику
+    topic_stats = context.user_data['practice_stats'][topic_id_str]
+    topic_stats['attempts'] += 1
+    topic_stats['scores'].append(score)
+    topic_stats['last_attempt'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    topic_stats['best_score'] = max(topic_stats.get('best_score', 0), score)
+    topic_stats['topic_title'] = topic_title  # Обновляем название на случай изменений
+    
+    # Обновляем серию правильных ответов
+    if score >= 2:  # Для task19 хорошим считается 2+ балла из 3
+        context.user_data['correct_streak'] = context.user_data.get('correct_streak', 0) + 1
+    else:
+        context.user_data['correct_streak'] = 0
+    
+    return result
 
 @safe_handler()
 async def handle_new_task(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1429,46 +1571,25 @@ async def noop(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     # Ничего не делаем, просто отвечаем на callback
 
-@safe_handler()
-async def reset_results(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Сброс результатов пользователя."""
+async def reset_progress_task19(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Полный сброс прогресса task19."""
     query = update.callback_query
     
-    # Проверяем, есть ли подтверждение
-    if context.user_data.get('confirm_reset_task19'):
-        # Сбрасываем результаты
-        context.user_data['task19_results'] = []
-        context.user_data.pop('confirm_reset_task19', None)
-        
-        
-        # Возвращаемся в меню
-        return await return_to_menu(update, context)
-    else:
-        # Запрашиваем подтверждение
-        context.user_data['confirm_reset_task19'] = True
-        
-        text = """⚠️ <b>Подтверждение сброса</b>
-
-Вы действительно хотите сбросить все результаты по заданию 19?
-
-Это действие нельзя отменить!"""
-        
-        kb = InlineKeyboardMarkup([
-            [
-                InlineKeyboardButton("❌ Да, сбросить", callback_data="t19_reset_confirm"),
-                InlineKeyboardButton("✅ Отмена", callback_data="t19_menu")
-            ]
-        ])
-        
-        await query.edit_message_text(
-            text,
-            reply_markup=kb,
-            parse_mode=ParseMode.HTML
-        )
-        
-        return states.CHOOSING_MODE
-
-
+    # Сбрасываем все данные
+    context.user_data.pop('task19_results', None)
+    context.user_data.pop('task19_achievements', None)
+    context.user_data.pop('correct_streak', None)
+    
+    # Очищаем practice_stats для task19
+    if 'practice_stats' in context.user_data:
+        # Удаляем только записи, относящиеся к task19
+        # Можно определить по наличию topic_id из task19_results
+        context.user_data['practice_stats'] = {}
+    
+    await query.answer("✅ Прогресс по заданию 19 сброшен!", show_alert=True)
+    
+    # Возвращаемся в меню
+    return await return_to_menu(update, context)
 
 @safe_handler()
 async def cmd_task19(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -2442,7 +2563,7 @@ async def show_achievements(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode=ParseMode.HTML
     )
     return states.CHOOSING_MODE
-    
+
 async def check_achievements(context: ContextTypes.DEFAULT_TYPE, user_id: int) -> List[Dict]:
     """Проверка и выдача новых достижений."""
     results = context.user_data.get('task19_results', [])
@@ -2450,7 +2571,7 @@ async def check_achievements(context: ContextTypes.DEFAULT_TYPE, user_id: int) -
     new_achievements = []
     
     # Условия для достижений
-    if 'first_example' not in achievements and len(results) > 0:
+    if len(results) >= 1 and 'first_example' not in achievements:
         achievements.add('first_example')
         new_achievements.append({
             'id': 'first_example',
@@ -2458,9 +2579,8 @@ async def check_achievements(context: ContextTypes.DEFAULT_TYPE, user_id: int) -
             'desc': 'Вы привели свой первый пример!'
         })
     
-    # Проверка на 5 идеальных ответов
     perfect_count = sum(1 for r in results if r.get('score', 0) >= 2.5)
-    if 'perfect_5' not in achievements and perfect_count >= 5:
+    if perfect_count >= 5 and 'perfect_5' not in achievements:
         achievements.add('perfect_5')
         new_achievements.append({
             'id': 'perfect_5',
@@ -2468,15 +2588,32 @@ async def check_achievements(context: ContextTypes.DEFAULT_TYPE, user_id: int) -
             'desc': 'Получено 5 отличных оценок!'
         })
     
-    # Проверка на изучение 10 тем
-    unique_topics = len(set(r.get('topic_id') for r in results if r.get('topic_id')))
-    if 'explorer_10' not in achievements and unique_topics >= 10:
+    unique_topics = len(set(r.get('topic_id', r.get('topic')) for r in results))
+    if unique_topics >= 10 and 'explorer_10' not in achievements:
         achievements.add('explorer_10')
         new_achievements.append({
             'id': 'explorer_10',
             'name': '🗺️ Исследователь',
             'desc': 'Изучено 10 разных тем!'
         })
+    
+    if len(results) >= 20 and 'persistent_20' not in achievements:
+        achievements.add('persistent_20')
+        new_achievements.append({
+            'id': 'persistent_20',
+            'name': '💪 Упорство',
+            'desc': 'Выполнено 20 заданий!'
+        })
+    
+    if len(results) >= 50:
+        avg = sum(r.get('score', 0) for r in results) / len(results)
+        if avg > 2 and 'master_50' not in achievements:
+            achievements.add('master_50')
+            new_achievements.append({
+                'id': 'master_50',
+                'name': '🏆 Мастер примеров',
+                'desc': 'Выполнено 50 заданий с высоким средним баллом!'
+            })
     
     # Сохраняем обновленные достижения
     context.user_data['task19_achievements'] = achievements
