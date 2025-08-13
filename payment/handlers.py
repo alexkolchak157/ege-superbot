@@ -26,7 +26,8 @@ from .config import (
     SUBSCRIPTION_MODE,
     DURATION_DISCOUNTS,
     MODULE_PLANS,
-    PAYMENT_ADMIN_CHAT_ID
+    PAYMENT_ADMIN_CHAT_ID,
+    get_plan_price_kopecks
 )
 from .subscription_manager import SubscriptionManager
 from .tinkoff import TinkoffPayment
@@ -138,7 +139,7 @@ async def show_unified_plans(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
 
 async def show_modular_interface(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Показывает модульный интерфейс подписок."""
+    """Показывает модульный интерфейс выбора подписки."""
     # Определяем источник вызова
     if update.callback_query:
         query = update.callback_query
@@ -157,21 +158,23 @@ async def show_modular_interface(update: Update, context: ContextTypes.DEFAULT_T
     # Проверяем пробный период
     has_trial = await subscription_manager.has_used_trial(user_id)
     
-    # Проверяем активные модули
-    active_modules = await subscription_manager.get_user_modules(user_id)
+    # ИСПРАВЛЕНИЕ: Используем правильный метод get_user_modules
+    modules_data = await subscription_manager.get_user_modules(user_id)
+    # Извлекаем только коды модулей для обратной совместимости
+    active_modules = [module['module_code'] for module in modules_data] if modules_data else []
     
     text = "💎 <b>Модульная система подписок</b>\n\n"
     
-    if active_modules:
+    if modules_data:  # Используем modules_data для проверки наличия модулей
         text += "✅ <b>Ваши активные модули:</b>\n"
         module_names = {
             'test_part': '📝 Тестовая часть',
             'task19': '🎯 Задание 19',
-            'task20': '📖 Задание 20',  # ИСПРАВЛЕНО: добавлена иконка
+            'task20': '📖 Задание 20',
             'task24': '💎 Задание 24',
             'task25': '✍️ Задание 25'
         }
-        for module in active_modules:
+        for module in modules_data:
             name = module_names.get(module['module_code'], module['module_code'])
             expires = module['expires_at'].strftime('%d.%m.%Y')
             text += f"• {name} (до {expires})\n"
@@ -185,11 +188,11 @@ async def show_modular_interface(update: Update, context: ContextTypes.DEFAULT_T
         text += "   • Полный доступ на 7 дней\n"
         text += "   • Все модули включены\n\n"
     
-    # ИСПРАВЛЕНО: Обновленные описания заданий для ЕГЭ-2025
+    # Пакет "Вторая часть"
     text += "🎯 <b>Пакет «Вторая часть»</b> — 499₽/мес\n"
-    text += "   • Задание 19 (Примеры)\n"  # Исправлено с "анализ суждений"
-    text += "   • Задание 20 (Суждения)\n"  # Исправлено с "пропущенные слова"
-    text += "   • Задание 25 (Развёрнутый ответ)\n"  # Исправлено с "определения и примеры"
+    text += "   • Задание 19 (Примеры)\n"
+    text += "   • Задание 20 (Суждения)\n"
+    text += "   • Задание 25 (Развёрнутый ответ)\n"
     text += "   <i>Экономия 98₽ по сравнению с покупкой по отдельности</i>\n\n"
     
     text += "👑 <b>Полный доступ</b> — 999₽/мес\n"
@@ -226,7 +229,7 @@ async def show_modular_interface(update: Update, context: ContextTypes.DEFAULT_T
         )]
     ])
     
-    if active_modules:
+    if active_modules:  # Используем active_modules для проверки
         keyboard.append([
             InlineKeyboardButton("📋 Мои подписки", callback_data="my_subscriptions")
         ])
@@ -271,16 +274,37 @@ async def handle_plan_selection(update: Update, context: ContextTypes.DEFAULT_TY
             context.user_data['trial_price'] = 100  # Цена в копейках (1 рубль)
             return await request_email(update, context)
         elif query.data.startswith("pay_package_"):
-            # Исправляем обработку package_second -> package_second_part
+            # Обработка пакетов
             package_name = query.data.replace("pay_package_", "")
             if package_name == "second":
                 package = "package_second_part"
+            elif package_name == "full":
+                package = "package_full"
             else:
                 package = f"package_{package_name}"
+            
+            # Проверяем, что пакет существует
+            if package not in MODULE_PLANS:
+                logger.error(f"Package not found: {package}")
+                await query.edit_message_text("❌ Пакет не найден.")
+                context.user_data.pop('in_payment_process', None)
+                return ConversationHandler.END
+                
             context.user_data['selected_plan'] = package
             return await show_duration_options(update, context)
+            
         elif query.data.startswith("pay_module_"):
+            # Обработка отдельных модулей
             module = query.data.replace("pay_", "")
+            
+            # Проверяем, что модуль существует
+            if module not in MODULE_PLANS:
+                logger.error(f"Module not found: {module}")
+                logger.error(f"Available modules: {list(MODULE_PLANS.keys())}")
+                await query.edit_message_text("❌ Модуль не найден.")
+                context.user_data.pop('in_payment_process', None)
+                return ConversationHandler.END
+                
             context.user_data['selected_plan'] = module
             return await show_duration_options(update, context)
     
@@ -356,8 +380,9 @@ async def cmd_debug_subscription(update: Update, context: ContextTypes.DEFAULT_T
     
     await update.message.reply_text(text, parse_mode=ParseMode.HTML)
 
+@safe_handler()
 async def show_individual_modules(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Показывает модули для множественного выбора."""
+    """Показывает список отдельных модулей для выбора."""
     query = update.callback_query
     
     # Инициализируем список выбранных модулей если его нет
@@ -378,6 +403,18 @@ async def show_individual_modules(update: Update, context: ContextTypes.DEFAULT_
         if v.get('type') == 'individual'
     }
     
+    # ИСПРАВЛЕНИЕ: Проверяем, что модули существуют
+    if not individual_modules:
+        logger.error("No individual modules found in MODULE_PLANS")
+        logger.error(f"MODULE_PLANS keys: {list(MODULE_PLANS.keys())}")
+        await query.edit_message_text(
+            "❌ Модули временно недоступны. Обратитесь к администратору.",
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("⬅️ Назад", callback_data="back_to_main")
+            ]])
+        )
+        return CHOOSING_PLAN
+    
     # Порядок отображения модулей
     module_order = [
         'module_test_part',
@@ -387,8 +424,11 @@ async def show_individual_modules(update: Update, context: ContextTypes.DEFAULT_
         'module_task24'
     ]
     
+    # Добавляем модули в клавиатуру
+    modules_added = 0
     for module_id in module_order:
         if module_id not in individual_modules:
+            logger.warning(f"Module {module_id} not found in individual_modules")
             continue
             
         module = individual_modules[module_id]
@@ -414,13 +454,28 @@ async def show_individual_modules(update: Update, context: ContextTypes.DEFAULT_
                 callback_data=f"info_{module_id}"
             )
         ])
+        modules_added += 1
+    
+    # Проверяем, что добавили хотя бы один модуль
+    if modules_added == 0:
+        logger.error("No modules were added to keyboard")
+        await query.edit_message_text(
+            "❌ Модули временно недоступны. Обратитесь к администратору.",
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("⬅️ Назад", callback_data="back_to_main")
+            ]])
+        )
+        return CHOOSING_PLAN
     
     # Показываем выбранные модули и общую стоимость
     if selected:
         text += "<b>Выбрано:</b>\n"
         for module_id in selected:
-            module = MODULE_PLANS[module_id]
-            text += f"• {module['name']} - {module['price_rub']}₽\n"
+            if module_id in MODULE_PLANS:
+                module = MODULE_PLANS[module_id]
+                text += f"• {module['name']} - {module['price_rub']}₽\n"
+            else:
+                logger.warning(f"Selected module {module_id} not found in MODULE_PLANS")
         
         text += f"\n💰 <b>Итого: {total_price}₽/мес</b>\n"
         
@@ -589,7 +644,15 @@ async def show_duration_options(update: Update, context: ContextTypes.DEFAULT_TY
     if plan_id.startswith('custom_'):
         plan = context.user_data['custom_plan']
     else:
-        plan = MODULE_PLANS.get(plan_id, SUBSCRIPTION_PLANS.get(plan_id))
+        # ИСПРАВЛЕНИЕ: Ищем в обоих словарях
+        plan = MODULE_PLANS.get(plan_id)
+        if not plan:
+            plan = SUBSCRIPTION_PLANS.get(plan_id)
+        
+        if not plan:
+            logger.error(f"Plan not found in show_duration_options: {plan_id}")
+            await query.edit_message_text("❌ Ошибка: план не найден")
+            return ConversationHandler.END
     
     text = f"<b>{plan['name']}</b>\n\n"
     text += "⏱ <b>Выберите срок подписки:</b>\n\n"
@@ -798,14 +861,44 @@ async def handle_payment_confirmation(update: Update, context: ContextTypes.DEFA
         # Для custom плана нужно будет создать несколько подписок
         modules_to_activate = plan['modules']
     else:
-        plan = MODULE_PLANS.get(plan_id, SUBSCRIPTION_PLANS.get(plan_id))
+        # ИСПРАВЛЕНИЕ: Ищем план сначала в MODULE_PLANS, потом в SUBSCRIPTION_PLANS
+        plan = MODULE_PLANS.get(plan_id)
+        if not plan:
+            plan = SUBSCRIPTION_PLANS.get(plan_id)
+        
+        if not plan:
+            logger.error(f"Plan not found: {plan_id}")
+            logger.error(f"Available MODULE_PLANS: {list(MODULE_PLANS.keys())}")
+            logger.error(f"Available SUBSCRIPTION_PLANS: {list(SUBSCRIPTION_PLANS.keys())}")
+            await query.edit_message_text("❌ Ошибка: план не найден. Обратитесь к администратору.")
+            context.user_data.pop('in_payment_process', None)
+            return ConversationHandler.END
+            
         modules_to_activate = plan.get('modules', [])
     
     # Рассчитываем стоимость
     if context.user_data.get('is_trial'):
         amount_kopecks = 100  # 1 рубль для пробного периода
     else:
-        amount_kopecks = get_plan_price_kopecks(plan_id, duration) if not plan_id.startswith('custom_') else int(plan['price_rub'] * DURATION_DISCOUNTS[duration]['multiplier'] * 100)
+        # ИСПРАВЛЕНИЕ: Обрабатываем custom планы и обычные по-разному
+        if plan_id.startswith('custom_'):
+            # Для custom плана используем сохраненную цену с учетом скидки
+            base_price = plan['price_rub']
+            if duration in DURATION_DISCOUNTS:
+                multiplier = DURATION_DISCOUNTS[duration]['multiplier']
+                total_price = int(base_price * multiplier)
+            else:
+                total_price = base_price * duration
+            amount_kopecks = total_price * 100
+        else:
+            # Для обычных планов используем функцию get_plan_price_kopecks
+            try:
+                amount_kopecks = get_plan_price_kopecks(plan_id, duration)
+            except ValueError as e:
+                logger.error(f"Error calculating price for plan {plan_id}: {e}")
+                await query.edit_message_text("❌ Ошибка при расчете стоимости. Попробуйте еще раз.")
+                context.user_data.pop('in_payment_process', None)
+                return ConversationHandler.END
     
     # Создаем платеж
     try:

@@ -53,6 +53,67 @@ class TinkoffPayment:
         # Вычисляем SHA256
         return hashlib.sha256(values_string.encode('utf-8')).hexdigest()
     
+    async def create_payment(
+        self,
+        amount_kopecks: int,
+        order_id: str,
+        description: str,
+        customer_email: str,
+        user_id: int,
+        bot_username: str = None
+    ) -> tuple[str, str]:
+        """
+        Создает платеж (обертка для init_payment для обратной совместимости).
+        
+        Args:
+            amount_kopecks: Сумма в копейках
+            order_id: Уникальный ID заказа
+            description: Описание платежа
+            customer_email: Email покупателя
+            user_id: ID пользователя Telegram
+            bot_username: Username бота (опционально)
+            
+        Returns:
+            Кортеж (payment_url, order_id) при успехе
+            
+        Raises:
+            Exception: При ошибке создания платежа
+        """
+        # Создаем позицию чека
+        receipt_items = [
+            self.build_receipt_item(
+                name=description[:64],  # Ограничиваем длину названия
+                price_kopecks=amount_kopecks
+            )
+        ]
+        
+        # Дополнительные данные
+        user_data = {
+            "user_id": str(user_id),
+            "email": customer_email
+        }
+        
+        # Вызываем основной метод
+        result = await self.init_payment(
+            order_id=order_id,
+            amount_kopecks=amount_kopecks,
+            description=description,
+            user_email=customer_email,
+            receipt_items=receipt_items,
+            user_data=user_data,
+            bot_username=bot_username
+        )
+        
+        # Проверяем результат
+        if result.get("success"):
+            payment_url = result.get("payment_url")
+            if not payment_url:
+                raise Exception("Payment URL not received from Tinkoff")
+            return payment_url, order_id
+        else:
+            error = result.get("error", "Unknown error")
+            raise Exception(f"Failed to create payment: {error}")
+            
     def verify_webhook_token(self, data: Dict[str, Any]) -> bool:
         """Проверяет подпись webhook от Tinkoff."""
         if "Token" not in data:

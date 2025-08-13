@@ -34,6 +34,105 @@ class SubscriptionManager:
         """Совместимость со старым кодом."""
         return {'SUBSCRIPTION_MODE': self.subscription_mode}
     
+    async def save_payment_info(
+        self,
+        user_id: int,
+        order_id: str,
+        plan_id: str,
+        amount: int,
+        email: str,
+        modules: List[str] = None
+    ) -> bool:
+        """
+        Сохраняет информацию о платеже в БД.
+        
+        Args:
+            user_id: ID пользователя
+            order_id: Уникальный ID заказа
+            plan_id: ID плана подписки
+            amount: Сумма в рублях
+            email: Email покупателя
+            modules: Список модулей для custom планов
+            
+        Returns:
+            True при успешном сохранении
+        """
+        try:
+            async with aiosqlite.connect(DATABASE_FILE) as conn:
+                # Подготавливаем metadata для custom планов
+                metadata = None
+                if modules:
+                    metadata = json.dumps(modules)
+                
+                # Сохраняем информацию о платеже
+                await conn.execute(
+                    """
+                    INSERT INTO payments (
+                        user_id,
+                        order_id,
+                        plan_id,
+                        amount_kopecks,
+                        status,
+                        metadata,
+                        created_at
+                    ) VALUES (?, ?, ?, ?, 'pending', ?, CURRENT_TIMESTAMP)
+                    """,
+                    (user_id, order_id, plan_id, amount * 100, metadata)
+                )
+                
+                # Также сохраняем email (если есть таблица для emails)
+                # Можно добавить в таблицу payments колонку email или создать отдельную таблицу
+                try:
+                    await conn.execute(
+                        """
+                        INSERT OR REPLACE INTO user_emails (user_id, email, updated_at)
+                        VALUES (?, ?, CURRENT_TIMESTAMP)
+                        """,
+                        (user_id, email)
+                    )
+                except:
+                    # Если таблицы нет, создаем её
+                    await conn.execute(
+                        """
+                        CREATE TABLE IF NOT EXISTS user_emails (
+                            user_id INTEGER PRIMARY KEY,
+                            email TEXT NOT NULL,
+                            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                        )
+                        """
+                    )
+                    await conn.execute(
+                        """
+                        INSERT OR REPLACE INTO user_emails (user_id, email, updated_at)
+                        VALUES (?, ?, CURRENT_TIMESTAMP)
+                        """,
+                        (user_id, email)
+                    )
+                
+                await conn.commit()
+                
+                logger.info(f"Payment info saved for user {user_id}, order {order_id}")
+                return True
+                
+        except Exception as e:
+            logger.error(f"Error saving payment info: {e}")
+            return False
+            
+    async def get_user_active_modules(self, user_id: int) -> List[str]:
+        """
+        Получает список кодов активных модулей пользователя.
+        Это алиас для get_user_modules, но возвращает только коды модулей.
+        
+        Args:
+            user_id: ID пользователя
+            
+        Returns:
+            Список кодов активных модулей (например, ['test_part', 'task19'])
+        """
+        modules = await self.get_user_modules(user_id)
+        # Возвращаем только коды модулей
+        return [module['module_code'] for module in modules]
+        
     async def init_tables(self):
         """Инициализирует таблицы в БД."""
         try:

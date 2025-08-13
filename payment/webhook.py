@@ -345,9 +345,17 @@ def create_webhook_app(bot: Bot = None) -> web.Application:
     """Создает aiohttp приложение для webhook."""
     app = web.Application()
     app['bot'] = bot
-    # ВАЖНО: путь должен быть /payment-notification
-    app.router.add_post('/payment-notification', handle_webhook)  # Изменено!
+    
+    # ИСПРАВЛЕНИЕ: Добавляем несколько путей для совместимости
+    # Основной путь
+    app.router.add_post('/payment/webhook', handle_webhook)
+    # Альтернативные пути для обратной совместимости
+    app.router.add_post('/webhook', handle_webhook)
+    app.router.add_post('/payment-notification', handle_webhook)
+    
+    # Health check
     app.router.add_get('/health', health_check)
+    
     return app
 
 async def health_check(request: web.Request) -> web.Response:
@@ -379,11 +387,16 @@ async def start_webhook_server(bot: Bot = None, port: int = 8080):
         await webhook_site.start()
         
         logger.info(f"Webhook server started on port {port}")
+        logger.info("Webhook paths registered:")
+        logger.info("  - /payment/webhook (основной)")
+        logger.info("  - /webhook (альтернативный)")
+        logger.info("  - /payment-notification (legacy)")
         
         # Логируем webhook URL для настройки в Tinkoff
         if hasattr(config, 'WEBHOOK_BASE_URL'):
-            webhook_url = f"{config.WEBHOOK_BASE_URL}/webhook"
-            logger.info(f"Webhook URL for Tinkoff: {webhook_url}")
+            logger.info(f"Webhook URLs for Tinkoff:")
+            logger.info(f"  Primary: {config.WEBHOOK_BASE_URL}/payment/webhook")
+            logger.info(f"  Alternative: {config.WEBHOOK_BASE_URL}/webhook")
         
     except Exception as e:
         logger.exception(f"Failed to start webhook server: {e}")
