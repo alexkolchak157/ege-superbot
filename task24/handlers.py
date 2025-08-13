@@ -33,6 +33,39 @@ logger = logging.getLogger(__name__)
 # Глобальные данные
 plan_bot_data = None
 
+def migrate_practiced_topics(context, plan_bot_data):
+    """Миграция старого формата practiced_topics (названия) в новый (индексы)."""
+    practiced = context.user_data.get('practiced_topics', set())
+    if not practiced:
+        return
+    
+    # Проверяем, нужна ли миграция (если есть строки в set)
+    needs_migration = any(isinstance(item, str) for item in practiced)
+    
+    if needs_migration:
+        logger.info(f"Migrating practiced_topics for user...")
+        new_practiced = set()
+        migrated_count = 0
+        
+        for item in practiced:
+            if isinstance(item, str):
+                # Ищем индекс по названию
+                found = False
+                for idx, name in plan_bot_data.topic_index_map.items():
+                    if name == item:
+                        new_practiced.add(idx)
+                        migrated_count += 1
+                        found = True
+                        break
+                if not found:
+                    logger.warning(f"Could not migrate topic: '{item}'")
+            else:
+                # Уже индекс
+                new_practiced.add(item)
+        
+        context.user_data['practiced_topics'] = new_practiced
+        logger.info(f"Migration complete: {migrated_count} topics migrated")
+
 async def delete_previous_messages(context: ContextTypes.DEFAULT_TYPE, chat_id: int, keep_message_id: Optional[int] = None):
     """Удаляет предыдущие сообщения диалога."""
     if not hasattr(context, 'bot') or not context.bot:
@@ -167,9 +200,6 @@ def init_data():
         logger.error(f"Проверенные пути: {possible_paths}")
         # Создаем пустой объект данных для избежания ошибок
         plan_bot_data = PlanBotData({"plans": {}, "blocks": {}})
-    
-    # Загружаем список администраторов
-    admin_manager._load_admin_ids()
     
     return data_loaded  # Возвращаем статус загрузки
 
@@ -896,9 +926,20 @@ async def handle_plan_enhanced(update: Update, context: ContextTypes.DEFAULT_TYP
         }
         
         # Добавляем тему в изученные
-        if 'practiced_topics' not in context.user_data:
-            context.user_data['practiced_topics'] = set()
-        context.user_data['practiced_topics'].add(topic_name)
+        topic_index = context.user_data.get('current_topic_index')
+        if topic_index is not None:
+            context.user_data['practiced_topics'].add(topic_index)  # Добавляем индекс!
+            logger.debug(f"Added topic index {topic_index} to practiced_topics")
+        else:
+            # Если индекс не сохранён, пытаемся найти его по названию
+            for idx, name in plan_bot_data.topic_index_map.items():
+                if name == topic_name:
+                    context.user_data['practiced_topics'].add(idx)
+                    context.user_data['current_topic_index'] = idx
+                    logger.debug(f"Found and added topic index {idx} for topic '{topic_name}'")
+                    break
+            else:
+                logger.warning(f"Could not find index for topic '{topic_name}'")
         
         # Удаляем сообщение "Анализирую..."
         try:
@@ -1101,7 +1142,7 @@ async def show_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def show_block_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Показывает статистику по блокам тем с универсальными компонентами."""
     query = update.callback_query
-    
+    migrate_practiced_topics(context, plan_bot_data)
     stats = get_user_stats(context)
     practiced = context.user_data.get('practiced_topics', set())
     
@@ -1153,7 +1194,7 @@ async def show_block_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def show_detailed_progress(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Показывает детальную статистику по всем темам с пагинацией."""
     query = update.callback_query
-    
+    migrate_practiced_topics(context, plan_bot_data)
     # Получаем страницу из callback_data (формат: show_detailed_progress:page)
     callback_parts = query.data.split(':')
     page = int(callback_parts[1]) if len(callback_parts) > 1 else 0
@@ -1223,7 +1264,7 @@ async def show_detailed_progress(update: Update, context: ContextTypes.DEFAULT_T
 async def show_completed(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Показывает список пройденных тем."""
     query = update.callback_query
-    
+    migrate_practiced_topics(context, plan_bot_data)
     scores_history = context.user_data.get('scores_history', [])
     
     if not scores_history:
@@ -1253,7 +1294,7 @@ async def show_completed(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def show_remaining(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Показывает список оставшихся тем с пагинацией."""
     query = update.callback_query
-    
+    migrate_practiced_topics(context, plan_bot_data)
     # Получаем страницу из callback_data (формат: show_remaining:page)
     callback_parts = query.data.split(':')
     page = int(callback_parts[1]) if len(callback_parts) > 1 else 0
@@ -1428,7 +1469,7 @@ async def cancel_reset(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def export_progress(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Экспорт прогресса пользователя."""
     query = update.callback_query
-    
+    migrate_practiced_topics(context, plan_bot_data)
     user_id = query.from_user.id
     username = query.from_user.username or "Unknown"
     practiced = context.user_data.get('practiced_topics', set())
@@ -1529,7 +1570,8 @@ async def cmd_task24(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 ]])
             )
             return ConversationHandler.END
-    
+    if plan_bot_data:
+        migrate_practiced_topics(context, plan_bot_data)
     # Очищаем контекст от данных других модулей
     keys_to_remove = [
         'current_topic',
