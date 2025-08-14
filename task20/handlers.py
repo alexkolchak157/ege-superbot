@@ -28,6 +28,7 @@ from core.state_validator import validate_state_transition, state_validator
 from core.utils import safe_edit_message
 from telegram.error import BadRequest
 from core.document_processor import DocumentHandlerMixin
+from core.migration import ensure_module_migration
 
 logger = logging.getLogger(__name__)
 
@@ -262,7 +263,10 @@ async def entry_from_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 @safe_handler()
 async def cmd_task20(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Команда /task20 - прямой вход в задание 20."""
+    """Команда /task20."""
+    # Автоматическая миграция при входе
+    from core.migration import ensure_module_migration
+    ensure_module_migration(context, 'task20', task20_data)
     
     # Очищаем контекст
     keys_to_remove = [
@@ -885,8 +889,6 @@ async def safe_handle_answer_task20(update: Update, context: ContextTypes.DEFAUL
         # Удаляем анимацию
         await thinking_msg.delete()
         
-        # ========= ДОБАВИТЬ НЕДОСТАЮЩИЙ КОД: =========
-        
         # Сохраняем результат
         if 'task20_results' not in context.user_data:
             context.user_data['task20_results'] = []
@@ -902,24 +904,25 @@ async def safe_handle_answer_task20(update: Update, context: ContextTypes.DEFAUL
         
         context.user_data['task20_results'].append(result_data)
         
-        # Синхронизация с practice_stats
-        if 'practice_stats' not in context.user_data:
-            context.user_data['practice_stats'] = {}
+        # ИСПРАВЛЕНИЕ: Используем изолированное хранилище task20_practice_stats
+        if 'task20_practice_stats' not in context.user_data:
+            context.user_data['task20_practice_stats'] = {}
         
         topic_id_str = str(topic['id'])
-        if topic_id_str not in context.user_data['practice_stats']:
-            context.user_data['practice_stats'][topic_id_str] = {
+        if topic_id_str not in context.user_data['task20_practice_stats']:
+            context.user_data['task20_practice_stats'][topic_id_str] = {
                 'attempts': 0,
                 'scores': [],
                 'last_attempt': None,
                 'best_score': 0,
                 'topic_title': topic['title'],
                 'topic_id': topic['id'],
-                'block': topic['block']
+                'block': topic['block'],
+                'module': 'task20'
             }
         
         # Обновляем статистику
-        topic_stats = context.user_data['practice_stats'][topic_id_str]
+        topic_stats = context.user_data['task20_practice_stats'][topic_id_str]
         topic_stats['attempts'] += 1
         topic_stats['scores'].append(score)
         topic_stats['last_attempt'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
@@ -1297,15 +1300,14 @@ async def view_by_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 @safe_handler()
 async def my_progress(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Показ прогресса пользователя с улучшенной визуализацией."""
+    """Показ прогресса task20."""
     query = update.callback_query
     
-    # ИСПРАВЛЕНИЕ: Проверяем ОБА источника данных
+    # ИЗМЕНЕНИЕ: Используем task20_practice_stats
     results = context.user_data.get('task20_results', [])
-    stats = context.user_data.get('practice_stats', {})
+    task20_stats = context.user_data.get('task20_practice_stats', {})
     
-    # Если нет данных ни в одном источнике
-    if not results and not stats:
+    if not results and not task20_stats:
         text = (
             "📊 <b>Ваш прогресс</b>\n\n"
             "У вас пока нет результатов.\n"
@@ -1683,30 +1685,16 @@ async def settings_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return states.CHOOSING_MODE
 
 @safe_handler()
-async def reset_progress(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Запрос подтверждения сброса прогресса."""
+async def reset_progress_task20(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Полный сброс прогресса task20."""
     query = update.callback_query
     
-    text = (
-        "⚠️ <b>Сброс прогресса</b>\n\n"
-        "Вы уверены, что хотите сбросить весь прогресс по заданию 20?\n"
-        "Это действие нельзя отменить!"
-    )
+    # Сбрасываем ТОЛЬКО данные task20
+    context.user_data.pop('task20_results', None)
+    context.user_data.pop('task20_practice_stats', None)
     
-    kb = InlineKeyboardMarkup([
-        [
-            InlineKeyboardButton("✅ Да, сбросить", callback_data="t20_confirm_reset"),
-            InlineKeyboardButton("❌ Отмена", callback_data="t20_progress")
-        ]
-    ])
-    
-    await query.edit_message_text(
-        text,
-        reply_markup=kb,
-        parse_mode=ParseMode.HTML
-    )
-    
-    return states.CHOOSING_MODE
+    await query.answer("✅ Прогресс по заданию 20 сброшен!", show_alert=True)
+    return await settings_mode(update, context)
 
 async def show_streak_notification(message, streak: int):
     """Показать уведомление о серии идеальных ответов."""
@@ -1774,13 +1762,30 @@ async def confirm_reset(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 @safe_handler()
 async def return_to_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Возврат в меню задания 20."""
+    """Возврат в меню task20."""
     query = update.callback_query
     
-    # Очищаем временные данные
-    keys_to_clear = ['current_topic', 'current_block', 'bank_current_idx', 'waiting_for_bank_search']
-    for key in keys_to_clear:
+    # Автоматическая миграция при возврате
+    from core.migration import ensure_module_migration
+    ensure_module_migration(context, 'task20', task20_data)  # Передаем context!
+    
+    # Очищаем контекст от данных других модулей
+    keys_to_remove = [
+        'current_topic',
+        'task19_current_topic', 
+        'task24_current_topic',
+        'task25_current_topic',
+        'answer_processing',
+        'current_block',
+        'waiting_for_bank_search'
+    ]
+    
+    for key in keys_to_remove:
         context.user_data.pop(key, None)
+    
+    # ВАЖНО: Устанавливаем активный модуль
+    context.user_data['active_module'] = 't20'
+    context.user_data['current_module'] = 't20'
     
     # Получаем статистику пользователя
     if UserProgress:
