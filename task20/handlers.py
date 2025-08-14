@@ -1692,9 +1692,12 @@ async def reset_progress_task20(update: Update, context: ContextTypes.DEFAULT_TY
     # Сбрасываем ТОЛЬКО данные task20
     context.user_data.pop('task20_results', None)
     context.user_data.pop('task20_practice_stats', None)
+    context.user_data.pop('task20_achievements', None)
     
     await query.answer("✅ Прогресс по заданию 20 сброшен!", show_alert=True)
-    return await settings_mode(update, context)
+    return await return_to_menu(update, context)
+
+reset_progress = reset_progress_task20
 
 async def show_streak_notification(message, streak: int):
     """Показать уведомление о серии идеальных ответов."""
@@ -1745,16 +1748,12 @@ async def confirm_reset(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Подтверждение сброса прогресса."""
     query = update.callback_query
     
-    # Сбрасываем все данные task20
+    # Сбрасываем прогресс
     context.user_data.pop('task20_results', None)
+    context.user_data.pop('task20_practice_stats', None)
     context.user_data.pop('task20_achievements', None)
-    context.user_data.pop('correct_streak', None)
     
-    # Очищаем practice_stats для task20
-    if 'practice_stats' in context.user_data:
-        context.user_data['practice_stats'] = {}
-    
-    await query.answer("✅ Прогресс по заданию 20 сброшен!", show_alert=True)
+    await query.answer("✅ Прогресс сброшен!", show_alert=True)
     
     # Возвращаемся в меню
     return await return_to_menu(update, context)
