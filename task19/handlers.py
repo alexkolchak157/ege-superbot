@@ -17,7 +17,7 @@ from core.states import TASK19_WAITING
 from core.ai_evaluator import Task19Evaluator, EvaluationResult
 from datetime import datetime
 import io
-from .evaluator import StrictnessLevel, Task19AIEvaluator
+from .evaluator import StrictnessLevel, Task19AIEvaluator, AI_EVALUATOR_AVAILABLE
 from core.universal_ui import UniversalUIComponents, AdaptiveKeyboards, MessageFormatter
 from core.ui_helpers import (
     show_thinking_animation,
