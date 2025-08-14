@@ -1303,7 +1303,11 @@ async def my_progress(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Показ прогресса task20."""
     query = update.callback_query
     
-    # ИЗМЕНЕНИЕ: Используем task20_practice_stats
+    # Убеждаемся, что данные мигрированы
+    from core.migration import ensure_module_migration
+    ensure_module_migration(context, 'task20', task20_data)
+    
+    # Используем изолированное хранилище task20_practice_stats
     results = context.user_data.get('task20_results', [])
     task20_stats = context.user_data.get('task20_practice_stats', {})
     
@@ -1318,57 +1322,54 @@ async def my_progress(update: Update, context: ContextTypes.DEFAULT_TYPE):
             [InlineKeyboardButton("⬅️ Назад", callback_data="t20_menu")]
         ])
     else:
-        # Собираем полную статистику из ОБОИХ источников
+        # Собираем полную статистику
         total_attempts = 0
         total_score = 0
         max_possible = 0
         block_stats = {}
         unique_topics = set()
         
-        # Обрабатываем results
-        if results:
-            total_attempts = len(results)
-            total_score = sum(r['score'] for r in results)
-            max_possible = sum(r.get('max_score', 3) for r in results)
+        # Обрабатываем результаты из task20_results
+        for result in results:
+            total_attempts += 1
+            total_score += result.get('score', 0)
+            max_possible += result.get('max_score', 3)
             
-            # Анализ по блокам
-            for result in results:
-                block = result.get('block', 'Без категории')
+            block = result.get('block', 'Без категории')
+            if block not in block_stats:
+                block_stats[block] = {'attempts': 0, 'total_score': 0}
+            block_stats[block]['attempts'] += 1
+            block_stats[block]['total_score'] += result.get('score', 0)
+            
+            topic_id = result.get('topic_id', result.get('topic'))
+            if topic_id:
+                unique_topics.add(str(topic_id))
+        
+        # Дополняем статистику из task20_practice_stats
+        for topic_id_str, topic_data in task20_stats.items():
+            if topic_data.get('attempts', 0) > 0 and topic_id_str not in unique_topics:
+                attempts = topic_data['attempts']
+                scores = topic_data.get('scores', [])
+                
+                total_attempts += attempts
+                total_score += sum(scores)
+                max_possible += attempts * 3
+                
+                block = topic_data.get('block', 'Без категории')
                 if block not in block_stats:
                     block_stats[block] = {'attempts': 0, 'total_score': 0}
-                block_stats[block]['attempts'] += 1
-                block_stats[block]['total_score'] += result['score']
+                block_stats[block]['attempts'] += attempts
+                block_stats[block]['total_score'] += sum(scores)
                 
-                # Собираем уникальные темы
-                topic_id = result.get('topic_id', result.get('topic'))
-                if topic_id:
-                    unique_topics.add(topic_id)
+                unique_topics.add(topic_id_str)
         
-        # Дополняем из practice_stats если есть данные, которых нет в results
-        if stats:
-            for topic_id_str, topic_data in stats.items():
-                if topic_data.get('attempts', 0) > 0:
-                    # Если этой темы нет в results - добавляем статистику
-                    if topic_id_str not in unique_topics:
-                        unique_topics.add(topic_id_str)
-                        
-                        # Обновляем общую статистику
-                        attempts = topic_data['attempts']
-                        scores = topic_data.get('scores', [])
-                        total_attempts += attempts
-                        total_score += sum(scores)
-                        max_possible += attempts * 3
-                        
-                        # Обновляем статистику по блокам
-                        block = topic_data.get('block', 'Без категории')
-                        if block not in block_stats:
-                            block_stats[block] = {'attempts': 0, 'total_score': 0}
-                        block_stats[block]['attempts'] += attempts
-                        block_stats[block]['total_score'] += sum(scores)
-        
-        # Вычисляем средний балл и другие метрики
+        # Вычисляем метрики
         avg_score = total_score / total_attempts if total_attempts > 0 else 0
         perfect_scores = sum(1 for r in results if r.get('score') == r.get('max_score', 3))
+        
+        # Добавляем счетчик идеальных из practice_stats
+        for topic_data in task20_stats.values():
+            perfect_scores += sum(1 for score in topic_data.get('scores', []) if score == 3)
         
         # Визуальный прогресс
         progress_visual = create_visual_progress(total_score, max_possible)
@@ -1378,23 +1379,24 @@ async def my_progress(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 <b>Общая статистика:</b>
 📝 Выполнено заданий: {total_attempts}
+📚 Изучено тем: {len(unique_topics)}
 ⭐ Средний балл: {avg_score:.1f}/3
-🎯 Идеальных ответов: {perfect_scores} ({perfect_scores/total_attempts*100:.0f}%)
+🎯 Идеальных ответов: {perfect_scores} ({perfect_scores/total_attempts*100:.0f}% от всех)
 📈 Общий прогресс: {progress_visual}
 
 <b>По блокам:</b>"""
         
-        # Выводим статистику по блокам
+        # Статистика по блокам
         for block, stats in sorted(block_stats.items()):
             block_avg = stats['total_score'] / stats['attempts'] if stats['attempts'] > 0 else 0
             text += f"\n• {block}: {block_avg:.1f}/3 ({stats['attempts']} попыток)"
         
-        # Добавляем информацию о серии
+        # Серия правильных ответов
         streak = context.user_data.get('correct_streak', 0)
         if streak > 0:
             text += f"\n\n🔥 <b>Текущая серия идеальных ответов:</b> {streak}"
         
-        # Проверяем достижения
+        # Достижения
         achievements = context.user_data.get('task20_achievements', set())
         if achievements:
             text += f"\n🏅 <b>Получено достижений:</b> {len(achievements)}/6"
@@ -1410,19 +1412,17 @@ async def my_progress(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Формируем клавиатуру
         kb_buttons = []
         
-        # Первая строка
         kb_buttons.append([
             InlineKeyboardButton("📈 Детальная статистика", callback_data="t20_detailed_progress"),
             InlineKeyboardButton("📥 Экспорт", callback_data="t20_export")
         ])
         
-        # Вторая строка
         kb_buttons.append([
             InlineKeyboardButton("🏅 Достижения", callback_data="t20_achievements"),
             InlineKeyboardButton("💪 Продолжить", callback_data="t20_practice")
         ])
         
-        # Третья строка с работой над ошибками (если есть слабые темы)
+        # Работа над ошибками
         weak_topics_count = sum(1 for r in results if r.get('score', 0) < 2)
         if weak_topics_count > 0:
             kb_buttons.append([
@@ -1430,7 +1430,6 @@ async def my_progress(update: Update, context: ContextTypes.DEFAULT_TYPE):
                                    callback_data="t20_mistakes")
             ])
         
-        # Последняя строка
         kb_buttons.append([
             InlineKeyboardButton("🔄 Сбросить прогресс", callback_data="t20_reset_progress"),
             InlineKeyboardButton("⬅️ Назад", callback_data="t20_menu")
@@ -1821,9 +1820,59 @@ async def back_to_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     from core.state_validator import state_validator
     state_validator.clear_state(query.from_user.id)
     
-    # Очищаем данные модуля
-    context.user_data.clear()
-    context.user_data['active_module'] = None
+    # ИСПРАВЛЕНИЕ: НЕ очищаем весь user_data!
+    # Сохраняем данные прогресса всех модулей
+    data_to_preserve = [
+        # Task 20
+        'task20_results',
+        'task20_practice_stats', 
+        'task20_achievements',
+        # Task 19
+        'task19_results',
+        'task19_practice_stats',
+        'task19_achievements',
+        # Task 25
+        'task25_results',
+        'task25_practice_stats',
+        'task25_achievements',
+        # Task 24
+        'task24_results',
+        'task24_stats',
+        # Test part
+        'test_part_results',
+        # Общие
+        'correct_streak',
+        'practice_stats'  # Старое хранилище для совместимости
+    ]
+    
+    # Сохраняем важные данные
+    preserved_data = {}
+    for key in data_to_preserve:
+        if key in context.user_data:
+            preserved_data[key] = context.user_data[key]
+    
+    # Очищаем только временные данные сессии
+    keys_to_remove = [
+        'current_topic',
+        'task19_current_topic',
+        'task20_current_topic', 
+        'task24_current_topic',
+        'task25_current_topic',
+        'answer_processing',
+        'current_block',
+        'waiting_for_bank_search',
+        'active_module',
+        'current_module',
+        'bank_current_idx',
+        'current_question_idx',
+        'test_answers'
+    ]
+    
+    for key in keys_to_remove:
+        context.user_data.pop(key, None)
+    
+    # Восстанавливаем сохраненные данные
+    context.user_data.update(preserved_data)
     
     # Получаем меню
     user_id = update.effective_user.id
@@ -1839,14 +1888,14 @@ async def back_to_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         await query.edit_message_text(
             "👋 Что хотите потренировать?",
-            reply_markup=kb,
-            parse_mode="HTML"
+            reply_markup=kb
         )
-    except Exception as e:
-        # Если не удается отредактировать (например, сообщение не изменилось),
-        # просто отвечаем на callback без создания нового сообщения
-        await query.answer()
-        logger.debug(f"Could not edit message in back_to_main_menu: {e}")
+    except Exception:
+        # Если не получилось отредактировать, отправляем новое
+        await query.message.reply_text(
+            "👋 Что хотите потренировать?",
+            reply_markup=kb
+        )
     
     return ConversationHandler.END
 
