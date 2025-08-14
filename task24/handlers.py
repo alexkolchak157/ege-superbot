@@ -28,6 +28,7 @@ from core.state_validator import validate_state_transition, state_validator
 import math
 from core.error_handler import safe_handler, auto_answer_callback
 
+
 logger = logging.getLogger(__name__)
 
 # Глобальные данные
@@ -1389,6 +1390,8 @@ async def reset_progress_task24(update: Update, context: ContextTypes.DEFAULT_TY
     
     await query.answer("✅ Прогресс по заданию 24 сброшен!", show_alert=True)
     return await cmd_task24(update, context)
+
+reset_progress = reset_progress_task24
 
 @safe_handler()
 async def confirm_reset_progress(update: Update, context: ContextTypes.DEFAULT_TYPE):
