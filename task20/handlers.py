@@ -858,24 +858,18 @@ async def safe_handle_answer_task20(update: Update, context: ContextTypes.DEFAUL
                     user_id=update.effective_user.id
                 )
                 score = result.total_score
-                
-                # Используем новую функцию форматирования
                 feedback_text = _format_evaluation_result(result, topic, user_answer)
                 
             except Exception as e:
                 logger.error(f"Evaluation error: {e}")
                 # Fallback оценка
-                score = min(3, len(user_answer.split('\n')))
+                lines = [l.strip() for l in user_answer.split('\n') if l.strip() and len(l.strip()) > 20]
+                score = min(3, len(lines))
                 feedback_text = _format_evaluation_result({
                     'total_score': score,
                     'max_score': 3,
-                    'feedback': 'Ваш ответ принят. Продолжайте практиковаться!',
-                    'detailed_feedback': {},
-                    'suggestions': [
-                        'Формулируйте суждения более абстрактно',
-                        'Используйте обобщающие конструкции',
-                        'Избегайте конкретных дат и названий'
-                    ]
+                    'feedback': 'Ваш ответ принят.',
+                    'suggestions': ['Изучите примеры в банке заданий']
                 }, topic, user_answer)
         else:
             # Простая оценка без AI
@@ -891,19 +885,9 @@ async def safe_handle_answer_task20(update: Update, context: ContextTypes.DEFAUL
         # Удаляем анимацию
         await thinking_msg.delete()
         
+        # ========= ДОБАВИТЬ НЕДОСТАЮЩИЙ КОД: =========
+        
         # Сохраняем результат
-        result_data = {
-            'topic': topic['title'],
-            'topic_id': topic['id'],
-            'block': topic['block'],
-            'score': score,
-            'max_score': 3,
-            'timestamp': datetime.now().isoformat()
-        }
-        
-        from datetime import datetime
-        
-        # Сохраняем в task20_results (как было)
         if 'task20_results' not in context.user_data:
             context.user_data['task20_results'] = []
         
@@ -918,7 +902,7 @@ async def safe_handle_answer_task20(update: Update, context: ContextTypes.DEFAUL
         
         context.user_data['task20_results'].append(result_data)
         
-        # ДОБАВЛЯЕМ: Синхронизация с practice_stats
+        # Синхронизация с practice_stats
         if 'practice_stats' not in context.user_data:
             context.user_data['practice_stats'] = {}
         
@@ -942,37 +926,48 @@ async def safe_handle_answer_task20(update: Update, context: ContextTypes.DEFAUL
         topic_stats['best_score'] = max(topic_stats.get('best_score', 0), score)
         
         # Обновляем серию правильных ответов
-        if score == 3:
+        if score >= 2:
             context.user_data['correct_streak'] = context.user_data.get('correct_streak', 0) + 1
-            
-            # Показываем уведомление о серии каждые 5 идеальных ответов
-            if context.user_data['correct_streak'] % 5 == 0:
-                await show_streak_notification(
-                    update.message,
-                    context.user_data['correct_streak']
-                )
         else:
             context.user_data['correct_streak'] = 0
         
-        # Проверяем достижения
-        new_achievements = await achievements_check(context, update.effective_user.id)
-        if new_achievements:
-            for achievement in new_achievements:
-                await show_achievement_notification(update, context, achievement)
+        # КРИТИЧЕСКИ ВАЖНО: ОТПРАВЛЯЕМ РЕЗУЛЬТАТ ПОЛЬЗОВАТЕЛЮ!
+        kb = InlineKeyboardMarkup([
+            [
+                InlineKeyboardButton("🎲 Новая тема", callback_data="t20_new"),
+                InlineKeyboardButton("🔄 Повторить", callback_data="t20_retry")
+            ],
+            [InlineKeyboardButton("⬅️ В меню", callback_data="t20_menu")]
+        ])
+        
+        await update.message.reply_text(
+            feedback_text,
+            reply_markup=kb,
+            parse_mode=ParseMode.HTML
+        )
+        
+        # Проверяем достижения (опционально)
+        # await check_achievements(update, context, score)
+        
+        return states.CHOOSING_MODE
         
     except Exception as e:
-        logger.error(f"Error in handle_answer: {e}")
-        await thinking_msg.delete()
+        logger.error(f"Error in safe_handle_answer_task20: {e}")
+        
+        # Пытаемся удалить анимацию
+        try:
+            await thinking_msg.delete()
+        except:
+            pass
+        
         await update.message.reply_text(
-            "❌ Произошла ошибка при проверке. Попробуйте еще раз.",
+            "❌ Произошла ошибка при обработке ответа. Попробуйте еще раз.",
             reply_markup=InlineKeyboardMarkup([[
-                InlineKeyboardButton("🔄 Попробовать снова", callback_data="t20_retry"),
-                InlineKeyboardButton("📝 В меню", callback_data="t20_menu")
+                InlineKeyboardButton("⬅️ В меню", callback_data="t20_menu")
             ]])
         )
-    
-    # ВАЖНО: Возвращаем states.CHOOSING_MODE вместо ConversationHandler.END
-    return states.CHOOSING_MODE
+        
+        return states.CHOOSING_MODE
     
 @safe_handler()
 async def good_examples(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -2052,7 +2047,7 @@ async def block_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return states.CHOOSING_MODE
 
 @safe_handler()
-@validate_state_transition({ANSWERING_T20})
+#@validate_state_transition({ANSWERING_T20})
 async def handle_answer_document_task20(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработка суждений из документа для task20."""
     
@@ -2082,7 +2077,6 @@ async def select_topic(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     
     topic_id = query.data.split(":")[1]
-    # Важно: topic_by_id использует строковые ключи
     topic = task20_data["topic_by_id"].get(str(topic_id))
     
     if not topic:
@@ -2091,7 +2085,7 @@ async def select_topic(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     context.user_data['current_topic'] = topic
     
-    text = _build_topic_message(topic)  # Исправлена опечатка
+    text = _build_topic_message(topic)
     kb = InlineKeyboardMarkup([
         [InlineKeyboardButton("❌ Отмена", callback_data="t20_list_topics")]
     ])
@@ -2101,6 +2095,10 @@ async def select_topic(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=kb,
         parse_mode=ParseMode.HTML
     )
+    
+    # ДОБАВИТЬ: Явная установка состояния
+    from core.state_validator import state_validator
+    state_validator.set_state(query.from_user.id, ANSWERING_T20)
     
     return ANSWERING_T20
 
@@ -2238,6 +2236,9 @@ async def random_topic_all(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ])
     
     await query.edit_message_text(text, reply_markup=kb, parse_mode=ParseMode.HTML)
+    from core.state_validator import state_validator
+    state_validator.set_state(query.from_user.id, ANSWERING_T20)
+    
     return ANSWERING_T20
 
 @safe_handler()
@@ -2272,7 +2273,10 @@ async def random_topic_block(update: Update, context: ContextTypes.DEFAULT_TYPE)
         parse_mode=ParseMode.HTML
     )
     
-    return states.ANSWERING_T20  # Важно: возвращаем правильное состояние
+    from core.state_validator import state_validator
+    state_validator.set_state(query.from_user.id, states.ANSWERING_T20)
+    
+    return states.ANSWERING_T20
 
 
 @safe_handler()
@@ -2858,6 +2862,9 @@ async def choose_topic(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode=ParseMode.HTML
     )
     
+    from core.state_validator import state_validator
+    state_validator.set_state(query.from_user.id, ANSWERING_T20)
+    
     return ANSWERING_T20
 
 async def save_stats_by_level(context: ContextTypes.DEFAULT_TYPE, user_id: int, score: int):
@@ -2884,7 +2891,7 @@ async def save_stats_by_level(context: ContextTypes.DEFAULT_TYPE, user_id: int, 
     stats['avg_score'] = stats['total_score'] / stats['attempts']
 
 @safe_handler()
-@validate_state_transition({ANSWERING_T20})
+#@validate_state_transition({ANSWERING_T20})
 async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return await safe_handle_answer_task20(update, context)
 
