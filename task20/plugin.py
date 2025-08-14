@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 
 class Task20Plugin(BotPlugin):
     code = "t20"  # Изменить с "task20" на "t20"
-    title = "Задание 20 (Суждения)"
+    title = "🎯 Задание 20 (Суждения)"
     menu_priority = 16
     
     async def post_init(self, app):
@@ -51,6 +51,7 @@ class Task20Plugin(BotPlugin):
                     CallbackQueryHandler(handlers.how_to_write, pattern="^t20_how_to_write$"),
                     CallbackQueryHandler(handlers.good_examples, pattern="^t20_good_examples$"), 
                     CallbackQueryHandler(handlers.common_mistakes, pattern="^t20_common_mistakes$"),
+                    CallbackQueryHandler(handlers.back_to_main_menu, pattern="^to_main_menu$"),
                     CallbackQueryHandler(handlers.useful_phrases, pattern="^t20_useful_phrases$"),
                     CallbackQueryHandler(handlers.handle_theory_sections, pattern="^t20_(how_to_write|good_examples|common_mistakes|useful_phrases)$"),
                     CallbackQueryHandler(handlers.examples_bank, pattern="^t20_examples$"),
@@ -58,7 +59,6 @@ class Task20Plugin(BotPlugin):
                     CallbackQueryHandler(handlers.show_achievements, pattern="^t20_achievements$"),
                     CallbackQueryHandler(handlers.mistakes_mode, pattern="^t20_mistakes$"),
                     CallbackQueryHandler(handlers.settings_mode, pattern="^t20_settings$"),
-                    CallbackQueryHandler(handlers.back_to_main_menu, pattern="^to_main_menu$"),
                     CallbackQueryHandler(handlers.noop, pattern="^noop$"),
                     CallbackQueryHandler(handlers.random_topic_all, pattern="^t20_random_all$"),
 

@@ -72,6 +72,11 @@ async def clear_task20_cache():
         except Exception as e:
             logger.error(f"Failed to clear task20 cache: {e}")
 
+@safe_handler()
+async def back_to_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработчик кнопки Главное меню - вызывает глобальный обработчик."""
+    from core.menu_handlers import handle_to_main_menu
+    return await handle_to_main_menu(update, context)
 
 async def init_task20_data(force_reload=False):
     """Инициализация данных с кэшированием."""
@@ -1809,95 +1814,6 @@ async def return_to_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
     return states.CHOOSING_MODE
-
-@safe_handler()
-@validate_state_transition({states.CHOOSING_MODE, states.CHOOSING_BLOCK, states.CHOOSING_TOPIC, ANSWERING_T20, states.ANSWERING_PARTS})
-async def back_to_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Возврат в главное меню бота."""
-    query = update.callback_query
-    
-    # Очищаем состояние пользователя
-    from core.state_validator import state_validator
-    state_validator.clear_state(query.from_user.id)
-    
-    # ИСПРАВЛЕНИЕ: НЕ очищаем весь user_data!
-    # Сохраняем данные прогресса всех модулей
-    data_to_preserve = [
-        # Task 20
-        'task20_results',
-        'task20_practice_stats', 
-        'task20_achievements',
-        # Task 19
-        'task19_results',
-        'task19_practice_stats',
-        'task19_achievements',
-        # Task 25
-        'task25_results',
-        'task25_practice_stats',
-        'task25_achievements',
-        # Task 24
-        'task24_results',
-        'task24_stats',
-        # Test part
-        'test_part_results',
-        # Общие
-        'correct_streak',
-        'practice_stats'  # Старое хранилище для совместимости
-    ]
-    
-    # Сохраняем важные данные
-    preserved_data = {}
-    for key in data_to_preserve:
-        if key in context.user_data:
-            preserved_data[key] = context.user_data[key]
-    
-    # Очищаем только временные данные сессии
-    keys_to_remove = [
-        'current_topic',
-        'task19_current_topic',
-        'task20_current_topic', 
-        'task24_current_topic',
-        'task25_current_topic',
-        'answer_processing',
-        'current_block',
-        'waiting_for_bank_search',
-        'active_module',
-        'current_module',
-        'bank_current_idx',
-        'current_question_idx',
-        'test_answers'
-    ]
-    
-    for key in keys_to_remove:
-        context.user_data.pop(key, None)
-    
-    # Восстанавливаем сохраненные данные
-    context.user_data.update(preserved_data)
-    
-    # Получаем меню
-    user_id = update.effective_user.id
-    
-    try:
-        from core.app import show_main_menu_with_access
-        kb = await show_main_menu_with_access(context, user_id)
-    except ImportError:
-        from core.plugin_loader import build_main_menu
-        kb = build_main_menu()
-    
-    # Сначала пытаемся отредактировать сообщение
-    try:
-        await query.edit_message_text(
-            "👋 Что хотите потренировать?",
-            reply_markup=kb
-        )
-    except Exception:
-        # Если не получилось отредактировать, отправляем новое
-        await query.message.reply_text(
-            "👋 Что хотите потренировать?",
-            reply_markup=kb
-        )
-    
-    return ConversationHandler.END
 
 @safe_handler()
 async def noop(update: Update, context: ContextTypes.DEFAULT_TYPE):
