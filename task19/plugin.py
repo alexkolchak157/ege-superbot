@@ -65,7 +65,6 @@ class Task19Plugin(BotPlugin):
                     CallbackQueryHandler(handlers.show_progress_enhanced, pattern="^t19_progress$"),
                     CallbackQueryHandler(handlers.settings_mode, pattern="^t19_settings$"),
                     CallbackQueryHandler(handlers.strictness_menu, pattern="^t19_strictness_menu$"),
-                    CallbackQueryHandler(handlers.back_to_main_menu, pattern="^to_main_menu$"),
                     CallbackQueryHandler(handlers.noop, pattern="^noop$"),
 
                     # Дополнительные действия
@@ -145,14 +144,12 @@ class Task19Plugin(BotPlugin):
                 states.AWAITING_FEEDBACK: [
                     CallbackQueryHandler(handlers.practice_mode, pattern="^next_topic$"),
                     CallbackQueryHandler(handlers.return_to_menu, pattern="^to_main_menu$"),
-                    CallbackQueryHandler(handlers.back_to_main_menu, pattern="^to_main_menu$"),
                     CallbackQueryHandler(handlers.practice_mode, pattern="^retry$"),
                 ],
             },
             fallbacks=[
                 CommandHandler("cancel", handlers.cmd_cancel),
                 CallbackQueryHandler(handlers.return_to_menu, pattern="^t19_menu$"),
-                CallbackQueryHandler(handlers.back_to_main_menu, pattern="^to_main_menu$"),
                 CallbackQueryHandler(handle_processing, pattern="^t19_"),
             ],
             name="task19_conversation",
