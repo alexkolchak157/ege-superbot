@@ -16,8 +16,8 @@ logger = logging.getLogger(__name__)
 
 class Task25Plugin(BotPlugin):
     code = "task25"
-    title = "Задание 25 (Развёрнутый ответ)"
-    menu_priority = 17  # После task20
+    title = "✍️ Задание 25  (Развёрнутый ответ)"
+    menu_priority = 18  # После task20
     
     async def post_init(self, app):
         """Инициализация данных для задания 25."""
@@ -55,7 +55,6 @@ class Task25Plugin(BotPlugin):
                     CallbackQueryHandler(handlers.show_examples_block, pattern="^t25_examples_block:"),
                     CallbackQueryHandler(handlers.my_progress, pattern="^t25_progress$"),
                     CallbackQueryHandler(handlers.settings_mode, pattern="^t25_settings$"),
-                    CallbackQueryHandler(handlers.back_to_main_menu, pattern="^to_main_menu$"),
                     CallbackQueryHandler(handlers.list_all_topics, pattern="^t25_all_topics_list$"),
                     CallbackQueryHandler(handlers.list_by_difficulty, pattern="^t25_list_by_diff:"),
                     CallbackQueryHandler(handlers.noop, pattern="^noop$"),
@@ -134,7 +133,6 @@ class Task25Plugin(BotPlugin):
                     CallbackQueryHandler(handlers.handle_result_action, pattern="^t25_new$"),
                     CallbackQueryHandler(handlers.my_progress, pattern="^t25_progress$"),
                     CallbackQueryHandler(handlers.return_to_menu, pattern="^t25_menu$"),
-                    CallbackQueryHandler(handlers.back_to_main_menu, pattern="^to_main_menu$"),
                     CallbackQueryHandler(handlers.another_topic_from_current, pattern="^t25_another_topic$"),
                     CallbackQueryHandler(handlers.practice_mode, pattern="^t25_practice$"),
                 ],
@@ -148,7 +146,6 @@ class Task25Plugin(BotPlugin):
             fallbacks=[
                 CommandHandler("cancel", handlers.cmd_cancel),
                 CallbackQueryHandler(handlers.return_to_menu, pattern="^t25_menu$"),
-                CallbackQueryHandler(handlers.back_to_main_menu, pattern="^to_main_menu$"),
             ],
             name="task25_conversation",
             persistent=False,
