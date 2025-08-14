@@ -1029,40 +1029,9 @@ async def back_to_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
 @safe_handler()
 async def back_to_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Возврат в главное меню бота."""
-    query = update.callback_query
+    from core.menu_handlers import handle_to_main_menu
+    return await handle_to_main_menu(update, context)
     
-    # Очищаем состояние пользователя
-    from core.state_validator import state_validator
-    state_validator.clear_state(query.from_user.id)
-    
-    # Очищаем данные модуля
-    context.user_data.clear()
-    context.user_data['active_module'] = None
-    
-    # Получаем меню
-    user_id = update.effective_user.id
-    
-    try:
-        from core.app import show_main_menu_with_access
-        kb = await show_main_menu_with_access(context, user_id)
-    except ImportError:
-        from core.plugin_loader import build_main_menu
-        kb = build_main_menu()
-    
-    # Сначала пытаемся отредактировать сообщение
-    try:
-        await query.edit_message_text(
-            "👋 Что хотите потренировать?",
-            reply_markup=kb,
-            parse_mode="HTML"
-        )
-    except Exception as e:
-        # Если не удается отредактировать (например, сообщение не изменилось),
-        # просто отвечаем на callback без создания нового сообщения
-        await query.answer()
-        logger.debug(f"Could not edit message in back_to_main_menu: {e}")
-    
-    return ConversationHandler.END
 @safe_handler()
 @validate_state_transition({states.CHOOSING_MODE, states.CHOOSING_BLOCK, states.CHOOSING_TOPIC, states.ANSWERING})
 async def back_to_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -2203,21 +2172,30 @@ async def reset_progress_confirm(update: Update, context: ContextTypes.DEFAULT_T
     )
     return states.CHOOSING_MODE
 
-# Добавьте эту функцию в test_part/handlers.py:
-
 @safe_handler()
 @validate_state_transition({states.CHOOSING_MODE})
 async def reset_progress_do(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Выполнение сброса прогресса."""
+    """Выполнение сброса прогресса test_part."""
     query = update.callback_query
     user_id = query.from_user.id
     
     try:
-        # Сбрасываем все данные пользователя
+        # Сбрасываем данные в БД
         await db.reset_user_progress(user_id)
         
-        # Очищаем контекст
-        context.user_data.clear()
+        # Очищаем ТОЛЬКО временные данные test_part
+        keys_to_remove = [
+            'mistake_ids',
+            'current_mistake_index',
+            'current_topic',
+            'current_question_id',
+            'user_id'
+        ]
+        
+        for key in keys_to_remove:
+            context.user_data.pop(key, None)
+        
+        # НЕ ТРОГАЕМ данные других модулей!
         
         # Устанавливаем активный модуль обратно
         context.user_data['active_module'] = 'test_part'
