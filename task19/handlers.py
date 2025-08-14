@@ -712,20 +712,14 @@ def _format_evaluation_result(result) -> str:
 
 @safe_handler()
 @validate_state_transition({TASK19_WAITING})
-async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обработка ответа на задание 19."""
-    
-    # Получаем текст ответа
-    if 'document_text' in context.user_data:
-        user_answer = context.user_data.pop('document_text')
-    else:
-        user_answer = update.message.text.strip()
-    
-    # Получаем текущую тему
+async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Обработка ответа пользователя на задание 19."""
+    user_answer = update.message.text.strip()
     topic = context.user_data.get('current_topic')
+    
     if not topic:
         await update.message.reply_text(
-            "❌ Ошибка: тема не выбрана.",
+            "❌ Не найдена текущая тема. Начните заново.",
             reply_markup=InlineKeyboardMarkup([[
                 InlineKeyboardButton("⬅️ В меню", callback_data="t19_menu")
             ]])
@@ -773,60 +767,13 @@ async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Удаляем анимацию
         await thinking_msg.delete()
         
-        # === ИСПРАВЛЕННОЕ СОХРАНЕНИЕ РЕЗУЛЬТАТА ===
-        from datetime import datetime
+        # === ИСПРАВЛЕНИЕ: Используем функцию save_result_task19 ===
+        # Вместо дублирующего кода сохранения в practice_stats
+        # используем готовую функцию, которая сохраняет в изолированное хранилище
+        save_result_task19(context, topic, score)
         
-        # Инициализируем результаты если нужно
-        if 'task19_results' not in context.user_data:
-            context.user_data['task19_results'] = []
-        
-        # Определяем параметры темы
-        if isinstance(topic, dict):
-            topic_id = topic.get('id', 0)
-            topic_title = topic.get('title', 'Неизвестная тема')
-            block = topic.get('block', 'Общие темы')
-        else:
-            topic_id = hash(str(topic)) % 10000
-            topic_title = str(topic)
-            block = 'Общие темы'
-        
-        # Сохраняем результат
-        result_data = {
-            'topic_id': topic_id,
-            'topic': topic_title,  # Для обратной совместимости
-            'topic_title': topic_title,
-            'block': block,
-            'score': score,
-            'max_score': 3,
-            'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-        }
-        
-        context.user_data['task19_results'].append(result_data)
-        
-        # ВАЖНО: Синхронизируем с practice_stats
-        if 'practice_stats' not in context.user_data:
-            context.user_data['practice_stats'] = {}
-        
-        topic_id_str = str(topic_id)
-        if topic_id_str not in context.user_data['practice_stats']:
-            context.user_data['practice_stats'][topic_id_str] = {
-                'attempts': 0,
-                'scores': [],
-                'last_attempt': None,
-                'best_score': 0,
-                'topic_title': topic_title,
-                'topic_id': topic_id
-            }
-        
-        # Обновляем статистику
-        topic_stats = context.user_data['practice_stats'][topic_id_str]
-        topic_stats['attempts'] += 1
-        topic_stats['scores'].append(score)
-        topic_stats['last_attempt'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-        topic_stats['best_score'] = max(topic_stats.get('best_score', 0), score)
-        
-        # Обновляем серию
-        if score >= 2:  # Хороший результат для task19
+        # Обновляем серию (уже есть в save_result_task19, но дублируем для надежности)
+        if score >= 2:
             context.user_data['correct_streak'] = context.user_data.get('correct_streak', 0) + 1
             
             # Показываем уведомление о серии
@@ -1574,20 +1521,25 @@ async def reset_progress_task19(update: Update, context: ContextTypes.DEFAULT_TY
 @safe_handler()
 async def cmd_task19(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Команда /task19."""
-    # Автоматическая миграция при входе
-    from core.migration import ensure_module_migration
-    ensure_module_migration(context, 'task19', task19_data)  # Передаем context, НЕ context.user_data!
+    # ИСПРАВЛЕНИЕ: Вызываем миграцию данных в изолированное хранилище
+    migrate_task19_data(context)  # Добавить эту строку если её нет
     
     # Устанавливаем активный модуль
     set_active_module(context)
     
+    # Используем изолированное хранилище для статистики
     results = context.user_data.get('task19_results', [])
+    task19_stats = context.user_data.get('task19_practice_stats', {})  # Изолированное хранилище
+    
+    # Подсчитываем статистику из изолированного хранилища
+    total_attempts = sum(data.get('attempts', 0) for data in task19_stats.values())
+    
     user_stats = {
-        'total_attempts': len(results),
+        'total_attempts': total_attempts,
         'average_score': sum(r['score'] for r in results) / len(results) if results else 0,
-        'streak': 0,
+        'streak': context.user_data.get('correct_streak', 0),
         'weak_topics_count': 0,
-        'progress_percent': int(len(set(r['topic'] for r in results)) / 50 * 100) if results else 0
+        'progress_percent': int(len(task19_stats) / 50 * 100) if task19_stats else 0
     }
     
     greeting = get_personalized_greeting(user_stats)
