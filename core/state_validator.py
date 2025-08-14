@@ -86,7 +86,30 @@ class StateTransitionValidator:
                 states.CHOOSING_MODE,
                 states.ANSWERING_PARTS,
                 ConversationHandler.END
-            }
+            },
+                        # ДОБАВИТЬ: Состояние для задания 20
+            states.ANSWERING_T20: {
+                states.CHOOSING_MODE,           # После ответа можно вернуться в меню
+                states.CHOOSING_NEXT_ACTION,    # Или выбрать следующее действие
+                states.ANSWERING_T20,          # Или повторить попытку
+                ConversationHandler.END
+            },
+            
+            # ДОБАВИТЬ: Состояние для задания 19
+            states.TASK19_WAITING: {
+                states.CHOOSING_MODE,
+                states.CHOOSING_NEXT_ACTION,
+                states.TASK19_WAITING,
+                ConversationHandler.END
+            },
+            
+            # ДОБАВИТЬ: Состояние для задания 25
+            states.TASK25_WAITING: {
+                states.CHOOSING_MODE,
+                states.CHOOSING_NEXT_ACTION,
+                states.TASK25_WAITING,
+                ConversationHandler.END
+            },
         }
         
         # Хранилище текущих состояний пользователей

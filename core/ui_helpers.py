@@ -28,11 +28,20 @@ async def show_thinking_animation(message: Message, text: str = "Анализи�
     
     # Простая анимация без фоновой задачи
     try:
+        bot = thinking_msg.get_bot()
+        chat_id = thinking_msg.chat_id
+        message_id = thinking_msg.message_id
+        
         for i in range(1, min(4, len(animations))):
             await asyncio.sleep(0.5)
-            await thinking_msg.edit_text(f"{animations[i]} {text}...")
-    except:
+            await bot.edit_message_text(
+                text=f"{animations[i]} {text}...",
+                chat_id=chat_id,
+                message_id=message_id
+            )
+    except Exception as e:
         # Игнорируем ошибки редактирования
+        logger.debug(f"Animation error: {e}")
         pass
     
     return thinking_msg
@@ -50,7 +59,6 @@ async def show_extended_thinking_animation(message: Message, text: str = "Про
     Returns:
         Message: Отправленное сообщение с анимацией
     """
-    # Расширенный набор эмодзи для разнообразия
     emojis = ["🔍", "📝", "🤔", "💭", "📊", "✨", "🧐", "📖", "🎯", "⚡"]
     dots_sequence = [".", "..", "..."]
     
@@ -59,33 +67,42 @@ async def show_extended_thinking_animation(message: Message, text: str = "Про
     
     # Создаем фоновую задачу для анимации
     async def animate():
-        update_interval = 1.5  # Обновление каждые 1.5 секунды
-        iterations = int(duration / update_interval)
-        
-        for i in range(iterations):
-            # Меняем эмодзи каждые 3 итерации (примерно каждые 4.5 секунды)
-            emoji_index = (i // 3) % len(emojis)
-            emoji = emojis[emoji_index]
+        try:
+            # Получаем объект бота
+            bot = thinking_msg.get_bot()
+            chat_id = thinking_msg.chat_id
+            message_id = thinking_msg.message_id
             
-            # Точки меняются каждую итерацию
-            dots = dots_sequence[i % len(dots_sequence)]
+            update_interval = 1.5
+            iterations = int(duration / update_interval)
             
-            try:
-                # Добавляем вариативность в текст для некоторых итераций
-                if i % 10 == 5:  # Каждые ~15 секунд
-                    variation_text = "Анализирую детали"
-                elif i % 10 == 8:  # Каждые ~12 секунд с смещением
-                    variation_text = "Почти готово"
-                else:
-                    variation_text = text
+            for i in range(iterations):
+                emoji_index = (i // 3) % len(emojis)
+                emoji = emojis[emoji_index]
+                dots = dots_sequence[i % len(dots_sequence)]
                 
-                await thinking_msg.edit_text(f"{emoji} {variation_text}{dots}")
-                await asyncio.sleep(update_interval)
-                
-            except Exception as e:
-                # Сообщение было удалено или произошла ошибка
-                logger.debug(f"Animation stopped: {e}")
-                break
+                try:
+                    if i % 10 == 5:
+                        variation_text = "Анализирую детали"
+                    elif i % 10 == 8:
+                        variation_text = "Почти готово"
+                    else:
+                        variation_text = text
+                    
+                    # Используем bot.edit_message_text
+                    await bot.edit_message_text(
+                        text=f"{emoji} {variation_text}{dots}",
+                        chat_id=chat_id,
+                        message_id=message_id
+                    )
+                    await asyncio.sleep(update_interval)
+                    
+                except Exception as e:
+                    logger.debug(f"Animation stopped: {e}")
+                    break
+                    
+        except Exception as e:
+            logger.error(f"Animation error: {e}")
     
     # Запускаем анимацию в фоне
     asyncio.create_task(animate())
@@ -122,22 +139,35 @@ async def show_ai_evaluation_animation(message: Message, duration: int = 40) -> 
     
     # Рассчитываем время для каждой фазы
     phase_duration = duration / len(phases)
-    updates_per_phase = max(3, int(phase_duration / 1.5))  # Минимум 3 обновления на фазу
+    updates_per_phase = max(3, int(phase_duration / 1.5))
     
     # Создаём корутину для анимации
     async def run_animation():
         try:
+            # Получаем объект бота из сообщения
+            bot = thinking_msg.get_bot()
+            chat_id = thinking_msg.chat_id
+            message_id = thinking_msg.message_id
+            
             for phase_idx, (emoji, phase_text) in enumerate(phases):
                 for update_idx in range(updates_per_phase):
                     dots = dots_sequence[update_idx % len(dots_sequence)]
                     
                     try:
-                        # В конце каждой фазы добавляем галочку
+                        # Используем bot.edit_message_text вместо message.edit_text
                         if update_idx == updates_per_phase - 1 and phase_idx < len(phases) - 1:
-                            await thinking_msg.edit_text(f"{emoji} {phase_text}... ✓")
+                            await bot.edit_message_text(
+                                text=f"{emoji} {phase_text}... ✓",
+                                chat_id=chat_id,
+                                message_id=message_id
+                            )
                             await asyncio.sleep(0.7)
                         else:
-                            await thinking_msg.edit_text(f"{emoji} {phase_text}{dots}")
+                            await bot.edit_message_text(
+                                text=f"{emoji} {phase_text}{dots}",
+                                chat_id=chat_id,
+                                message_id=message_id
+                            )
                             await asyncio.sleep(1.3)
                             
                     except Exception as e:
@@ -146,7 +176,11 @@ async def show_ai_evaluation_animation(message: Message, duration: int = 40) -> 
             
             # Финальное сообщение
             try:
-                await thinking_msg.edit_text("✅ Проверка завершена!")
+                await bot.edit_message_text(
+                    text="✅ Проверка завершена!",
+                    chat_id=chat_id,
+                    message_id=message_id
+                )
                 await asyncio.sleep(0.5)
             except:
                 pass
@@ -155,7 +189,6 @@ async def show_ai_evaluation_animation(message: Message, duration: int = 40) -> 
             logger.error(f"Animation error: {e}")
     
     # Запускаем анимацию как фоновую задачу
-    # НЕ сохраняем ссылку на задачу в объекте Message
     asyncio.create_task(run_animation())
     
     return thinking_msg

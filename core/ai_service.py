@@ -76,8 +76,8 @@ class YandexGPTService:
         return self
     
     async def __aexit__(self, exc_type, exc_val, exc_tb):
-        """Для обратной совместимости с async with"""
-        pass
+        """Закрывает сессию при выходе из контекстного менеджера"""
+        await self.cleanup()  # Вызываем cleanup для закрытия сессии
     
     async def cleanup(self):
         """Очистка ресурсов"""
