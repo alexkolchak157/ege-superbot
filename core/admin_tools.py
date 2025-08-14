@@ -746,6 +746,43 @@ async def broadcast_receive_message(update: Update, context: ContextTypes.DEFAUL
     
     return BROADCAST_CONFIRM
 
+@admin_only  # или без этого декоратора для тестирования
+async def cmd_debug_data(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Команда /debugdata - показывает сохраненные данные."""
+    
+    text = "🔍 <b>DEBUG: User Data</b>\n\n"
+    
+    # Проверяем данные каждого модуля
+    modules_data = {
+        'task19': ['task19_results', 'task19_practice_stats'],
+        'task20': ['task20_results', 'task20_practice_stats'],
+        'task25': ['task25_results', 'task25_practice_stats'],
+        'task24': ['task24_results', 'practiced_topics'],
+    }
+    
+    for module, keys in modules_data.items():
+        text += f"<b>{module}:</b>\n"
+        for key in keys:
+            if key in context.user_data:
+                value = context.user_data[key]
+                if isinstance(value, list):
+                    text += f"  {key}: {len(value)} items\n"
+                elif isinstance(value, dict):
+                    text += f"  {key}: {len(value)} keys\n"
+                elif isinstance(value, set):
+                    text += f"  {key}: {len(value)} items\n"
+                else:
+                    text += f"  {key}: exists\n"
+            else:
+                text += f"  {key}: NOT FOUND ❌\n"
+    
+    text += f"\n<b>Total keys:</b> {len(context.user_data)}\n"
+    text += f"<b>All keys:</b> {', '.join(list(context.user_data.keys())[:15])}"
+    
+    if len(context.user_data) > 15:
+        text += f"... (+{len(context.user_data) - 15} more)"
+    
+    await update.message.reply_text(text, parse_mode=ParseMode.HTML)
 
 @admin_only
 async def broadcast_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -3451,7 +3488,7 @@ def register_admin_handlers(app):
     app.add_handler(CallbackQueryHandler(show_filters, pattern="^admin:show_filters$"))
     app.add_handler(CallbackQueryHandler(filter_by_date, pattern="^admin:filter_date$"))
     app.add_handler(CallbackQueryHandler(apply_filter, pattern="^admin:filter_apply:"))
-
+    app.add_handler(CommandHandler("debugdata", cmd_debug_data))
     # Настройки - Цены подписок
     app.add_handler(CallbackQueryHandler(settings_prices, pattern="^admin:settings_prices$"))
     app.add_handler(CallbackQueryHandler(sales_stats, pattern="^admin:sales_stats$"))

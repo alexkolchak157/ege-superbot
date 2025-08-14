@@ -306,13 +306,13 @@ def migrate_all_modules(user_data: dict, module_data_dict: Dict[str, dict] = Non
 
 # Вспомогательные функции для использования в handlers
 
-def ensure_module_migration(context, module_name: str, module_data: dict = None):
+def ensure_module_migration(context_or_user_data, module_name: str, module_data: dict = None):
     """
     Гарантирует, что миграция выполнена для модуля при входе.
     Использовать в начале cmd_taskXX и return_to_menu функций.
     
     Args:
-        context: Объект контекста ContextTypes.DEFAULT_TYPE
+        context_or_user_data: Объект контекста ContextTypes.DEFAULT_TYPE или словарь user_data
         module_name: Имя модуля
         module_data: Данные модуля (опционально)
     """
@@ -320,10 +320,18 @@ def ensure_module_migration(context, module_name: str, module_data: dict = None)
     if module_name in ['task24', 'test_part']:
         return  # Эти модули не нуждаются в миграции
     
+    # Определяем, что нам передали - context или user_data
+    if hasattr(context_or_user_data, 'user_data'):
+        # Это context объект
+        user_data = context_or_user_data.user_data
+    else:
+        # Это уже user_data словарь
+        user_data = context_or_user_data
+    
     isolated_storage_name = f'{module_name}_practice_stats'
-    if isolated_storage_name not in context.user_data:
-        # Выполняем миграцию - передаем context.user_data в migrate_to_isolated_storage
-        migrate_to_isolated_storage(context.user_data, module_name, module_data)
+    if isolated_storage_name not in user_data:
+        # Выполняем миграцию
+        migrate_to_isolated_storage(user_data, module_name, module_data)
 
 
 # Для отладки и администрирования

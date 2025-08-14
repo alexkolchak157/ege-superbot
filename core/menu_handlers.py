@@ -1,47 +1,23 @@
 # core/menu_handlers.py
-"""Универсальные обработчики для главного меню."""
-import logging
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+"""Глобальные обработчики меню."""
+
+from telegram import Update
 from telegram.ext import ContextTypes, ConversationHandler, CallbackQueryHandler
-from core.plugin_loader import build_main_menu
+import logging
+
+logger = logging.getLogger(__name__)
 
 async def handle_to_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Универсальный возврат в главное меню из любого плагина."""
+    """Обработчик для кнопки 'Главное меню'."""
     query = update.callback_query
+    
     if query:
         await query.answer()
         
-        user_id = update.effective_user.id
+        user_id = query.from_user.id
         
-        # Проверяем подписку для правильного отображения статуса
-        subscription_manager = context.bot_data.get('subscription_manager')
-        if subscription_manager:
-            subscription_info = await subscription_manager.get_subscription_info(user_id)
-            
-            if subscription_info:
-                if subscription_info.get('type') == 'modular':
-                    modules = subscription_info.get('modules', [])
-                    if modules:
-                        status_text = f"✅ У вас активная подписка на модули:\n"
-                        for module in modules:
-                            status_text += f"   • {module}\n"
-                        status_text += f"\nДействует до: {subscription_info.get('expires_at').strftime('%d.%m.%Y')}"
-                    else:
-                        status_text = "❌ У вас нет активной подписки"
-                else:
-                    plan_name = subscription_info.get('plan_name', 'Подписка')
-                    status_text = f"✅ У вас активная подписка: {plan_name}"
-                    status_text += f"\nДействует до: {subscription_info.get('expires_at').strftime('%d.%m.%Y')}"
-            else:
-                status_text = "❌ У вас нет активной подписки"
-        else:
-            status_text = ""
-        
-        # Используем тот же текст, что и в start_command
-        welcome_text = f"""
-👋 Добро пожаловать в бот для подготовки к ЕГЭ по обществознанию!
-
-{status_text}
+        welcome_text = """
+🎓 <b>Подготовка к ЕГЭ по обществознанию</b>
 
 Используйте кнопки ниже для навигации:
 """
@@ -52,45 +28,144 @@ async def handle_to_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE
             kb = await show_main_menu_with_access(context, user_id)
         except ImportError:
             # Если функция еще не добавлена, используем стандартное меню
-            from core.plugin_loader import build_main_menu
-            kb = build_main_menu()
+            try:
+                from core.plugin_loader import build_main_menu
+                kb = build_main_menu()
+            except ImportError as e:
+                logger.error(f"Could not import menu builder: {e}")
+                kb = None
         
         try:
-            await query.edit_message_text(
-                welcome_text, 
-                reply_markup=kb,
-                parse_mode="HTML"
-            )
+            if kb:
+                await query.edit_message_text(
+                    welcome_text, 
+                    reply_markup=kb,
+                    parse_mode="HTML"
+                )
+            else:
+                await query.edit_message_text(
+                    welcome_text,
+                    parse_mode="HTML"
+                )
         except Exception as e:
             # Если не удалось отредактировать, отправляем новое сообщение
             logger.debug(f"Could not edit message in handle_to_main_menu: {e}")
-            await query.message.reply_text(
-                welcome_text, 
-                reply_markup=kb,
-                parse_mode="HTML"
-            )
+            try:
+                if kb:
+                    await query.message.reply_text(
+                        welcome_text, 
+                        reply_markup=kb,
+                        parse_mode="HTML"
+                    )
+                else:
+                    await query.message.reply_text(
+                        welcome_text,
+                        parse_mode="HTML"
+                    )
+            except Exception as e2:
+                logger.error(f"Could not send message: {e2}")
     
-    # Очищаем данные пользователя
-    context.user_data.clear()
+    # === ГЛАВНОЕ ИСПРАВЛЕНИЕ: НЕ ОЧИЩАЕМ context.user_data.clear()! ===
+    
+    # Определяем, какие данные нужно сохранить (всё важное)
+    data_to_preserve = []
+    
+    # Данные всех модулей
+    modules = ['task19', 'task20', 'task24', 'task25', 'test_part']
+    for module in modules:
+        data_to_preserve.extend([
+            f'{module}_results',
+            f'{module}_practice_stats',
+            f'{module}_achievements',
+            f'{module}_stats'
+        ])
+    
+    # Специфичные данные
+    data_to_preserve.extend([
+        'practiced_topics',      # task24
+        'scores_history',        # task24
+        'correct_streak',        # общий счетчик
+        'practice_stats',        # старое хранилище
+        'user_preferences',      # настройки
+        'subscription_status',   # подписка
+        'subscription_expiry',   
+        'purchased_modules'      
+    ])
+    
+    # Сохраняем важные данные
+    preserved_data = {}
+    for key in data_to_preserve:
+        if key in context.user_data:
+            preserved_data[key] = context.user_data[key]
+    
+    # Очищаем ТОЛЬКО временные ключи текущей сессии
+    temp_keys = [
+        'current_topic',
+        'task19_current_topic',
+        'task20_current_topic',
+        'task24_current_topic',
+        'task25_current_topic',
+        'answer_processing',
+        'current_block',
+        'waiting_for_bank_search',
+        'active_module',
+        'current_module',
+        'bank_current_idx',
+        'current_question_idx',
+        'test_answers',
+        'viewing_mode',
+        'search_query',
+        'temp_message_id',
+        'thinking_message_id',
+        '_state',
+        'conversation_state'
+    ]
+    
+    # Удаляем только временные ключи
+    removed = 0
+    for key in temp_keys:
+        if key in context.user_data:
+            context.user_data.pop(key)
+            removed += 1
+    
+    # Восстанавливаем сохраненные данные (на случай если что-то случайно удалили)
+    context.user_data.update(preserved_data)
+    
+    logger.info(f"Menu navigation: preserved {len(preserved_data)} keys, removed {removed} temp keys")
+    
     return ConversationHandler.END
+
 
 async def handle_plugin_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработчик выбора плагина из главного меню."""
     query = update.callback_query
     
-    # Очищаем предыдущее состояние
-    context.user_data.clear()
+    # === ИСПРАВЛЕНИЕ: НЕ ДЕЛАЕМ context.user_data.clear()! ===
+    # Очищаем только временное состояние предыдущего модуля
+    temp_keys = [
+        'current_topic',
+        'active_module',
+        'current_module',
+        'answer_processing',
+        'current_block',
+        'viewing_mode',
+        '_state',
+        'conversation_state'
+    ]
+    
+    for key in temp_keys:
+        context.user_data.pop(key, None)
     
     # Логируем для отладки
-    import logging
-    logger = logging.getLogger(__name__)
-    logger.info(f"Plugin choice: {query.data}")
+    logger.info(f"Plugin choice: {query.data}, preserved data keys: {len(context.user_data)}")
     
     # Отвечаем на callback
-    await query.answer()
+    if query:
+        await query.answer()
     
     # ConversationHandler плагина сам обработает вход
-    return None  # Не возвращаем состояние
+    return None
+
 
 def register_global_handlers(app):
     """Регистрирует глобальные обработчики, работающие во всех плагинах."""
@@ -101,10 +176,10 @@ def register_global_handlers(app):
             handle_to_main_menu, 
             pattern="^to_main_menu$"
         ),
-        group=-1  # Высокий приоритет
+        group=-1  # Высокий приоритет - срабатывает раньше других
     )
     
-    # Для обратной совместимости
+    # Для обратной совместимости со старым паттерном
     app.add_handler(
         CallbackQueryHandler(
             handle_to_main_menu, 
