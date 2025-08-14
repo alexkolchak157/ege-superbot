@@ -256,6 +256,42 @@ async def entry_from_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return states.CHOOSING_MODE
 
 @safe_handler()
+async def cmd_task25(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Команда /task25 - вход в задание 25."""
+    
+    # Автоматическая миграция данных при необходимости
+    from core.migration import ensure_module_migration
+    ensure_module_migration(context, 'task25', task25_data)
+    
+    text = (
+        "📝 <b>Задание 25</b>\n\n"
+        "Развёрнутый ответ с обоснованием и примерами.\n"
+        "Максимальный балл: 6\n\n"
+        "Выберите режим работы:"
+    )
+    
+    # Получаем статистику пользователя
+    results = context.user_data.get('task25_results', [])
+    user_stats = {
+        'total_attempts': len(results),
+        'average_score': sum(r['score'] for r in results) / len(results) if results else 0,
+        'streak': context.user_data.get('correct_streak', 0),
+        'weak_topics_count': 0,
+        'progress_percent': int(len(set(r.get('topic_id') for r in results)) / 100 * 100) if results else 0
+    }
+    
+    # Используем адаптивную клавиатуру
+    kb = AdaptiveKeyboards.create_menu_keyboard(user_stats, module_code="t25")
+    
+    await update.message.reply_text(
+        text,
+        reply_markup=kb,
+        parse_mode=ParseMode.HTML
+    )
+    
+    return states.CHOOSING_MODE
+
+@safe_handler()
 async def list_by_difficulty(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Показ тем по уровню сложности с пагинацией."""
     query = update.callback_query
