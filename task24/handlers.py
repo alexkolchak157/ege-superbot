@@ -875,17 +875,21 @@ async def handle_plan_enhanced(update: Update, context: ContextTypes.DEFAULT_TYP
         )
         return ConversationHandler.END
     
-    # Отправляем сообщение "Анализирую..."
+    # ИСПРАВЛЕНИЕ: Отправляем сообщение "Анализирую..." ДО блока try
     thinking_msg = await show_extended_thinking_animation(
-        update.message,  # ИСПРАВЛЕНО: было user_message 
+        update.message,
         "Анализирую план",
-        duration=45  # Планы проверяются быстрее
+        duration=45
     )
-    context.user_data['task24_thinking_msg_id'] = thinking_msg.message_id
-    
-    # НЕ УДАЛЯЕМ сообщения здесь! Удаление будет происходить при выборе следующего действия
+    # ИСПРАВЛЕНИЕ: Убрать эту строку отсюда, она дублируется и вызывает ошибку
+    # context.user_data['task24_thinking_msg_id'] = thinking_msg.message_id  # УДАЛИТЬ!
     
     try:
+        # Инициализация practiced_topics если не существует
+        if 'practiced_topics' not in context.user_data:
+            context.user_data['practiced_topics'] = set()
+            logger.info("Initialized practiced_topics set for user")
+        
         # Проверяем, включена ли AI-проверка
         use_ai = context.bot_data.get('use_ai_checking', True)
         
@@ -928,7 +932,7 @@ async def handle_plan_enhanced(update: Update, context: ContextTypes.DEFAULT_TYP
         # Добавляем тему в изученные
         topic_index = context.user_data.get('current_topic_index')
         if topic_index is not None:
-            context.user_data['practiced_topics'].add(topic_index)  # Добавляем индекс!
+            context.user_data['practiced_topics'].add(topic_index)
             logger.debug(f"Added topic index {topic_index} to practiced_topics")
         else:
             # Если индекс не сохранён, пытаемся найти его по названию
@@ -1554,8 +1558,14 @@ async def search_topics(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return states.AWAITING_SEARCH
 
 async def cmd_task24(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Команда /task24 - прямой вход в модуль."""
+    """Команда /task24 - вход в задание."""
     
+    # ДОБАВИТЬ: Инициализация структур данных
+    if 'practiced_topics' not in context.user_data:
+        context.user_data['practiced_topics'] = set()
+    
+    if 'task24_results' not in context.user_data:
+        context.user_data['task24_results'] = []
     # Проверяем загрузку данных
     if not plan_bot_data:
         logger.info("Первый вход в модуль task24, загружаем данные...")
