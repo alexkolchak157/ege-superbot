@@ -29,6 +29,7 @@ from core.ui_helpers import (
     create_visual_progress,
     get_achievement_emoji,
 )
+from core.migration import ensure_module_migration
 from core.error_handler import safe_handler, auto_answer_callback
 from core.plugin_loader import build_main_menu
 from core.state_validator import validate_state_transition, state_validator
@@ -579,15 +580,14 @@ async def select_topic(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 @safe_handler()
 async def show_progress_enhanced(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Показ прогресса с улучшенным UI."""
+    """Показ прогресса с изолированным хранилищем."""
     query = update.callback_query
     
-    # ИСПРАВЛЕНИЕ: Проверяем ОБА источника данных
+    # ИЗМЕНЕНИЕ: Используем task19_practice_stats
     results = context.user_data.get('task19_results', [])
-    stats = context.user_data.get('practice_stats', {})
+    task19_stats = context.user_data.get('task19_practice_stats', {})
     
-    # Если нет данных ни в одном источнике
-    if not results and not stats:
+    if not results and not task19_stats:
         text = MessageFormatter.format_welcome_message(
             "задание 19", 
             is_new_user=True
@@ -597,117 +597,58 @@ async def show_progress_enhanced(update: Update, context: ContextTypes.DEFAULT_T
             InlineKeyboardButton("⬅️ Назад", callback_data="t19_menu")
         ]])
     else:
-        # Собираем полную статистику из ОБОИХ источников
         total_attempts = 0
         total_score = 0
         max_possible = 0
         topic_stats_combined = {}
         
-        # Обрабатываем results
         if results:
-            total_attempts = len(results)
-            total_score = sum(r['score'] for r in results)
-            max_possible = sum(r.get('max_score', 3) for r in results)
-            
-            # Группируем по темам
             for result in results:
-                topic_key = result.get('topic', result.get('topic_title', 'Неизвестная тема'))
-                if topic_key not in topic_stats_combined:
-                    topic_stats_combined[topic_key] = {
+                topic_id = str(result.get('topic_id', 0))
+                topic_title = result.get('topic_title', result.get('topic', 'Неизвестная тема'))
+                
+                if topic_id not in topic_stats_combined:
+                    topic_stats_combined[topic_id] = {
+                        'title': topic_title,
                         'scores': [],
-                        'topic_id': result.get('topic_id'),
                         'attempts': 0
                     }
-                topic_stats_combined[topic_key]['scores'].append(result['score'])
-                topic_stats_combined[topic_key]['attempts'] += 1
-        
-        # Дополняем из practice_stats если есть данные, которых нет в results
-        if stats:
-            for topic_id_str, topic_data in stats.items():
-                topic_title = topic_data.get('topic_title', f'Тема {topic_id_str}')
                 
-                # Если этой темы нет в results - добавляем из stats
-                if topic_title not in topic_stats_combined and topic_data.get('attempts', 0) > 0:
-                    topic_stats_combined[topic_title] = {
+                topic_stats_combined[topic_id]['scores'].append(result['score'])
+                topic_stats_combined[topic_id]['attempts'] += 1
+                total_attempts += 1
+                total_score += result['score']
+                max_possible += result.get('max_score', 3)
+        
+        # Дополняем из task19_practice_stats
+        for topic_id_str, topic_data in task19_stats.items():
+            if topic_data.get('attempts', 0) > 0:
+                if topic_id_str not in topic_stats_combined:
+                    topic_stats_combined[topic_id_str] = {
+                        'title': topic_data.get('topic_title', f'Тема {topic_id_str}'),
                         'scores': topic_data.get('scores', []),
-                        'topic_id': topic_data.get('topic_id', topic_id_str),
                         'attempts': topic_data.get('attempts', 0)
                     }
-                    # Обновляем общую статистику
                     total_attempts += topic_data['attempts']
                     total_score += sum(topic_data.get('scores', []))
                     max_possible += topic_data['attempts'] * 3
         
-        # Вычисляем средний балл
         avg_score = total_score / total_attempts if total_attempts > 0 else 0
         
-        # Формируем топ результаты
-        top_results = []
-        for topic_name, topic_data in topic_stats_combined.items():
-            if topic_data['scores']:
-                avg = sum(topic_data['scores']) / len(topic_data['scores'])
-                top_results.append({
-                    'topic': topic_name[:30],
-                    'score': round(avg, 1),  # Округляем до 1 знака
-                    'max_score': 3,
-                    'attempts': topic_data['attempts']
-                })
+        text = f"""📊 <b>Ваш прогресс в Задании 19</b>
+
+📝 <b>Всего попыток:</b> {total_attempts}
+⭐ <b>Средний балл:</b> {avg_score:.1f}/3
+📚 <b>Изучено тем:</b> {len(topic_stats_combined)}
+"""
         
-        # Сортируем по среднему баллу
-        top_results.sort(key=lambda x: x['score'], reverse=True)
-        
-        # Используем универсальное форматирование сообщения
-        stats_for_formatter = {
-            'total_attempts': total_attempts,
-            'average_score': avg_score,
-            'completed': len(topic_stats_combined),
-            'total': 50,  # Примерное количество возможных тем
-            'total_time': context.user_data.get('total_time_minutes', 0),
-            'top_results': top_results[:3]
-        }
-        
-        text = MessageFormatter.format_progress_message(stats_for_formatter, "заданию 19")
-        
-        # Добавляем информацию о серии
-        streak = context.user_data.get('correct_streak', 0)
-        if streak > 0:
-            text += f"\n🔥 <b>Текущая серия:</b> {streak}"
-        
-        # Проверяем достижения
-        achievements = context.user_data.get('task19_achievements', set())
-        if achievements:
-            text += f"\n🏅 <b>Получено достижений:</b> {len(achievements)}"
-        
-        # Формируем клавиатуру
-        kb_buttons = []
-        
-        # Первая строка кнопок
-        if total_attempts >= 5:
-            kb_buttons.append([
-                InlineKeyboardButton("📈 Детальная статистика", callback_data="t19_detailed"),
-                InlineKeyboardButton("📤 Экспорт", callback_data="t19_export")
-            ])
-        
-        # Вторая строка
-        kb_buttons.append([
-            InlineKeyboardButton("🏅 Достижения", callback_data="t19_achievements"),
-            InlineKeyboardButton("💪 Продолжить", callback_data="t19_practice")
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("📥 Экспорт результатов", callback_data="t19_export")],
+            [InlineKeyboardButton("🏅 Достижения", callback_data="t19_achievements")],
+            [InlineKeyboardButton("⬅️ Назад", callback_data="t19_menu")]
         ])
-        
-        # Третья строка
-        kb_buttons.append([
-            InlineKeyboardButton("🔄 Сбросить прогресс", callback_data="t19_reset_confirm"),
-            InlineKeyboardButton("⬅️ Назад", callback_data="t19_menu")
-        ])
-        
-        kb = InlineKeyboardMarkup(kb_buttons)
     
-    await query.edit_message_text(
-        text,
-        reply_markup=kb,
-        parse_mode=ParseMode.HTML
-    )
-    
+    await query.edit_message_text(text, reply_markup=kb, parse_mode=ParseMode.HTML)
     return states.CHOOSING_MODE
 
 
@@ -938,30 +879,26 @@ async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return states.CHOOSING_MODE
 
 def save_result_task19(context: ContextTypes.DEFAULT_TYPE, topic: Dict, score: int):
-    """Сохраняет результат проверки для task19."""
+    """Сохраняет результат проверки для task19 с изолированным хранилищем."""
     from datetime import datetime
     
-    # Инициализируем структуру результатов если нужно
     if 'task19_results' not in context.user_data:
         context.user_data['task19_results'] = []
     
-    # Определяем topic_id и topic_title в зависимости от формата topic
     if isinstance(topic, dict):
         topic_id = topic.get('id', 0)
         topic_title = topic.get('title', 'Неизвестная тема')
         block = topic.get('block', 'Общие темы')
         task_text = topic.get('task_text', '')
     else:
-        # Если topic - строка (обратная совместимость)
-        topic_id = hash(str(topic)) % 10000  # Генерируем псевдо-id
+        topic_id = hash(str(topic)) % 10000
         topic_title = str(topic)
         block = 'Общие темы'
         task_text = ''
     
-    # Сохраняем результат
     result = {
         'topic_id': topic_id,
-        'topic': topic_title,  # Для обратной совместимости
+        'topic': topic_title,
         'topic_title': topic_title,
         'block': block,
         'score': score,
@@ -972,33 +909,31 @@ def save_result_task19(context: ContextTypes.DEFAULT_TYPE, topic: Dict, score: i
     
     context.user_data['task19_results'].append(result)
     
-    # ВАЖНО: Синхронизируем с practice_stats для единообразия с другими модулями
-    if 'practice_stats' not in context.user_data:
-        context.user_data['practice_stats'] = {}
+    # ИЗМЕНЕНИЕ: Используем task19_practice_stats вместо practice_stats
+    if 'task19_practice_stats' not in context.user_data:
+        context.user_data['task19_practice_stats'] = {}
     
     topic_id_str = str(topic_id)
     
-    # Инициализируем статистику по теме если её нет
-    if topic_id_str not in context.user_data['practice_stats']:
-        context.user_data['practice_stats'][topic_id_str] = {
+    if topic_id_str not in context.user_data['task19_practice_stats']:
+        context.user_data['task19_practice_stats'][topic_id_str] = {
             'attempts': 0,
             'scores': [],
             'last_attempt': None,
             'best_score': 0,
             'topic_title': topic_title,
-            'topic_id': topic_id
+            'topic_id': topic_id,
+            'module': 'task19'
         }
     
-    # Обновляем статистику
-    topic_stats = context.user_data['practice_stats'][topic_id_str]
+    topic_stats = context.user_data['task19_practice_stats'][topic_id_str]
     topic_stats['attempts'] += 1
     topic_stats['scores'].append(score)
     topic_stats['last_attempt'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     topic_stats['best_score'] = max(topic_stats.get('best_score', 0), score)
-    topic_stats['topic_title'] = topic_title  # Обновляем название на случай изменений
+    topic_stats['topic_title'] = topic_title
     
-    # Обновляем серию правильных ответов
-    if score >= 2:  # Для task19 хорошим считается 2+ балла из 3
+    if score >= 2:
         context.user_data['correct_streak'] = context.user_data.get('correct_streak', 0) + 1
     else:
         context.user_data['correct_streak'] = 0
@@ -1473,10 +1408,20 @@ async def back_to_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 @safe_handler()
 async def return_to_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Возврат в меню задания 19."""
+    """Возврат в меню task19."""
     query = update.callback_query
     
-    # Получаем статистику для адаптивного меню
+    # Автоматическая миграция при возврате
+    from core.migration import ensure_module_migration
+    ensure_module_migration(context, 'task19', task19_data)  # Передаем context, НЕ context.user_data!
+    
+    # Устанавливаем активный модуль
+    set_active_module(context)
+    
+    # Отвечаем на callback, чтобы убрать "часики"
+    await query.answer()
+    
+    # Получаем статистику пользователя
     results = context.user_data.get('task19_results', [])
     user_stats = {
         'total_attempts': len(results),
@@ -1486,20 +1431,24 @@ async def return_to_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         'progress_percent': int(len(set(r['topic'] for r in results)) / 50 * 100) if results else 0
     }
     
+    # Формируем приветствие
     greeting = get_personalized_greeting(user_stats)
     text = greeting + MessageFormatter.format_welcome_message(
         "задание 19",
         is_new_user=user_stats['total_attempts'] == 0
     )
     
+    # Создаем адаптивную клавиатуру
     kb = AdaptiveKeyboards.create_menu_keyboard(user_stats, module_code="t19")
     
+    # Показываем меню
     await query.edit_message_text(
         text,
         reply_markup=kb,
         parse_mode=ParseMode.HTML
     )
     
+    # Возвращаем состояние CHOOSING_MODE для работы с меню
     return states.CHOOSING_MODE
 
 @safe_handler()
@@ -1571,29 +1520,64 @@ async def noop(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     # Ничего не делаем, просто отвечаем на callback
 
+def migrate_task19_data(context: ContextTypes.DEFAULT_TYPE):
+    """Миграция данных task19 из общего practice_stats в изолированное хранилище."""
+    
+    # Если уже есть изолированное хранилище, пропускаем миграцию
+    if 'task19_practice_stats' in context.user_data:
+        return
+    
+    # Создаем изолированное хранилище
+    context.user_data['task19_practice_stats'] = {}
+    
+    # Если есть общий practice_stats, пытаемся извлечь данные task19
+    if 'practice_stats' in context.user_data and task19_data and 'topics' in task19_data:
+        # Получаем все topic_id из task19
+        task19_topic_ids = {str(t.get('id', 0)) for t in task19_data['topics']}
+        
+        # Копируем только темы task19 в изолированное хранилище
+        for topic_id_str, topic_data in context.user_data['practice_stats'].items():
+            if topic_id_str in task19_topic_ids:
+                context.user_data['task19_practice_stats'][topic_id_str] = topic_data.copy()
+                # Добавляем идентификатор модуля
+                context.user_data['task19_practice_stats'][topic_id_str]['module'] = 'task19'
+    
+    # Также мигрируем из task19_results если они есть
+    if 'task19_results' in context.user_data:
+        for result in context.user_data['task19_results']:
+            topic_id_str = str(result.get('topic_id', 0))
+            
+            # Если этой темы еще нет в practice_stats
+            if topic_id_str not in context.user_data['task19_practice_stats']:
+                context.user_data['task19_practice_stats'][topic_id_str] = {
+                    'attempts': 1,
+                    'scores': [result['score']],
+                    'last_attempt': result.get('timestamp'),
+                    'best_score': result['score'],
+                    'topic_title': result.get('topic_title', result.get('topic', 'Неизвестная тема')),
+                    'topic_id': result.get('topic_id'),
+                    'module': 'task19'
+                }
+
 async def reset_progress_task19(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Полный сброс прогресса task19."""
     query = update.callback_query
     
-    # Сбрасываем все данные
+    # Сбрасываем ТОЛЬКО данные task19
     context.user_data.pop('task19_results', None)
+    context.user_data.pop('task19_practice_stats', None)  # Изолированное хранилище
     context.user_data.pop('task19_achievements', None)
-    context.user_data.pop('correct_streak', None)
-    
-    # Очищаем practice_stats для task19
-    if 'practice_stats' in context.user_data:
-        # Удаляем только записи, относящиеся к task19
-        # Можно определить по наличию topic_id из task19_results
-        context.user_data['practice_stats'] = {}
     
     await query.answer("✅ Прогресс по заданию 19 сброшен!", show_alert=True)
-    
-    # Возвращаемся в меню
     return await return_to_menu(update, context)
 
 @safe_handler()
 async def cmd_task19(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Команда /task19."""
+    # Автоматическая миграция при входе
+    from core.migration import ensure_module_migration
+    ensure_module_migration(context, 'task19', task19_data)  # Передаем context, НЕ context.user_data!
+    
     # Устанавливаем активный модуль
     set_active_module(context)
     
