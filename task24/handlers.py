@@ -1368,53 +1368,27 @@ async def show_remaining(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return states.CHOOSING_MODE
 
 @safe_handler()
-async def reset_progress(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Сброс прогресса с подтверждением."""
+async def reset_progress_task24(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Полный сброс прогресса task24."""
     query = update.callback_query
     
-    # Проверяем, есть ли флаг подтверждения
-    if context.user_data.get('confirm_reset'):
-        # Сброс подтвержден
-        context.user_data['practiced_topics'] = set()
-        context.user_data['scores_history'] = []
-        context.user_data['total_time_minutes'] = 0
-        context.user_data.pop('confirm_reset', None)
-        
-        
-        # Возвращаемся в меню
-        kb = keyboards.build_main_menu_keyboard()
-        await query.edit_message_text(
-            "📝 <b>Задание 24 - составление сложного плана</b>\n\n"
-            "Прогресс успешно сброшен. Выберите режим:",
-            reply_markup=kb,
-            parse_mode=ParseMode.HTML
-        )
-    else:
-        # Запрашиваем подтверждение
-        context.user_data['confirm_reset'] = True
-        
-        stats = get_user_stats(context)
-        warning_text = f"⚠️ <b>Вы уверены?</b>\n\n"
-        warning_text += f"Будет удалено:\n"
-        warning_text += f"• Прогресс по {stats['practiced_count']} темам\n"
-        warning_text += f"• История из {len(stats['scores_history'])} оценок\n"
-        warning_text += f"• Статистика времени\n\n"
-        warning_text += "Это действие нельзя отменить!"
-        
-        kb = InlineKeyboardMarkup([
-            [
-                InlineKeyboardButton("❌ Да, сбросить", callback_data="t24_reset_progress"),
-                InlineKeyboardButton("✅ Отмена", callback_data="t24_cancel_reset")
-            ]
-        ])
-        
-        await query.edit_message_text(
-            warning_text,
-            reply_markup=kb,
-            parse_mode=ParseMode.HTML
-        )
+    # Сбрасываем ТОЛЬКО данные task24
+    keys_to_remove = [
+        'practiced_topics',
+        'scores_history',
+        'total_time_minutes',
+        'session_start',
+        'task24_topic_msg_id',
+        'task24_plan_msg_id',
+        'task24_thinking_msg_id',
+        'task24_result_msg_id'
+    ]
     
-    return states.CHOOSING_MODE
+    for key in keys_to_remove:
+        context.user_data.pop(key, None)
+    
+    await query.answer("✅ Прогресс по заданию 24 сброшен!", show_alert=True)
+    return await cmd_task24(update, context)
 
 @safe_handler()
 async def confirm_reset_progress(update: Update, context: ContextTypes.DEFAULT_TYPE):
