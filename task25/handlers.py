@@ -35,6 +35,7 @@ from core.ui_helpers import (
 from core.error_handler import safe_handler, auto_answer_callback
 from core.state_validator import validate_state_transition, state_validator
 from telegram.ext import ConversationHandler
+from core.migration import ensure_module_migration
 
 logger = logging.getLogger(__name__)
 
@@ -1462,12 +1463,11 @@ async def my_progress(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Показ прогресса пользователя."""
     query = update.callback_query
     
-    # ИСПРАВЛЕНИЕ: Проверяем ОБА источника данных
-    stats = context.user_data.get('practice_stats', {})
+    # ИЗМЕНЕНИЕ: Используем task25_practice_stats
     results = context.user_data.get('task25_results', [])
+    task25_stats = context.user_data.get('task25_practice_stats', {})
     
-    # Если нет данных ни в одном источнике
-    if not stats and not results:
+    if not task25_stats and not results:
         text = (
             "📊 <b>Ваш прогресс</b>\n\n"
             "Вы ещё не решали задания. Начните практику!"
@@ -1596,7 +1596,7 @@ def save_result(context: ContextTypes.DEFAULT_TYPE, topic: Dict, score: int):
     
     # Сохраняем результат с правильными ключами
     result = {
-        'topic_id': topic.get('id'),  # Добавляем topic_id
+        'topic_id': topic.get('id'),
         'topic_title': topic.get('title', 'Неизвестная тема'),
         'block': topic.get('block', 'Общие темы'),
         'score': score,
@@ -1611,7 +1611,7 @@ def save_result(context: ContextTypes.DEFAULT_TYPE, topic: Dict, score: int):
     
     topic_id_str = str(topic.get('id', 0))
     
-    # ИСПРАВЛЕНИЕ КРИТИЧЕСКОГО БАГА - правильная инициализация структуры
+    # Инициализируем статистику по теме если её нет
     if topic_id_str not in context.user_data['practice_stats']:
         context.user_data['practice_stats'][topic_id_str] = {
             'attempts': 0,
@@ -1622,30 +1622,18 @@ def save_result(context: ContextTypes.DEFAULT_TYPE, topic: Dict, score: int):
             'topic_id': topic.get('id')
         }
     
-    # Обновляем статистику по теме
+    # Обновляем статистику
     topic_stats = context.user_data['practice_stats'][topic_id_str]
     topic_stats['attempts'] += 1
     topic_stats['scores'].append(score)
     topic_stats['last_attempt'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-    
-    # Обновляем лучший результат
-    if score > topic_stats.get('best_score', 0):
-        topic_stats['best_score'] = score
-    
-    # Сохраняем название темы если оно обновилось
-    if topic.get('title'):
-        topic_stats['topic_title'] = topic.get('title')
+    topic_stats['best_score'] = max(topic_stats.get('best_score', 0), score)
     
     # Обновляем серию правильных ответов
     if score >= 5:  # Для task25 хорошим считается 5+ баллов из 6
         context.user_data['correct_streak'] = context.user_data.get('correct_streak', 0) + 1
     else:
         context.user_data['correct_streak'] = 0
-    
-    # Логируем для отладки
-    import logging
-    logger = logging.getLogger(__name__)
-    logger.info(f"Saved result for topic {topic_id_str}: score={score}, total_attempts={topic_stats['attempts']}")
     
     return result
 
@@ -1716,9 +1704,13 @@ async def settings_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return states.CHOOSING_MODE
 
 
-# Вспомогательные функции
-async def cmd_task25(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Команда /task25."""
+@safe_handler()
+async def return_to_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Возврат в меню task25."""
+    query = update.callback_query
+    
+    # ДОБАВИТЬ: Автоматическая миграция
+    ensure_module_migration(context.user_data, 'task25', task25_data)
     text = (
         "📝 <b>Задание 25</b>\n\n"
         "Развёрнутый ответ с обоснованием и примерами.\n"
@@ -1758,8 +1750,12 @@ async def cmd_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 @safe_handler()
 async def return_to_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Возврат в меню задания 25."""
+    """Возврат в меню task25."""
     query = update.callback_query
+    
+    # Автоматическая миграция при возврате
+    from core.migration import ensure_module_migration
+    ensure_module_migration(context, 'task25', task25_data)
     
     results = context.user_data.get('task25_results', [])
     user_stats = {
@@ -2494,15 +2490,14 @@ async def detailed_progress(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Детальный прогресс по темам."""
     query = update.callback_query
     
-    stats = context.user_data.get('practice_stats', {})
+    # ИЗМЕНЕНИЕ: Используем task25_practice_stats
+    task25_stats = context.user_data.get('task25_practice_stats', {})
     
-    if not stats:
-        
+    if not task25_stats:
         return states.CHOOSING_MODE
     
-    # Сортируем темы по последней попытке
     sorted_topics = sorted(
-        stats.items(),
+        task25_stats.items(),
         key=lambda x: x[1].get('attempts', 0),
         reverse=True
     )
@@ -2556,39 +2551,56 @@ async def detailed_progress(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return states.CHOOSING_MODE
 
 async def _save_user_stats(context: ContextTypes.DEFAULT_TYPE, topic: Dict, score: int):
-    """Сохраняет статистику пользователя."""
-    stats = context.user_data.get('task25_stats', {
-        'total_attempts': 0,
-        'topics_completed': [],  # Используем list вместо set
-        'scores': [],
-        'blocks_progress': {}
-    })
+    """Сохраняет статистику пользователя с изолированным хранилищем."""
+    from datetime import datetime
     
-    # Обновляем статистику
-    stats['total_attempts'] += 1
+    if 'task25_results' not in context.user_data:
+        context.user_data['task25_results'] = []
     
-    # Добавляем тему если её ещё нет
-    topic_id = topic.get('id')
-    if topic_id and topic_id not in stats['topics_completed']:
-        stats['topics_completed'].append(topic_id)
+    result = {
+        'topic_id': topic.get('id'),
+        'topic_title': topic.get('title', 'Неизвестная тема'),
+        'block': topic.get('block', 'Общие темы'),
+        'score': score,
+        'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    }
     
-    stats['scores'].append(score)
+    context.user_data['task25_results'].append(result)
     
-    # Обновляем прогресс по блокам
-    block_name = topic.get('block', 'Общие темы')
-    if block_name not in stats['blocks_progress']:
-        stats['blocks_progress'][block_name] = 0
+    # ИЗМЕНЕНИЕ: Используем task25_practice_stats вместо practice_stats
+    if 'task25_practice_stats' not in context.user_data:
+        context.user_data['task25_practice_stats'] = {}
     
-    # Подсчитываем прогресс
-    block_topics = task25_data.get('topics_by_block', {}).get(block_name, [])
-    if block_topics:
-        completed_in_block = len([
-            t for t in block_topics 
-            if t.get('id') in stats['topics_completed']
-        ])
-        stats['blocks_progress'][block_name] = (completed_in_block / len(block_topics)) * 100
+    topic_id_str = str(topic.get('id', 0))
     
-    context.user_data['task25_stats'] = stats
+    if topic_id_str not in context.user_data['task25_practice_stats']:
+        context.user_data['task25_practice_stats'][topic_id_str] = {
+            'attempts': 0,
+            'scores': [],
+            'last_attempt': None,
+            'best_score': 0,
+            'topic_title': topic.get('title', 'Неизвестная тема'),
+            'topic_id': topic.get('id'),
+            'module': 'task25'
+        }
+    
+    topic_stats = context.user_data['task25_practice_stats'][topic_id_str]
+    topic_stats['attempts'] += 1
+    topic_stats['scores'].append(score)
+    topic_stats['last_attempt'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    
+    if score > topic_stats.get('best_score', 0):
+        topic_stats['best_score'] = score
+    
+    if topic.get('title'):
+        topic_stats['topic_title'] = topic.get('title')
+    
+    if score >= 5:
+        context.user_data['correct_streak'] = context.user_data.get('correct_streak', 0) + 1
+    else:
+        context.user_data['correct_streak'] = 0
+    
+    return result
 
 def _format_evaluation_result(result: EvaluationResult, topic: Dict) -> str:
     """Форматирует результат проверки для отображения пользователю."""
@@ -2771,29 +2783,16 @@ async def handle_progress(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 @safe_handler()
 async def handle_reset_progress(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Сброс прогресса пользователя."""
+    """Полный сброс прогресса task25."""
     query = update.callback_query
     
-    text = (
-        "⚠️ <b>Сброс прогресса</b>\n\n"
-        "Вы уверены, что хотите сбросить весь прогресс по заданию 25?\n"
-        "Это действие нельзя отменить!"
-    )
+    # Сбрасываем ТОЛЬКО данные task25
+    context.user_data.pop('task25_results', None)
+    context.user_data.pop('task25_practice_stats', None)
+    context.user_data.pop('task25_achievements', None)
     
-    kb = InlineKeyboardMarkup([
-        [
-            InlineKeyboardButton("✅ Да, сбросить", callback_data="t25_confirm_reset"),
-            InlineKeyboardButton("❌ Отмена", callback_data="t25_settings")
-        ]
-    ])
-    
-    await query.edit_message_text(
-        text,
-        reply_markup=kb,
-        parse_mode=ParseMode.HTML
-    )
-    
-    return states.CHOOSING_MODE
+    await query.answer("✅ Прогресс по заданию 25 сброшен!", show_alert=True)
+    return await settings_mode(update, context)
 
 @safe_handler()
 @validate_state_transition({states.CHOOSING_MODE})
