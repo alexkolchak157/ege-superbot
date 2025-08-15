@@ -207,13 +207,31 @@ else:
 # Для отладки выведем доступные планы
 logger.info(f"Available plans: {list(SUBSCRIPTION_PLANS.keys())}")
 
-def get_plan_price_kopecks(plan_id: str, months: int = 1) -> int:
-    """Возвращает цену плана в копейках с учетом длительности."""
-    plan = SUBSCRIPTION_PLANS.get(plan_id)
-    if not plan:
-        raise ValueError(f"Unknown plan: {plan_id}")
+def get_plan_price_kopecks(plan_id: str, months: int = 1, custom_plan_data: dict = None) -> int:
+    """Возвращает цену плана в копейках с учетом длительности.
     
-    base_price = plan['price_rub']
+    Args:
+        plan_id: ID плана
+        months: Количество месяцев
+        custom_plan_data: Данные custom плана (если план custom)
+    
+    Returns:
+        Цена в копейках
+    """
+    # ИСПРАВЛЕНИЕ: Обработка custom планов
+    if plan_id.startswith('custom_') and custom_plan_data:
+        base_price = custom_plan_data.get('price_rub', 0)
+    else:
+        plan = SUBSCRIPTION_PLANS.get(plan_id)
+        if not plan:
+            # Пробуем найти в MODULE_PLANS если используется модульная система
+            if SUBSCRIPTION_MODE == 'modular':
+                plan = MODULE_PLANS.get(plan_id)
+            
+            if not plan:
+                raise ValueError(f"Unknown plan: {plan_id}")
+        
+        base_price = plan['price_rub']
     
     # Применяем множитель для длительности
     if months in DURATION_DISCOUNTS:

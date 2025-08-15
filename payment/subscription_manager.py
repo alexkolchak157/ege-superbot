@@ -19,7 +19,6 @@ from .config import (
 
 logger = logging.getLogger(__name__)
 
-
 class SubscriptionManager:
     """Управление подписками пользователей."""
     
@@ -33,7 +32,36 @@ class SubscriptionManager:
     def config(self):
         """Совместимость со старым кодом."""
         return {'SUBSCRIPTION_MODE': self.subscription_mode}
-    
+
+    async def save_payment_metadata(self, payment_id: str, metadata: dict):
+        """Сохраняет метаданные платежа для custom планов.
+        
+        Args:
+            payment_id: ID платежа
+            metadata: Словарь с метаданными (modules, duration_months, plan_name и т.д.)
+        """
+        async with aiosqlite.connect(DATABASE_FILE) as conn:
+            # Создаем таблицу если она не существует
+            await conn.execute("""
+                CREATE TABLE IF NOT EXISTS payment_metadata (
+                    payment_id TEXT PRIMARY KEY,
+                    metadata TEXT NOT NULL,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            
+            # Сохраняем метаданные
+            await conn.execute("""
+                INSERT OR REPLACE INTO payment_metadata (payment_id, metadata, created_at)
+                VALUES (?, ?, CURRENT_TIMESTAMP)
+            """, (payment_id, json.dumps(metadata)))
+            
+            await conn.commit()
+            
+            logger.info(f"Saved metadata for payment {payment_id}: {metadata}")
+
+    # Если метод save_payment_info работает некорректно с модулями, 
+    # замените его на эту версию:
     async def save_payment_info(
         self,
         user_id: int,
@@ -41,15 +69,14 @@ class SubscriptionManager:
         plan_id: str,
         amount: int,
         email: str,
-        modules: List[str] = None
+        modules: list = None
     ) -> bool:
-        """
-        Сохраняет информацию о платеже в БД.
+        """Сохраняет информацию о платеже в БД.
         
         Args:
             user_id: ID пользователя
             order_id: Уникальный ID заказа
-            plan_id: ID плана подписки
+            plan_id: ID плана подписки (включая custom_xxx для custom планов)
             amount: Сумма в рублях
             email: Email покупателя
             modules: Список модулей для custom планов
@@ -62,56 +89,69 @@ class SubscriptionManager:
                 # Подготавливаем metadata для custom планов
                 metadata = None
                 if modules:
-                    metadata = json.dumps(modules)
+                    metadata = json.dumps({
+                        'modules': modules,
+                        'type': 'custom'
+                    })
                 
-                # Сохраняем информацию о платеже
-                await conn.execute(
-                    """
+                # Создаем таблицу если не существует
+                await conn.execute("""
+                    CREATE TABLE IF NOT EXISTS payments (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        user_id INTEGER NOT NULL,
+                        order_id TEXT UNIQUE NOT NULL,
+                        plan_id TEXT NOT NULL,
+                        amount_kopecks INTEGER NOT NULL,
+                        status TEXT DEFAULT 'pending',
+                        payment_id TEXT,
+                        metadata TEXT,
+                        email TEXT,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        completed_at TIMESTAMP
+                    )
+                """)
+                
+                # ИСПРАВЛЕНИЕ: Сохраняем полный plan_id, включая custom_xxx
+                # Не меняем его на просто 'custom'
+                logger.info(f"Saving payment: order_id={order_id}, user_id={user_id}, plan_id={plan_id}, amount={amount}₽")
+                
+                await conn.execute("""
                     INSERT INTO payments (
-                        user_id,
-                        order_id,
-                        plan_id,
-                        amount_kopecks,
-                        status,
-                        metadata,
-                        created_at
-                    ) VALUES (?, ?, ?, ?, 'pending', ?, CURRENT_TIMESTAMP)
-                    """,
-                    (user_id, order_id, plan_id, amount * 100, metadata)
-                )
+                        user_id, order_id, plan_id, amount_kopecks, 
+                        status, metadata, email, created_at
+                    ) VALUES (?, ?, ?, ?, 'pending', ?, ?, CURRENT_TIMESTAMP)
+                """, (user_id, order_id, plan_id, amount * 100, metadata, email))
                 
-                # Также сохраняем email (если есть таблица для emails)
-                # Можно добавить в таблицу payments колонку email или создать отдельную таблицу
-                try:
-                    await conn.execute(
-                        """
-                        INSERT OR REPLACE INTO user_emails (user_id, email, updated_at)
-                        VALUES (?, ?, CURRENT_TIMESTAMP)
-                        """,
-                        (user_id, email)
+                # Проверяем что сохранилось
+                cursor = await conn.execute(
+                    "SELECT order_id, plan_id FROM payments WHERE order_id = ?",
+                    (order_id,)
+                )
+                saved = await cursor.fetchone()
+                if saved:
+                    logger.info(f"Payment saved successfully: {saved}")
+                else:
+                    logger.error(f"Payment not found after saving! order_id={order_id}")
+                
+                # Сохраняем email пользователя
+                await conn.execute("""
+                    CREATE TABLE IF NOT EXISTS user_emails (
+                        user_id INTEGER PRIMARY KEY,
+                        email TEXT NOT NULL,
+                        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                     )
-                except:
-                    # Если таблицы нет, создаем её
-                    await conn.execute(
-                        """
-                        CREATE TABLE IF NOT EXISTS user_emails (
-                            user_id INTEGER PRIMARY KEY,
-                            email TEXT NOT NULL,
-                            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                        )
-                        """
-                    )
-                    await conn.execute(
-                        """
-                        INSERT OR REPLACE INTO user_emails (user_id, email, updated_at)
-                        VALUES (?, ?, CURRENT_TIMESTAMP)
-                        """,
-                        (user_id, email)
-                    )
+                """)
+                
+                await conn.execute("""
+                    INSERT OR REPLACE INTO user_emails (user_id, email, updated_at)
+                    VALUES (?, ?, CURRENT_TIMESTAMP)
+                """, (user_id, email))
                 
                 await conn.commit()
                 
-                logger.info(f"Payment info saved for user {user_id}, order {order_id}")
+                logger.info(f"Payment info saved: user={user_id}, order={order_id}, plan={plan_id}, amount={amount}₽")
+                if modules:
+                    logger.info(f"Custom plan modules: {modules}")
                 return True
                 
         except Exception as e:

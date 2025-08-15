@@ -19,7 +19,7 @@ from telegram.ext import (
     MessageHandler,
     filters
 )
-
+import aiosqlite
 from core.error_handler import safe_handler
 from .config import (
     SUBSCRIPTION_PLANS, 
@@ -632,25 +632,33 @@ async def proceed_with_selected_modules(update: Update, context: ContextTypes.DE
     # Переходим к выбору длительности
     return await show_duration_options(update, context)
 
+@safe_handler()
 async def show_duration_options(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Показывает варианты длительности подписки."""
     query = update.callback_query
+    await query.answer()
     
     context.user_data['in_payment_process'] = True
     
     plan_id = context.user_data['selected_plan']
     
-    # Проверяем custom план
+    # ИСПРАВЛЕНИЕ: Сначала проверяем custom план
     if plan_id.startswith('custom_'):
-        plan = context.user_data['custom_plan']
+        plan = context.user_data.get('custom_plan')
+        if not plan:
+            logger.error(f"Custom plan data not found for {plan_id}")
+            await query.edit_message_text("❌ Ошибка: данные плана не найдены")
+            return ConversationHandler.END
     else:
-        # ИСПРАВЛЕНИЕ: Ищем в обоих словарях
+        # Для обычных планов ищем в обоих словарях
         plan = MODULE_PLANS.get(plan_id)
         if not plan:
             plan = SUBSCRIPTION_PLANS.get(plan_id)
         
         if not plan:
             logger.error(f"Plan not found in show_duration_options: {plan_id}")
+            logger.error(f"Available MODULE_PLANS: {list(MODULE_PLANS.keys())}")
+            logger.error(f"Available SUBSCRIPTION_PLANS: {list(SUBSCRIPTION_PLANS.keys())}")
             await query.edit_message_text("❌ Ошибка: план не найден")
             return ConversationHandler.END
     
@@ -716,6 +724,7 @@ async def handle_duration_selection(update: Update, context: ContextTypes.DEFAUL
     return await request_email(update, context)
 
 
+@safe_handler()
 async def request_email(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Запрашивает email пользователя."""
     query = update.callback_query
@@ -724,10 +733,22 @@ async def request_email(update: Update, context: ContextTypes.DEFAULT_TYPE):
     plan_id = context.user_data.get('selected_plan')
     duration = context.user_data.get('duration_months', 1)
     
-    plan = MODULE_PLANS.get(plan_id, SUBSCRIPTION_PLANS.get(plan_id))
-    if not plan:
-        await query.edit_message_text("❌ Ошибка: план не найден")
-        return ConversationHandler.END
+    # ИСПРАВЛЕНИЕ: Правильная обработка custom планов
+    if plan_id.startswith('custom_'):
+        plan = context.user_data.get('custom_plan')
+        if not plan:
+            logger.error(f"Custom plan data not found in request_email for {plan_id}")
+            await query.edit_message_text("❌ Ошибка: данные плана не найдены")
+            return ConversationHandler.END
+    else:
+        plan = MODULE_PLANS.get(plan_id)
+        if not plan:
+            plan = SUBSCRIPTION_PLANS.get(plan_id)
+        
+        if not plan:
+            logger.error(f"Plan not found in request_email: {plan_id}")
+            await query.edit_message_text("❌ Ошибка: план не найден")
+            return ConversationHandler.END
     
     # Специальное отображение для пробного периода
     if context.user_data.get('is_trial'):
@@ -747,12 +768,71 @@ async def request_email(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if SUBSCRIPTION_MODE == 'modular' and duration > 1:
             discount_info = DURATION_DISCOUNTS.get(duration, {})
             text += f"\nСрок: {discount_info.get('label', f'{duration} мес.')}"
+        else:
+            text += f"\nСрок: {duration} мес."
         
         text += f"\n\nДля оформления подписки введите ваш email:"
     
     await query.edit_message_text(text, parse_mode=ParseMode.HTML)
     return ENTERING_EMAIL
 
+# Исправленные функции для payment/handlers.py
+
+# 1. Исправление функции request_email
+@safe_handler()
+async def request_email(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Запрашивает email пользователя."""
+    query = update.callback_query
+    await query.answer()
+    
+    plan_id = context.user_data.get('selected_plan')
+    duration = context.user_data.get('duration_months', 1)
+    
+    # ИСПРАВЛЕНИЕ: Правильная обработка custom планов
+    if plan_id.startswith('custom_'):
+        plan = context.user_data.get('custom_plan')
+        if not plan:
+            logger.error(f"Custom plan data not found in request_email for {plan_id}")
+            await query.edit_message_text("❌ Ошибка: данные плана не найдены")
+            return ConversationHandler.END
+    else:
+        plan = MODULE_PLANS.get(plan_id)
+        if not plan:
+            plan = SUBSCRIPTION_PLANS.get(plan_id)
+        
+        if not plan:
+            logger.error(f"Plan not found in request_email: {plan_id}")
+            await query.edit_message_text("❌ Ошибка: план не найден")
+            return ConversationHandler.END
+    
+    # Специальное отображение для пробного периода
+    if context.user_data.get('is_trial'):
+        text = f"""📝 <b>Оформление пробного периода</b>
+
+План: {plan['name']}
+Срок: 7 дней
+Стоимость: 1 ₽
+
+Для оформления подписки введите ваш email:"""
+    else:
+        # Обычное отображение для других планов
+        text = f"""📝 <b>Оформление подписки</b>
+
+План: {plan['name']}"""
+        
+        if SUBSCRIPTION_MODE == 'modular' and duration > 1:
+            discount_info = DURATION_DISCOUNTS.get(duration, {})
+            text += f"\nСрок: {discount_info.get('label', f'{duration} мес.')}"
+        else:
+            text += f"\nСрок: {duration} мес."
+        
+        text += f"\n\nДля оформления подписки введите ваш email:"
+    
+    await query.edit_message_text(text, parse_mode=ParseMode.HTML)
+    return ENTERING_EMAIL
+
+
+# 2. Исправление функции handle_email_input
 @safe_handler()
 async def handle_email_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработка ввода email."""
@@ -784,46 +864,62 @@ async def handle_email_input(update: Update, context: ContextTypes.DEFAULT_TYPE)
     duration = context.user_data.get('duration_months', 1)
     is_trial = context.user_data.get('is_trial', False)
 
-    plan = MODULE_PLANS.get(plan_id, SUBSCRIPTION_PLANS.get(plan_id))
-    if not plan:
-        await update.message.reply_text("❌ Ошибка: план не найден")
-        return ConversationHandler.END
+    # ИСПРАВЛЕНИЕ: Правильная обработка custom планов
+    if plan_id.startswith('custom_'):
+        plan = context.user_data.get('custom_plan')
+        if not plan:
+            logger.error(f"Custom plan data not found in handle_email_input for {plan_id}")
+            await update.message.reply_text("❌ Ошибка: данные плана не найдены")
+            return ConversationHandler.END
+    else:
+        plan = MODULE_PLANS.get(plan_id)
+        if not plan:
+            plan = SUBSCRIPTION_PLANS.get(plan_id)
+        
+        if not plan:
+            logger.error(f"Plan not found in handle_email_input: {plan_id}")
+            await update.message.reply_text("❌ Ошибка: план не найден")
+            return ConversationHandler.END
 
     # Специальное отображение для пробного периода
     if is_trial:
         text = f"""📋 <b>Подтверждение заказа</b>
 
-    ✅ План: {plan['name']}
-    📧 Email: {email}
-    📅 Срок: 7 дней
-    💰 К оплате: 1 ₽
+✅ План: {plan['name']}
+📧 Email: {email}
+📅 Срок: 7 дней
+💰 К оплате: 1 ₽
 
-    Все верно?"""
+Все верно?"""
     else:
-        # Обычное отображение
+        # Обычное отображение с учетом скидок
         if SUBSCRIPTION_MODE == 'modular' and duration > 1:
-            from .config import DURATION_DISCOUNTS, get_plan_price_kopecks
-            total_price = get_plan_price_kopecks(plan_id, duration) // 100
+            from .config import DURATION_DISCOUNTS
             discount_info = DURATION_DISCOUNTS.get(duration, {})
+            
+            # Для custom планов считаем цену на основе базовой стоимости
+            base_price = plan['price_rub']
+            multiplier = discount_info.get('multiplier', duration)
+            total_price = int(base_price * multiplier)
             
             text = f"""📋 <b>Подтверждение заказа</b>
 
-    ✅ План: {plan['name']}
-    📧 Email: {email}
-    📅 Срок: {discount_info.get('label', f'{duration} мес.')}
-    💰 К оплате: {total_price} ₽
+✅ План: {plan['name']}
+📧 Email: {email}
+📅 Срок: {discount_info.get('label', f'{duration} мес.')}
+💰 К оплате: {total_price} ₽
 
-    Все верно?"""
+Все верно?"""
         else:
             total_price = plan['price_rub'] * duration
             text = f"""📋 <b>Подтверждение заказа</b>
 
-    ✅ План: {plan['name']}
-    📧 Email: {email}
-    📅 Срок: {duration} мес.
-    💰 К оплате: {total_price} ₽
+✅ План: {plan['name']}
+📧 Email: {email}
+📅 Срок: {duration} мес.
+💰 К оплате: {total_price} ₽
 
-    Все верно?"""
+Все верно?"""
 
     keyboard = [
         [InlineKeyboardButton("✅ Подтвердить и оплатить", callback_data="confirm_payment")],
@@ -837,7 +933,6 @@ async def handle_email_input(update: Update, context: ContextTypes.DEFAULT_TYPE)
     )
 
     return CONFIRMING
-
 
 @safe_handler()
 async def handle_payment_confirmation(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -855,13 +950,18 @@ async def handle_payment_confirmation(update: Update, context: ContextTypes.DEFA
     duration = context.user_data.get('duration_months', 1)
     email = context.user_data['user_email']
     
-    # Получаем план (обычный или custom)
+    # ИСПРАВЛЕНИЕ: Правильная обработка всех типов планов
     if plan_id.startswith('custom_'):
-        plan = context.user_data['custom_plan']
+        plan = context.user_data.get('custom_plan')
+        if not plan:
+            logger.error(f"Custom plan data not found for {plan_id}")
+            await query.edit_message_text("❌ Ошибка: данные плана не найдены. Попробуйте заново.")
+            context.user_data.pop('in_payment_process', None)
+            return ConversationHandler.END
         # Для custom плана нужно будет создать несколько подписок
-        modules_to_activate = plan['modules']
+        modules_to_activate = plan.get('modules', [])
     else:
-        # ИСПРАВЛЕНИЕ: Ищем план сначала в MODULE_PLANS, потом в SUBSCRIPTION_PLANS
+        # Ищем план сначала в MODULE_PLANS, потом в SUBSCRIPTION_PLANS
         plan = MODULE_PLANS.get(plan_id)
         if not plan:
             plan = SUBSCRIPTION_PLANS.get(plan_id)
@@ -873,77 +973,136 @@ async def handle_payment_confirmation(update: Update, context: ContextTypes.DEFA
             await query.edit_message_text("❌ Ошибка: план не найден. Обратитесь к администратору.")
             context.user_data.pop('in_payment_process', None)
             return ConversationHandler.END
-            
+        
         modules_to_activate = plan.get('modules', [])
     
-    # Рассчитываем стоимость
+    # Вычисляем цену с учетом типа плана
     if context.user_data.get('is_trial'):
-        amount_kopecks = 100  # 1 рубль для пробного периода
-    else:
-        # ИСПРАВЛЕНИЕ: Обрабатываем custom планы и обычные по-разному
-        if plan_id.startswith('custom_'):
-            # Для custom плана используем сохраненную цену с учетом скидки
-            base_price = plan['price_rub']
-            if duration in DURATION_DISCOUNTS:
-                multiplier = DURATION_DISCOUNTS[duration]['multiplier']
-                total_price = int(base_price * multiplier)
-            else:
-                total_price = base_price * duration
-            amount_kopecks = total_price * 100
+        # Пробный период - 1 рубль
+        amount_kopecks = 100
+    elif plan_id.startswith('custom_'):
+        # Custom план - используем базовую цену с учетом скидок
+        from .config import DURATION_DISCOUNTS
+        base_price = plan['price_rub']
+        if duration in DURATION_DISCOUNTS:
+            multiplier = DURATION_DISCOUNTS[duration]['multiplier']
+            total_price = int(base_price * multiplier)
         else:
-            # Для обычных планов используем функцию get_plan_price_kopecks
-            try:
-                amount_kopecks = get_plan_price_kopecks(plan_id, duration)
-            except ValueError as e:
-                logger.error(f"Error calculating price for plan {plan_id}: {e}")
-                await query.edit_message_text("❌ Ошибка при расчете стоимости. Попробуйте еще раз.")
-                context.user_data.pop('in_payment_process', None)
-                return ConversationHandler.END
+            total_price = base_price * duration
+        amount_kopecks = total_price * 100
+    else:
+        # Обычный план
+        from .config import get_plan_price_kopecks
+        amount_kopecks = get_plan_price_kopecks(plan_id, duration)
     
     # Создаем платеж
     try:
-        payment_url, order_id = await tinkoff_payment.create_payment(
-            amount_kopecks=amount_kopecks,
-            order_id=f"{user_id}_{plan_id}_{int(datetime.now().timestamp())}",
-            description=f"Подписка: {plan['name']}",
-            customer_email=email,
-            user_id=user_id
-        )
+        tinkoff_payment = TinkoffPayment()
+        # ИСПРАВЛЕНИЕ: Создаем order_id с префиксом sub_ сразу
+        order_id = f"sub_{user_id}_{plan_id}_{int(datetime.now().timestamp())}"
         
-        # Сохраняем информацию о платеже
-        await subscription_manager.save_payment_info(
-            user_id=user_id,
-            order_id=order_id,
-            plan_id=plan_id if not plan_id.startswith('custom_') else 'custom',
-            amount=amount_kopecks // 100,
-            email=email,
-            modules=modules_to_activate  # Сохраняем список модулей
-        )
-        
-        # Отправляем ссылку на оплату
-        text = "✅ <b>Платеж создан!</b>\n\n"
-        text += f"Сумма к оплате: {amount_kopecks // 100} ₽\n\n"
-        text += "Нажмите кнопку ниже для перехода к оплате:"
-        
-        keyboard = [[
-            InlineKeyboardButton("💳 Оплатить", url=payment_url)
-        ]]
-        
-        await query.edit_message_text(
-            text,
-            reply_markup=InlineKeyboardMarkup(keyboard),
-            parse_mode=ParseMode.HTML
-        )
-        
+        # ИСПРАВЛЕНИЕ: Правильный вызов create_payment с amount_kopecks
+        # create_payment возвращает кортеж (payment_url, order_id)
+        try:
+            if context.user_data.get('is_trial'):
+                payment_url, returned_order_id = await tinkoff_payment.create_payment(
+                    amount_kopecks=amount_kopecks,  # ИСПРАВЛЕНО: amount -> amount_kopecks
+                    order_id=order_id,  # Передаем полный order_id с префиксом sub_
+                    description=f"Пробный период 7 дней",
+                    customer_email=email,
+                    user_id=user_id,
+                    bot_username=context.bot.username  # Передаем username бота
+                )
+            else:
+                payment_url, returned_order_id = await tinkoff_payment.create_payment(
+                    amount_kopecks=amount_kopecks,  # ИСПРАВЛЕНО: amount -> amount_kopecks
+                    order_id=order_id,  # Передаем полный order_id с префиксом sub_
+                    description=f"Подписка: {plan['name']} на {duration} мес.",
+                    customer_email=email,
+                    user_id=user_id,
+                    bot_username=context.bot.username  # Передаем username бота
+                )
+            
+            # Используем возвращенный order_id (должен быть тот же)
+            if returned_order_id != order_id:
+                logger.warning(f"Order ID mismatch: sent {order_id}, received {returned_order_id}")
+                order_id = returned_order_id  # Используем то, что вернул API
+            
+            payment_id = order_id  # Используем order_id как payment_id для сохранения
+            
+            # Сохраняем информацию о платеже
+            subscription_manager = context.bot_data.get('subscription_manager', SubscriptionManager())
+            
+            # ИСПРАВЛЕНИЕ: Используем правильное имя метода save_payment_info вместо save_payment
+            await subscription_manager.save_payment_info(
+                user_id=user_id,
+                order_id=order_id,
+                plan_id=plan_id,
+                amount=amount_kopecks // 100,  # Конвертируем обратно в рубли
+                email=email,
+                modules=modules_to_activate if plan_id.startswith('custom_') else None
+            )
+            
+            # Для custom планов модули будут активированы через webhook после подтверждения оплаты
+            # metadata уже сохранена в save_payment_info
+            
+            # Отправляем ссылку на оплату
+            text = f"""✅ <b>Платеж создан!</b>
+
+Нажмите кнопку ниже для перехода к оплате.
+
+После успешной оплаты подписка будет активирована автоматически."""
+            
+            keyboard = [
+                [InlineKeyboardButton("💳 Оплатить", url=payment_url)],
+                [InlineKeyboardButton("✅ Я оплатил", callback_data="check_payment")],
+                [InlineKeyboardButton("❌ Отмена", callback_data="pay_cancel")]
+            ]
+            
+            await query.edit_message_text(
+                text,
+                parse_mode=ParseMode.HTML,
+                reply_markup=InlineKeyboardMarkup(keyboard)
+            )
+            
+            # Уведомляем админа
+            if PAYMENT_ADMIN_CHAT_ID:
+                admin_text = f"""🆕 Новый платеж:
+                
+Пользователь: {update.effective_user.mention_html()}
+План: {plan['name']}
+Сумма: {amount_kopecks // 100}₽
+Email: {email}"""
+                
+                try:
+                    await context.bot.send_message(
+                        PAYMENT_ADMIN_CHAT_ID,
+                        admin_text,
+                        parse_mode=ParseMode.HTML
+                    )
+                except Exception as e:
+                    logger.error(f"Failed to notify admin: {e}")
+                    
+        except Exception as payment_error:
+            # Обработка ошибки создания платежа
+            logger.error(f"Payment creation failed: {payment_error}")
+            error_msg = str(payment_error)
+            
+            await query.edit_message_text(
+                f"❌ Ошибка создания платежа:\n{error_msg}\n\nПопробуйте позже или обратитесь к администратору.",
+                reply_markup=InlineKeyboardMarkup([[
+                    InlineKeyboardButton("🔄 Попробовать снова", callback_data="subscribe")
+                ]])
+            )
+    
     except Exception as e:
-        logger.error(f"Error creating payment: {e}")
+        logger.error(f"Payment creation error: {e}")
         await query.edit_message_text(
-            "❌ Ошибка при создании платежа. Попробуйте позже."
+            "❌ Произошла ошибка при создании платежа.\n\nПопробуйте позже."
         )
     
     context.user_data.pop('in_payment_process', None)
     return ConversationHandler.END
-
 
 async def cancel_payment(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Отмена процесса оплаты."""
