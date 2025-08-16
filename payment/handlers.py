@@ -141,33 +141,28 @@ async def show_unified_plans(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
 async def show_modular_interface(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Показывает модульный интерфейс подписок."""
-    # Определяем источник вызова
     if update.callback_query:
         query = update.callback_query
         await query.answer()
         
-        # ДОБАВЛЕНО: Проверка, не показываем ли мы уже эту страницу
-        current_message = query.message.text if query.message else None
-        
         # Функция для безопасного редактирования
-        async def safe_edit_message(text, reply_markup):
+        async def safe_edit_message(text, reply_markup, parse_mode=None):  # ✅ Добавлен параметр parse_mode
             try:
                 await query.edit_message_text(
                     text,
-                    parse_mode=ParseMode.HTML,
+                    parse_mode=parse_mode or ParseMode.HTML,  # Используем переданный или HTML по умолчанию
                     reply_markup=reply_markup
                 )
-            except telegram.error.BadRequest as e:
+            except BadRequest as e:
                 if "Message is not modified" not in str(e):
                     raise
-                # Если сообщение не изменилось, ничего не делаем
                 
         edit_func = safe_edit_message
     else:
         # Вызов из команды /subscribe
-        edit_func = lambda text, reply_markup: update.message.reply_text(
+        edit_func = lambda text, reply_markup, parse_mode=ParseMode.HTML: update.message.reply_text(
             text, 
-            parse_mode=ParseMode.HTML, 
+            parse_mode=parse_mode, 
             reply_markup=reply_markup
         )
     
@@ -262,11 +257,25 @@ async def show_modular_interface(update: Update, context: ContextTypes.DEFAULT_T
     
     await edit_func(
         text,
-        reply_markup=InlineKeyboardMarkup(keyboard),
-        parse_mode=ParseMode.HTML
+        reply_markup=InlineKeyboardMarkup(keyboard)
     )
     
-    return CHOOSING_PLAN
+    # ИСПРАВЛЕНО: Проверяем источник вызова
+    # Возвращаем CHOOSING_PLAN только если мы в ConversationHandler
+    if update.message:
+        # Вызов через команду /subscribe - мы в ConversationHandler
+        return CHOOSING_PLAN
+    elif update.callback_query:
+        # Проверяем callback_data
+        if update.callback_query.data in ["subscribe", "subscribe_start"]:
+            # Эти callbacks являются entry_points в ConversationHandler
+            return CHOOSING_PLAN
+        else:
+            # Для других callbacks (например, my_subscriptions) не возвращаем состояние
+            return
+    
+    # По умолчанию не возвращаем состояние
+    return
 
 
 @safe_handler()
@@ -1198,10 +1207,8 @@ async def handle_my_subscriptions(update: Update, context: ContextTypes.DEFAULT_
     query = update.callback_query
     await query.answer()
     
-    # ДОБАВЛЕНО: Проверка на вызов из главного меню
-    if query.data == "my_subscriptions" and context.user_data.get('from_menu'):
-        # Если вызвано из меню, сохраняем это
-        context.user_data['show_back_to_menu'] = True
+    # Устанавливаем флаг, что пользователь в процессе работы с подпиской
+    context.user_data['in_payment_process'] = True
     
     user_id = query.from_user.id
     subscription_manager = context.bot_data.get('subscription_manager', SubscriptionManager())
@@ -1210,17 +1217,17 @@ async def handle_my_subscriptions(update: Update, context: ContextTypes.DEFAULT_
         modules = await subscription_manager.get_user_modules(user_id)
         
         if not modules:
-            # Для пользователей без подписки
+            # Для пользователей без подписки показываем интерфейс подписки
             try:
                 await show_modular_interface(update, context)
-            except telegram.error.BadRequest as e:
+            except BadRequest as e:
                 if "Message is not modified" in str(e):
-                    await query.answer("Вы уже находитесь на странице выбора подписки", show_alert=False)
+                    await query.answer("Вы уже на странице подписки", show_alert=False)
                 else:
+                    logger.error(f"Error in handle_my_subscriptions: {e}")
                     raise
-            return
         else:
-            # ИСПРАВЛЕНИЕ: Для пользователей с подпиской тоже обрабатываем ошибку
+            # Для пользователей с подпиской показываем их модули
             text = "📋 <b>Ваши активные модули:</b>\n\n"
             module_names = {
                 'test_part': '📝 Тестовая часть',
@@ -1249,18 +1256,18 @@ async def handle_my_subscriptions(update: Update, context: ContextTypes.DEFAULT_
                 [InlineKeyboardButton("🏠 Главное меню", callback_data="to_main_menu")]
             ]
             
-            # ИСПРАВЛЕНИЕ: Обрабатываем ошибку редактирования
+            # Обрабатываем ошибку редактирования
             try:
                 await query.edit_message_text(
                     text,
                     parse_mode=ParseMode.HTML,
                     reply_markup=InlineKeyboardMarkup(keyboard)
                 )
-            except telegram.error.BadRequest as e:
+            except BadRequest as e:
                 if "Message is not modified" in str(e):
-                    # Сообщение уже показывает информацию о подписке
                     await query.answer("Информация о вашей подписке", show_alert=False)
                 else:
+                    logger.error(f"Error editing message in handle_my_subscriptions: {e}")
                     raise
     
 @safe_handler()
@@ -1410,11 +1417,28 @@ def register_payment_handlers(app: Application):
         ],
         allow_reentry=True
     )
+
+async def standalone_pay_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Автономный обработчик для кнопок оплаты вне ConversationHandler."""
+    query = update.callback_query
+    await query.answer()
     
-    async def my_subscriptions_standalone(update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Автономный обработчик my_subscriptions."""
-        await handle_my_subscriptions(update, context)
-        return ConversationHandler.END
+    # Устанавливаем флаг процесса оплаты
+    context.user_data['in_payment_process'] = True
+    
+    # Переходим в ConversationHandler через точку входа
+    if query.data in ["pay_trial", "pay_package_full", "pay_package_second"]:
+        # Вызываем handle_plan_selection и входим в ConversationHandler
+        context.user_data['entry_from_standalone'] = True
+        return await handle_plan_selection(update, context)
+    elif query.data == "pay_individual_modules":
+        # Показываем выбор модулей
+        context.user_data['entry_from_standalone'] = True
+        return await show_individual_modules(update, context)
+    else:
+        # Неизвестная кнопка
+        context.user_data.pop('in_payment_process', None)
+        await query.answer("Неизвестное действие", show_alert=True)
     
     app.add_handler(
         CallbackQueryHandler(
@@ -1440,10 +1464,50 @@ def register_payment_handlers(app: Application):
     )
     
     app.add_handler(payment_conv, group=-50)
+    app.add_handler(
+        CallbackQueryHandler(
+            standalone_pay_handler, 
+            pattern="^pay_trial$"
+        ), 
+        group=-48
+    )
+    app.add_handler(
+        CallbackQueryHandler(
+            standalone_pay_handler, 
+            pattern="^pay_package_full$"
+        ), 
+        group=-48
+    )
+    app.add_handler(
+        CallbackQueryHandler(
+            standalone_pay_handler, 
+            pattern="^pay_package_second$"
+        ), 
+        group=-48
+    )
+    app.add_handler(
+        CallbackQueryHandler(
+            standalone_pay_handler, 
+            pattern="^pay_individual_modules$"
+        ), 
+        group=-48
+    )
     
+    # Обработчик для subscribe который переводит в ConversationHandler
+    async def subscribe_redirect(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Перенаправляет в интерфейс подписки."""
+        context.user_data['in_payment_process'] = True
+        return await show_modular_interface(update, context)
+    
+    app.add_handler(
+        CallbackQueryHandler(
+            subscribe_redirect,
+            pattern="^subscribe$"
+        ),
+        group=-48
+    )
     # Дополнительные команды тоже с приоритетом
     app.add_handler(CommandHandler("my_subscriptions", cmd_my_subscriptions), group=-50)
-    app.add_handler(CallbackQueryHandler(handle_my_subscriptions, pattern="^my_subscriptions$"), group=-50)
     app.add_handler(
         CallbackQueryHandler(handle_back_to_main_menu, pattern="^back_to_main$"), 
         group=-49  # Приоритет чуть ниже, чтобы ConversationHandler обрабатывал первым

@@ -126,7 +126,7 @@ class SubscriptionMiddleware:
             return True
         
         # Проверяем, является ли это бесплатным действием
-        if self._is_free_action(update):
+        if self._is_free_action(update, context):  # ✅ Передаем context
             logger.debug(f"Free action for user {user_id}")
             return True
         
@@ -443,10 +443,16 @@ def setup_subscription_middleware(
         
         # Паттерны для подписки
         'my_subscription', 'subscribe_start',
+        'my_subscriptions',  # ДОБАВИТЬ этот паттерн!
         
-        # ДОБАВИТЬ: паттерны для выбора модулей
+        # Паттерны для выбора модулей
         'toggle_', 'info_', 'proceed_with_modules',
         'pay_individual_modules', 'pay_package_',
+        'pay_trial', 'pay_full',
+        
+        # Паттерны для навигации в подписке
+        'back_to_module_selection', 'back_to_main',
+        'back_to_plans', 'back_to_modules',
         
         # Админские паттерны
         'admin_', 'broadcast_', 'stats_', 'test_',
