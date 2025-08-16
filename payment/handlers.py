@@ -235,7 +235,7 @@ async def show_modular_interface(update: Update, context: ContextTypes.DEFAULT_T
         ])
     
     keyboard.append([
-        InlineKeyboardButton("❌ Отмена", callback_data="pay_cancel")
+        InlineKeyboardButton("🏠 Главное меню", callback_data="to_main_menu")
     ])
     
     await edit_func(
@@ -1128,15 +1128,15 @@ async def cmd_my_subscriptions(update: Update, context: ContextTypes.DEFAULT_TYP
         modules = await subscription_manager.get_user_modules(user_id)
         
         if not modules:
-            text = "У вас нет активных подписок.\n\nИспользуйте /subscribe для оформления."
+            text = "📋 <b>Мои подписки</b>\n\nУ вас нет активных подписок.\n\nИспользуйте /subscribe для оформления."
         else:
             text = "📋 <b>Ваши активные модули:</b>\n\n"
             module_names = {
                 'test_part': '📝 Тестовая часть',
                 'task19': '🎯 Задание 19',
                 'task20': '📖 Задание 20',
-                'task25': '✍️ Задание 25',
-                'task24': '💎 Задание 24 (Премиум)'
+                'task24': '💎 Задание 24',
+                'task25': '✍️ Задание 25'
             }
             for module in modules:
                 name = module_names.get(module['module_code'], module['module_code'])
@@ -1158,7 +1158,11 @@ async def cmd_my_subscriptions(update: Update, context: ContextTypes.DEFAULT_TYP
         else:
             text = "У вас нет активной подписки.\n\nИспользуйте /subscribe для оформления."
     
-    keyboard = [[InlineKeyboardButton("🔄 Оформить/Продлить", callback_data="subscribe")]]
+    # ДОБАВЛЕНО: кнопка главного меню
+    keyboard = [
+        [InlineKeyboardButton("🔄 Оформить/Продлить", callback_data="subscribe")],
+        [InlineKeyboardButton("🏠 Главное меню", callback_data="to_main_menu")]
+    ]
     
     await update.message.reply_text(
         text,
@@ -1166,14 +1170,17 @@ async def cmd_my_subscriptions(update: Update, context: ContextTypes.DEFAULT_TYP
         reply_markup=InlineKeyboardMarkup(keyboard)
     )
 
-
 @safe_handler()
 async def handle_my_subscriptions(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработчик callback my_subscriptions."""
     query = update.callback_query
     await query.answer()
     
-    # Показываем подписки как в команде
+    # ДОБАВЛЕНО: Проверка на вызов из главного меню
+    if query.data == "my_subscriptions" and context.user_data.get('from_menu'):
+        # Если вызвано из меню, сохраняем это
+        context.user_data['show_back_to_menu'] = True
+    
     user_id = query.from_user.id
     subscription_manager = context.bot_data.get('subscription_manager', SubscriptionManager())
     
@@ -1181,7 +1188,7 @@ async def handle_my_subscriptions(update: Update, context: ContextTypes.DEFAULT_
         modules = await subscription_manager.get_user_modules(user_id)
         
         if not modules:
-            text = "У вас нет активных подписок.\n\nВыберите подходящий план:"
+            text = "📋 <b>Мои подписки</b>\n\nУ вас нет активных подписок.\n\nВыберите подходящий план:"
         else:
             text = "📋 <b>Ваши активные модули:</b>\n\n"
             module_names = {
@@ -1195,6 +1202,15 @@ async def handle_my_subscriptions(update: Update, context: ContextTypes.DEFAULT_
                 name = module_names.get(module['module_code'], module['module_code'])
                 expires = module['expires_at'].strftime('%d.%m.%Y')
                 text += f"{name}\n└ Действует до: {expires}\n\n"
+            
+            # ДОБАВЛЕНО: детали доступа
+            text += "📊 <b>Детали доступа:</b>\n"
+            all_modules = ['test_part', 'task19', 'task20', 'task24', 'task25']
+            for module_code in all_modules:
+                has_access = await subscription_manager.check_module_access(user_id, module_code)
+                status = "✅" if has_access else "❌"
+                module_name = module_names.get(module_code, module_code)
+                text += f"   {status} {module_name}\n"
     else:
         subscription = await subscription_manager.check_active_subscription(user_id)
         if subscription:
@@ -1208,15 +1224,33 @@ async def handle_my_subscriptions(update: Update, context: ContextTypes.DEFAULT_
             text = "У вас нет активной подписки."
     
     keyboard = [
-        [InlineKeyboardButton("🔄 Оформить/Продлить", callback_data="subscribe")],
-        [InlineKeyboardButton("⬅️ Назад", callback_data="back_to_main")]
+        [InlineKeyboardButton("🔄 Оформить/Продлить", callback_data="subscribe")]
     ]
+    
+    # ИСПРАВЛЕНО: Используем правильный callback для главного меню
+    keyboard.append([
+        InlineKeyboardButton("🏠 Главное меню", callback_data="main_menu")
+    ])
     
     await query.edit_message_text(
         text,
         parse_mode=ParseMode.HTML,
         reply_markup=InlineKeyboardMarkup(keyboard)
     )
+    return ConversationHandler.END
+    
+@safe_handler()
+async def handle_back_to_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Глобальный обработчик для возврата в главное меню."""
+    query = update.callback_query
+    await query.answer()
+    
+    # Очищаем флаг процесса оплаты если он был
+    context.user_data.pop('in_payment_process', None)
+    
+    # Используем глобальный обработчик из core
+    from core.menu_handlers import handle_to_main_menu
+    return await handle_to_main_menu(update, context)
 
 @safe_handler()
 async def handle_module_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1353,12 +1387,43 @@ def register_payment_handlers(app: Application):
         allow_reentry=True
     )
     
+    async def my_subscriptions_standalone(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Автономный обработчик my_subscriptions."""
+        await handle_my_subscriptions(update, context)
+        return ConversationHandler.END
+    
+    app.add_handler(
+        CallbackQueryHandler(
+            my_subscriptions_standalone, 
+            pattern="^my_subscriptions$"
+        ), 
+        group=-45  # Приоритет выше чем у общих обработчиков, но ниже чем у ConversationHandler
+    )
+    
+    # Дополнительный обработчик для main_menu из payment
+    async def payment_to_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Переход в главное меню из payment."""
+        from core.menu_handlers import handle_to_main_menu
+        await handle_to_main_menu(update, context)
+        return ConversationHandler.END
+    
+    app.add_handler(
+        CallbackQueryHandler(
+            payment_to_main_menu,
+            pattern="^(main_menu|to_main_menu)$"
+        ),
+        group=-45
+    )
+    
     app.add_handler(payment_conv, group=-50)
     
     # Дополнительные команды тоже с приоритетом
     app.add_handler(CommandHandler("my_subscriptions", cmd_my_subscriptions), group=-50)
     app.add_handler(CallbackQueryHandler(handle_my_subscriptions, pattern="^my_subscriptions$"), group=-50)
-    
+    app.add_handler(
+        CallbackQueryHandler(handle_back_to_main_menu, pattern="^back_to_main$"), 
+        group=-49  # Приоритет чуть ниже, чтобы ConversationHandler обрабатывал первым
+    )
     # Обработчик информации о модулях
     app.add_handler(CommandHandler("debug_subscription", cmd_debug_subscription), group=-50)
     
