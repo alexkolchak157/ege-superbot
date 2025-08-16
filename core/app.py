@@ -542,9 +542,12 @@ def main():
         builder = Application.builder()
         builder.token(config.BOT_TOKEN)
         
-        # Добавляем persistence для сохранения состояний
-        #persistence = PicklePersistence(filepath="bot_persistence.pickle")
-        #builder.persistence(persistence)
+        persistence = PicklePersistence(
+            filepath="bot_persistence.pickle",
+            # Сохраняем данные каждые 30 секунд и при завершении
+            update_interval=30
+        )
+        builder.persistence(persistence)
         
         # Настройка параметров
         builder.post_init(post_init)
