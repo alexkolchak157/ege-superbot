@@ -60,8 +60,6 @@ class SubscriptionManager:
             
             logger.info(f"Saved metadata for payment {payment_id}: {metadata}")
 
-    # Если метод save_payment_info работает некорректно с модулями, 
-    # замените его на эту версию:
     async def save_payment_info(
         self,
         user_id: int,
@@ -71,7 +69,8 @@ class SubscriptionManager:
         email: str,
         modules: list = None
     ) -> bool:
-        """Сохраняет информацию о платеже в БД.
+        """
+        Сохраняет информацию о платеже в БД.
         
         Args:
             user_id: ID пользователя
@@ -94,68 +93,77 @@ class SubscriptionManager:
                         'type': 'custom'
                     })
                 
-                # Создаем таблицу если не существует
-                await conn.execute("""
-                    CREATE TABLE IF NOT EXISTS payments (
-                        id INTEGER PRIMARY KEY AUTOINCREMENT,
-                        user_id INTEGER NOT NULL,
-                        order_id TEXT UNIQUE NOT NULL,
-                        plan_id TEXT NOT NULL,
-                        amount_kopecks INTEGER NOT NULL,
-                        status TEXT DEFAULT 'pending',
-                        payment_id TEXT,
-                        metadata TEXT,
-                        email TEXT,
-                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                        completed_at TIMESTAMP
-                    )
-                """)
-                
-                # ИСПРАВЛЕНИЕ: Сохраняем полный plan_id, включая custom_xxx
-                # Не меняем его на просто 'custom'
+                # НЕ создаем таблицу здесь - она должна быть создана в init_tables()
+                # Просто сохраняем данные
                 logger.info(f"Saving payment: order_id={order_id}, user_id={user_id}, plan_id={plan_id}, amount={amount}₽")
                 
-                await conn.execute("""
-                    INSERT INTO payments (
-                        user_id, order_id, plan_id, amount_kopecks, 
-                        status, metadata, email, created_at
-                    ) VALUES (?, ?, ?, ?, 'pending', ?, ?, CURRENT_TIMESTAMP)
-                """, (user_id, order_id, plan_id, amount * 100, metadata, email))
+                try:
+                    await conn.execute("""
+                        INSERT INTO payments (
+                            user_id, order_id, plan_id, amount_kopecks, 
+                            status, metadata, email, created_at
+                        ) VALUES (?, ?, ?, ?, 'pending', ?, ?, CURRENT_TIMESTAMP)
+                    """, (user_id, order_id, plan_id, amount * 100, metadata, email))
+                    
+                except aiosqlite.OperationalError as e:
+                    if "no such table" in str(e):
+                        # Если таблицы нет, инициализируем её
+                        logger.warning("Table 'payments' not found, initializing...")
+                        await self.init_tables()
+                        
+                        # Повторяем попытку
+                        await conn.execute("""
+                            INSERT INTO payments (
+                                user_id, order_id, plan_id, amount_kopecks, 
+                                status, metadata, email, created_at
+                            ) VALUES (?, ?, ?, ?, 'pending', ?, ?, CURRENT_TIMESTAMP)
+                        """, (user_id, order_id, plan_id, amount * 100, metadata, email))
+                    else:
+                        raise
                 
                 # Проверяем что сохранилось
                 cursor = await conn.execute(
-                    "SELECT order_id, plan_id FROM payments WHERE order_id = ?",
+                    "SELECT order_id, plan_id, email FROM payments WHERE order_id = ?",
                     (order_id,)
                 )
                 saved = await cursor.fetchone()
                 if saved:
-                    logger.info(f"Payment saved successfully: {saved}")
+                    logger.info(f"✅ Payment saved successfully: order={saved[0]}, plan={saved[1]}, email={saved[2]}")
                 else:
-                    logger.error(f"Payment not found after saving! order_id={order_id}")
+                    logger.error(f"❌ Payment not found after saving! order_id={order_id}")
+                    return False
                 
-                # Сохраняем email пользователя
-                await conn.execute("""
-                    CREATE TABLE IF NOT EXISTS user_emails (
-                        user_id INTEGER PRIMARY KEY,
-                        email TEXT NOT NULL,
-                        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                    )
-                """)
-                
-                await conn.execute("""
-                    INSERT OR REPLACE INTO user_emails (user_id, email, updated_at)
-                    VALUES (?, ?, CURRENT_TIMESTAMP)
-                """, (user_id, email))
+                # Сохраняем email пользователя в отдельную таблицу для истории
+                try:
+                    await conn.execute("""
+                        INSERT OR REPLACE INTO user_emails (user_id, email, updated_at)
+                        VALUES (?, ?, CURRENT_TIMESTAMP)
+                    """, (user_id, email))
+                except aiosqlite.OperationalError:
+                    # Если таблицы нет, создаем
+                    await conn.execute("""
+                        CREATE TABLE IF NOT EXISTS user_emails (
+                            user_id INTEGER PRIMARY KEY,
+                            email TEXT NOT NULL,
+                            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                        )
+                    """)
+                    await conn.execute("""
+                        INSERT OR REPLACE INTO user_emails (user_id, email, updated_at)
+                        VALUES (?, ?, CURRENT_TIMESTAMP)
+                    """, (user_id, email))
                 
                 await conn.commit()
                 
-                logger.info(f"Payment info saved: user={user_id}, order={order_id}, plan={plan_id}, amount={amount}₽")
+                logger.info(f"✅ Payment info saved: user={user_id}, order={order_id}, plan={plan_id}, amount={amount}₽")
                 if modules:
                     logger.info(f"Custom plan modules: {modules}")
                 return True
                 
         except Exception as e:
-            logger.error(f"Error saving payment info: {e}")
+            logger.error(f"❌ Error saving payment info: {e}")
+            import traceback
+            logger.error(f"Traceback: {traceback.format_exc()}")
             return False
             
     async def get_user_active_modules(self, user_id: int) -> List[str]:
@@ -174,10 +182,10 @@ class SubscriptionManager:
         return [module['module_code'] for module in modules]
         
     async def init_tables(self):
-        """Инициализирует таблицы в БД."""
+        """Инициализирует таблицы в БД с правильной схемой."""
         try:
             async with aiosqlite.connect(DATABASE_FILE) as conn:
-                # Создаем таблицу payments если её нет
+                # Создаем таблицу payments с ПРАВИЛЬНОЙ схемой
                 await conn.execute("""
                     CREATE TABLE IF NOT EXISTS payments (
                         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -187,24 +195,34 @@ class SubscriptionManager:
                         amount_kopecks INTEGER NOT NULL,
                         status TEXT DEFAULT 'pending',
                         payment_id TEXT,
-                        metadata TEXT,  -- Для хранения дополнительных данных (модули для custom планов)
+                        metadata TEXT,
+                        email TEXT,  -- ВАЖНО: колонка email включена в схему
                         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                         completed_at TIMESTAMP
                     )
                 """)
                 
-                # Проверяем наличие колонки metadata и добавляем если нет
+                # Проверяем и добавляем недостающие колонки для существующих таблиц
                 cursor = await conn.execute("PRAGMA table_info(payments)")
                 columns = await cursor.fetchall()
                 column_names = [col[1] for col in columns]
                 
+                # Добавляем недостающие колонки если таблица уже существовала
                 if 'metadata' not in column_names:
                     await conn.execute("ALTER TABLE payments ADD COLUMN metadata TEXT")
                     logger.info("Added metadata column to payments table")
                 
+                if 'email' not in column_names:
+                    await conn.execute("ALTER TABLE payments ADD COLUMN email TEXT")
+                    logger.info("Added email column to payments table")
+                    
+                if 'completed_at' not in column_names:
+                    await conn.execute("ALTER TABLE payments ADD COLUMN completed_at TIMESTAMP")
+                    logger.info("Added completed_at column to payments table")
+                
                 await conn.commit()
                     
-                # Индекс для payments
+                # Индексы для payments
                 await conn.execute("""
                     CREATE INDEX IF NOT EXISTS idx_payments_user 
                     ON payments(user_id)
@@ -213,37 +231,23 @@ class SubscriptionManager:
                     CREATE INDEX IF NOT EXISTS idx_payments_status 
                     ON payments(status)
                 """)
-                
-                # Единая таблица подписок (для обычного режима)
                 await conn.execute("""
-                    CREATE TABLE IF NOT EXISTS user_subscriptions (
-                        id INTEGER PRIMARY KEY AUTOINCREMENT,
-                        user_id INTEGER NOT NULL,
-                        plan_id TEXT NOT NULL,
-                        payment_id TEXT,
-                        status TEXT DEFAULT 'active',
-                        starts_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                        expires_at TIMESTAMP NOT NULL,
-                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                        activated_at TIMESTAMP,
-                        cancelled_at TIMESTAMP,
-                        UNIQUE(user_id, plan_id, expires_at)
+                    CREATE INDEX IF NOT EXISTS idx_payments_order 
+                    ON payments(order_id)
+                """)
+                
+                # Таблица для хранения email пользователей отдельно
+                await conn.execute("""
+                    CREATE TABLE IF NOT EXISTS user_emails (
+                        user_id INTEGER PRIMARY KEY,
+                        email TEXT NOT NULL,
+                        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                     )
                 """)
                 
-                # Индексы для user_subscriptions
-                await conn.execute("""
-                    CREATE INDEX IF NOT EXISTS idx_user_subs_user 
-                    ON user_subscriptions(user_id)
-                """)
-                await conn.execute("""
-                    CREATE INDEX IF NOT EXISTS idx_user_subs_expires 
-                    ON user_subscriptions(expires_at)
-                """)
-                
-                # Таблицы для модульной системы
-                if SUBSCRIPTION_MODE == 'modular':
-                    # Основная таблица модульных подписок
+                # Для модульного режима
+                if self.subscription_mode == 'modular':
+                    # Таблица модульных подписок
                     await conn.execute("""
                         CREATE TABLE IF NOT EXISTS module_subscriptions (
                             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -251,10 +255,8 @@ class SubscriptionManager:
                             module_code TEXT NOT NULL,
                             plan_id TEXT NOT NULL,
                             expires_at TIMESTAMP NOT NULL,
-                            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                             is_active BOOLEAN DEFAULT 1,
-                            is_trial BOOLEAN DEFAULT 0,
-                            payment_id TEXT,
+                            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                             UNIQUE(user_id, module_code)
                         )
                     """)
@@ -272,13 +274,7 @@ class SubscriptionManager:
                         CREATE INDEX IF NOT EXISTS idx_module_subs_active 
                         ON module_subscriptions(is_active)
                     """)
-                    # Проверяем и добавляем недостающие колонки
-                    cursor = await conn.execute("PRAGMA table_info(payments)")
-                    columns = await cursor.fetchall()
-                    column_names = [col[1] for col in columns]
-
-                    if 'completed_at' not in column_names:
-                        await conn.execute("ALTER TABLE payments ADD COLUMN completed_at TIMESTAMP")
+                    
                     # История пробных периодов
                     await conn.execute("""
                         CREATE TABLE IF NOT EXISTS trial_history (
@@ -290,37 +286,27 @@ class SubscriptionManager:
                     
                     logger.info("Modular subscription tables created")
                 
-                # Миграция: удаляем дублирующую таблицу user_modules если она существует
-                # (она дублирует функционал module_subscriptions)
-                cursor = await conn.execute(
-                    "SELECT name FROM sqlite_master WHERE type='table' AND name='user_modules'"
-                )
-                if await cursor.fetchone():
-                    logger.warning("Found duplicate table 'user_modules', migrating data...")
+                else:
+                    # Единая таблица подписок (для обычного режима)
+                    await conn.execute("""
+                        CREATE TABLE IF NOT EXISTS user_subscriptions (
+                            id INTEGER PRIMARY KEY AUTOINCREMENT,
+                            user_id INTEGER NOT NULL,
+                            plan_id TEXT NOT NULL,
+                            expires_at TIMESTAMP NOT NULL,
+                            is_active BOOLEAN DEFAULT 1,
+                            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                            UNIQUE(user_id)
+                        )
+                    """)
                     
-                    # Переносим данные из user_modules в module_subscriptions если нужно
-                    try:
-                        await conn.execute("""
-                            INSERT OR IGNORE INTO module_subscriptions 
-                            (user_id, module_code, plan_id, expires_at, is_active, created_at)
-                            SELECT user_id, module_code, 
-                                   COALESCE(plan_id, 'module_' || module_code),
-                                   expires_at, is_active, created_at
-                            FROM user_modules
-                            WHERE expires_at IS NOT NULL
-                        """)
-                        
-                        # Удаляем старую таблицу
-                        await conn.execute("DROP TABLE user_modules")
-                        logger.info("Successfully migrated and removed user_modules table")
-                    except Exception as e:
-                        logger.error(f"Error during migration: {e}")
+                    logger.info("Standard subscription tables created")
                 
                 await conn.commit()
-                logger.info("Payment tables initialized successfully")
+                logger.info("All tables initialized successfully")
                 
         except Exception as e:
-            logger.exception(f"Error initializing payment tables: {e}")
+            logger.error(f"Error initializing tables: {e}")
             raise
     
     async def deactivate_subscription(self, user_id: int, plan_id: str) -> bool:
@@ -653,24 +639,53 @@ class SubscriptionManager:
                     logger.error(f"Payment not found for order {order_id}")
                     return False
                 
-                user_id, plan_id, metadata = payment
+                user_id, plan_id, metadata_str = payment
+                logger.info(f"Activating subscription: user={user_id}, plan={plan_id}, metadata={metadata_str}")
                 
                 # Обработка custom плана
-                if plan_id == 'custom' and metadata:
-                    # Получаем список модулей из metadata
-                    import json
-                    modules = json.loads(metadata)
+                if plan_id.startswith('custom_'):
+                    # Для custom планов берем модули из metadata или из plan_id
+                    modules = []
+                    
+                    if metadata_str:
+                        try:
+                            import json
+                            metadata = json.loads(metadata_str)
+                            modules = metadata.get('modules', [])
+                        except json.JSONDecodeError:
+                            logger.warning(f"Failed to parse metadata: {metadata_str}")
+                    
+                    # Если модули не найдены в metadata, пытаемся извлечь из plan_id
+                    if not modules:
+                        # Например: custom_test_part_task24 -> ['test_part', 'task24']
+                        plan_parts = plan_id.replace('custom_', '')
+                        
+                        # Распознаем модули в имени плана
+                        possible_modules = []
+                        if 'test_part' in plan_parts:
+                            possible_modules.append('test_part')
+                        if 'task19' in plan_parts:
+                            possible_modules.append('task19')
+                        if 'task20' in plan_parts:
+                            possible_modules.append('task20')
+                        if 'task24' in plan_parts:
+                            possible_modules.append('task24')
+                        if 'task25' in plan_parts:
+                            possible_modules.append('task25')
+                        
+                        modules = possible_modules
+                    
+                    if not modules:
+                        logger.error(f"No modules found for custom plan {plan_id}")
+                        return False
+                    
                     logger.info(f"Activating custom plan with modules: {modules}")
                     
                     # Активируем каждый модуль
-                    for module_code in modules:
-                        await self._activate_modular_subscription(
-                            user_id, 
-                            f"module_{module_code}" if not module_code.startswith('module_') else module_code,
-                            payment_id
-                        )
+                    await self._activate_custom_modules(user_id, modules, plan_id, payment_id)
+                    
                 else:
-                    # Стандартная активация
+                    # Стандартная активация для предопределенных планов
                     if SUBSCRIPTION_MODE == 'modular':
                         await self._activate_modular_subscription(user_id, plan_id, payment_id)
                     else:
@@ -678,7 +693,7 @@ class SubscriptionManager:
                 
                 # Обновляем статус платежа
                 await conn.execute(
-                    "UPDATE payments SET status = 'completed' WHERE order_id = ?",
+                    "UPDATE payments SET status = 'completed', completed_at = CURRENT_TIMESTAMP WHERE order_id = ?",
                     (order_id,)
                 )
                 await conn.commit()
@@ -689,6 +704,75 @@ class SubscriptionManager:
         except Exception as e:
             logger.exception(f"Error activating subscription: {e}")
             return False
+    
+    async def _activate_custom_modules(self, user_id: int, modules: list, plan_id: str, payment_id: str):
+        """Активирует модули для custom плана с возможностью продления."""
+        from datetime import datetime, timedelta, timezone
+        
+        async with aiosqlite.connect(DATABASE_FILE) as conn:
+            for module_code in modules:
+                logger.info(f"Activating module {module_code} for user {user_id}")
+                
+                # Проверяем, есть ли уже активная подписка на этот модуль
+                cursor = await conn.execute(
+                    """
+                    SELECT expires_at FROM module_subscriptions 
+                    WHERE user_id = ? AND module_code = ? AND is_active = 1
+                    """,
+                    (user_id, module_code)
+                )
+                existing = await cursor.fetchone()
+                
+                if existing:
+                    # Если подписка уже есть, продлеваем её
+                    existing_expires = datetime.fromisoformat(existing[0])
+                    
+                    # Если текущая подписка еще активна, добавляем время к ней
+                    if existing_expires > datetime.now(timezone.utc):
+                        new_expires = existing_expires + timedelta(days=30)
+                        logger.info(f"Extending existing subscription for {module_code} to {new_expires}")
+                    else:
+                        # Если истекла, начинаем с текущего момента
+                        new_expires = datetime.now(timezone.utc) + timedelta(days=30)
+                        logger.info(f"Renewing expired subscription for {module_code}")
+                    
+                    # Обновляем существующую запись
+                    await conn.execute(
+                        """
+                        UPDATE module_subscriptions 
+                        SET expires_at = ?, plan_id = ?, is_active = 1
+                        WHERE user_id = ? AND module_code = ?
+                        """,
+                        (new_expires, plan_id, user_id, module_code)
+                    )
+                else:
+                    # Создаем новую подписку
+                    new_expires = datetime.now(timezone.utc) + timedelta(days=30)
+                    
+                    # Сначала деактивируем старые неактивные записи
+                    await conn.execute(
+                        """
+                        DELETE FROM module_subscriptions 
+                        WHERE user_id = ? AND module_code = ? AND is_active = 0
+                        """,
+                        (user_id, module_code)
+                    )
+                    
+                    # Вставляем новую запись
+                    await conn.execute(
+                        """
+                        INSERT INTO module_subscriptions 
+                        (user_id, module_code, plan_id, expires_at, is_active, created_at)
+                        VALUES (?, ?, ?, ?, 1, CURRENT_TIMESTAMP)
+                        """,
+                        (user_id, module_code, plan_id, new_expires)
+                    )
+                    logger.info(f"Created new subscription for {module_code} until {new_expires}")
+                
+                logger.info(f"✅ Module {module_code} activated for user {user_id}")
+            
+            await conn.commit()
+            logger.info(f"All modules activated for user {user_id}")
     
     async def _activate_unified_subscription(self, user_id: int, plan_id: str, payment_id: str):
         """Активация единой подписки - ИСПРАВЛЕННАЯ версия."""
@@ -708,9 +792,13 @@ class SubscriptionManager:
             logger.info(f"Unified subscription activated for user {user_id}, plan {plan_id}")
     
     async def _activate_modular_subscription(self, user_id: int, plan_id: str, payment_id: str):
-        """Активация модульной подписки - ИСПРАВЛЕННАЯ версия."""
+        """Активация модульной подписки для предопределенных планов."""
+        from datetime import datetime, timezone
+        from .config import SUBSCRIPTION_PLANS, get_subscription_end_date
+        
         logger.info(f"Activating modular subscription for user {user_id}, plan {plan_id}")
         
+        # Проверяем только предопределенные планы
         plan = SUBSCRIPTION_PLANS.get(plan_id)
         if not plan:
             logger.error(f"Unknown plan: {plan_id}")
@@ -742,57 +830,32 @@ class SubscriptionManager:
                     (user_id, now, expires_at)
                 )
             
-            # Активируем каждый модуль из плана
+            # Активируем модули
             for module_code in modules:
-                # Проверяем, есть ли уже активная подписка на этот модуль
-                cursor = await conn.execute(
+                # Деактивируем старые подписки на этот модуль
+                await conn.execute(
                     """
-                    SELECT id, expires_at FROM module_subscriptions
-                    WHERE user_id = ? AND module_code = ? AND is_active = 1
+                    UPDATE module_subscriptions 
+                    SET is_active = 0 
+                    WHERE user_id = ? AND module_code = ?
                     """,
                     (user_id, module_code)
                 )
-                existing = await cursor.fetchone()
                 
-                if existing:
-                    # Обновляем существующую подписку
-                    existing_id, existing_expires = existing
-                    new_expires = max(expires_at, datetime.fromisoformat(existing_expires))
-                    
-                    await conn.execute(
-                        """
-                        UPDATE module_subscriptions
-                        SET expires_at = ?, plan_id = ?, payment_id = ?
-                        WHERE id = ?
-                        """,
-                        (new_expires, plan_id, payment_id, existing_id)
-                    )
-                    logger.info(f"Extended module {module_code} for user {user_id} until {new_expires}")
-                else:
-                    # Создаем новую подписку на модуль
-                    await conn.execute(
-                        """
-                        INSERT INTO module_subscriptions
-                        (user_id, module_code, plan_id, expires_at, is_trial, payment_id)
-                        VALUES (?, ?, ?, ?, ?, ?)
-                        """,
-                        (user_id, module_code, plan_id, expires_at, is_trial, payment_id)
-                    )
-                    logger.info(f"Activated module {module_code} for user {user_id} until {expires_at}")
-            
-            # Также создаем запись в user_subscriptions для совместимости
-            # ИСПРАВЛЕНО: Добавляем starts_at
-            await conn.execute(
-                """
-                INSERT OR REPLACE INTO user_subscriptions 
-                (user_id, plan_id, payment_id, status, starts_at, expires_at, activated_at)
-                VALUES (?, ?, ?, 'active', ?, ?, ?)
-                """,
-                (user_id, plan_id, payment_id, now, expires_at, now)
-            )
+                # Создаем новую подписку
+                await conn.execute(
+                    """
+                    INSERT INTO module_subscriptions 
+                    (user_id, module_code, plan_id, expires_at, is_active, created_at)
+                    VALUES (?, ?, ?, ?, 1, ?)
+                    """,
+                    (user_id, module_code, plan_id, expires_at, now)
+                )
+                
+                logger.info(f"Module {module_code} activated for user {user_id}")
             
             await conn.commit()
-            logger.info(f"All modules activated for user {user_id}")
+            logger.info(f"Modular subscription activated: {len(modules)} modules")
     
     async def has_used_trial(self, user_id: int) -> bool:
         """Проверяет, использовал ли пользователь пробный период."""
