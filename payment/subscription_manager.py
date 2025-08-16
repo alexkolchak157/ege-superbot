@@ -1,8 +1,9 @@
 # payment/subscription_manager.py - ИСПРАВЛЕННАЯ версия под ваш API
 """Менеджер подписок с поддержкой модульной системы."""
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Optional, Dict, Any, List
+from decimal import Decimal
 import json
 from functools import wraps
 from payment.config import SUBSCRIPTION_MODE, SUBSCRIPTION_PLANS
@@ -32,6 +33,190 @@ class SubscriptionManager:
     def config(self):
         """Совместимость со старым кодом."""
         return {'SUBSCRIPTION_MODE': self.subscription_mode}
+
+    async def get_auto_renewal_status(self, user_id: int) -> Optional[Dict]:
+        """Получает статус автопродления для пользователя."""
+        try:
+            async with aiosqlite.connect(self.database_file) as conn:
+                conn.row_factory = aiosqlite.Row
+                cursor = await conn.execute("""
+                    SELECT enabled, payment_method, recurrent_token, card_id, 
+                           next_renewal_date, failures_count, last_renewal_attempt
+                    FROM auto_renewal_settings 
+                    WHERE user_id = ?
+                """, (user_id,))
+                
+                row = await cursor.fetchone()
+                if row:
+                    return {
+                        'enabled': bool(row['enabled']),
+                        'payment_method': row['payment_method'],
+                        'recurrent_token': row['recurrent_token'],
+                        'card_id': row['card_id'],
+                        'next_renewal_date': datetime.fromisoformat(row['next_renewal_date']) if row['next_renewal_date'] else None,
+                        'failures_count': row['failures_count'],
+                        'last_renewal_attempt': datetime.fromisoformat(row['last_renewal_attempt']) if row['last_renewal_attempt'] else None
+                    }
+                return None
+                
+        except Exception as e:
+            logger.error(f"Error getting auto-renewal status: {e}")
+            return None
+
+    async def get_last_payment_info(self, user_id: int) -> Optional[Dict]:
+        """Получает информацию о последнем платеже пользователя."""
+        try:
+            async with aiosqlite.connect(self.database_file) as conn:
+                conn.row_factory = aiosqlite.Row
+                cursor = await conn.execute("""
+                    SELECT order_id, plan_id, amount, status, metadata, created_at
+                    FROM payments 
+                    WHERE user_id = ? AND status = 'completed'
+                    ORDER BY created_at DESC 
+                    LIMIT 1
+                """, (user_id,))
+                
+                row = await cursor.fetchone()
+                if row:
+                    result = dict(row)
+                    # Парсим metadata если есть
+                    if row['metadata']:
+                        try:
+                            metadata = json.loads(row['metadata'])
+                            result['recurrent_id'] = metadata.get('recurrent_token')
+                        except json.JSONDecodeError:
+                            pass
+                    return result
+                return None
+                
+        except Exception as e:
+            logger.error(f"Error getting last payment info: {e}")
+            return None
+
+    async def get_last_subscription_info(self, user_id: int) -> Optional[Dict]:
+        """Получает информацию о последней подписке пользователя."""
+        try:
+            async with aiosqlite.connect(self.database_file) as conn:
+                conn.row_factory = aiosqlite.Row
+                
+                if self.subscription_mode == 'modular':
+                    # Для модульной системы получаем последние активные модули
+                    cursor = await conn.execute("""
+                        SELECT plan_id, expires_at 
+                        FROM module_subscriptions 
+                        WHERE user_id = ? 
+                        ORDER BY expires_at DESC 
+                        LIMIT 1
+                    """, (user_id,))
+                else:
+                    # Для единой системы
+                    cursor = await conn.execute("""
+                        SELECT plan_id, expires_at 
+                        FROM user_subscriptions 
+                        WHERE user_id = ? 
+                        ORDER BY activated_at DESC 
+                        LIMIT 1
+                    """, (user_id,))
+                
+                row = await cursor.fetchone()
+                if row:
+                    plan_id = row['plan_id']
+                    
+                    # Получаем информацию о плане
+                    from .config import SUBSCRIPTION_PLANS, MODULE_PLANS
+                    
+                    plan = None
+                    if self.subscription_mode == 'modular':
+                        plan = MODULE_PLANS.get(plan_id)
+                    if not plan:
+                        plan = SUBSCRIPTION_PLANS.get(plan_id)
+                    
+                    if plan:
+                        return {
+                            'plan_id': plan_id,
+                            'plan_name': plan.get('name', plan_id),
+                            'amount': plan.get('price_rub', 0),
+                            'expires_at': row['expires_at']
+                        }
+                
+                return None
+                
+        except Exception as e:
+            logger.error(f"Error getting last subscription info: {e}")
+            return None
+
+    async def save_user_email(self, user_id: int, email: str) -> bool:
+        """Сохраняет email пользователя."""
+        try:
+            async with aiosqlite.connect(self.database_file) as conn:
+                await conn.execute("""
+                    INSERT OR REPLACE INTO user_emails (user_id, email, updated_at)
+                    VALUES (?, ?, CURRENT_TIMESTAMP)
+                """, (user_id, email))
+                await conn.commit()
+                return True
+        except Exception as e:
+            logger.error(f"Error saving user email: {e}")
+            return False
+
+    async def get_users_for_auto_renewal(self) -> List[int]:
+        """Получает список пользователей для автопродления."""
+        try:
+            today = datetime.now(timezone.utc).date()
+            
+            async with aiosqlite.connect(self.database_file) as conn:
+                cursor = await conn.execute("""
+                    SELECT user_id 
+                    FROM auto_renewal_settings 
+                    WHERE enabled = 1 
+                    AND DATE(next_renewal_date) <= DATE(?)
+                """, (today.isoformat(),))
+                
+                rows = await cursor.fetchall()
+                return [row[0] for row in rows]
+                
+        except Exception as e:
+            logger.error(f"Error getting users for auto-renewal: {e}")
+            return []
+
+    async def get_payment_by_order_id(self, order_id: str) -> Optional[Dict]:
+        """Получает информацию о платеже по order_id."""
+        try:
+            async with aiosqlite.connect(self.database_file) as conn:
+                conn.row_factory = aiosqlite.Row
+                cursor = await conn.execute("""
+                    SELECT * FROM payments WHERE order_id = ?
+                """, (order_id,))
+                
+                row = await cursor.fetchone()
+                return dict(row) if row else None
+                
+        except Exception as e:
+            logger.error(f"Error getting payment by order_id: {e}")
+            return None
+
+    def _extract_modules_from_plan_id(self, plan_id: str) -> List[str]:
+        """Извлекает модули из custom plan_id."""
+        modules = []
+        
+        # Убираем префикс custom_
+        plan_parts = plan_id.replace('custom_', '')
+        
+        # Проверяем наличие каждого модуля в имени
+        module_mapping = {
+            'test_part': 'test_part',
+            'test': 'test_part',
+            'task19': 'task19',
+            'task20': 'task20', 
+            'task24': 'task24',
+            'task25': 'task25'
+        }
+        
+        for key, module in module_mapping.items():
+            if key in plan_parts and module not in modules:
+                modules.append(module)
+        
+        return modules
 
     async def save_payment_metadata(self, payment_id: str, metadata: dict):
         """Сохраняет метаданные платежа для custom планов.
@@ -285,7 +470,52 @@ class SubscriptionManager:
                     """)
                     
                     logger.info("Modular subscription tables created")
-                
+                    
+                    await conn.execute("""
+                        CREATE TABLE IF NOT EXISTS auto_renewal_settings (
+                            user_id INTEGER PRIMARY KEY,
+                            enabled BOOLEAN DEFAULT 0,
+                            payment_method TEXT,  -- 'card' или 'recurrent_token'
+                            recurrent_token TEXT,  -- Токен для рекуррентных платежей
+                            card_id TEXT,  -- ID сохраненной карты
+                            last_renewal_attempt TIMESTAMP,
+                            next_renewal_date TIMESTAMP,
+                            failures_count INTEGER DEFAULT 0,
+                            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                        )
+                    """)
+                    
+                    # Таблица истории автопродлений
+                    await conn.execute("""
+                        CREATE TABLE IF NOT EXISTS auto_renewal_history (
+                            id INTEGER PRIMARY KEY AUTOINCREMENT,
+                            user_id INTEGER NOT NULL,
+                            plan_id TEXT NOT NULL,
+                            payment_id TEXT,
+                            status TEXT NOT NULL,  -- 'success', 'failed', 'cancelled'
+                            amount INTEGER NOT NULL,
+                            error_message TEXT,
+                            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                            FOREIGN KEY (user_id) REFERENCES users(user_id)
+                        )
+                    """)
+                    
+                    # Таблица для уведомлений об истечении подписки
+                    await conn.execute("""
+                        CREATE TABLE IF NOT EXISTS subscription_notifications (
+                            id INTEGER PRIMARY KEY AUTOINCREMENT,
+                            user_id INTEGER NOT NULL,
+                            notification_type TEXT NOT NULL, -- 'expiry_7days', 'expiry_3days', 'expiry_1day', 'expired'
+                            sent_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                            subscription_end_date TIMESTAMP,
+                            UNIQUE(user_id, notification_type, subscription_end_date)
+                        )
+                    """)
+                    
+                    await conn.commit()
+                    logger.info("Extended subscription tables created")
+                    
                 else:
                     # Единая таблица подписок (для обычного режима)
                     await conn.execute("""
@@ -624,10 +854,10 @@ class SubscriptionManager:
             logger.error(f"Error creating payment: {e}")
             raise
     
-    async def activate_subscription(self, order_id: str, payment_id: str = None) -> bool:
-        """Активирует подписку после успешной оплаты с поддержкой custom планов."""
+    async def activate_subscription(self, order_id: str, user_id: int = None, plan_id: str = None) -> bool:
+        """Активирует подписку после успешной оплаты с учетом срока."""
         try:
-            async with aiosqlite.connect(DATABASE_FILE) as conn:
+            async with aiosqlite.connect(self.database_file) as conn:
                 # Получаем информацию о платеже
                 cursor = await conn.execute(
                     "SELECT user_id, plan_id, metadata FROM payments WHERE order_id = ?",
@@ -639,57 +869,52 @@ class SubscriptionManager:
                     logger.error(f"Payment not found for order {order_id}")
                     return False
                 
-                user_id, plan_id, metadata_str = payment
-                logger.info(f"Activating subscription: user={user_id}, plan={plan_id}, metadata={metadata_str}")
+                user_id = user_id or payment[0]
+                plan_id = plan_id or payment[1]
                 
-                # Обработка custom плана
+                # ВАЖНО: Извлекаем метаданные для получения duration_months
+                metadata = {}
+                if payment[2]:
+                    try:
+                        metadata = json.loads(payment[2])
+                    except json.JSONDecodeError:
+                        logger.warning(f"Failed to parse metadata for order {order_id}")
+                
+                duration_months = metadata.get('duration_months', 1)
+                logger.info(f"Activating subscription for {duration_months} months")
+                
+                # Обработка custom планов
                 if plan_id.startswith('custom_'):
-                    # Для custom планов берем модули из metadata или из plan_id
-                    modules = []
-                    
-                    if metadata_str:
-                        try:
-                            import json
-                            metadata = json.loads(metadata_str)
-                            modules = metadata.get('modules', [])
-                        except json.JSONDecodeError:
-                            logger.warning(f"Failed to parse metadata: {metadata_str}")
-                    
-                    # Если модули не найдены в metadata, пытаемся извлечь из plan_id
+                    modules = metadata.get('modules', [])
                     if not modules:
-                        # Например: custom_test_part_task24 -> ['test_part', 'task24']
-                        plan_parts = plan_id.replace('custom_', '')
-                        
-                        # Распознаем модули в имени плана
-                        possible_modules = []
-                        if 'test_part' in plan_parts:
-                            possible_modules.append('test_part')
-                        if 'task19' in plan_parts:
-                            possible_modules.append('task19')
-                        if 'task20' in plan_parts:
-                            possible_modules.append('task20')
-                        if 'task24' in plan_parts:
-                            possible_modules.append('task24')
-                        if 'task25' in plan_parts:
-                            possible_modules.append('task25')
-                        
-                        modules = possible_modules
+                        # Пытаемся извлечь из plan_id
+                        modules = self._extract_modules_from_plan_id(plan_id)
                     
-                    if not modules:
-                        logger.error(f"No modules found for custom plan {plan_id}")
-                        return False
-                    
-                    logger.info(f"Activating custom plan with modules: {modules}")
-                    
-                    # Активируем каждый модуль
-                    await self._activate_custom_modules(user_id, modules, plan_id, payment_id)
-                    
+                    if modules:
+                        # ИСПРАВЛЕНИЕ: Передаем duration_months
+                        await self._activate_custom_modules(
+                            user_id, 
+                            modules, 
+                            plan_id, 
+                            payment_id=order_id,
+                            duration_months=duration_months  # Передаем срок
+                        )
                 else:
-                    # Стандартная активация для предопределенных планов
-                    if SUBSCRIPTION_MODE == 'modular':
-                        await self._activate_modular_subscription(user_id, plan_id, payment_id)
+                    # Для стандартных планов
+                    if self.subscription_mode == 'modular':
+                        await self._activate_modular_subscription_extended(
+                            user_id, 
+                            plan_id, 
+                            payment_id=order_id,
+                            duration_months=duration_months
+                        )
                     else:
-                        await self._activate_unified_subscription(user_id, plan_id, payment_id)
+                        await self._activate_unified_subscription_extended(
+                            user_id, 
+                            plan_id, 
+                            payment_id=order_id,
+                            duration_months=duration_months
+                        )
                 
                 # Обновляем статус платежа
                 await conn.execute(
@@ -698,22 +923,378 @@ class SubscriptionManager:
                 )
                 await conn.commit()
                 
-                logger.info(f"✅ Subscription activated for user {user_id}, order {order_id}")
+                # Проверяем настройку автопродления (если включена соответствующая опция)
+                if metadata.get('enable_auto_renewal'):
+                    recurrent_token = metadata.get('recurrent_token')
+                    if recurrent_token:
+                        await self.enable_auto_renewal(
+                            user_id,
+                            payment_method='recurrent',
+                            recurrent_token=recurrent_token
+                        )
+                
+                logger.info(f"✅ Subscription activated for user {user_id}, order {order_id}, duration {duration_months} months")
                 return True
                 
         except Exception as e:
             logger.exception(f"Error activating subscription: {e}")
             return False
     
-    async def _activate_custom_modules(self, user_id: int, modules: list, plan_id: str, payment_id: str):
-        """Активирует модули для custom плана с возможностью продления."""
+    async def _activate_custom_modules(self, user_id: int, modules: list, plan_id: str, payment_id: str, duration_months: int = 1):
+        """Исправленная версия активации модулей с поддержкой многомесячных подписок."""
         from datetime import datetime, timedelta, timezone
         
-        async with aiosqlite.connect(DATABASE_FILE) as conn:
+        async with aiosqlite.connect(self.database_file) as conn:
             for module_code in modules:
-                logger.info(f"Activating module {module_code} for user {user_id}")
+                logger.info(f"Activating module {module_code} for user {user_id} for {duration_months} months")
                 
-                # Проверяем, есть ли уже активная подписка на этот модуль
+                # Проверяем существующую подписку
+                cursor = await conn.execute(
+                    """
+                    SELECT expires_at FROM module_subscriptions 
+                    WHERE user_id = ? AND module_code = ? AND is_active = 1
+                    """,
+                    (user_id, module_code)
+                )
+                existing = await cursor.fetchone()
+                
+                # Вычисляем правильную дату окончания с учетом duration_months
+                duration_days = 30 * duration_months  # Приблизительно
+                
+                if existing:
+                    existing_expires = datetime.fromisoformat(existing[0])
+                    
+                    if existing_expires > datetime.now(timezone.utc):
+                        # Продлеваем от текущей даты окончания
+                        new_expires = existing_expires + timedelta(days=duration_days)
+                        logger.info(f"Extending existing subscription for {module_code} by {duration_months} months to {new_expires}")
+                    else:
+                        # Активируем заново
+                        new_expires = datetime.now(timezone.utc) + timedelta(days=duration_days)
+                        logger.info(f"Renewing expired subscription for {module_code} for {duration_months} months")
+                    
+                    await conn.execute(
+                        """
+                        UPDATE module_subscriptions 
+                        SET expires_at = ?, plan_id = ?, is_active = 1, updated_at = CURRENT_TIMESTAMP
+                        WHERE user_id = ? AND module_code = ?
+                        """,
+                        (new_expires, plan_id, user_id, module_code)
+                    )
+                else:
+                    # Создаем новую подписку
+                    new_expires = datetime.now(timezone.utc) + timedelta(days=duration_days)
+                    
+                    await conn.execute(
+                        """
+                        INSERT INTO module_subscriptions 
+                        (user_id, module_code, plan_id, expires_at, is_active, created_at)
+                        VALUES (?, ?, ?, ?, 1, CURRENT_TIMESTAMP)
+                        """,
+                        (user_id, module_code, plan_id, new_expires)
+                    )
+                    logger.info(f"Created new subscription for {module_code} for {duration_months} months until {new_expires}")
+                
+                logger.info(f"✅ Module {module_code} activated for user {user_id} for {duration_months} months")
+            
+            await conn.commit()
+
+    async def enable_auto_renewal(self, user_id: int, payment_method: str, 
+                                 recurrent_token: str = None, card_id: str = None) -> bool:
+        """Включает автопродление для пользователя."""
+        try:
+            async with aiosqlite.connect(self.database_file) as conn:
+                # Получаем текущую подписку для определения даты следующего продления
+                subscription = await self.check_active_subscription(user_id)
+                if not subscription:
+                    logger.error(f"No active subscription for user {user_id}")
+                    return False
+                
+                next_renewal = subscription.get('expires_at')
+                
+                await conn.execute("""
+                    INSERT OR REPLACE INTO auto_renewal_settings 
+                    (user_id, enabled, payment_method, recurrent_token, card_id, 
+                     next_renewal_date, failures_count, updated_at)
+                    VALUES (?, 1, ?, ?, ?, ?, 0, CURRENT_TIMESTAMP)
+                """, (user_id, payment_method, recurrent_token, card_id, next_renewal))
+                
+                await conn.commit()
+                logger.info(f"Auto-renewal enabled for user {user_id}")
+                return True
+                
+        except Exception as e:
+            logger.error(f"Error enabling auto-renewal: {e}")
+            return False
+    
+    async def disable_auto_renewal(self, user_id: int) -> bool:
+        """Отключает автопродление для пользователя."""
+        try:
+            async with aiosqlite.connect(self.database_file) as conn:
+                await conn.execute("""
+                    UPDATE auto_renewal_settings 
+                    SET enabled = 0, updated_at = CURRENT_TIMESTAMP 
+                    WHERE user_id = ?
+                """, (user_id,))
+                await conn.commit()
+                logger.info(f"Auto-renewal disabled for user {user_id}")
+                return True
+        except Exception as e:
+            logger.error(f"Error disabling auto-renewal: {e}")
+            return False
+    
+    async def process_auto_renewal(self, user_id: int) -> bool:
+        """Обрабатывает автопродление подписки."""
+        try:
+            async with aiosqlite.connect(self.database_file) as conn:
+                # Получаем настройки автопродления
+                cursor = await conn.execute("""
+                    SELECT enabled, payment_method, recurrent_token, card_id 
+                    FROM auto_renewal_settings 
+                    WHERE user_id = ? AND enabled = 1
+                """, (user_id,))
+                
+                settings = await cursor.fetchone()
+                if not settings:
+                    logger.info(f"Auto-renewal not enabled for user {user_id}")
+                    return False
+                
+                enabled, payment_method, recurrent_token, card_id = settings
+                
+                # Получаем информацию о текущей подписке
+                subscription = await self.check_active_subscription(user_id)
+                if not subscription:
+                    # Подписка истекла, пытаемся продлить
+                    
+                    # Здесь должна быть интеграция с Tinkoff API для рекуррентного платежа
+                    # Пример структуры:
+                    success = await self._process_recurrent_payment(
+                        user_id, 
+                        recurrent_token,
+                        subscription.get('plan_id'),
+                        subscription.get('amount', 0)
+                    )
+                    
+                    if success:
+                        # Записываем успешное продление
+                        await conn.execute("""
+                            INSERT INTO auto_renewal_history 
+                            (user_id, plan_id, payment_id, status, amount)
+                            VALUES (?, ?, ?, 'success', ?)
+                        """, (user_id, subscription['plan_id'], 
+                              f"AUTO_{datetime.now().timestamp()}", 
+                              subscription['amount']))
+                        
+                        # Обновляем дату следующего продления
+                        next_date = datetime.now(timezone.utc) + timedelta(days=30)
+                        await conn.execute("""
+                            UPDATE auto_renewal_settings 
+                            SET next_renewal_date = ?, failures_count = 0, 
+                                last_renewal_attempt = CURRENT_TIMESTAMP 
+                            WHERE user_id = ?
+                        """, (next_date, user_id))
+                    else:
+                        # Записываем неудачную попытку
+                        await conn.execute("""
+                            UPDATE auto_renewal_settings 
+                            SET failures_count = failures_count + 1, 
+                                last_renewal_attempt = CURRENT_TIMESTAMP 
+                            WHERE user_id = ?
+                        """, (user_id,))
+                        
+                        # Если 3 неудачные попытки - отключаем автопродление
+                        cursor = await conn.execute(
+                            "SELECT failures_count FROM auto_renewal_settings WHERE user_id = ?",
+                            (user_id,)
+                        )
+                        failures = await cursor.fetchone()
+                        if failures and failures[0] >= 3:
+                            await self.disable_auto_renewal(user_id)
+                            # Уведомляем пользователя
+                            return False
+                    
+                    await conn.commit()
+                    return success
+                    
+                return True
+                
+        except Exception as e:
+            logger.error(f"Error processing auto-renewal: {e}")
+            return False
+    
+    async def _process_recurrent_payment(self, user_id: int, recurrent_token: str, 
+                                        plan_id: str, amount: int) -> bool:
+        """Обрабатывает рекуррентный платеж через Tinkoff API."""
+        try:
+            from .tinkoff_api import TinkoffAPI
+            
+            api = TinkoffAPI()
+            
+            # Создаем рекуррентный платеж
+            payment_data = {
+                'Amount': amount * 100,  # В копейках
+                'OrderId': f"AUTO_{user_id}_{datetime.now().timestamp()}",
+                'Description': f'Автопродление подписки {plan_id}',
+                'CustomerKey': str(user_id),
+                'Recurrent': 'Y',
+                'RebillId': recurrent_token
+            }
+            
+            result = await api.init_recurrent_payment(payment_data)
+            
+            if result.get('Success'):
+                payment_id = result.get('PaymentId')
+                
+                # Подтверждаем платеж
+                confirm_result = await api.confirm_payment(payment_id)
+                
+                if confirm_result.get('Status') == 'CONFIRMED':
+                    # Активируем подписку
+                    await self.activate_subscription(
+                        f"AUTO_{user_id}_{datetime.now().timestamp()}",
+                        user_id,
+                        plan_id
+                    )
+                    return True
+            
+            return False
+            
+        except Exception as e:
+            logger.error(f"Recurrent payment error: {e}")
+            return False
+    
+    # ============= УВЕДОМЛЕНИЯ =============
+    
+    async def get_expiring_subscriptions(self, days_before: int) -> List[Dict]:
+        """Получает список подписок, истекающих через указанное количество дней."""
+        try:
+            check_date = datetime.now(timezone.utc) + timedelta(days=days_before)
+            check_date_start = check_date.replace(hour=0, minute=0, second=0, microsecond=0)
+            check_date_end = check_date.replace(hour=23, minute=59, second=59, microsecond=999999)
+            
+            async with aiosqlite.connect(self.database_file) as conn:
+                conn.row_factory = aiosqlite.Row
+                
+                if self.subscription_mode == 'modular':
+                    # Для модульной системы
+                    cursor = await conn.execute("""
+                        SELECT DISTINCT user_id, MIN(expires_at) as expires_at, 
+                               GROUP_CONCAT(module_code) as modules
+                        FROM module_subscriptions
+                        WHERE is_active = 1 
+                        AND expires_at BETWEEN ? AND ?
+                        GROUP BY user_id
+                    """, (check_date_start, check_date_end))
+                else:
+                    # Для единой системы
+                    cursor = await conn.execute("""
+                        SELECT user_id, plan_id, expires_at
+                        FROM user_subscriptions
+                        WHERE status = 'active'
+                        AND expires_at BETWEEN ? AND ?
+                    """, (check_date_start, check_date_end))
+                
+                results = await cursor.fetchall()
+                return [dict(row) for row in results]
+                
+        except Exception as e:
+            logger.error(f"Error getting expiring subscriptions: {e}")
+            return []
+    
+    async def has_notification_sent(self, user_id: int, notification_type: str, 
+                                   subscription_end: datetime) -> bool:
+        """Проверяет, было ли уже отправлено уведомление."""
+        try:
+            async with aiosqlite.connect(self.database_file) as conn:
+                cursor = await conn.execute("""
+                    SELECT 1 FROM subscription_notifications
+                    WHERE user_id = ? 
+                    AND notification_type = ?
+                    AND DATE(subscription_end_date) = DATE(?)
+                """, (user_id, notification_type, subscription_end))
+                
+                return await cursor.fetchone() is not None
+                
+        except Exception as e:
+            logger.error(f"Error checking notification: {e}")
+            return False
+    
+    async def mark_notification_sent(self, user_id: int, notification_type: str, 
+                                    subscription_end: datetime):
+        """Отмечает уведомление как отправленное."""
+        try:
+            async with aiosqlite.connect(self.database_file) as conn:
+                await conn.execute("""
+                    INSERT OR IGNORE INTO subscription_notifications
+                    (user_id, notification_type, subscription_end_date)
+                    VALUES (?, ?, ?)
+                """, (user_id, notification_type, subscription_end))
+                await conn.commit()
+                
+        except Exception as e:
+            logger.error(f"Error marking notification: {e}")
+
+    async def _activate_unified_subscription(self, user_id: int, plan_id: str, 
+                                                 payment_id: str, duration_months: int = 1):
+        """Расширенная активация единой подписки с учетом срока."""
+        from datetime import datetime, timedelta, timezone
+        
+        duration_days = 30 * duration_months
+        expires_at = datetime.now(timezone.utc) + timedelta(days=duration_days)
+        
+        async with aiosqlite.connect(self.database_file) as conn:
+            # Проверяем существующую активную подписку
+            cursor = await conn.execute(
+                """
+                SELECT expires_at FROM user_subscriptions 
+                WHERE user_id = ? AND status = 'active'
+                """,
+                (user_id,)
+            )
+            existing = await cursor.fetchone()
+            
+            if existing:
+                existing_expires = datetime.fromisoformat(existing[0])
+                if existing_expires > datetime.now(timezone.utc):
+                    # Продлеваем от существующей даты
+                    expires_at = existing_expires + timedelta(days=duration_days)
+                
+                # Деактивируем старую подписку
+                await conn.execute(
+                    "UPDATE user_subscriptions SET status = 'replaced' WHERE user_id = ? AND status = 'active'",
+                    (user_id,)
+                )
+            
+            # Создаем новую запись о подписке
+            await conn.execute(
+                """
+                INSERT INTO user_subscriptions 
+                (user_id, plan_id, payment_id, status, expires_at, activated_at)
+                VALUES (?, ?, ?, 'active', ?, ?)
+                """,
+                (user_id, plan_id, payment_id, expires_at, datetime.now(timezone.utc))
+            )
+            await conn.commit()
+            logger.info(f"Unified subscription activated for {duration_months} months until {expires_at}")
+
+    
+    async def _activate_modular_subscription(self, user_id: int, plan_id: str, 
+                                                 payment_id: str, duration_months: int = 1):
+        """Расширенная активация модульной подписки с учетом срока."""
+        from datetime import datetime, timedelta, timezone
+        from .config import SUBSCRIPTION_PLANS
+        
+        plan = SUBSCRIPTION_PLANS.get(plan_id)
+        if not plan:
+            raise ValueError(f"Unknown plan: {plan_id}")
+        
+        modules = plan.get('modules', [])
+        duration_days = 30 * duration_months
+        expires_at = datetime.now(timezone.utc) + timedelta(days=duration_days)
+        
+        async with aiosqlite.connect(self.database_file) as conn:
+            for module_code in modules:
+                # Проверяем существующую подписку
                 cursor = await conn.execute(
                     """
                     SELECT expires_at FROM module_subscriptions 
@@ -724,138 +1305,34 @@ class SubscriptionManager:
                 existing = await cursor.fetchone()
                 
                 if existing:
-                    # Если подписка уже есть, продлеваем её
                     existing_expires = datetime.fromisoformat(existing[0])
-                    
-                    # Если текущая подписка еще активна, добавляем время к ней
                     if existing_expires > datetime.now(timezone.utc):
-                        new_expires = existing_expires + timedelta(days=30)
-                        logger.info(f"Extending existing subscription for {module_code} to {new_expires}")
+                        # Продлеваем от существующей даты
+                        new_expires = existing_expires + timedelta(days=duration_days)
                     else:
-                        # Если истекла, начинаем с текущего момента
-                        new_expires = datetime.now(timezone.utc) + timedelta(days=30)
-                        logger.info(f"Renewing expired subscription for {module_code}")
+                        new_expires = expires_at
                     
-                    # Обновляем существующую запись
                     await conn.execute(
                         """
                         UPDATE module_subscriptions 
-                        SET expires_at = ?, plan_id = ?, is_active = 1
+                        SET expires_at = ?, plan_id = ?, updated_at = CURRENT_TIMESTAMP 
                         WHERE user_id = ? AND module_code = ?
                         """,
                         (new_expires, plan_id, user_id, module_code)
                     )
                 else:
                     # Создаем новую подписку
-                    new_expires = datetime.now(timezone.utc) + timedelta(days=30)
-                    
-                    # Сначала деактивируем старые неактивные записи
-                    await conn.execute(
-                        """
-                        DELETE FROM module_subscriptions 
-                        WHERE user_id = ? AND module_code = ? AND is_active = 0
-                        """,
-                        (user_id, module_code)
-                    )
-                    
-                    # Вставляем новую запись
                     await conn.execute(
                         """
                         INSERT INTO module_subscriptions 
                         (user_id, module_code, plan_id, expires_at, is_active, created_at)
                         VALUES (?, ?, ?, ?, 1, CURRENT_TIMESTAMP)
                         """,
-                        (user_id, module_code, plan_id, new_expires)
+                        (user_id, module_code, plan_id, expires_at)
                     )
-                    logger.info(f"Created new subscription for {module_code} until {new_expires}")
-                
-                logger.info(f"✅ Module {module_code} activated for user {user_id}")
             
             await conn.commit()
-            logger.info(f"All modules activated for user {user_id}")
-    
-    async def _activate_unified_subscription(self, user_id: int, plan_id: str, payment_id: str):
-        """Активация единой подписки - ИСПРАВЛЕННАЯ версия."""
-        expires_at = get_subscription_end_date(plan_id)
-        
-        async with aiosqlite.connect(DATABASE_FILE) as conn:
-            # Используем правильную таблицу user_subscriptions
-            await conn.execute(
-                """
-                INSERT INTO user_subscriptions 
-                (user_id, plan_id, payment_id, status, expires_at, activated_at)
-                VALUES (?, ?, ?, 'active', ?, ?)
-                """,
-                (user_id, plan_id, payment_id, expires_at, datetime.now(timezone.utc))
-            )
-            await conn.commit()
-            logger.info(f"Unified subscription activated for user {user_id}, plan {plan_id}")
-    
-    async def _activate_modular_subscription(self, user_id: int, plan_id: str, payment_id: str):
-        """Активация модульной подписки для предопределенных планов."""
-        from datetime import datetime, timezone
-        from .config import SUBSCRIPTION_PLANS, get_subscription_end_date
-        
-        logger.info(f"Activating modular subscription for user {user_id}, plan {plan_id}")
-        
-        # Проверяем только предопределенные планы
-        plan = SUBSCRIPTION_PLANS.get(plan_id)
-        if not plan:
-            logger.error(f"Unknown plan: {plan_id}")
-            raise ValueError(f"Unknown plan: {plan_id}")
-        
-        modules = plan.get('modules', [])
-        logger.info(f"Plan {plan_id} includes modules: {modules}")
-        
-        expires_at = get_subscription_end_date(plan_id)
-        is_trial = plan.get('type') == 'trial'
-        now = datetime.now(timezone.utc)
-        
-        async with aiosqlite.connect(DATABASE_FILE) as conn:
-            # Если это пробный период, проверяем историю
-            if is_trial:
-                cursor = await conn.execute(
-                    "SELECT 1 FROM trial_history WHERE user_id = ?",
-                    (user_id,)
-                )
-                if await cursor.fetchone():
-                    raise ValueError("Trial already used")
-                
-                # Записываем использование триала
-                await conn.execute(
-                    """
-                    INSERT INTO trial_history (user_id, trial_activated_at, trial_expires_at)
-                    VALUES (?, ?, ?)
-                    """,
-                    (user_id, now, expires_at)
-                )
-            
-            # Активируем модули
-            for module_code in modules:
-                # Деактивируем старые подписки на этот модуль
-                await conn.execute(
-                    """
-                    UPDATE module_subscriptions 
-                    SET is_active = 0 
-                    WHERE user_id = ? AND module_code = ?
-                    """,
-                    (user_id, module_code)
-                )
-                
-                # Создаем новую подписку
-                await conn.execute(
-                    """
-                    INSERT INTO module_subscriptions 
-                    (user_id, module_code, plan_id, expires_at, is_active, created_at)
-                    VALUES (?, ?, ?, ?, 1, ?)
-                    """,
-                    (user_id, module_code, plan_id, expires_at, now)
-                )
-                
-                logger.info(f"Module {module_code} activated for user {user_id}")
-            
-            await conn.commit()
-            logger.info(f"Modular subscription activated: {len(modules)} modules")
+            logger.info(f"Modular subscription activated for {duration_months} months")
     
     async def has_used_trial(self, user_id: int) -> bool:
         """Проверяет, использовал ли пользователь пробный период."""

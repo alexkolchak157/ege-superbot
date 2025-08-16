@@ -255,6 +255,25 @@ def get_subscription_end_date(plan_id: str, months: int = 1) -> datetime:
         days = plan['duration_days'] * months
         return datetime.now(timezone.utc) + timedelta(days=days)
 
+def calculate_subscription_price(plan_id: str, months: int = 1, custom_plan_data: dict = None) -> int:
+    """Рассчитывает цену подписки с учетом срока и скидок."""
+    if plan_id.startswith('custom_') and custom_plan_data:
+        base_price = custom_plan_data.get('price_rub', 0)
+    else:
+        plan = SUBSCRIPTION_PLANS.get(plan_id) or MODULE_PLANS.get(plan_id)
+        if not plan:
+            raise ValueError(f"Unknown plan: {plan_id}")
+        base_price = plan['price_rub']
+    
+    # Применяем скидки для многомесячных подписок
+    if months in DURATION_DISCOUNTS:
+        multiplier = DURATION_DISCOUNTS[months]['multiplier']
+        total_price = int(base_price * multiplier)
+    else:
+        total_price = base_price * months
+    
+    return total_price * 100  # Возвращаем в копейках
+
 def get_plan_modules(plan_id: str) -> List[str]:
     """Возвращает список модулей для плана."""
     plan = SUBSCRIPTION_PLANS.get(plan_id)

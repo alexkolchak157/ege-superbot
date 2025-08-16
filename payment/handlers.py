@@ -1148,23 +1148,22 @@ async def handle_email_input(update: Update, context: ContextTypes.DEFAULT_TYPE)
     return CONFIRMING
 
 @safe_handler()
-async def handle_payment_confirmation(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обработка подтверждения платежа с правильной обработкой отмены."""
+async def handle_payment_confirmation_with_recurrent(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработка подтверждения платежа с опцией включения автопродления."""
     query = update.callback_query
     await query.answer()
     
-    # Обрабатываем отмену (теперь callback_data="cancel_payment")
     if query.data == "cancel_payment":
         context.user_data.pop('in_payment_process', None)
         await query.edit_message_text("❌ Оформление подписки отменено.")
         return ConversationHandler.END
     
-    # Если не отмена, то это подтверждение платежа
     user_id = update.effective_user.id
     plan_id = context.user_data['selected_plan']
     duration = context.user_data.get('duration_months', 1)
     email = context.user_data['user_email']
     is_trial = context.user_data.get('is_trial', False)
+    enable_auto_renewal = context.user_data.get('enable_auto_renewal', False)  
     
     # Получаем план
     if plan_id.startswith('custom_'):
@@ -1206,61 +1205,80 @@ async def handle_payment_confirmation(update: Update, context: ContextTypes.DEFA
         
         amount_kopecks = total_price * 100
     
-    # Создаем платеж
     try:
-        from payment.tinkoff import TinkoffPayment
-        tinkoff_payment = TinkoffPayment()
+        # Рассчитываем цену
+        total_price = calculate_subscription_price(plan_id, duration, plan if plan_id.startswith('custom_') else None)
         
         # Создаем уникальный order_id
-        from datetime import datetime
-        order_id = f"sub_{user_id}_{plan_id.replace('custom_', 'cst')}_{int(datetime.now().timestamp())}"
+        order_id = f"ORD_{user_id}_{int(datetime.now().timestamp())}"
         
-        # Создаем описание платежа
-        if is_trial:
-            description = f"Пробный период 7 дней"
+        # Подготавливаем метаданные
+        payment_metadata = {
+            'user_id': user_id,
+            'plan_id': plan_id,
+            'duration_months': duration,
+            'modules': modules_to_activate if plan_id.startswith('custom_') else None,
+            'is_trial': is_trial,
+            'enable_auto_renewal': enable_auto_renewal  # НОВОЕ
+        }
+        
+        # Сохраняем email
+        await subscription_manager.save_user_email(user_id, email)
+        
+        # Создаем запись о платеже
+        payment_info = await subscription_manager.create_payment(
+            user_id=user_id,
+            plan_id=plan_id,
+            amount_kopecks=total_price,
+            metadata=json.dumps(payment_metadata)
+        )
+        
+        # НОВОЕ: Используем рекуррентный API если нужно автопродление
+        if enable_auto_renewal:
+            from .tbank_recurrent import TBankRecurrentPayments
+            
+            tbank_api = TBankRecurrentPayments()
+            
+            # Инициализируем первичный платеж с Recurrent=Y
+            payment_result = await tbank_api.init_primary_payment(
+                order_id=order_id,
+                amount_kopecks=total_price,
+                customer_key=str(user_id),  # Используем user_id как CustomerKey
+                description=f"Подписка {plan['name']} на {duration} мес. с автопродлением",
+                user_email=email
+            )
         else:
-            description = f"Подписка: {plan['name']} на {duration} мес."
+            # Обычный платеж без рекуррентов
+            payment_result = await tinkoff_payment.create_payment(
+                order_id=order_id,
+                amount_kopecks=total_price,
+                description=f"Подписка {plan['name']} на {duration} мес.",
+                user_email=email
+            )
         
-        # Создаем платеж в Tinkoff
-        try:
-            payment_url, returned_order_id = await tinkoff_payment.create_payment(
-                amount_kopecks=amount_kopecks,
-                order_id=order_id,
-                description=description,
-                customer_email=email,
-                user_id=user_id,
-                bot_username=context.bot.username
-            )
+        if payment_result.get('success'):
+            payment_url = payment_result.get('payment_url')
             
-            # Используем возвращенный order_id
-            if returned_order_id != order_id:
-                logger.warning(f"Order ID mismatch: sent {order_id}, received {returned_order_id}")
-                order_id = returned_order_id
+            # Сохраняем payment_id
+            await subscription_manager.update_payment_id(order_id, payment_result.get('payment_id'))
             
-            # Сохраняем информацию о платеже
-            subscription_manager = context.bot_data.get('subscription_manager', SubscriptionManager())
-            
-            await subscription_manager.save_payment_info(
-                user_id=user_id,
-                order_id=order_id,
-                plan_id=plan_id,
-                amount=amount_kopecks // 100,  # Конвертируем обратно в рубли
-                email=email,
-                modules=modules_to_activate if plan_id.startswith('custom_') else None
-            )
-            
-            # Отправляем ссылку на оплату
-            text = f"""✅ <b>Платеж создан!</b>
+            text = f"""💳 <b>Переход к оплате</b>
 
-Нажмите кнопку ниже для перехода к оплате.
+План: {plan['name']}
+Срок: {duration} мес.
+{'🔄 Автопродление: включено' if enable_auto_renewal else ''}
+Сумма: {total_price // 100} ₽
+
+Сейчас вы будете перенаправлены на страницу оплаты Т-Банка.
 
 После успешной оплаты подписка будет активирована автоматически."""
             
-            keyboard = [
-                [InlineKeyboardButton("💳 Оплатить", url=payment_url)],
-                [InlineKeyboardButton("✅ Я оплатил", callback_data="check_payment")],
-                [InlineKeyboardButton("❌ Отмена", callback_data="cancel_payment")]
-            ]
+            keyboard = [[
+                InlineKeyboardButton("💳 Перейти к оплате", url=payment_url)
+            ]]
+            
+            if enable_auto_renewal:
+                text += "\n\n✅ После оплаты автопродление будет настроено автоматически."
             
             await query.edit_message_text(
                 text,
@@ -1268,44 +1286,22 @@ async def handle_payment_confirmation(update: Update, context: ContextTypes.DEFA
                 reply_markup=InlineKeyboardMarkup(keyboard)
             )
             
-            # Уведомляем админа если настроено
-            if PAYMENT_ADMIN_CHAT_ID:
-                admin_text = f"""🆕 Новый платеж:
-                
-Пользователь: {update.effective_user.mention_html()}
-План: {plan['name']}
-Срок: {duration} мес.
-Сумма: {amount_kopecks // 100}₽
-Email: {email}"""
-                
-                try:
-                    await context.bot.send_message(
-                        PAYMENT_ADMIN_CHAT_ID,
-                        admin_text,
-                        parse_mode=ParseMode.HTML
-                    )
-                except Exception as e:
-                    logger.error(f"Failed to notify admin: {e}")
-                    
-        except Exception as payment_error:
-            logger.error(f"Payment creation failed: {payment_error}")
-            error_msg = str(payment_error)
+            # Очищаем флаг процесса оплаты
+            context.user_data.pop('in_payment_process', None)
+            return ConversationHandler.END
             
+        else:
+            error_msg = payment_result.get('error', 'Неизвестная ошибка')
             await query.edit_message_text(
-                f"❌ Ошибка создания платежа:\n{error_msg}\n\nПопробуйте позже или обратитесь к администратору.",
-                reply_markup=InlineKeyboardMarkup([[
-                    InlineKeyboardButton("🔄 Попробовать снова", callback_data="subscribe")
-                ]])
+                f"❌ Ошибка создания платежа: {error_msg}\n\n"
+                "Попробуйте позже или обратитесь в поддержку."
             )
-    
+            return ConversationHandler.END
+            
     except Exception as e:
         logger.error(f"Payment creation error: {e}")
-        await query.edit_message_text(
-            "❌ Произошла ошибка при создании платежа.\n\nПопробуйте позже."
-        )
-    
-    context.user_data.pop('in_payment_process', None)
-    return ConversationHandler.END
+        await query.edit_message_text("❌ Ошибка создания платежа. Попробуйте позже.")
+        return ConversationHandler.END
 
 async def cancel_payment(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Отмена процесса оплаты."""
@@ -1320,6 +1316,57 @@ async def cancel_payment(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     return ConversationHandler.END
 
+@safe_handler()
+async def ask_auto_renewal(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Спрашивает пользователя о включении автопродления."""
+    query = update.callback_query
+    await query.answer()
+    
+    text = """🔄 <b>Настройка автопродления</b>
+
+Хотите включить автоматическое продление подписки?
+
+✅ <b>Преимущества автопродления:</b>
+• Не нужно помнить о дате окончания
+• Непрерывный доступ к материалам
+• Можно отключить в любой момент
+• Уведомления за 3 дня до списания
+
+⚠️ Средства будут списываться автоматически каждый месяц с привязанной карты."""
+    
+    keyboard = [
+        [
+            InlineKeyboardButton("✅ Включить автопродление", 
+                               callback_data="enable_auto_renewal_payment"),
+            InlineKeyboardButton("❌ Без автопродления", 
+                               callback_data="disable_auto_renewal_payment")
+        ]
+    ]
+    
+    await query.edit_message_text(
+        text,
+        parse_mode=ParseMode.HTML,
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
+    
+    return CONFIRMING
+
+
+@safe_handler()
+async def handle_auto_renewal_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обрабатывает выбор автопродления при оплате."""
+    query = update.callback_query
+    await query.answer()
+    
+    if query.data == "enable_auto_renewal_payment":
+        context.user_data['enable_auto_renewal'] = True
+        await query.answer("✅ Автопродление будет включено после оплаты")
+    else:
+        context.user_data['enable_auto_renewal'] = False
+        await query.answer("Автопродление не будет включено")
+    
+    # Переходим к подтверждению платежа
+    return await handle_payment_confirmation_with_recurrent(update, context)
 
 @safe_handler()
 async def cmd_my_subscriptions(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1667,19 +1714,25 @@ def register_payment_handlers(app: Application):
                 MessageHandler(filters.TEXT & ~filters.COMMAND, handle_email_input)
             ],
             CONFIRMING: [
-                CallbackQueryHandler(handle_payment_confirmation, pattern="^confirm_payment$"),
-                CallbackQueryHandler(handle_payment_confirmation, pattern="^cancel_payment$")  # Обрабатываем отмену через ту же функцию
+                # НОВОЕ: Добавляем обработку выбора автопродления
+                CallbackQueryHandler(ask_auto_renewal, pattern="^confirm_payment$"),
+                CallbackQueryHandler(handle_auto_renewal_choice, 
+                                   pattern="^(enable|disable)_auto_renewal_payment$"),
+                CallbackQueryHandler(handle_payment_confirmation_with_recurrent, 
+                                   pattern="^final_confirm_payment$"),
+                CallbackQueryHandler(cancel_payment, pattern="^cancel_payment$")
             ]
         },
         fallbacks=[
             CommandHandler("cancel", cancel_payment),
             CallbackQueryHandler(cancel_payment, pattern="^pay_cancel$"),
-            CallbackQueryHandler(cancel_payment, pattern="^cancel_payment$"),  # Добавлен обработчик для cancel_payment
             CallbackQueryHandler(handle_my_subscriptions, pattern="^my_subscriptions$")
         ],
         allow_reentry=True,
-        per_message=False  # Убираем предупреждение
-        )
+        per_message=False
+    )
+    
+    app.add_handler(payment_conv, group=-50)
     app.add_handler(
         CallbackQueryHandler(
             check_payment_status,

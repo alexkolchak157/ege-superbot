@@ -52,6 +52,35 @@ async def init_payment_module(app: Application):
     # Регистрируем middleware для проверки подписок
     setup_subscription_middleware(app)
     
+    # Пробуем импортировать и регистрировать обработчики автопродления
+    try:
+        from .auto_renewal_handlers import register_auto_renewal_handlers
+        register_auto_renewal_handlers(app)
+        logger.info("Auto-renewal handlers registered")
+    except ImportError as e:
+        logger.warning(f"Auto-renewal handlers not available: {e}")
+    except Exception as e:
+        logger.error(f"Error registering auto-renewal handlers: {e}")
+    
+    # Пробуем запустить планировщик (если доступен)
+    try:
+        from .scheduler import SubscriptionScheduler
+        subscription_scheduler = SubscriptionScheduler(app.bot, subscription_manager)
+        subscription_scheduler.start()
+        app.bot_data['subscription_scheduler'] = subscription_scheduler
+        
+        # Добавляем остановку планировщика при завершении
+        async def shutdown_scheduler():
+            if 'subscription_scheduler' in app.bot_data:
+                app.bot_data['subscription_scheduler'].stop()
+        
+        app.post_shutdown.append(shutdown_scheduler)
+        logger.info("Subscription scheduler initialized")
+    except ImportError:
+        logger.info("Subscription scheduler not available (scheduler.py not found)")
+    except Exception as e:
+        logger.error(f"Error initializing subscription scheduler: {e}")
+    
     # ИСПРАВЛЕНИЕ: Передаем объект бота в webhook сервер
     webhook_task = asyncio.create_task(start_webhook_server(bot=app.bot))
     
