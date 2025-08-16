@@ -337,7 +337,7 @@ async def show_main_menu_with_access(context: ContextTypes.DEFAULT_TYPE, user_id
     
     # Добавляем дополнительные кнопки
     buttons.extend([
-        [InlineKeyboardButton("💳 Моя подписка", callback_data="my_subscription")],
+        [InlineKeyboardButton("💳 Моя подписка", callback_data="my_subscriptions")],  # ИСПРАВЛЕНО: с 's'
         #[InlineKeyboardButton("⚙️ Настройки", callback_data="settings")]
     ])
     
