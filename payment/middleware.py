@@ -191,8 +191,12 @@ class SubscriptionMiddleware:
         
         return True
     
-    def _is_free_action(self, update: Update) -> bool:
-        """Проверяет, является ли действие бесплатным"""
+    def _is_free_action(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
+        """Проверяет, является ли действие бесплатным."""
+        
+        # Добавляем проверку для пользователей в процессе оплаты
+        if context and context.user_data.get('in_payment_process'):
+            return True
         # Проверяем команды
         if update.message and update.message.text:
             # Извлекаем команду без /
@@ -437,8 +441,12 @@ def setup_subscription_middleware(
         'module_info_', 'duration_', 'back_to_',
         'check_subscription', 'support_', 'settings_',
         
-        # ВАЖНО: my_subscription уже добавлен в список!
-        'my_subscription',
+        # Паттерны для подписки
+        'my_subscription', 'subscribe_start',
+        
+        # ДОБАВИТЬ: паттерны для выбора модулей
+        'toggle_', 'info_', 'proceed_with_modules',
+        'pay_individual_modules', 'pay_package_',
         
         # Админские паттерны
         'admin_', 'broadcast_', 'stats_', 'test_',

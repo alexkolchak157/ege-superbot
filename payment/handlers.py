@@ -9,6 +9,7 @@ from telegram import (
     InlineKeyboardMarkup, 
     Update,
 )
+from telegram.error import BadRequest
 from telegram.constants import ParseMode
 from telegram.ext import (
     Application,
@@ -139,15 +140,36 @@ async def show_unified_plans(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
 
 async def show_modular_interface(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Показывает модульный интерфейс выбора подписки."""
+    """Показывает модульный интерфейс подписок."""
     # Определяем источник вызова
     if update.callback_query:
         query = update.callback_query
         await query.answer()
-        edit_func = query.edit_message_text
+        
+        # ДОБАВЛЕНО: Проверка, не показываем ли мы уже эту страницу
+        current_message = query.message.text if query.message else None
+        
+        # Функция для безопасного редактирования
+        async def safe_edit_message(text, reply_markup):
+            try:
+                await query.edit_message_text(
+                    text,
+                    parse_mode=ParseMode.HTML,
+                    reply_markup=reply_markup
+                )
+            except telegram.error.BadRequest as e:
+                if "Message is not modified" not in str(e):
+                    raise
+                # Если сообщение не изменилось, ничего не делаем
+                
+        edit_func = safe_edit_message
     else:
         # Вызов из команды /subscribe
-        edit_func = update.message.reply_text
+        edit_func = lambda text, reply_markup: update.message.reply_text(
+            text, 
+            parse_mode=ParseMode.HTML, 
+            reply_markup=reply_markup
+        )
     
     user_id = update.effective_user.id
     subscription_manager = context.bot_data.get('subscription_manager', SubscriptionManager())
@@ -1188,8 +1210,17 @@ async def handle_my_subscriptions(update: Update, context: ContextTypes.DEFAULT_
         modules = await subscription_manager.get_user_modules(user_id)
         
         if not modules:
-            text = "📋 <b>Мои подписки</b>\n\nУ вас нет активных подписок.\n\nВыберите подходящий план:"
+            # Для пользователей без подписки
+            try:
+                await show_modular_interface(update, context)
+            except telegram.error.BadRequest as e:
+                if "Message is not modified" in str(e):
+                    await query.answer("Вы уже находитесь на странице выбора подписки", show_alert=False)
+                else:
+                    raise
+            return
         else:
+            # ИСПРАВЛЕНИЕ: Для пользователей с подпиской тоже обрабатываем ошибку
             text = "📋 <b>Ваши активные модули:</b>\n\n"
             module_names = {
                 'test_part': '📝 Тестовая часть',
@@ -1203,7 +1234,7 @@ async def handle_my_subscriptions(update: Update, context: ContextTypes.DEFAULT_
                 expires = module['expires_at'].strftime('%d.%m.%Y')
                 text += f"{name}\n└ Действует до: {expires}\n\n"
             
-            # ДОБАВЛЕНО: детали доступа
+            # Детали доступа
             text += "📊 <b>Детали доступа:</b>\n"
             all_modules = ['test_part', 'task19', 'task20', 'task24', 'task25']
             for module_code in all_modules:
@@ -1211,33 +1242,26 @@ async def handle_my_subscriptions(update: Update, context: ContextTypes.DEFAULT_
                 status = "✅" if has_access else "❌"
                 module_name = module_names.get(module_code, module_code)
                 text += f"   {status} {module_name}\n"
-    else:
-        subscription = await subscription_manager.check_active_subscription(user_id)
-        if subscription:
-            plan = SUBSCRIPTION_PLANS.get(subscription['plan_id'], {})
-            expires = subscription['expires_at'].strftime('%d.%m.%Y')
-            text = f"""✅ <b>Активная подписка</b>
-
-План: {plan.get('name', 'Подписка')}
-Действует до: {expires}"""
-        else:
-            text = "У вас нет активной подписки."
-    
-    keyboard = [
-        [InlineKeyboardButton("🔄 Оформить/Продлить", callback_data="subscribe")]
-    ]
-    
-    # ИСПРАВЛЕНО: Используем правильный callback для главного меню
-    keyboard.append([
-        InlineKeyboardButton("🏠 Главное меню", callback_data="main_menu")
-    ])
-    
-    await query.edit_message_text(
-        text,
-        parse_mode=ParseMode.HTML,
-        reply_markup=InlineKeyboardMarkup(keyboard)
-    )
-    return ConversationHandler.END
+            
+            # Кнопки
+            keyboard = [
+                [InlineKeyboardButton("🔄 Продлить/Добавить модули", callback_data="subscribe")],
+                [InlineKeyboardButton("🏠 Главное меню", callback_data="to_main_menu")]
+            ]
+            
+            # ИСПРАВЛЕНИЕ: Обрабатываем ошибку редактирования
+            try:
+                await query.edit_message_text(
+                    text,
+                    parse_mode=ParseMode.HTML,
+                    reply_markup=InlineKeyboardMarkup(keyboard)
+                )
+            except telegram.error.BadRequest as e:
+                if "Message is not modified" in str(e):
+                    # Сообщение уже показывает информацию о подписке
+                    await query.answer("Информация о вашей подписке", show_alert=False)
+                else:
+                    raise
     
 @safe_handler()
 async def handle_back_to_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
