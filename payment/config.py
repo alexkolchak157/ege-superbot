@@ -192,8 +192,9 @@ MODULE_PLANS = {
 # Длительность подписок со скидками
 DURATION_DISCOUNTS = {
     1: {'multiplier': 1.0, 'label': '1 месяц'},
-    3: {'multiplier': 2.7, 'label': '3 месяца (-10%)'},  # 10% скидка
-    6: {'multiplier': 4.8, 'label': '6 месяцев (-20%)'}  # 20% скидка
+    3: {'multiplier': 2.7, 'label': '3 месяца'},
+    6: {'multiplier': 5.0, 'label': '6 месяцев'},
+    12: {'multiplier': 9.0, 'label': '12 месяцев'}
 }
 
 # Выбираем активную систему планов
