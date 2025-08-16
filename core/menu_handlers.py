@@ -4,6 +4,7 @@
 from telegram import Update
 from telegram.ext import ContextTypes, ConversationHandler, CallbackQueryHandler
 import logging
+from telegram.error import BadRequest
 
 logger = logging.getLogger(__name__)
 
@@ -22,12 +23,11 @@ async def handle_to_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE
 Используйте кнопки ниже для навигации:
 """
         
-        # Используем функцию с проверкой доступа
+        # Получаем клавиатуру меню
         try:
             from core.app import show_main_menu_with_access
             kb = await show_main_menu_with_access(context, user_id)
         except ImportError:
-            # Если функция еще не добавлена, используем стандартное меню
             try:
                 from core.plugin_loader import build_main_menu
                 kb = build_main_menu()
@@ -35,6 +35,7 @@ async def handle_to_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE
                 logger.error(f"Could not import menu builder: {e}")
                 kb = None
         
+        # Пытаемся отредактировать сообщение
         try:
             if kb:
                 await query.edit_message_text(
@@ -47,23 +48,42 @@ async def handle_to_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE
                     welcome_text,
                     parse_mode="HTML"
                 )
-        except Exception as e:
-            # Если не удалось отредактировать, отправляем новое сообщение
-            logger.debug(f"Could not edit message in handle_to_main_menu: {e}")
-            try:
+        except BadRequest as e:
+            # Проверяем тип ошибки
+            error_message = str(e).lower()
+            
+            # Если сообщение не изменилось - просто игнорируем
+            if "message is not modified" in error_message:
+                logger.debug("Message is not modified, skipping update")
+                pass
+            # Если сообщение слишком старое для редактирования
+            elif "message to edit not found" in error_message or "message can't be edited" in error_message:
+                logger.debug("Message too old or can't be edited, sending new one")
+                # Только в этом случае удаляем и отправляем новое
+                try:
+                    await query.message.delete()
+                except:
+                    pass
+                
                 if kb:
-                    await query.message.reply_text(
+                    await query.message.chat.send_message(
                         welcome_text, 
                         reply_markup=kb,
                         parse_mode="HTML"
                     )
                 else:
-                    await query.message.reply_text(
+                    await query.message.chat.send_message(
                         welcome_text,
                         parse_mode="HTML"
                     )
-            except Exception as e2:
-                logger.error(f"Could not send message: {e2}")
+            else:
+                # Неизвестная ошибка - логируем
+                logger.error(f"Unknown BadRequest error: {e}")
+        except Exception as e:
+            # Другие ошибки
+            logger.error(f"Unexpected error in handle_to_main_menu: {e}")
+    
+    return ConversationHandler.END
     
     # === ГЛАВНОЕ ИСПРАВЛЕНИЕ: НЕ ОЧИЩАЕМ context.user_data.clear()! ===
     

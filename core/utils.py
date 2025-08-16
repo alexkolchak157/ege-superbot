@@ -91,6 +91,57 @@ async def check_subscription(
     
     return False
 
+async def safe_menu_transition(query, text, keyboard, parse_mode="HTML"):
+    """
+    Безопасный переход между меню без моргания.
+    
+    Args:
+        query: CallbackQuery объект
+        text: Текст для отображения
+        keyboard: InlineKeyboardMarkup клавиатура
+        parse_mode: Режим парсинга (по умолчанию HTML)
+    
+    Returns:
+        bool: True если успешно обновлено, False если произошла ошибка
+    """
+    try:
+        await query.edit_message_text(
+            text,
+            reply_markup=keyboard,
+            parse_mode=parse_mode
+        )
+        return True
+    except BadRequest as e:
+        error_msg = str(e).lower()
+        
+        # Если сообщение не изменилось - это нормально, просто возвращаем успех
+        if "message is not modified" in error_msg:
+            logger.debug("Message unchanged, skipping edit")
+            return True
+            
+        # Если сообщение слишком старое или удалено
+        elif "message to edit not found" in error_msg or "message can't be edited" in error_msg:
+            logger.debug("Message can't be edited, sending new one")
+            try:
+                # Пытаемся удалить старое сообщение
+                await query.message.delete()
+            except:
+                pass
+            
+            # Отправляем новое
+            await query.message.chat.send_message(
+                text,
+                reply_markup=keyboard,
+                parse_mode=parse_mode
+            )
+            return True
+        else:
+            logger.error(f"Unknown BadRequest in safe_menu_transition: {e}")
+            return False
+    except Exception as e:
+        logger.error(f"Unexpected error in safe_menu_transition: {e}")
+        return False
+
 async def send_subscription_required(
     query_or_update: Union[Update, any],
     channel: Optional[str] = None,
