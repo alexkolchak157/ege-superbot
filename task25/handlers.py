@@ -4,7 +4,7 @@ import io
 import csv
 import json
 import random
-from typing import Optional, Dict, List, Any
+from typing import Dict, List, Optional, Any, Tuple
 from datetime import datetime
 from core.document_processor import DocumentHandlerMixin
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
@@ -66,107 +66,86 @@ except ImportError as e:
     logger.error(f"Failed to import utils: {e}")
     TopicSelector = None
 
+def check_data_loaded():
+    """Проверяет загрузку данных."""
+    global task25_data
+    if not task25_data or not task25_data.get('topics'):
+        logger.error("task25_data is empty or not loaded!")
+        return False
+    return True
+
 async def init_task25_data():
     """Инициализация данных для задания 25."""
     global task25_data, evaluator, topic_selector
     
-    # Проверяем кэш
-    if cache:
-        cached_data = await cache.get('task25_data')
-        if cached_data:
-            # Проверяем, что данные действительно загружены и корректны
-            if (isinstance(cached_data, dict) and 
-                'topics' in cached_data and 
-                cached_data['topics']):  # Проверяем, что topics не пустой
-                
-                task25_data = cached_data
-                if TopicSelector:
-                    topic_selector = TopicSelector(task25_data['topics'])
-                logger.info(f"Loaded task25 data from cache: {len(task25_data['topics'])} topics")
-                
-                # Инициализируем evaluator после загрузки данных
-                _init_evaluator()
-                return
-            else:
-                logger.warning("Cached data is invalid, loading from file")
-                # Удаляем невалидный кэш
-                await cache.delete('task25_data')
+    logger.info("Starting init_task25_data...")
     
-    # Загружаем из файла
+    # Путь к файлу
     data_file = os.path.join(os.path.dirname(__file__), "task25_topics.json")
     
     try:
         with open(data_file, "r", encoding="utf-8") as f:
-            raw = json.load(f)
+            topics_list = json.load(f)
         
-        # Проверяем формат данных
+        if not isinstance(topics_list, list):
+            logger.error(f"Invalid data format: expected list, got {type(topics_list)}")
+            topics_list = []
+        
+        # Обработка данных
         all_topics = []
         topic_by_id = {}
         topics_by_block = {}
         blocks = {}
         
-        # Если это список тем
-        if isinstance(raw, list):
-            for topic in raw:
-                if isinstance(topic, dict):
-                    # Генерируем ID если его нет
-                    if 'id' not in topic:
-                        topic['id'] = f"topic_{len(all_topics) + 1}"
-                    
-                    # Определяем блок если его нет
-                    if 'block' not in topic:
-                        topic['block'] = _determine_block(topic.get('title', ''))
-                    
-                    block_name = topic['block']
-                    
-                    # Добавляем в общий список
-                    all_topics.append(topic)
-                    topic_by_id[topic['id']] = topic
-                    
-                    # Группируем по блокам
-                    if block_name not in topics_by_block:
-                        topics_by_block[block_name] = []
-                        blocks[block_name] = {"name": block_name, "topics": []}
-                    
-                    topics_by_block[block_name].append(topic)
-                    blocks[block_name]["topics"].append(topic)
+        for topic in topics_list:
+            if not isinstance(topic, dict):
+                continue
+            
+            # Проверяем обязательные поля
+            if 'id' not in topic or 'title' not in topic:
+                continue
+            
+            # Блок
+            block_name = topic.get('block', 'Общие темы')
+            
+            # Добавляем в структуры
+            all_topics.append(topic)
+            topic_by_id[topic['id']] = topic
+            
+            if block_name not in topics_by_block:
+                topics_by_block[block_name] = []
+                blocks[block_name] = {"name": block_name, "topics": []}
+            
+            topics_by_block[block_name].append(topic)
+            blocks[block_name]["topics"].append(topic)
         
-        # Если данные не пустые, формируем итоговую структуру
-        if all_topics:
-            # Добавляем темы без блока в "Общие темы"
-            for topic in all_topics:
-                if not topic.get('block'):
-                    topic['block'] = "Общие темы"
-            
-            task25_data = {
-                "topics": all_topics,
-                "topic_by_id": topic_by_id,
-                "topics_by_block": topics_by_block,
-                "blocks": blocks
-            }
-            
-            # Создаём селектор если модуль доступен
-            if TopicSelector:
+        # Сохраняем данные
+        task25_data = {
+            "topics": all_topics,
+            "topic_by_id": topic_by_id,
+            "topics_by_block": topics_by_block,
+            "blocks": blocks
+        }
+        
+        # Статистика
+        topics_with_examples = len([t for t in all_topics if 'example_answers' in t])
+        logger.info(f"Loaded {len(all_topics)} topics, {topics_with_examples} with examples")
+        logger.info(f"Blocks: {list(topics_by_block.keys())}")
+        
+        # Инициализируем селектор если есть
+        if TopicSelector and all_topics:
+            try:
                 topic_selector = TopicSelector(all_topics)
-            
-            logger.info(f"Loaded {len(all_topics)} topics for task25")
-            logger.info(f"Blocks: {list(topics_by_block.keys())}")
-            
-            # Сохраняем в кэш только если данные валидны
-            if cache and all_topics:
-                await cache.set('task25_data', task25_data, ttl=86400)  # 24 часа
-        else:
-            logger.error("No topics found in data file")
-            task25_data = {"topics": [], "blocks": {}, "topics_by_block": {}}
-            
+            except Exception as e:
+                logger.warning(f"Failed to init TopicSelector: {e}")
+                topic_selector = None
+        
     except Exception as e:
-        logger.error(f"Failed to load task25 data: {e}", exc_info=True)
-        task25_data = {"topics": [], "blocks": {}, "topics_by_block": {}}
-        topic_selector = None
+        logger.error(f"Error loading task25 data: {e}", exc_info=True)
+        task25_data = {"topics": [], "topic_by_id": {}, "topics_by_block": {}, "blocks": {}}
     
-    # Инициализируем AI evaluator
+    # Инициализируем evaluator
     _init_evaluator()
-
 
 def _init_evaluator():
     """Инициализация AI evaluator."""
@@ -192,25 +171,24 @@ def _init_evaluator():
         evaluator = None
 
 def _determine_block(title: str) -> str:
-    """Определяет блок темы по ключевым словам в заголовке."""
+    """Определяет блок темы по названию."""
+    if not title:
+        return "Общие темы"
+    
     title_lower = title.lower()
     
-    # Ключевые слова для каждого блока
-    block_keywords = {
-        "Человек и общество": ["человек", "общество", "личность", "социализация", "культура", "мировоззрение"],
-        "Экономика": ["экономика", "рынок", "спрос", "предложение", "деньги", "банк", "предприятие", "бизнес"],
-        "Социальные отношения": ["семья", "социальная", "группа", "страта", "мобильность", "конфликт"],
-        "Политика": ["политика", "власть", "государство", "демократия", "выборы", "партия", "президент"],
-        "Право": ["право", "закон", "конституция", "суд", "преступление", "правонарушение", "юридическая"]
-    }
+    # Ключевые слова для определения блоков
+    if any(w in title_lower for w in ['человек', 'личность', 'общество', 'культур', 'мораль', 'познани']):
+        return "Человек и общество"
+    elif any(w in title_lower for w in ['экономик', 'рынок', 'деньг', 'предпринимат', 'бизнес', 'налог']):
+        return "Экономика"
+    elif any(w in title_lower for w in ['социальн', 'семь', 'группа', 'страт', 'класс', 'молодеж']):
+        return "Социальная сфера"
+    elif any(w in title_lower for w in ['политик', 'власть', 'государств', 'демократ', 'выбор', 'партии']):
+        return "Политика"
+    elif any(w in title_lower for w in ['прав', 'закон', 'юрид', 'суд', 'преступ', 'конституц']):
+        return "Право"
     
-    # Проверяем каждый блок
-    for block, keywords in block_keywords.items():
-        for keyword in keywords:
-            if keyword in title_lower:
-                return block
-    
-    # Если не удалось определить - возвращаем общий блок
     return "Общие темы"
 
 @safe_handler()
@@ -1097,27 +1075,51 @@ async def examples_by_block(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Примеры по блокам."""
     query = update.callback_query
     
+    if not check_data_loaded():
+        await query.answer("❌ Данные не загружены", show_alert=True)
+        await query.edit_message_text(
+            "❌ <b>Ошибка загрузки данных</b>\n\n"
+            "Попробуйте позже или обратитесь к администратору.",
+            parse_mode=ParseMode.HTML,
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("⬅️ Назад", callback_data="t25_examples")
+            ]])
+        )
+        return states.CHOOSING_MODE
+    
     blocks = task25_data.get("topics_by_block", {})
     
-    text = "📚 <b>Примеры по блокам</b>\n\nВыберите блок:"
-    buttons = []
+    # Фильтруем блоки с примерами
+    blocks_with_examples = {}
+    for block_name, topics in blocks.items():
+        topics_with_ex = [t for t in topics if 'example_answers' in t]
+        if topics_with_ex:
+            blocks_with_examples[block_name] = topics_with_ex
     
-    for block_name in blocks.keys():
-        buttons.append([InlineKeyboardButton(
-            block_name,
-            callback_data=f"t25_examples_block:{block_name}"
-        )])
+    if not blocks_with_examples:
+        text = "📚 <b>Примеры по блокам</b>\n\n"
+        text += "❌ В базе нет тем с примерами ответов.\n\n"
+        text += "<i>Администратор уведомлен о проблеме.</i>"
+        
+        kb = InlineKeyboardMarkup([[
+            InlineKeyboardButton("⬅️ Назад", callback_data="t25_examples")
+        ]])
+    else:
+        text = "📚 <b>Примеры по блокам</b>\n\n"
+        text += f"Найдено блоков: {len(blocks_with_examples)}\n\n"
+        text += "Выберите блок:"
+        
+        buttons = []
+        for block_name, topics in blocks_with_examples.items():
+            buttons.append([InlineKeyboardButton(
+                f"{block_name} ({len(topics)} тем)",
+                callback_data=f"t25_examples_block:{block_name}"
+            )])
+        
+        buttons.append([InlineKeyboardButton("⬅️ Назад", callback_data="t25_examples")])
+        kb = InlineKeyboardMarkup(buttons)
     
-    buttons.append([InlineKeyboardButton("⬅️ Назад", callback_data="t25_examples")])
-    
-    kb = InlineKeyboardMarkup(buttons)
-    
-    await query.edit_message_text(
-        text,
-        reply_markup=kb,
-        parse_mode=ParseMode.HTML
-    )
-    
+    await query.edit_message_text(text, reply_markup=kb, parse_mode=ParseMode.HTML)
     return states.CHOOSING_MODE
 
 
@@ -1126,43 +1128,57 @@ async def best_examples(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Показ лучших примеров."""
     query = update.callback_query
     
-    # Выбираем 5 случайных тем с примерами
+    if not check_data_loaded():
+        await query.answer("❌ Данные не загружены", show_alert=True)
+        await query.edit_message_text(
+            "❌ <b>Ошибка загрузки данных</b>\n\n"
+            "Попробуйте позже или обратитесь к администратору.",
+            parse_mode=ParseMode.HTML,
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("⬅️ Назад", callback_data="t25_examples")
+            ]])
+        )
+        return states.CHOOSING_MODE
+    
+    # Фильтруем темы с примерами
+    import random
     topics_with_examples = [
         t for t in task25_data.get('topics', [])
         if 'example_answers' in t
     ]
     
     if not topics_with_examples:
-        return states.CHOOSING_MODE
+        text = "⭐ <b>Лучшие примеры ответов</b>\n\n"
+        text += "❌ В базе пока нет тем с примерами.\n\n"
+        text += "<i>Администратор уведомлен о проблеме.</i>"
+        
+        kb = InlineKeyboardMarkup([[
+            InlineKeyboardButton("⬅️ Назад", callback_data="t25_examples")
+        ]])
+    else:
+        sample_topics = random.sample(
+            topics_with_examples,
+            min(5, len(topics_with_examples))
+        )
+        
+        text = "⭐ <b>Лучшие примеры ответов</b>\n\n"
+        text += f"Показано {len(sample_topics)} из {len(topics_with_examples)}:\n\n"
+        
+        buttons = []
+        for i, topic in enumerate(sample_topics, 1):
+            text += f"{i}. {topic.get('title', 'Без названия')[:50]}\n"
+            buttons.append([InlineKeyboardButton(
+                f"👁 Пример {i}",
+                callback_data=f"t25_show_example:{topic['id']}"
+            )])
+        
+        buttons.append([InlineKeyboardButton("🔄 Другие", callback_data="t25_best_examples")])
+        buttons.append([InlineKeyboardButton("⬅️ Назад", callback_data="t25_examples")])
+        
+        kb = InlineKeyboardMarkup(buttons)
     
-    sample_topics = random.sample(
-        topics_with_examples,
-        min(5, len(topics_with_examples))
-    )
-    
-    text = "⭐ <b>Лучшие примеры ответов</b>\n\n"
-    buttons = []
-    
-    for i, topic in enumerate(sample_topics, 1):
-        text += f"{i}. {topic['title']}\n"
-        buttons.append([InlineKeyboardButton(
-            f"👁 Пример {i}",
-            callback_data=f"t25_show_example:{topic['id']}"
-        )])
-    
-    buttons.append([InlineKeyboardButton("🔄 Другие примеры", callback_data="t25_best_examples")])
-    buttons.append([InlineKeyboardButton("⬅️ Назад", callback_data="t25_examples")])
-    
-    kb = InlineKeyboardMarkup(buttons)
-    
-    await query.edit_message_text(
-        text,
-        reply_markup=kb,
-        parse_mode=ParseMode.HTML
-    )
-    
+    await query.edit_message_text(text, reply_markup=kb, parse_mode=ParseMode.HTML)
     return states.CHOOSING_MODE
-
 
 @safe_handler()
 async def show_example(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1266,11 +1282,11 @@ async def show_example(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 @safe_handler()
-@validate_state_transition({states.ANSWERING})
 async def example_answers(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Примеры ответов в теории."""
+    """Примеры ответов в теории - вызывается из состояния CHOOSING_MODE."""
     query = update.callback_query
     
+    # Вызываем функцию best_examples для показа примеров
     return await best_examples(update, context)
 
 
@@ -1279,37 +1295,32 @@ async def common_mistakes(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Типичные ошибки."""
     query = update.callback_query
     
-    text = (
-        "⚠️ <b>Типичные ошибки в задании 25</b>\n\n"
-        
-        "❌ <b>Ошибки в обосновании (К1):</b>\n"
-        "• Одно предложение вместо развёрнутого ответа\n"
-        "• Отсутствие теоретической аргументации\n"
-        "• Подмена обоснования примером\n"
-        "• Нет причинно-следственных связей\n\n"
-        
-        "❌ <b>Ошибки в ответе (К2):</b>\n"
-        "• Неполный или уклончивый ответ\n"
-        "• Ответ не соответствует вопросу\n"
-        "• Забыли ответить на эту часть\n\n"
-        
-        "❌ <b>Ошибки в примерах (К3):</b>\n"
-        "• Абстрактные примеры без деталей\n"
-        "• Повторение одного примера\n"
-        "• Примеры не из жизни РФ (когда требуется)\n"
-        "• Менее трёх примеров\n"
-        "• Примеры не соответствуют заданию\n\n"
-        
-        "💡 <b>Как избежать:</b>\n"
-        "• Внимательно читайте ВСЕ части задания\n"
-        "• Структурируйте ответ по частям\n"
-        "• Проверяйте соответствие критериям\n"
-        "• Используйте черновик"
-    )
+    text = """⚠️ <b>Типичные ошибки в задании 25</b>
+
+<b>1. Обоснование (К1)</b>
+❌ Отсутствие теоретических понятий
+❌ Несоответствие обоснования вопросу
+❌ Использование бытовых рассуждений
+
+<b>2. Ответ на вопрос (К2)</b>
+❌ Неоднозначная формулировка
+❌ Противоречие с обоснованием
+❌ Отсутствие прямого ответа
+
+<b>3. Примеры (К3)</b>
+❌ Примеры из одной сферы жизни
+❌ Абстрактные примеры без деталей
+❌ Несоответствие примеров тезису
+
+<b>Как избежать ошибок:</b>
+✅ Внимательно читайте вопрос
+✅ Используйте обществоведческие термины
+✅ Приводите конкретные примеры с деталями
+✅ Проверяйте логическую связность"""
     
     kb = InlineKeyboardMarkup([
-        [InlineKeyboardButton("📝 Примеры хороших ответов", callback_data="t25_example_answers")],
-        [InlineKeyboardButton("⬅️ Назад", callback_data="t25_theory")]
+        [InlineKeyboardButton("📚 Примеры ответов", callback_data="t25_best_examples")],
+        [InlineKeyboardButton("⬅️ К теории", callback_data="t25_theory")]
     ])
     
     await query.edit_message_text(
@@ -1472,16 +1483,84 @@ async def show_example_topic(query, context: ContextTypes.DEFAULT_TYPE, topic_id
     )
 
 @safe_handler()
-@validate_state_transition({states.CHOOSING_MODE})
 async def handle_example_navigation(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Навигация по примерам ответов."""
     query = update.callback_query
     
-    _, _, topic_idx = query.data.split(":")
-    topic_idx = int(topic_idx)
+    # Извлекаем действие из callback_data
+    action = query.data.split(':')[1]
     
-    # Вызываем существующую функцию show_example_topic
-    await show_example_topic(query, context, topic_idx)
+    # Получаем текущий индекс примера
+    current_idx = context.user_data.get('example_index', 0)
+    topics_with_examples = [
+        t for t in task25_data.get('topics', [])
+        if 'example_answers' in t
+    ]
+    
+    if not topics_with_examples:
+        await query.answer("Нет доступных примеров", show_alert=True)
+        return states.CHOOSING_MODE
+    
+    # Обработка действий навигации
+    if action == 'next':
+        current_idx = (current_idx + 1) % len(topics_with_examples)
+    elif action == 'prev':
+        current_idx = (current_idx - 1) % len(topics_with_examples)
+    elif action == 'random':
+        current_idx = random.randint(0, len(topics_with_examples) - 1)
+    
+    # Сохраняем индекс
+    context.user_data['example_index'] = current_idx
+    
+    # Показываем пример
+    topic = topics_with_examples[current_idx]
+    
+    text = f"📚 <b>Пример {current_idx + 1} из {len(topics_with_examples)}</b>\n\n"
+    text += f"<b>Тема:</b> {topic['title']}\n"
+    text += f"<b>Блок:</b> {topic.get('block', 'Не указан')}\n"
+    text += f"{'─' * 30}\n\n"
+    
+    # Форматируем пример
+    if 'example_answers' in topic:
+        example = topic['example_answers']
+        
+        if 'part1' in example:
+            text += "<b>1. Обоснование:</b>\n"
+            text += f"{example['part1']}\n\n"
+        
+        if 'part2' in example:
+            text += "<b>2. Ответ на вопрос:</b>\n"
+            text += f"{example['part2']}\n\n"
+        
+        if 'part3' in example:
+            text += "<b>3. Примеры:</b>\n"
+            if isinstance(example['part3'], list):
+                for i, ex in enumerate(example['part3'], 1):
+                    if isinstance(ex, dict):
+                        text += f"{i}) {ex.get('type', 'Пример')}: {ex.get('example', ex)}\n"
+                    else:
+                        text += f"{i}) {ex}\n"
+            else:
+                text += f"{example['part3']}\n"
+    
+    # Кнопки навигации
+    kb = InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("⬅️", callback_data="t25_example_nav:prev"),
+            InlineKeyboardButton(f"{current_idx + 1}/{len(topics_with_examples)}", callback_data="t25_noop"),
+            InlineKeyboardButton("➡️", callback_data="t25_example_nav:next")
+        ],
+        [InlineKeyboardButton("🎲 Случайный", callback_data="t25_example_nav:random")],
+        [InlineKeyboardButton("📝 Попробовать эту тему", callback_data=f"t25_topic:{topic['id']}")],
+        [InlineKeyboardButton("⬅️ Назад", callback_data="t25_examples")]
+    ])
+    
+    await query.edit_message_text(
+        text,
+        reply_markup=kb,
+        parse_mode=ParseMode.HTML
+    )
+    
     return states.CHOOSING_MODE
 
 @safe_handler()
@@ -1809,7 +1888,8 @@ async def back_to_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def noop(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Пустой обработчик для неактивных кнопок."""
     query = update.callback_query
-    return states.CHOOSING_MODE
+    await query.answer()  # Просто подтверждаем нажатие без действий
+    return None  # Не меняем состояние
 
 @safe_handler()
 async def handle_noop(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -3227,7 +3307,6 @@ async def confirm_reset_progress(update: Update, context: ContextTypes.DEFAULT_T
 
 
 @safe_handler()
-@validate_state_transition({states.ANSWERING})
 async def show_example_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Показывает эталонный ответ для выбранной темы."""
     query = update.callback_query
@@ -3237,6 +3316,7 @@ async def show_example_answer(update: Update, context: ContextTypes.DEFAULT_TYPE
     topic = task25_data.get('topic_by_id', {}).get(int(topic_id))
     
     if not topic:
+        await query.answer("Тема не найдена", show_alert=True)
         return states.CHOOSING_MODE
     
     # Форматируем эталонный ответ
@@ -3249,28 +3329,59 @@ async def show_example_answer(update: Update, context: ContextTypes.DEFAULT_TYPE
         
         # Часть 1 - Обоснование
         if 'part1' in example:
-            text += "<b>1. Обоснование:</b>\n"
-            text += f"{example['part1']}\n\n"
+            text += "<b>1. Обоснование (2 балла):</b>\n"
+            if isinstance(example['part1'], dict):
+                text += f"{example['part1'].get('answer', example['part1'])}\n\n"
+            else:
+                text += f"{example['part1']}\n\n"
         
         # Часть 2 - Ответ
         if 'part2' in example:
-            text += "<b>2. Ответ на вопрос:</b>\n"
-            text += f"{example['part2']}\n\n"
+            text += "<b>2. Ответ на вопрос (1 балл):</b>\n"
+            if isinstance(example['part2'], dict):
+                text += f"{example['part2'].get('answer', example['part2'])}\n\n"
+            else:
+                text += f"{example['part2']}\n\n"
         
         # Часть 3 - Примеры
         if 'part3' in example:
-            text += "<b>3. Примеры:</b>\n"
-            for i, ex in enumerate(example['part3'], 1):
-                text += f"\n{i}) <i>{ex.get('type', 'Пример')}:</i>\n"
-                text += f"{ex['example']}\n"
+            text += "<b>3. Примеры (3 балла):</b>\n"
+            if isinstance(example['part3'], list):
+                for i, ex in enumerate(example['part3'], 1):
+                    if isinstance(ex, dict):
+                        text += f"\n{i}) <b>{ex.get('type', 'Пример')}:</b>\n"
+                        text += f"{ex.get('example', ex)}\n"
+                    else:
+                        text += f"\n{i}) {ex}\n"
+            else:
+                text += f"{example['part3']}\n"
     else:
         text += "<i>Эталонный ответ для этой темы пока не добавлен</i>"
     
-    kb = InlineKeyboardMarkup([
-        [InlineKeyboardButton("📝 Попробовать тему", callback_data=f"t25_try_topic:{topic_id}")],
-        [InlineKeyboardButton("🔍 К поиску", callback_data="t25_bank_search")],
-        [InlineKeyboardButton("⬅️ В меню", callback_data="t25_menu")]
+    # Кнопки действий
+    buttons = []
+    
+    # Кнопка "Попробовать эту тему"
+    buttons.append([InlineKeyboardButton(
+        "📝 Попробовать эту тему",
+        callback_data=f"t25_topic:{topic['id']}"
+    )])
+    
+    # Навигация по блоку
+    block_name = topic.get('block')
+    if block_name:
+        buttons.append([InlineKeyboardButton(
+            f"📚 Другие темы из блока «{block_name}»",
+            callback_data=f"t25_examples_block:{block_name}"
+        )])
+    
+    # Возврат в меню
+    buttons.extend([
+        [InlineKeyboardButton("🔍 Поиск примеров", callback_data="t25_search_examples")],
+        [InlineKeyboardButton("⬅️ К банку примеров", callback_data="t25_examples")]
     ])
+    
+    kb = InlineKeyboardMarkup(buttons)
     
     await query.edit_message_text(
         text,
