@@ -728,6 +728,572 @@ async def cmd_list_active_subscribers(update: Update, context: ContextTypes.DEFA
         logger.exception(f"Error listing subscribers: {e}")
         await update.message.reply_text(f"❌ Ошибка: {e}")
 
+# Добавьте эти функции в файл payment/admin_commands.py ПЕРЕД функцией register_admin_commands
+
+# ====================== НЕДОСТАЮЩИЕ ФУНКЦИИ ======================
+
+@admin_only
+async def handle_refresh_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обновляет и показывает статистику платежей."""
+    query = update.callback_query
+    await query.answer("Обновляю статистику...")
+    
+    try:
+        import aiosqlite
+        from datetime import datetime, timedelta
+        
+        async with aiosqlite.connect(DATABASE_PATH) as db:
+            # Статистика за последние 30 дней
+            cursor = await db.execute("""
+                SELECT 
+                    COUNT(*) as total_payments,
+                    COUNT(CASE WHEN status = 'completed' THEN 1 END) as successful,
+                    COUNT(CASE WHEN status = 'failed' THEN 1 END) as failed,
+                    COUNT(CASE WHEN status = 'pending' THEN 1 END) as pending,
+                    SUM(CASE WHEN status = 'completed' THEN amount ELSE 0 END) as total_revenue,
+                    AVG(CASE WHEN status = 'completed' THEN amount ELSE NULL END) as avg_payment
+                FROM payments
+                WHERE created_at > datetime('now', '-30 days')
+            """)
+            stats = await cursor.fetchone()
+            
+            # Статистика по планам
+            cursor = await db.execute("""
+                SELECT plan_id, COUNT(*) as count, SUM(amount) as revenue
+                FROM payments
+                WHERE status = 'completed' AND created_at > datetime('now', '-30 days')
+                GROUP BY plan_id
+                ORDER BY count DESC
+                LIMIT 5
+            """)
+            top_plans = await cursor.fetchall()
+            
+            text = f"""📊 <b>Статистика платежей (30 дней)</b>
+
+📈 <b>Общая статистика:</b>
+├ Всего платежей: {stats[0]}
+├ ✅ Успешных: {stats[1]}
+├ ❌ Неудачных: {stats[2]}
+├ ⏳ В ожидании: {stats[3]}
+├ 💰 Общий доход: {stats[4] // 100 if stats[4] else 0} ₽
+└ 💵 Средний чек: {stats[5] // 100 if stats[5] else 0} ₽
+
+🏆 <b>Топ планов:</b>"""
+            
+            for i, (plan_id, count, revenue) in enumerate(top_plans, 1):
+                text += f"\n{i}. {plan_id}: {count} шт. ({revenue // 100} ₽)"
+            
+            keyboard = [
+                [
+                    InlineKeyboardButton("📥 Экспорт CSV", callback_data="admin:export_payments"),
+                    InlineKeyboardButton("📈 Графики", callback_data="admin:payment_charts")
+                ],
+                [InlineKeyboardButton("◀️ Назад", callback_data="admin:payment_stats")]
+            ]
+            
+            await query.edit_message_text(
+                text,
+                parse_mode=ParseMode.HTML,
+                reply_markup=InlineKeyboardMarkup(keyboard)
+            )
+            
+    except Exception as e:
+        logger.error(f"Error refreshing stats: {e}")
+        await query.edit_message_text(
+            "❌ Ошибка при обновлении статистики",
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("◀️ Назад", callback_data="admin:payment_stats")
+            ]])
+        )
+
+
+@admin_only
+async def handle_export_payments(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Экспортирует историю платежей в CSV файл."""
+    query = update.callback_query
+    await query.answer("Экспортирую данные...")
+    
+    try:
+        import aiosqlite
+        import csv
+        from io import StringIO, BytesIO
+        from datetime import datetime
+        
+        async with aiosqlite.connect(DATABASE_PATH) as db:
+            cursor = await db.execute("""
+                SELECT 
+                    p.order_id,
+                    p.user_id,
+                    p.plan_id,
+                    p.amount,
+                    p.status,
+                    p.created_at,
+                    p.completed_at,
+                    u.username,
+                    u.first_name,
+                    u.last_name
+                FROM payments p
+                LEFT JOIN users u ON p.user_id = u.user_id
+                ORDER BY p.created_at DESC
+                LIMIT 5000
+            """)
+            payments = await cursor.fetchall()
+            
+            # Создаем CSV в памяти
+            output = StringIO()
+            writer = csv.writer(output)
+            
+            # Заголовки
+            writer.writerow([
+                'Order ID', 'User ID', 'Username', 'Full Name', 
+                'Plan', 'Amount (RUB)', 'Status', 
+                'Created', 'Completed'
+            ])
+            
+            # Данные
+            for payment in payments:
+                full_name = f"{payment[8] or ''} {payment[9] or ''}".strip()
+                writer.writerow([
+                    payment[0],  # order_id
+                    payment[1],  # user_id
+                    payment[7] or 'N/A',  # username
+                    full_name or 'N/A',  # full name
+                    payment[2],  # plan_id
+                    payment[3] // 100 if payment[3] else 0,  # amount in rubles
+                    payment[4],  # status
+                    payment[5],  # created_at
+                    payment[6] or 'N/A'  # completed_at
+                ])
+            
+            # Конвертируем в байты
+            csv_data = output.getvalue().encode('utf-8-sig')  # UTF-8 with BOM для Excel
+            csv_file = BytesIO(csv_data)
+            csv_file.name = f"payments_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
+            
+            # Отправляем файл
+            await query.message.reply_document(
+                document=csv_file,
+                filename=csv_file.name,
+                caption=f"📊 <b>Экспорт платежей</b>\n\n"
+                       f"📅 Дата: {datetime.now().strftime('%d.%m.%Y %H:%M')}\n"
+                       f"📝 Записей: {len(payments)}\n"
+                       f"💾 Формат: CSV (Excel-compatible)",
+                parse_mode=ParseMode.HTML
+            )
+            
+            await query.edit_message_text(
+                "✅ Экспорт завершен! Файл отправлен.",
+                reply_markup=InlineKeyboardMarkup([[
+                    InlineKeyboardButton("◀️ Назад", callback_data="admin:refresh_stats")
+                ]])
+            )
+            
+    except Exception as e:
+        logger.error(f"Error exporting payments: {e}")
+        await query.edit_message_text(
+            f"❌ Ошибка при экспорте: {str(e)}",
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("◀️ Назад", callback_data="admin:payment_stats")
+            ]])
+        )
+
+
+@admin_only
+async def sales_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Показывает детальную статистику продаж."""
+    query = update.callback_query
+    await query.answer()
+    
+    try:
+        import aiosqlite
+        from datetime import datetime, timedelta
+        
+        async with aiosqlite.connect(DATABASE_PATH) as db:
+            # Статистика за сегодня
+            cursor = await db.execute("""
+                SELECT 
+                    COUNT(*) as count,
+                    SUM(amount) as revenue
+                FROM payments
+                WHERE status = 'completed' 
+                AND DATE(created_at) = DATE('now')
+            """)
+            today = await cursor.fetchone()
+            
+            # Статистика за вчера
+            cursor = await db.execute("""
+                SELECT 
+                    COUNT(*) as count,
+                    SUM(amount) as revenue
+                FROM payments
+                WHERE status = 'completed' 
+                AND DATE(created_at) = DATE('now', '-1 day')
+            """)
+            yesterday = await cursor.fetchone()
+            
+            # Статистика за неделю
+            cursor = await db.execute("""
+                SELECT 
+                    COUNT(*) as count,
+                    SUM(amount) as revenue
+                FROM payments
+                WHERE status = 'completed' 
+                AND created_at > datetime('now', '-7 days')
+            """)
+            week = await cursor.fetchone()
+            
+            # Статистика за месяц
+            cursor = await db.execute("""
+                SELECT 
+                    COUNT(*) as count,
+                    SUM(amount) as revenue
+                FROM payments
+                WHERE status = 'completed' 
+                AND created_at > datetime('now', '-30 days')
+            """)
+            month = await cursor.fetchone()
+            
+            text = f"""💰 <b>Статистика продаж</b>
+
+📅 <b>Сегодня:</b>
+├ Продаж: {today[0]}
+└ Доход: {today[1] // 100 if today[1] else 0} ₽
+
+📅 <b>Вчера:</b>
+├ Продаж: {yesterday[0]}
+└ Доход: {yesterday[1] // 100 if yesterday[1] else 0} ₽
+
+📅 <b>За 7 дней:</b>
+├ Продаж: {week[0]}
+├ Доход: {week[1] // 100 if week[1] else 0} ₽
+└ Средний чек: {week[1] // week[0] // 100 if week[0] > 0 else 0} ₽
+
+📅 <b>За 30 дней:</b>
+├ Продаж: {month[0]}
+├ Доход: {month[1] // 100 if month[1] else 0} ₽
+└ Средний чек: {month[1] // month[0] // 100 if month[0] > 0 else 0} ₽"""
+            
+            keyboard = [
+                [
+                    InlineKeyboardButton("📊 По планам", callback_data="admin:stats_by_plan"),
+                    InlineKeyboardButton("👥 По пользователям", callback_data="admin:stats_by_user")
+                ],
+                [InlineKeyboardButton("◀️ Назад", callback_data="admin:payment_stats")]
+            ]
+            
+            await query.edit_message_text(
+                text,
+                parse_mode=ParseMode.HTML,
+                reply_markup=InlineKeyboardMarkup(keyboard)
+            )
+            
+    except Exception as e:
+        logger.error(f"Error showing sales stats: {e}")
+        await query.edit_message_text(
+            "❌ Ошибка при получении статистики",
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("◀️ Назад", callback_data="admin:payment_stats")
+            ]])
+        )
+
+
+@admin_only
+async def payment_history(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Показывает историю последних платежей."""
+    query = update.callback_query
+    await query.answer()
+    
+    try:
+        import aiosqlite
+        from datetime import datetime
+        
+        async with aiosqlite.connect(DATABASE_PATH) as db:
+            cursor = await db.execute("""
+                SELECT 
+                    p.order_id,
+                    p.user_id,
+                    u.username,
+                    p.plan_id,
+                    p.amount,
+                    p.status,
+                    p.created_at
+                FROM payments p
+                LEFT JOIN users u ON p.user_id = u.user_id
+                ORDER BY p.created_at DESC
+                LIMIT 10
+            """)
+            payments = await cursor.fetchall()
+            
+            text = "📜 <b>История платежей (последние 10)</b>\n\n"
+            
+            status_emoji = {
+                'completed': '✅',
+                'pending': '⏳',
+                'failed': '❌',
+                'refunded': '↩️'
+            }
+            
+            for payment in payments:
+                created = datetime.fromisoformat(payment[6])
+                username = f"@{payment[2]}" if payment[2] else f"ID:{payment[1]}"
+                status = status_emoji.get(payment[5], '❓')
+                
+                text += f"{status} <b>{created.strftime('%d.%m %H:%M')}</b>\n"
+                text += f"├ {username}\n"
+                text += f"├ План: {payment[3]}\n"
+                text += f"├ Сумма: {payment[4] // 100} ₽\n"
+                text += f"└ ID: <code>{payment[0][:20]}</code>\n\n"
+            
+            keyboard = [
+                [
+                    InlineKeyboardButton("🔍 Поиск", callback_data="admin:search_payment"),
+                    InlineKeyboardButton("📥 Экспорт", callback_data="admin:export_payments")
+                ],
+                [InlineKeyboardButton("◀️ Назад", callback_data="admin:payment_stats")]
+            ]
+            
+            await query.edit_message_text(
+                text,
+                parse_mode=ParseMode.HTML,
+                reply_markup=InlineKeyboardMarkup(keyboard)
+            )
+            
+    except Exception as e:
+        logger.error(f"Error showing payment history: {e}")
+        await query.edit_message_text(
+            "❌ Ошибка при получении истории",
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("◀️ Назад", callback_data="admin:payment_stats")
+            ]])
+        )
+
+
+@admin_only
+async def export_payments_csv(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Алиас для handle_export_payments."""
+    return await handle_export_payments(update, context)
+
+
+@admin_only
+async def handle_list_active_users(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Показывает список активных пользователей с подписками."""
+    query = update.callback_query
+    await query.answer()
+    
+    try:
+        import aiosqlite
+        from datetime import datetime
+        
+        async with aiosqlite.connect(DATABASE_PATH) as db:
+            if SUBSCRIPTION_MODE == 'modular':
+                cursor = await db.execute("""
+                    SELECT DISTINCT 
+                        ms.user_id,
+                        u.username,
+                        u.first_name,
+                        u.last_name,
+                        GROUP_CONCAT(ms.module_code) as modules,
+                        MIN(ms.expires_at) as expires_soon
+                    FROM module_subscriptions ms
+                    LEFT JOIN users u ON ms.user_id = u.user_id
+                    WHERE ms.is_active = 1 AND ms.expires_at > datetime('now')
+                    GROUP BY ms.user_id
+                    ORDER BY ms.expires_at DESC
+                    LIMIT 20
+                """)
+            else:
+                cursor = await db.execute("""
+                    SELECT 
+                        us.user_id,
+                        u.username,
+                        u.first_name,
+                        u.last_name,
+                        us.plan_id,
+                        us.expires_at
+                    FROM user_subscriptions us
+                    LEFT JOIN users u ON us.user_id = u.user_id
+                    WHERE us.status = 'active' AND us.expires_at > datetime('now')
+                    ORDER BY us.expires_at DESC
+                    LIMIT 20
+                """)
+            
+            users = await cursor.fetchall()
+            
+            text = f"👥 <b>Активные подписчики (топ 20)</b>\n\n"
+            
+            for i, user in enumerate(users, 1):
+                username = f"@{user[1]}" if user[1] else f"ID:{user[0]}"
+                full_name = f"{user[2] or ''} {user[3] or ''}".strip()
+                
+                if SUBSCRIPTION_MODE == 'modular':
+                    modules = user[4]
+                    expires = datetime.fromisoformat(user[5])
+                    text += f"{i}. {username}"
+                    if full_name:
+                        text += f" ({full_name})"
+                    text += f"\n├ Модули: {modules}\n"
+                    text += f"└ До: {expires.strftime('%d.%m.%Y')}\n\n"
+                else:
+                    plan = user[4]
+                    expires = datetime.fromisoformat(user[5])
+                    text += f"{i}. {username}"
+                    if full_name:
+                        text += f" ({full_name})"
+                    text += f"\n├ План: {plan}\n"
+                    text += f"└ До: {expires.strftime('%d.%m.%Y')}\n\n"
+            
+            # Получаем общее количество
+            cursor = await db.execute("""
+                SELECT COUNT(DISTINCT user_id) 
+                FROM module_subscriptions 
+                WHERE is_active = 1 AND expires_at > datetime('now')
+            """ if SUBSCRIPTION_MODE == 'modular' else """
+                SELECT COUNT(*) 
+                FROM user_subscriptions 
+                WHERE status = 'active' AND expires_at > datetime('now')
+            """)
+            total = await cursor.fetchone()
+            
+            text += f"📊 Всего активных: {total[0]}"
+            
+            keyboard = [
+                [
+                    InlineKeyboardButton("📥 Экспорт всех", callback_data="admin:export_users"),
+                    InlineKeyboardButton("🔍 Поиск", callback_data="admin:search_user")
+                ],
+                [InlineKeyboardButton("◀️ Назад", callback_data="admin:users")]
+            ]
+            
+            await query.edit_message_text(
+                text,
+                parse_mode=ParseMode.HTML,
+                reply_markup=InlineKeyboardMarkup(keyboard)
+            )
+            
+    except Exception as e:
+        logger.error(f"Error listing active users: {e}")
+        await query.edit_message_text(
+            "❌ Ошибка при получении списка пользователей",
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("◀️ Назад", callback_data="admin:users")
+            ]])
+        )
+
+
+@admin_only
+async def handle_payment_charts(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Показывает графики платежей (заглушка)."""
+    query = update.callback_query
+    await query.answer()
+    
+    await query.edit_message_text(
+        "📈 <b>Графики платежей</b>\n\n"
+        "Функция в разработке. Здесь будут:\n"
+        "• График доходов по дням\n"
+        "• Распределение по планам\n"
+        "• Динамика конверсии\n"
+        "• Анализ когорт",
+        parse_mode=ParseMode.HTML,
+        reply_markup=InlineKeyboardMarkup([[
+            InlineKeyboardButton("◀️ Назад", callback_data="admin:refresh_stats")
+        ]])
+    )
+
+
+@admin_only
+async def handle_stats_by_plan(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Показывает статистику по планам."""
+    query = update.callback_query
+    await query.answer()
+    
+    try:
+        import aiosqlite
+        
+        async with aiosqlite.connect(DATABASE_PATH) as db:
+            cursor = await db.execute("""
+                SELECT 
+                    plan_id,
+                    COUNT(*) as sales_count,
+                    SUM(amount) as total_revenue,
+                    AVG(amount) as avg_amount
+                FROM payments
+                WHERE status = 'completed'
+                GROUP BY plan_id
+                ORDER BY total_revenue DESC
+            """)
+            plans = await cursor.fetchall()
+            
+            text = "📊 <b>Статистика по планам</b>\n\n"
+            
+            for plan in plans:
+                text += f"<b>{plan[0]}</b>\n"
+                text += f"├ Продаж: {plan[1]}\n"
+                text += f"├ Доход: {plan[2] // 100 if plan[2] else 0} ₽\n"
+                text += f"└ Средний чек: {plan[3] // 100 if plan[3] else 0} ₽\n\n"
+            
+            await query.edit_message_text(
+                text,
+                parse_mode=ParseMode.HTML,
+                reply_markup=InlineKeyboardMarkup([[
+                    InlineKeyboardButton("◀️ Назад", callback_data="admin:sales_stats")
+                ]])
+            )
+            
+    except Exception as e:
+        logger.error(f"Error showing stats by plan: {e}")
+        await query.edit_message_text("❌ Ошибка при получении статистики")
+
+
+@admin_only
+async def handle_stats_by_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Показывает топ пользователей по платежам."""
+    query = update.callback_query
+    await query.answer()
+    
+    try:
+        import aiosqlite
+        
+        async with aiosqlite.connect(DATABASE_PATH) as db:
+            cursor = await db.execute("""
+                SELECT 
+                    p.user_id,
+                    u.username,
+                    u.first_name,
+                    COUNT(*) as payment_count,
+                    SUM(p.amount) as total_spent
+                FROM payments p
+                LEFT JOIN users u ON p.user_id = u.user_id
+                WHERE p.status = 'completed'
+                GROUP BY p.user_id
+                ORDER BY total_spent DESC
+                LIMIT 10
+            """)
+            users = await cursor.fetchall()
+            
+            text = "🏆 <b>Топ-10 пользователей по платежам</b>\n\n"
+            
+            for i, user in enumerate(users, 1):
+                username = f"@{user[1]}" if user[1] else f"ID:{user[0]}"
+                text += f"{i}. {username}"
+                if user[2]:
+                    text += f" ({user[2]})"
+                text += f"\n├ Платежей: {user[3]}\n"
+                text += f"└ Потрачено: {user[4] // 100} ₽\n\n"
+            
+            await query.edit_message_text(
+                text,
+                parse_mode=ParseMode.HTML,
+                reply_markup=InlineKeyboardMarkup([[
+                    InlineKeyboardButton("◀️ Назад", callback_data="admin:sales_stats")
+                ]])
+            )
+            
+    except Exception as e:
+        logger.error(f"Error showing stats by user: {e}")
+        await query.edit_message_text("❌ Ошибка при получении статистики")
+
+
+# ====================== КОНЕЦ НЕДОСТАЮЩИХ ФУНКЦИЙ ======================
 
 # Добавьте эту функцию в register_admin_commands:
 def register_admin_commands(app: Application):
