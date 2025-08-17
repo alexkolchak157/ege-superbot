@@ -36,6 +36,7 @@ from core.error_handler import safe_handler, auto_answer_callback
 from core.state_validator import validate_state_transition, state_validator
 from telegram.ext import ConversationHandler
 from core.migration import ensure_module_migration
+from core.utils import safe_menu_transition
 
 logger = logging.getLogger(__name__)
 
@@ -1499,7 +1500,7 @@ async def my_progress(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Показ прогресса пользователя."""
     query = update.callback_query
     
-    # ИЗМЕНЕНИЕ: Используем task25_practice_stats
+    # Используем task25_practice_stats
     results = context.user_data.get('task25_results', [])
     task25_stats = context.user_data.get('task25_practice_stats', {})
     
@@ -1520,8 +1521,8 @@ async def my_progress(update: Update, context: ContextTypes.DEFAULT_TYPE):
         total_score = 0
         topics_tried = 0
         
-        # Сначала обрабатываем данные из practice_stats
-        for topic_id, topic_stats in stats.items():
+        # Обрабатываем данные из task25_practice_stats (ИСПРАВЛЕНО!)
+        for topic_id, topic_stats in task25_stats.items():  # Было: stats.items()
             if topic_stats.get('attempts', 0) > 0:
                 topics_tried += 1
                 total_attempts += topic_stats['attempts']
@@ -1530,89 +1531,64 @@ async def my_progress(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     best_score = max(topic_stats['scores'])
                     total_score += best_score
         
-        # Если practice_stats пустой, но есть results - используем их
-        if not stats and results:
+        # Если task25_stats пустой, но есть results - используем их (ИСПРАВЛЕНО!)
+        if not task25_stats and results:  # Было: if not stats and results
             total_attempts = len(results)
             total_score = sum(r['score'] for r in results)
             topics_tried = len(set(r.get('topic_id') for r in results if r.get('topic_id')))
         
-        # Если есть и stats и results - синхронизируем
-        elif stats and results:
-            # Проверяем, есть ли в results темы, которых нет в stats
+        # Если есть и task25_stats и results - синхронизируем (ИСПРАВЛЕНО!)
+        elif task25_stats and results:  # Было: elif stats and results
+            # Проверяем, есть ли в results темы, которых нет в task25_stats
             for result in results:
                 topic_id_str = str(result.get('topic_id', 0))
-                if topic_id_str not in stats:
-                    # Добавляем недостающую тему в подсчет
-                    topics_tried += 1
-                    total_attempts += 1
-                    total_score += result['score']
+                if topic_id_str not in task25_stats:
+                    # Добавляем тему из results
+                    if 'task25_practice_stats' not in context.user_data:
+                        context.user_data['task25_practice_stats'] = {}
+                    
+                    context.user_data['task25_practice_stats'][topic_id_str] = {
+                        'attempts': 1,
+                        'scores': [result['score']],
+                        'topic_title': result.get('topic_title', 'Неизвестная тема'),
+                        'topic_id': result.get('topic_id'),
+                        'module': 'task25'
+                    }
+                    
+                    # Обновляем локальную переменную
+                    task25_stats = context.user_data['task25_practice_stats']
         
-        # Вычисляем средний балл
+        # Формируем отображение
         if topics_tried > 0:
             avg_score = total_score / topics_tried
             text += f"<b>Тем изучено:</b> {topics_tried}\n"
             text += f"<b>Всего попыток:</b> {total_attempts}\n"
-            text += f"<b>Средний балл:</b> {avg_score:.1f}/6\n"
+            text += f"<b>Средний балл:</b> {avg_score:.1f}/6\n\n"
             
-            # Добавляем информацию о серии
-            streak = context.user_data.get('correct_streak', 0)
-            if streak > 0:
-                text += f"<b>🔥 Текущая серия:</b> {streak}\n"
-            
-            text += "\n"
-            
-            # Детализация по темам
-            text += "<b>По темам:</b>\n"
-            
-            # Собираем информацию о темах из обоих источников
-            topics_info = {}
-            
-            # Из practice_stats
-            for topic_id, topic_stats in stats.items():
-                if topic_stats['attempts'] > 0:
-                    # Пытаемся найти название темы
-                    topic_title = topic_stats.get('topic_title')
-                    if not topic_title:
-                        # Ищем в results
-                        for r in results:
-                            if str(r.get('topic_id')) == topic_id:
-                                topic_title = r.get('topic_title', f'Тема {topic_id}')
-                                break
-                    if not topic_title:
-                        topic_title = f'Тема {topic_id}'
-                    
-                    topics_info[topic_id] = {
-                        'title': topic_title[:30],
-                        'best': max(topic_stats['scores']) if topic_stats['scores'] else 0,
-                        'attempts': topic_stats['attempts']
-                    }
-            
-            # Добавляем темы из results, которых нет в stats
-            for result in results:
-                topic_id_str = str(result.get('topic_id', 0))
-                if topic_id_str not in topics_info:
-                    topics_info[topic_id_str] = {
-                        'title': result.get('topic_title', f'Тема {topic_id_str}')[:30],
-                        'best': result['score'],
-                        'attempts': 1
-                    }
-            
-            # Выводим топ-5 тем
-            sorted_topics = sorted(topics_info.items(), key=lambda x: x[1]['best'], reverse=True)
-            for topic_id, info in sorted_topics[:5]:
-                text += f"• {info['title']}: {info['best']}/6 (попыток: {info['attempts']})\n"
-            
-            if len(topics_info) > 5:
-                text += f"\n<i>Показаны 5 лучших из {len(topics_info)} тем</i>\n"
+            # Детализация по темам (только если есть данные)
+            if task25_stats:
+                text += "<b>Последние темы:</b>\n"
+                # Сортируем по последней попытке (если есть timestamp)
+                sorted_topics = sorted(
+                    task25_stats.items(),
+                    key=lambda x: x[1].get('last_attempt', ''),
+                    reverse=True
+                )[:5]  # Показываем последние 5 тем
+                
+                for topic_id_str, topic_data in sorted_topics:
+                    topic_title = topic_data.get('topic_title', 'Неизвестная тема')[:30]
+                    if topic_data.get('scores'):
+                        best = max(topic_data['scores'])
+                        attempts = topic_data.get('attempts', 0)
+                        text += f"• {topic_title}: {best}/6 (попыток: {attempts})\n"
         else:
             text += "Начните практику для отслеживания прогресса!"
-    
-    # Формируем клавиатуру
-    kb = InlineKeyboardMarkup([
-        [InlineKeyboardButton("📈 Подробнее", callback_data="t25_detailed_progress")],
-        [InlineKeyboardButton("🔄 Сбросить прогресс", callback_data="t25_reset_confirm")],
-        [InlineKeyboardButton("⬅️ Назад", callback_data="t25_menu")]
-    ])
+        
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("📈 Подробнее", callback_data="t25_detailed_progress")],
+            [InlineKeyboardButton("🔄 Сбросить прогресс", callback_data="t25_reset_confirm")],
+            [InlineKeyboardButton("⬅️ Назад", callback_data="t25_menu")]
+        ])
     
     await query.edit_message_text(
         text,
@@ -1648,8 +1624,8 @@ def save_result(context: ContextTypes.DEFAULT_TYPE, topic: Dict, score: int):
     topic_id_str = str(topic.get('id', 0))
     
     # Инициализируем статистику по теме если её нет
-    if topic_id_str not in context.user_data['practice_stats']:
-        context.user_data['practice_stats'][topic_id_str] = {
+    if topic_id_str not in context.user_data['task25_practice_stats']:
+        context.user_data['task25_practice_stats'][topic_id_str] = {
             'attempts': 0,
             'scores': [],
             'last_attempt': None,
@@ -1659,7 +1635,7 @@ def save_result(context: ContextTypes.DEFAULT_TYPE, topic: Dict, score: int):
         }
     
     # Обновляем статистику
-    topic_stats = context.user_data['practice_stats'][topic_id_str]
+    topic_stats = context.user_data['task25_practice_stats'][topic_id_str]
     topic_stats['attempts'] += 1
     topic_stats['scores'].append(score)
     topic_stats['last_attempt'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
@@ -1745,29 +1721,32 @@ async def return_to_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Возврат в меню task25."""
     query = update.callback_query
     
-    # ДОБАВИТЬ: Автоматическая миграция
-    ensure_module_migration(context.user_data, 'task25', task25_data)
-    text = (
-        "📝 <b>Задание 25</b>\n\n"
-        "Развёрнутый ответ с обоснованием и примерами.\n"
-        "Максимальный балл: 6\n\n"
-        "Выберите режим работы:"
+    if query:
+        await query.answer()
+    
+    # Автоматическая миграция при возврате
+    from core.migration import ensure_module_migration
+    ensure_module_migration(context, 'task25', task25_data)
+    
+    results = context.user_data.get('task25_results', [])
+    user_stats = {
+        'total_attempts': len(results),
+        'average_score': sum(r['score'] for r in results) / len(results) if results else 0,
+        'streak': context.user_data.get('correct_streak', 0),
+        'weak_topics_count': 0,
+        'progress_percent': int(len(set(r.get('topic_id') for r in results)) / 100 * 100) if results else 0
+    }
+
+    greeting = get_personalized_greeting(user_stats)
+    text = greeting + MessageFormatter.format_welcome_message(
+        "задание 25",
+        is_new_user=user_stats['total_attempts'] == 0
     )
     
-    kb = InlineKeyboardMarkup([
-        [InlineKeyboardButton("💪 Практика", callback_data="t25_practice")],
-        [InlineKeyboardButton("📚 Теория", callback_data="t25_theory")],
-        [InlineKeyboardButton("🏦 Банк примеров", callback_data="t25_examples")],
-        [InlineKeyboardButton("📊 Мой прогресс", callback_data="t25_progress")],
-        [InlineKeyboardButton("⚙️ Настройки", callback_data="t25_settings")],
-        [InlineKeyboardButton("🏠 Главное меню", callback_data="to_main_menu")]
-    ])
+    kb = AdaptiveKeyboards.create_menu_keyboard(user_stats, module_code="t25")
     
-    await update.message.reply_text(
-        text,
-        reply_markup=kb,
-        parse_mode=ParseMode.HTML
-    )
+    # Используем безопасную функцию перехода
+    await safe_menu_transition(query, text, kb)
     
     return states.CHOOSING_MODE
 
@@ -1904,74 +1883,59 @@ async def list_topics(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 @safe_handler()
 async def show_topic_by_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Показ конкретной темы по ID."""
+    """Показ темы по ID - используется для показа примеров и выбора темы для практики."""
     query = update.callback_query
     
-    # Парсим ID темы из callback_data
-    topic_id = query.data.split(':', 1)[1]
+    # Определяем действие по callback_data
+    action_type = "show_example"  # по умолчанию показываем пример
+    if "try_topic" in query.data:
+        action_type = "practice"
     
-    # Пытаемся преобразовать в число, если это число
-    try:
-        topic_id = int(topic_id)
-    except ValueError:
-        pass  # Оставляем как строку
+    # Извлекаем ID темы
+    topic_id = query.data.split(':')[1]
     
-    topic = task25_data.get("topic_by_id", {}).get(topic_id)
+    # Находим тему по ID
+    topic = None
+    for t in task25_data.get('topics', []):
+        if str(t.get('id')) == str(topic_id):
+            topic = t
+            break
     
     if not topic:
+        await query.answer("Тема не найдена", show_alert=True)
         return states.CHOOSING_MODE
     
-    context.user_data['current_topic'] = topic
-    
-    # Проверяем режим ответа
-    settings = context.user_data.get('task25_settings', {})
-    
-    if settings.get('answer_mode') == 'parts':
-        # Начинаем с первой части
-        context.user_data['current_part'] = 1
-        context.user_data['part_answers'] = {}
+    # Если это режим практики (нажали "Попробовать эту тему")
+    if action_type == "practice":
+        context.user_data['current_topic'] = topic
+        context.user_data['mode'] = 'practice'
         
-        parts = topic.get('parts', {})
-        part1_text = parts.get('part1', '')
+        # Показываем задание для решения
+        text = "📝 <b>Задание 25</b>\n\n"
+        text += f"<b>Тема:</b> {topic['title']}\n"
+        text += f"<b>Блок:</b> {topic.get('block', 'Не указан')}\n\n"
         
-        text = (
-            f"📝 <b>Режим ответа по частям</b>\n\n"
-            f"<b>Тема:</b> {topic['title']}\n"
-            f"<b>Блок:</b> {topic.get('block', 'Общие темы')}\n"
-            f"<b>Сложность:</b> { {'easy': '🟢 Легкая', 'medium': '🟡 Средняя', 'hard': '🔴 Сложная'}.get(topic.get('difficulty', 'medium'), '⚪') }\n\n"
-            f"<b>Часть 1: Обоснование (2 балла)</b>\n\n"
-            f"{part1_text}\n\n"
-            f"💡 <i>Отправьте ваше обоснование</i>"
-        )
-        
-        kb = InlineKeyboardMarkup([
-            [InlineKeyboardButton("❌ Отмена", callback_data="t25_practice")]
-        ])
-        
-        await query.edit_message_text(
-            text,
-            reply_markup=kb,
-            parse_mode=ParseMode.HTML
-        )
-        
-        return ANSWERING_PARTS
-    else:
-        # Стандартный режим
-        text = _build_topic_message(topic)
-        
-        # Определяем откуда вернуться
-        selected_block = context.user_data.get('selected_block')
-        if selected_block:
-            back_callback = f"t25_block:{selected_block}"
-            back_text = "⬅️ К блоку"
+        text += "<b>Ваше задание:</b>\n"
+        if 'parts' in topic:
+            parts = topic['parts']
+            if parts.get('part1'):
+                text += f"1. {parts['part1']}\n"
+            if parts.get('part2'):
+                text += f"2. {parts['part2']}\n"
+            if parts.get('part3'):
+                text += f"3. {parts['part3']}\n"
         else:
-            back_callback = "t25_all_topics_list"
-            back_text = "⬅️ К списку"
+            text += f"{topic.get('task_text', '')}\n"
         
-        kb = InlineKeyboardMarkup([
-            [InlineKeyboardButton("🎲 Другая тема", callback_data="t25_another_topic")],
-            [InlineKeyboardButton(back_text, callback_data=back_callback)]
-        ])
+        text += "\n📌 <b>Требования к ответу:</b>\n"
+        text += "1️⃣ Развёрнутое обоснование (2 балла)\n"
+        text += "2️⃣ Точный ответ на вопрос (1 балл)\n"
+        text += "3️⃣ Три конкретных примера (3 балла)\n\n"
+        text += "💬 <i>Отправьте развёрнутый ответ одним сообщением</i>"
+        
+        kb = InlineKeyboardMarkup([[
+            InlineKeyboardButton("❌ Отмена", callback_data="t25_menu")
+        ]])
         
         await query.edit_message_text(
             text,
@@ -1979,7 +1943,79 @@ async def show_topic_by_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
             parse_mode=ParseMode.HTML
         )
         
-        return states.ANSWERING
+        return states.TASK25_WAITING
+    
+    # Иначе показываем пример (нажали "Пример 1-5")
+    else:
+        # Проверяем наличие эталонного ответа
+        if 'example_answers' not in topic:
+            await query.answer("Эталонный ответ для этой темы пока не добавлен", show_alert=True)
+            return states.CHOOSING_MODE
+        
+        # Форматируем текст примера
+        text = f"📝 <b>Пример эталонного ответа</b>\n"
+        text += "━" * 35 + "\n\n"
+        text += f"<b>Тема:</b> {topic['title']}\n"
+        text += f"<b>Блок:</b> {topic.get('block', 'Не указан')}\n"
+        text += f"<b>Сложность:</b> "
+        
+        difficulty = topic.get('difficulty', 'medium')
+        diff_map = {
+            'easy': '🟢 Лёгкая',
+            'medium': '🟡 Средняя', 
+            'hard': '🔴 Сложная'
+        }
+        text += f"{diff_map.get(difficulty, difficulty)}\n\n"
+        
+        # Показываем задание
+        text += "<b>📋 Задание:</b>\n"
+        if 'task_text' in topic:
+            text += f"{topic['task_text']}\n\n"
+        elif 'parts' in topic:
+            parts = topic['parts']
+            if parts.get('part1'):
+                text += f"1. {parts['part1']}\n"
+            if parts.get('part2'):
+                text += f"2. {parts['part2']}\n"
+            if parts.get('part3'):
+                text += f"3. {parts['part3']}\n"
+            text += "\n"
+        
+        # Используем функцию форматирования эталонного ответа
+        text += _format_example_answer(topic)
+        
+        # Кнопки действий
+        buttons = []
+        
+        # Основная кнопка - попробовать решить
+        buttons.append([InlineKeyboardButton(
+            "📝 Попробовать эту тему",
+            callback_data=f"t25_try_topic:{topic['id']}"
+        )])
+        
+        # Навигация по блоку (если есть)
+        block_name = topic.get('block')
+        if block_name:
+            buttons.append([InlineKeyboardButton(
+                f"📚 Другие темы из блока «{block_name}»",
+                callback_data=f"t25_examples_block:{block_name}"
+            )])
+        
+        # Кнопки навигации
+        buttons.extend([
+            [InlineKeyboardButton("🔍 Другие примеры", callback_data="t25_best_examples")],
+            [InlineKeyboardButton("⬅️ К банку примеров", callback_data="t25_examples")]
+        ])
+        
+        kb = InlineKeyboardMarkup(buttons)
+        
+        await query.edit_message_text(
+            text,
+            reply_markup=kb,
+            parse_mode=ParseMode.HTML
+        )
+        
+        return states.CHOOSING_MODE
 
 @safe_handler()
 async def show_topic_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -2432,7 +2468,7 @@ async def show_block_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Статистика по блокам тем."""
     query = update.callback_query
     
-    stats = context.user_data.get('practice_stats', {})
+    task25_stats = context.user_data.get('task25_practice_stats', {})
     
     if not stats:
         text = "📊 <b>Статистика по блокам</b>\n\n"
@@ -2672,30 +2708,60 @@ def _format_evaluation_result(result: EvaluationResult, topic: Dict) -> str:
 
 
 def _format_example_answer(topic: Dict) -> str:
-    """Форматирует эталонный ответ."""
+    """Форматирует эталонный ответ для отображения."""
     example = topic.get('example_answers', {})
     if not example:
-        return ""
+        return "\n⚠️ <i>Эталонный ответ не найден</i>"
     
-    text = "\n\n📚 <b>Эталонный ответ:</b>\n\n"
+    text = "\n" + "━" * 35 + "\n"
+    text += "✨ <b>ЭТАЛОННЫЙ ОТВЕТ:</b>\n\n"
     
+    # Часть 1 - Обоснование
     if 'part1' in example:
-        text += f"<b>1. Обоснование:</b>\n{example['part1']}\n\n"
-    
-    if 'part2' in example:
-        text += f"<b>2. Ответ:</b>\n{example['part2']}\n\n"
-    
-    if 'part3' in example:
-        text += "<b>3. Примеры:</b>\n"
-        if isinstance(example['part3'], list):
-            for i, ex in enumerate(example['part3'], 1):
-                if isinstance(ex, dict):
-                    text += f"\n{i}) <i>{ex.get('type', 'Пример')}:</i>\n"
-                    text += f"{ex.get('example', ex)}\n"
-                else:
-                    text += f"{i}) {ex}\n"
+        text += "1️⃣ <b>Обоснование (2 балла):</b>\n"
+        if isinstance(example['part1'], dict):
+            content = example['part1'].get('answer', example['part1'].get('text', str(example['part1'])))
         else:
-            text += f"{example['part3']}\n"
+            content = str(example['part1'])
+        text += f"<i>{content}</i>\n\n"
+    
+    # Часть 2 - Ответ на вопрос
+    if 'part2' in example:
+        text += "2️⃣ <b>Ответ на вопрос (1 балл):</b>\n"
+        if isinstance(example['part2'], dict):
+            content = example['part2'].get('answer', example['part2'].get('text', str(example['part2'])))
+        else:
+            content = str(example['part2'])
+        text += f"<i>{content}</i>\n\n"
+    
+    # Часть 3 - Примеры
+    if 'part3' in example:
+        text += "3️⃣ <b>Примеры (3 балла):</b>\n\n"
+        
+        if isinstance(example['part3'], list):
+            # Если примеры в виде списка
+            for i, ex in enumerate(example['part3'], 1):
+                text += f"📌 <b>Пример {i}:</b>\n"
+                if isinstance(ex, dict):
+                    # Если пример - словарь с типом и текстом
+                    if 'type' in ex:
+                        text += f"<b>{ex['type']}</b>\n"
+                    example_text = ex.get('example', ex.get('text', str(ex)))
+                    text += f"<i>{example_text}</i>\n\n"
+                else:
+                    # Если пример - просто текст
+                    text += f"<i>{ex}</i>\n\n"
+        elif isinstance(example['part3'], str):
+            # Если примеры - просто текст
+            text += f"<i>{example['part3']}</i>\n"
+    
+    # Финальный разделитель и подсказка
+    text += "━" * 35 + "\n"
+    text += "💡 <i>Обратите внимание на:</i>\n"
+    text += "• Структуру и логику изложения\n"
+    text += "• Использование терминов\n"
+    text += "• Конкретность примеров\n"
+    text += "• Детализацию ответов"
     
     return text
 
@@ -2730,7 +2796,7 @@ async def handle_progress(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Показывает прогресс пользователя."""
     query = update.callback_query
     
-    stats = context.user_data.get('practice_stats', {})
+    task25_stats = context.user_data.get('task25_practice_stats', {})
     
     if not stats:
         text = "📊 <b>Ваш прогресс</b>\n\n"
@@ -2977,7 +3043,8 @@ async def handle_recommended(update: Update, context: ContextTypes.DEFAULT_TYPE)
     """Выбор рекомендованной темы."""
     query = update.callback_query
     
-    user_stats = context.user_data.get('practice_stats', {})
+    # ИЗМЕНЕНИЕ: Используем task25_practice_stats вместо practice_stats
+    user_stats = context.user_data.get('task25_practice_stats', {})
     
     if topic_selector and user_stats:
         user_id = update.effective_user.id
@@ -2989,6 +3056,7 @@ async def handle_recommended(update: Update, context: ContextTypes.DEFAULT_TYPE)
         topic = random.choice(topics) if topics else None
     
     if not topic:
+        await query.answer("❌ Не удалось подобрать тему", show_alert=True)
         return states.CHOOSING_MODE
     
     # Сохраняем тему
@@ -3000,7 +3068,12 @@ async def handle_recommended(update: Update, context: ContextTypes.DEFAULT_TYPE)
     
     recommendation_text = "🎯 <b>Рекомендованная тема</b>\n"
     if user_stats:
-        recommendation_text += "<i>Выбрана на основе вашей статистики</i>\n\n"
+        # Добавим больше информации о том, почему выбрана эта тема
+        topics_tried = len(user_stats)
+        if topics_tried > 0:
+            recommendation_text += f"<i>Выбрана на основе {topics_tried} изученных тем</i>\n\n"
+        else:
+            recommendation_text += "<i>Начните с темы средней сложности</i>\n\n"
     else:
         recommendation_text += "<i>Начните с темы средней сложности</i>\n\n"
     
