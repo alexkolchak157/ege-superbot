@@ -954,9 +954,13 @@ async def safe_handle_answer_task20(update: Update, context: ContextTypes.DEFAUL
             parse_mode=ParseMode.HTML
         )
         
-        # Проверяем достижения (опционально)
-        # await check_achievements(update, context, score)
-        
+        context.user_data['t20_last_screen'] = 'feedback'
+        context.user_data['t20_last_feedback'] = {
+            'text': feedback_text,
+            'score': score,
+            'topic': topic,
+            'user_answer': user_answer  # Сохраняем и ответ пользователя
+        }
         return states.CHOOSING_MODE
         
     except Exception as e:
