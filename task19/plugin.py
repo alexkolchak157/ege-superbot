@@ -67,6 +67,10 @@ class Task19Plugin(BotPlugin):
                     CallbackQueryHandler(handlers.strictness_menu, pattern="^t19_strictness_menu$"),
                     CallbackQueryHandler(handlers.noop, pattern="^noop$"),
 
+                    CallbackQueryHandler(
+                        handlers.back_to_feedback,
+                        pattern="^t19_back_to_feedback$"
+                    ),
                     # Дополнительные действия
                     CallbackQueryHandler(handlers.reset_results, pattern="^t19_reset_confirm$"),
                     

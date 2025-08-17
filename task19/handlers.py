@@ -740,12 +740,10 @@ async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
         # Удаляем анимацию
         await thinking_msg.delete()
         
-        # === ИСПРАВЛЕНИЕ: Используем функцию save_result_task19 ===
-        # Вместо дублирующего кода сохранения в practice_stats
-        # используем готовую функцию, которая сохраняет в изолированное хранилище
+        # Используем функцию save_result_task19
         save_result_task19(context, topic, score)
         
-        # Обновляем серию (уже есть в save_result_task19, но дублируем для надежности)
+        # Обновляем серию
         if score >= 2:
             context.user_data['correct_streak'] = context.user_data.get('correct_streak', 0) + 1
             
@@ -781,6 +779,14 @@ async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
             reply_markup=kb,
             parse_mode=ParseMode.HTML
         )
+        
+        # ДОБАВИТЬ: Сохраняем контекст для возврата (ВНУТРИ TRY БЛОКА!)
+        context.user_data['t19_last_screen'] = 'feedback'
+        context.user_data['t19_last_feedback'] = {
+            'text': feedback_text,
+            'score': score,
+            'topic': topic
+        }
         
         # Возвращаем состояние для продолжения
         return states.CHOOSING_MODE
@@ -1198,11 +1204,27 @@ async def examples_bank(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         text += "💡 <i>Обратите внимание на структуру и конкретность примеров!</i>"
         
-        kb = InlineKeyboardMarkup([
+        # Проверяем, откуда пришел пользователь
+        last_screen = context.user_data.get('t19_last_screen')
+        
+        # Формируем кнопки навигации
+        kb_buttons = []
+        
+        # Если пришли из результатов, добавляем кнопку возврата
+        if last_screen == 'feedback':
+            kb_buttons.append([
+                InlineKeyboardButton("⬅️ Вернуться к результатам", callback_data="t19_back_to_feedback")
+            ])
+        
+        # Остальные кнопки
+        kb_buttons.extend([
             [InlineKeyboardButton("➡️ Следующая тема", callback_data="t19_bank_nav:1")],
             [InlineKeyboardButton("🔍 Поиск темы", callback_data="t19_bank_search")],
-            [InlineKeyboardButton("⬅️ Назад", callback_data="t19_menu")]
+            [InlineKeyboardButton("⬅️ В меню", callback_data="t19_menu")]
         ])
+        
+        kb = InlineKeyboardMarkup(kb_buttons)
+        
     else:
         # ИСПРАВЛЕНО: Более информативное сообщение об ошибке
         text = """📚 <b>Банк примеров</b>
@@ -1225,6 +1247,40 @@ async def examples_bank(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=kb,
         parse_mode=ParseMode.HTML
     )
+    return states.CHOOSING_MODE
+
+@safe_handler()
+async def back_to_feedback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Возврат к экрану с результатами проверки."""
+    query = update.callback_query
+    
+    # Получаем сохраненные данные
+    last_feedback = context.user_data.get('t19_last_feedback')
+    
+    if not last_feedback:
+        await query.answer("Результаты не найдены", show_alert=True)
+        return await return_to_menu(update, context)
+    
+    # Восстанавливаем экран с результатами
+    feedback_text = last_feedback['text']
+    score = last_feedback['score']
+    
+    # Формируем клавиатуру как после проверки
+    kb = AdaptiveKeyboards.create_result_keyboard(
+        score=score,
+        max_score=3,
+        module_code="t19"
+    )
+    
+    await query.edit_message_text(
+        feedback_text,
+        reply_markup=kb,
+        parse_mode=ParseMode.HTML
+    )
+    
+    # Восстанавливаем контекст
+    context.user_data['t19_last_screen'] = 'feedback'
+    
     return states.CHOOSING_MODE
 
 @safe_handler()
