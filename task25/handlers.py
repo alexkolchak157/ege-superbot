@@ -23,6 +23,7 @@ from core.states import (
     AWAITING_FEEDBACK,
     TASK25_WAITING
 )
+from .data_loader import get_data
 from core.ui_helpers import (
     show_thinking_animation,
     show_extended_thinking_animation,
@@ -41,10 +42,15 @@ from core.utils import safe_menu_transition
 logger = logging.getLogger(__name__)
 
 # Глобальные переменные
-task25_data = {}
+task25_data = get_data()
 topic_selector = None
 evaluator = None
 
+
+if task25_data and task25_data.get('topics'):
+    logger.info(f"✅ task25_data initialized with {len(task25_data['topics'])} topics")
+else:
+    logger.error("❌ task25_data is empty after import!")
 # Импорты внутренних модулей ПОСЛЕ определения переменных
 try:
     from .evaluator import Task25AIEvaluator, StrictnessLevel, EvaluationResult, AI_EVALUATOR_AVAILABLE
@@ -80,72 +86,44 @@ async def init_task25_data():
     
     logger.info("Starting init_task25_data...")
     
-    # Путь к файлу
-    data_file = os.path.join(os.path.dirname(__file__), "task25_topics.json")
-    
-    try:
-        with open(data_file, "r", encoding="utf-8") as f:
-            topics_list = json.load(f)
+    # Если данные уже загружены из data_loader, просто инициализируем дополнительные компоненты
+    if task25_data and task25_data.get('topics'):
+        logger.info(f"Data already loaded: {len(task25_data['topics'])} topics")
         
-        if not isinstance(topics_list, list):
-            logger.error(f"Invalid data format: expected list, got {type(topics_list)}")
-            topics_list = []
-        
-        # Обработка данных
-        all_topics = []
-        topic_by_id = {}
-        topics_by_block = {}
-        blocks = {}
-        
-        for topic in topics_list:
-            if not isinstance(topic, dict):
-                continue
-            
-            # Проверяем обязательные поля
-            if 'id' not in topic or 'title' not in topic:
-                continue
-            
-            # Блок
-            block_name = topic.get('block', 'Общие темы')
-            
-            # Добавляем в структуры
-            all_topics.append(topic)
-            topic_by_id[topic['id']] = topic
-            
-            if block_name not in topics_by_block:
-                topics_by_block[block_name] = []
-                blocks[block_name] = {"name": block_name, "topics": []}
-            
-            topics_by_block[block_name].append(topic)
-            blocks[block_name]["topics"].append(topic)
-        
-        # Сохраняем данные
-        task25_data = {
-            "topics": all_topics,
-            "topic_by_id": topic_by_id,
-            "topics_by_block": topics_by_block,
-            "blocks": blocks
-        }
-        
-        # Статистика
-        topics_with_examples = len([t for t in all_topics if 'example_answers' in t])
-        logger.info(f"Loaded {len(all_topics)} topics, {topics_with_examples} with examples")
-        logger.info(f"Blocks: {list(topics_by_block.keys())}")
-        
-        # Инициализируем селектор если есть
-        if TopicSelector and all_topics:
+        # Инициализируем селектор
+        if TopicSelector and task25_data['topics']:
             try:
-                topic_selector = TopicSelector(all_topics)
+                topic_selector = TopicSelector(task25_data['topics'])
+                logger.info("TopicSelector initialized")
             except Exception as e:
                 logger.warning(f"Failed to init TopicSelector: {e}")
-                topic_selector = None
         
-    except Exception as e:
-        logger.error(f"Error loading task25 data: {e}", exc_info=True)
-        task25_data = {"topics": [], "topic_by_id": {}, "topics_by_block": {}, "blocks": {}}
+        # Инициализируем evaluator
+        _init_evaluator()
+        
+        return True
     
-    # Инициализируем evaluator
-    _init_evaluator()
+    # Если данных нет, пытаемся загрузить заново
+    logger.warning("Data not pre-loaded, attempting to load...")
+    from .data_loader import load_data_sync
+    
+    task25_data = load_data_sync()
+    
+    if task25_data and task25_data.get('topics'):
+        logger.info(f"✅ Loaded {len(task25_data['topics'])} topics")
+        
+        # Инициализируем компоненты
+        if TopicSelector:
+            try:
+                topic_selector = TopicSelector(task25_data['topics'])
+            except Exception as e:
+                logger.warning(f"Failed to init TopicSelector: {e}")
+        
+        _init_evaluator()
+        return True
+    else:
+        logger.error("❌ Failed to load data")
+        return False
 
 def _init_evaluator():
     """Инициализация AI evaluator."""
@@ -190,6 +168,64 @@ def _determine_block(title: str) -> str:
         return "Право"
     
     return "Общие темы"
+
+async def cmd_t25status(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Проверка статуса модуля task25."""
+    global task25_data, topic_selector, evaluator
+    
+    text = "📊 <b>Статус модуля Task25:</b>\n\n"
+    
+    # Проверка данных
+    if task25_data:
+        text += "✅ <b>Данные загружены:</b>\n"
+        text += f"• Всего тем: {len(task25_data.get('topics', []))}\n"
+        text += f"• Блоков: {len(task25_data.get('blocks', {}))}\n"
+        text += f"• По ID: {len(task25_data.get('topic_by_id', {}))}\n"
+        
+        # Примеры тем
+        if task25_data.get('topics'):
+            text += f"\n<b>Примеры тем:</b>\n"
+            for topic in task25_data['topics'][:3]:
+                text += f"• {topic.get('title', 'Без названия')}\n"
+    else:
+        text += "❌ <b>Данные НЕ загружены!</b>\n"
+    
+    # Проверка компонентов
+    text += f"\n<b>Компоненты:</b>\n"
+    text += f"• TopicSelector: {'✅' if topic_selector else '❌'}\n"
+    text += f"• Evaluator: {'✅' if evaluator else '❌'}\n"
+    
+    await update.message.reply_text(text, parse_mode=ParseMode.HTML)
+
+async def cmd_debug_data(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Команда для проверки загрузки данных (только для админов)."""
+    global task25_data
+    
+    user_id = update.effective_user.id
+    # Проверка на админа (замените на ваш ID)
+    if user_id not in [YOUR_ADMIN_ID]:
+        await update.message.reply_text("❌ Недостаточно прав")
+        return
+    
+    text = "🔍 <b>Диагностика task25_data:</b>\n\n"
+    
+    if task25_data:
+        text += f"✅ Данные загружены\n"
+        text += f"• Всего тем: {len(task25_data.get('topics', []))}\n"
+        text += f"• Блоков: {len(task25_data.get('blocks', {}))}\n"
+        text += f"• По ID: {len(task25_data.get('topic_by_id', {}))}\n"
+        text += f"• Ключи: {list(task25_data.keys())}\n"
+        
+        if task25_data.get('blocks'):
+            text += f"\n<b>Блоки:</b>\n"
+            for block_name in list(task25_data['blocks'].keys())[:5]:
+                count = len(task25_data['blocks'][block_name]['topics'])
+                text += f"• {block_name}: {count} тем\n"
+    else:
+        text += "❌ Данные НЕ загружены\n"
+        text += "task25_data is None или пустой dict\n"
+    
+    await update.message.reply_text(text, parse_mode=ParseMode.HTML)
 
 @safe_handler()
 @validate_state_transition({ConversationHandler.END, None})

@@ -163,7 +163,8 @@ class Task25Plugin(BotPlugin):
         # Дополнительные хендлеры, не охваченные ConversationHandler
         if hasattr(handlers, "register_task25_handlers"):
             handlers.register_task25_handlers(app)
-
+        app.add_handler(CommandHandler("t25status", handlers.cmd_t25status))
+        app.add_handler(CommandHandler("t25debug", handlers.cmd_debug_data))
         logger.info(f"Registered handlers for {self.title} plugin")
 
 # Экспортируем плагин
