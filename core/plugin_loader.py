@@ -64,18 +64,42 @@ def load_modules(application):
     # Сначала ищем все плагины
     discover_plugins()
     
+    # Список для post_init функций
+    post_init_tasks = []
+    
     # Затем регистрируем каждый плагин
     for plugin in PLUGINS:
         try:
             logger.info(f"Registering plugin: {plugin.title}")
             plugin.register(application)
             
-            # Если у плагина есть post_init, добавляем его в очередь
+            # Если у плагина есть post_init, сохраняем его
             if hasattr(plugin, 'post_init'):
-                application.post_init(plugin.post_init)
+                post_init_tasks.append(plugin)
+                logger.info(f"Post-init scheduled for {plugin.title}")
                 
         except Exception as e:
             logger.error(f"Failed to register plugin {plugin.code}: {e}")
+    
+    # Создаем единую корутину для вызова всех post_init
+    async def run_all_post_inits(app):
+        """Выполняет все post_init функции плагинов."""
+        logger.info(f"Running post_init for {len(post_init_tasks)} plugins...")
+        
+        for plugin in post_init_tasks:
+            try:
+                logger.info(f"Initializing {plugin.title}...")
+                await plugin.post_init(app)
+                logger.info(f"✅ {plugin.title} initialized successfully")
+            except Exception as e:
+                logger.error(f"❌ Failed post_init for {plugin.title}: {e}", exc_info=True)
+        
+        logger.info("All plugin post_inits completed")
+    
+    # Регистрируем ОДНУ корутину для post_init
+    if post_init_tasks:
+        application.post_init(run_all_post_inits)
+        logger.info(f"Registered post_init handler for {len(post_init_tasks)} plugins")
     
     logger.info(f"Successfully registered {len(PLUGINS)} plugins")
     
