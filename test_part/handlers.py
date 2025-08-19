@@ -1454,41 +1454,54 @@ async def send_exam_question(message, context: ContextTypes.DEFAULT_TYPE, index:
     
     question = exam_questions[index]
     context.user_data['exam_current'] = index + 1
-    context.user_data['current_question_id'] = question['id']
-    context.user_data[f'question_{question["id"]}'] = question
     
-    # Формируем текст с прогрессом
-    progress_text = f"📝 <b>Вопрос {index + 1} из {len(exam_questions)}</b>\n"
-    progress_text += f"Задание №{question['exam_position']}\n\n"
-    progress_text += question.get('question_text', '')
+    # ИСПРАВЛЕНИЕ: Используем правильное поле 'question' из структуры данных
+    question_text = None
     
-    # Клавиатура с кнопкой пропуска
-    exam_keyboard = InlineKeyboardMarkup([
-        [InlineKeyboardButton(f"⏭️ Пропустить ({16 - index - 1} осталось)", 
-                            callback_data="exam_skip_question")],
-        [InlineKeyboardButton("❌ Завершить экзамен", callback_data="exam_abort")]
-    ])
+    # Согласно диагностике, поле называется 'question'
+    if isinstance(question, dict):
+        question_text = question.get('question')
+    elif isinstance(question, str):
+        question_text = question
     
-    # Отправляем вопрос
-    if question.get('image_url'):
-        try:
-            await message.reply_photo(
-                photo=question['image_url'],
-                caption=progress_text,
-                parse_mode=ParseMode.HTML,
-                reply_markup=exam_keyboard
-            )
-        except:
-            await message.reply_text(
-                progress_text,
-                parse_mode=ParseMode.HTML,
-                reply_markup=exam_keyboard
-            )
-    else:
+    # Если текст все еще не найден, используем заглушку и логируем ошибку
+    if not question_text:
+        import json
+        logger.error(f"Empty question text for exam question {index + 1}. Question data: {json.dumps(question, ensure_ascii=False)[:200]}")
+        question_text = f"[Ошибка загрузки вопроса {index + 1}]"
+    
+    # Формируем текст сообщения
+    text = f"📝 <b>Вопрос {index + 1} из 16</b>"
+    
+    # Добавляем информацию о сложности и теме, если есть
+    if isinstance(question, dict):
+        if question.get('difficulty'):
+            text += f" (Сложность: {question.get('difficulty')})"
+        if question.get('topic'):
+            text += f"\n📚 Тема: {question.get('topic')}"
+    
+    text += f"\n\n{question_text}"
+    
+    # Сохраняем правильный ответ и объяснение для последующей проверки
+    if isinstance(question, dict):
+        context.user_data[f'exam_answer_{index}'] = question.get('answer')
+        context.user_data[f'exam_explanation_{index}'] = question.get('explanation')
+    
+    # Отправляем вопрос с клавиатурой
+    keyboard = get_exam_question_keyboard()
+    
+    try:
         await message.reply_text(
-            progress_text,
-            parse_mode=ParseMode.HTML,
-            reply_markup=exam_keyboard
+            text,
+            reply_markup=keyboard,
+            parse_mode='HTML'
+        )
+    except Exception as e:
+        logger.error(f"Error sending exam question {index + 1}: {e}")
+        # Отправляем без HTML разметки, если возникла ошибка
+        await message.reply_text(
+            text.replace('<b>', '').replace('</b>', ''),
+            reply_markup=keyboard
         )
 
 @safe_handler()
