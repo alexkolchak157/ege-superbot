@@ -185,32 +185,23 @@ async def cleanup_previous_messages(update: Update, context: ContextTypes.DEFAUL
 
 
 @safe_handler()
-@validate_state_transition({states.CHOOSING_MODE})
+@validate_state_transition({states.CHOOSING_MODE, states.ANSWERING, None})
 async def entry_from_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Вход в тестовую часть из главного меню."""
+    """Вход в модуль тестовой части из главного меню."""
     query = update.callback_query
     
-    # Очищаем контекст от данных других модулей
-    keys_to_remove = [
-        'current_topic',
-        'task19_current_topic', 
-        'task20_current_topic',
-        'task25_current_topic',
-        'task24_current_topic'
-    ]
+    # Очищаем предыдущее состояние
+    user_id = query.from_user.id
+    from core.state_validator import state_validator
+    state_validator.clear_state(user_id)
     
-    for key in keys_to_remove:
-        context.user_data.pop(key, None)
-    
-    # Устанавливаем флаг активного модуля
-    context.user_data['active_module'] = 'test_part'
-    
-    # Убрана проверка подписки - она должна быть на уровне всего бота
+    # Устанавливаем корректное состояние
+    state_validator.set_state(user_id, states.CHOOSING_MODE)
     
     kb = keyboards.get_initial_choice_keyboard()
     await query.edit_message_text(
         "📚 <b>Тестовая часть ЕГЭ</b>\n\n"
-        "Выберите режим работы:",
+        "Выберите режим:",
         reply_markup=kb,
         parse_mode=ParseMode.HTML
     )
@@ -761,12 +752,11 @@ async def check_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return ConversationHandler.END
 
 @safe_handler()
-@validate_state_transition({states.CHOOSING_NEXT_ACTION, states.ANSWERING})
 async def handle_next_action(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обработка действий после ответа."""
+    """Обработчик выбора действия после ответа на вопрос."""
     query = update.callback_query
     
-    # Всегда отвечаем на callback query в начале
+    # Отвечаем на callback query только ОДИН раз в начале
     await query.answer()
     action = query.data
     
@@ -800,12 +790,15 @@ async def handle_next_action(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 except Exception as e:
                     logger.error(f"Error sending explanation: {e}")
             else:
+                # Используем show_alert вместо повторного answer()
                 await query.answer("Пояснение отсутствует", show_alert=True)
+                return states.CHOOSING_NEXT_ACTION
         else:
+            # Используем show_alert вместо повторного answer()
             await query.answer("Ошибка: вопрос не найден", show_alert=True)
+            return states.CHOOSING_NEXT_ACTION
         
-        # ВАЖНО: Отвечаем на callback query
-        await query.answer()
+        # УБИРАЕМ дублирующий вызов query.answer()
         return states.CHOOSING_NEXT_ACTION
     
     elif action == "test_next_continue":
@@ -1165,33 +1158,20 @@ async def cmd_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def send_question(message, context: ContextTypes.DEFAULT_TYPE,
                        question_data: dict, last_mode: str):
-    """Отправка вопроса пользователю с поддержкой изображений и длинных текстов."""
+    """Отправка вопроса пользователю БЕЗ дублирования."""
     
     # Устанавливаем активный модуль
     context.user_data['active_module'] = 'test_part'
     
-    # Сохраняем данные о вопросе
+    # Получаем ID пользователя для управления состоянием
+    user_id = None
+    if hasattr(message, 'from_user'):
+        user_id = message.from_user.id
+    elif hasattr(message, 'chat'):
+        user_id = message.chat.id
+    
+    # Очищаем старые данные вопросов ПЕРЕД сохранением нового
     question_id = question_data.get('id')
-    context.user_data['current_question_id'] = question_id
-    context.user_data[f'question_{question_id}'] = question_data
-    context.user_data['last_mode'] = last_mode
-    
-    # Проверяем наличие обязательных полей
-    required_fields = ['id', 'answer', 'type']
-    missing_fields = [field for field in required_fields if not question_data.get(field)]
-    
-    if missing_fields:
-        logger.error(f"Question missing required fields: {missing_fields}")
-        error_msg = "❌ Ошибка: некорректные данные вопроса"
-        
-        if hasattr(message, 'edit_text'):
-            await message.edit_text(error_msg)
-        else:
-            await message.reply_text(error_msg)
-        return ConversationHandler.END
-    
-    # Очищаем данные предыдущих вопросов
-    logger.info(f"Clearing old question data before sending new question {question_id}")
     keys_to_remove = []
     for key in context.user_data.keys():
         if key.startswith('question_') and key != f'question_{question_id}':
@@ -1199,9 +1179,9 @@ async def send_question(message, context: ContextTypes.DEFAULT_TYPE,
     for key in keys_to_remove:
         context.user_data.pop(key, None)
     
-    # Сохраняем данные вопроса под его ID
-    context.user_data[f'question_{question_id}'] = question_data.copy()
+    # Сохраняем данные нового вопроса
     context.user_data['current_question_id'] = question_id
+    context.user_data[f'question_{question_id}'] = question_data
     context.user_data['last_mode'] = last_mode
     
     # Логирование для отладки
@@ -1381,9 +1361,10 @@ async def send_question(message, context: ContextTypes.DEFAULT_TYPE,
             pass
         return ConversationHandler.END
     
-    # Устанавливаем состояние пользователя
-    from core.state_validator import state_validator
-    state_validator.set_state(user_id, states.ANSWERING)
+    # В конце функции обязательно устанавливаем правильное состояние
+    if user_id:
+        from core.state_validator import state_validator
+        state_validator.set_state(user_id, states.ANSWERING)
     
     return states.ANSWERING
 
@@ -1441,7 +1422,7 @@ async def start_exam_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return states.EXAM_MODE
 
 async def send_exam_question(message, context: ContextTypes.DEFAULT_TYPE, index: int):
-    """Отправка вопроса в режиме экзамена."""
+    """Отправка вопроса в режиме экзамена с поддержкой всех типов вопросов."""
     exam_questions = context.user_data.get('exam_questions', [])
     
     if index >= len(exam_questions):
@@ -1452,52 +1433,234 @@ async def send_exam_question(message, context: ContextTypes.DEFAULT_TYPE, index:
     question = exam_questions[index]
     context.user_data['exam_current'] = index + 1
     
-    # ИСПРАВЛЕНИЕ: Используем правильное поле 'question' из структуры данных
+    # Сохраняем ID вопроса для последующей проверки
+    question_id = question.get('id', f'exam_q_{index}')
+    context.user_data['current_question_id'] = question_id
+    
+    # Извлекаем текст вопроса в зависимости от типа
+    question_type = question.get('type', 'text')
     question_text = None
     
-    # Согласно диагностике, поле называется 'question'
     if isinstance(question, dict):
-        question_text = question.get('question')
+        # Для matching-вопросов текст в поле instruction
+        if question_type == 'matching':
+            question_text = question.get('instruction', '')
+            
+            # Добавляем информацию о колонках для matching
+            if question_text:
+                # Получаем данные колонок
+                col1_header = question.get('column1_header', 'СТОЛБЕЦ 1')
+                col1_options = question.get('column1_options', {})
+                col2_header = question.get('column2_header', 'СТОЛБЕЦ 2')
+                col2_options = question.get('column2_options', {})
+                
+                # Проверяем наличие опций
+                if col1_options and col2_options:
+                    # Формируем полный текст с колонками
+                    full_text = question_text + "\n\n"
+                    
+                    # Первая колонка
+                    full_text += f"<b>{col1_header}:</b>\n"
+                    for letter, option in sorted(col1_options.items()):
+                        full_text += f"{letter}) {option}\n"
+                    
+                    full_text += "\n"
+                    
+                    # Вторая колонка
+                    full_text += f"<b>{col2_header}:</b>\n"
+                    for digit, option in sorted(col2_options.items(), key=lambda x: int(x[0]) if x[0].isdigit() else 0):
+                        full_text += f"{digit}. {option}\n"
+                    
+                    question_text = full_text
+        else:
+            # Для остальных типов пробуем разные поля
+            question_text = (
+                question.get('question') or 
+                question.get('question_text') or 
+                question.get('text') or
+                question.get('instruction', '')
+            )
     elif isinstance(question, str):
         question_text = question
     
-    # Если текст все еще не найден, используем заглушку и логируем ошибку
+    # Если текст не найден, используем заглушку
     if not question_text:
         import json
-        logger.error(f"Empty question text for exam question {index + 1}. Question data: {json.dumps(question, ensure_ascii=False)[:200]}")
+        logger.error(f"Empty question text for exam question {index + 1}. Question type: {question_type}. Question data: {json.dumps(question, ensure_ascii=False)[:500]}")
         question_text = f"[Ошибка загрузки вопроса {index + 1}]"
     
     # Формируем текст сообщения
-    text = f"📝 <b>Вопрос {index + 1} из 16</b>"
+    text = f"📝 <b>Экзамен • Вопрос {index + 1} из 16</b>"
     
-    # Добавляем информацию о сложности и теме, если есть
+    # Добавляем информацию о задании ЕГЭ, сложности и теме
     if isinstance(question, dict):
+        exam_num = question.get('exam_number', question.get('exam_position'))
+        if exam_num:
+            text += f"\n📚 Задание ЕГЭ №{exam_num}"
         if question.get('difficulty'):
-            text += f" (Сложность: {question.get('difficulty')})"
+            text += f" • Сложность: {question.get('difficulty')}"
         if question.get('topic'):
-            text += f"\n📚 Тема: {question.get('topic')}"
+            from test_part.keyboards import TOPIC_NAMES
+            topic_name = TOPIC_NAMES.get(question.get('topic'), question.get('topic'))
+            text += f"\n📖 Тема: {topic_name}"
     
-    text += f"\n\n{question_text}"
+    text += "\n" + "━" * 30 + "\n\n"
+    text += question_text
     
-    # Сохраняем правильный ответ и объяснение для последующей проверки
+    # Добавляем подсказку по формату ответа
+    if question_type == 'matching':
+        # Безопасно получаем количество опций
+        col1_options = question.get('column1_options', {}) if isinstance(question, dict) else {}
+        col1_count = len(col1_options) if col1_options else 5  # По умолчанию 5
+        text += f"\n\n✍️ <i>Введите {col1_count} цифр без пробелов</i>"
+    elif question_type == 'multiple_choice':
+        text += f"\n\n✍️ <i>Введите цифры ответов без пробелов</i>"
+    elif question_type == 'single_choice':
+        text += f"\n\n✍️ <i>Введите одну цифру ответа</i>"
+    else:
+        text += f"\n\n✍️ <i>Введите ваш ответ</i>"
+    
+    # Сохраняем данные вопроса и ответ для проверки
     if isinstance(question, dict):
+        context.user_data[f'question_{question_id}'] = question
         context.user_data[f'exam_answer_{index}'] = question.get('answer')
         context.user_data[f'exam_explanation_{index}'] = question.get('explanation')
+        # Сохраняем позицию в экзамене
+        question['exam_position'] = question.get('exam_number', index + 1)
     
-    # Отправляем вопрос с клавиатурой
+    # Импортируем функцию из keyboards
+    from test_part.keyboards import get_exam_question_keyboard
     keyboard = get_exam_question_keyboard()
     
+    # Проверяем наличие изображения
+    image_url = question.get('image_url') if isinstance(question, dict) else None
+    
     try:
-        await message.reply_text(
-            text,
-            reply_markup=keyboard,
-            parse_mode='HTML'
-        )
+        # Импортируем необходимые модули
+        import os
+        from pathlib import Path
+        
+        # Определяем базовую директорию для изображений
+        BASE_DIR = Path("/opt/ege-bot")
+        
+        # Если есть изображение
+        if image_url:
+            # Если путь относительный, делаем его абсолютным
+            if not os.path.isabs(image_url):
+                image_path = BASE_DIR / image_url
+            else:
+                image_path = Path(image_url)
+            
+            # Проверяем существование файла
+            if image_path.exists():
+                # Проверяем длину текста для caption (максимум 1024 символа)
+                MAX_CAPTION_LENGTH = 1024
+                
+                # Получаем chat_id
+                if hasattr(message, 'chat'):
+                    chat_id = message.chat.id
+                elif hasattr(message, 'chat_id'):
+                    chat_id = message.chat_id
+                else:
+                    # Fallback - пробуем получить из контекста
+                    chat_id = context.user_data.get('user_id')
+                
+                if len(text) <= MAX_CAPTION_LENGTH:
+                    # Текст помещается в caption
+                    if hasattr(message, 'edit_text'):
+                        # Это редактирование - нужно удалить старое и отправить новое
+                        try:
+                            await message.delete()
+                        except:
+                            pass
+                        
+                        with open(image_path, 'rb') as photo:
+                            await context.bot.send_photo(
+                                chat_id=chat_id,
+                                photo=photo,
+                                caption=text,
+                                reply_markup=keyboard,
+                                parse_mode='HTML'
+                            )
+                    else:
+                        # Обычная отправка
+                        with open(image_path, 'rb') as photo:
+                            await message.reply_photo(
+                                photo=photo,
+                                caption=text,
+                                reply_markup=keyboard,
+                                parse_mode='HTML'
+                            )
+                else:
+                    # Текст слишком длинный - отправляем раздельно
+                    logger.info(f"Text too long for caption ({len(text)} chars), sending separately")
+                    
+                    if hasattr(message, 'edit_text'):
+                        try:
+                            await message.delete()
+                        except:
+                            pass
+                    
+                    # Сначала изображение с коротким описанием
+                    with open(image_path, 'rb') as photo:
+                        await context.bot.send_photo(
+                            chat_id=chat_id,
+                            photo=photo,
+                            caption=f"📊 График к вопросу {index + 1}"
+                        )
+                    
+                    # Затем текст с клавиатурой
+                    await context.bot.send_message(
+                        chat_id=chat_id,
+                        text=text,
+                        reply_markup=keyboard,
+                        parse_mode='HTML'
+                    )
+            else:
+                # Файл не найден
+                logger.error(f"Image file not found: {image_url}")
+                text = "⚠️ Изображение не найдено\n\n" + text
+                
+                # Отправляем без изображения
+                if hasattr(message, 'reply_text'):
+                    await message.reply_text(
+                        text,
+                        reply_markup=keyboard,
+                        parse_mode='HTML'
+                    )
+                elif hasattr(message, 'edit_text'):
+                    await message.edit_text(
+                        text,
+                        reply_markup=keyboard,
+                        parse_mode='HTML'
+                    )
+        else:
+            # Нет изображения - стандартная отправка
+            if hasattr(message, 'reply_text'):
+                await message.reply_text(
+                    text,
+                    reply_markup=keyboard,
+                    parse_mode='HTML'
+                )
+            elif hasattr(message, 'edit_text'):
+                await message.edit_text(
+                    text,
+                    reply_markup=keyboard,
+                    parse_mode='HTML'
+                )
+            else:
+                # Fallback
+                await message.reply_text(
+                    text,
+                    reply_markup=keyboard,
+                    parse_mode='HTML'
+                )
     except Exception as e:
         logger.error(f"Error sending exam question {index + 1}: {e}")
-        # Отправляем без HTML разметки, если возникла ошибка
+        # Отправляем без HTML разметки при ошибке
+        text_plain = text.replace('<b>', '').replace('</b>', '').replace('<i>', '').replace('</i>', '')
         await message.reply_text(
-            text.replace('<b>', '').replace('</b>', ''),
+            text_plain,
             reply_markup=keyboard
         )
 
@@ -1809,50 +1972,39 @@ def safe_cache_get_exam_questions():
     return exam_questions
 
 async def send_mistake_question(message, context: ContextTypes.DEFAULT_TYPE):
-    """Отправляет вопрос из списка ошибок."""
+    """Отправка вопроса в режиме работы над ошибками БЕЗ дублирования."""
     mistake_ids = context.user_data.get('mistake_ids', [])
     current_index = context.user_data.get('current_mistake_index', 0)
     
     if current_index >= len(mistake_ids):
-        # Все ошибки пройдены
+        # Завершаем работу над ошибками
         kb = keyboards.get_mistakes_finish_keyboard()
-        
-        text = "✅ <b>Работа над ошибками завершена!</b>\n\n"
-        text += f"Исправлено ошибок: {context.user_data.get('mistakes_corrected', 0)}\n"
-        text += f"Осталось ошибок: {len(mistake_ids)}"
-        
-        if hasattr(message, 'edit_text'):
-            await message.edit_text(text, reply_markup=kb, parse_mode=ParseMode.HTML)
-        else:
-            await message.reply_text(text, reply_markup=kb, parse_mode=ParseMode.HTML)
-        
+        await message.reply_text(
+            "✅ Работа над ошибками завершена!",
+            reply_markup=kb
+        )
         return states.CHOOSING_MODE
     
-    # Получаем вопрос
-    question_id = mistake_ids[current_index]
-    question_data = utils.find_question_by_id(question_id)
+    # Получаем данные вопроса
+    mistake_id = mistake_ids[current_index]
+    question_data = get_question_by_id(mistake_id)
     
     if not question_data:
-        # Вопрос не найден, пропускаем
+        # Пропускаем несуществующий вопрос
         context.user_data['current_mistake_index'] = current_index + 1
         return await send_mistake_question(message, context)
-
-    # Добавляем клавиатуру с кнопкой пропуска
-    mistake_keyboard = InlineKeyboardMarkup([
-        [InlineKeyboardButton("⏭️ Пропустить", callback_data="skip_mistake")],
-        [InlineKeyboardButton("❌ Завершить", callback_data="test_exit_mistakes")]
-    ])
-
+    
+    # ВАЖНО: Проверяем, не отправляли ли мы уже этот вопрос
+    last_sent_mistake_id = context.user_data.get('last_sent_mistake_id')
+    if last_sent_mistake_id == mistake_id:
+        logger.warning(f"Attempting to send duplicate mistake question: {mistake_id}")
+        return states.REVIEWING_MISTAKES
+    
+    # Запоминаем, что отправили этот вопрос
+    context.user_data['last_sent_mistake_id'] = mistake_id
+    
     # Отправляем вопрос
     await send_question(message, context, question_data, "mistakes")
-    
-    # ДОБАВИТЬ: Устанавливаем состояние пользователя
-    # Получаем user_id из контекста
-    user_id = context.user_data.get('user_id')
-    if user_id:
-        from core.state_validator import state_validator
-        state_validator.set_state(user_id, states.REVIEWING_MISTAKES)
-    
     return states.REVIEWING_MISTAKES
 
 @safe_handler()
