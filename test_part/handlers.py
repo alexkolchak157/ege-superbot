@@ -717,9 +717,19 @@ async def check_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 feedback += "\n\n" + "─" * 30 + "\n"
                 feedback += f"💪 <i>{motivational_phrase}</i>"
         
-        # Кнопки
+        # В функции check_answer, найдите строку где создается клавиатура:
         has_explanation = bool(question_data.get('explanation'))
-        kb = keyboards.get_next_action_keyboard(last_mode, has_explanation=has_explanation)
+
+        # ИСПРАВЛЕНИЕ: Получаем номер задания для передачи в клавиатуру
+        exam_number = None
+        if last_mode == 'exam_num':
+            exam_number = context.user_data.get('current_exam_number')
+
+        kb = keyboards.get_next_action_keyboard(
+            last_mode, 
+            has_explanation=has_explanation,
+            exam_number=exam_number  # Передаем номер задания
+        )
         
         # Удаляем анимацию
         try:
@@ -805,6 +815,10 @@ async def handle_next_action(update: Update, context: ContextTypes.DEFAULT_TYPE)
         except Exception as e:
             logger.error(f"Error sending loading message: {e}")
             return states.CHOOSING_NEXT_ACTION
+        
+        # ИСПРАВЛЕНИЕ: Передаем chat_id правильно
+        chat_id = query.message.chat_id
+        await utils.purge_old_messages(context, chat_id)
         
         # Удаляем предыдущие сообщения используя централизованную функцию
         await utils.purge_old_messages(context, query.message.chat_id, keep_id=loading_msg.message_id)

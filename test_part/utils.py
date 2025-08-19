@@ -518,13 +518,7 @@ async def generate_detailed_report(user_id: int) -> str:
 async def purge_old_messages(context: ContextTypes.DEFAULT_TYPE, chat_id: int, keep_id: int = None):
     """
     Удаляет старые сообщения из чата, включая сообщения с изображениями.
-    
-    Args:
-        context: Контекст бота
-        chat_id: ID чата
-        keep_id: ID сообщения, которое НЕ нужно удалять
     """
-    # Список ID сообщений для удаления
     message_ids_to_delete = []
     
     # Добавляем основное сообщение с вопросом
@@ -538,7 +532,6 @@ async def purge_old_messages(context: ContextTypes.DEFAULT_TYPE, chat_id: int, k
         photo_id = context.user_data['current_photo_message_id']
         if photo_id != keep_id:
             message_ids_to_delete.append(photo_id)
-        # Удаляем из контекста после добавления в список
         context.user_data.pop('current_photo_message_id', None)
     
     # Добавляем сообщение пользователя с ответом
@@ -547,11 +540,19 @@ async def purge_old_messages(context: ContextTypes.DEFAULT_TYPE, chat_id: int, k
         if answer_id != keep_id:
             message_ids_to_delete.append(answer_id)
     
-    # Добавляем сообщение с результатом
+    # ИСПРАВЛЕНИЕ: Добавляем обработку feedback_message_id
+    if 'feedback_message_id' in context.user_data:
+        feedback_id = context.user_data['feedback_message_id']
+        if feedback_id != keep_id:
+            message_ids_to_delete.append(feedback_id)
+        context.user_data.pop('feedback_message_id', None)
+    
+    # Также проверяем result_message_id для совместимости
     if 'result_message_id' in context.user_data:
         result_id = context.user_data['result_message_id']
         if result_id != keep_id:
             message_ids_to_delete.append(result_id)
+        context.user_data.pop('result_message_id', None)
     
     # Добавляем дополнительные сообщения (например, пояснения)
     if 'extra_messages_to_delete' in context.user_data:

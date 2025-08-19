@@ -176,7 +176,7 @@ def get_mistakes_nav_keyboard() -> InlineKeyboardMarkup:
         ],
     ])
 
-def get_next_action_keyboard(last_mode: str, has_explanation: bool = False) -> InlineKeyboardMarkup:
+def get_next_action_keyboard(last_mode: str, has_explanation: bool = False, exam_number: int = None) -> InlineKeyboardMarkup:
     """Клавиатура действий после ответа (ОСНОВНАЯ ВЕРСИЯ)."""
     keyboard = []
     
@@ -187,7 +187,11 @@ def get_next_action_keyboard(last_mode: str, has_explanation: bool = False) -> I
     if last_mode == "topic":
         next_text = "➡️ Следующий вопрос по теме"
     elif last_mode == "exam_num":
-        next_text = "➡️ Следующий вопрос №"
+        # ИСПРАВЛЕНИЕ: Добавляем номер задания если он передан
+        if exam_number:
+            next_text = f"➡️ Следующий вопрос №{exam_number}"
+        else:
+            next_text = "➡️ Следующий вопрос"
     elif last_mode == "block":
         next_text = "➡️ Следующий из блока"
     elif last_mode == "mistakes":
