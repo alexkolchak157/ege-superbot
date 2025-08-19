@@ -313,7 +313,7 @@ async def test_detailed_analysis(update: Update, context: ContextTypes.DEFAULT_T
 async def select_exam_num_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Выбор режима по номеру ЕГЭ."""
     query = update.callback_query
-    
+    context.user_data['user_id'] = query.from_user.id
     # Устанавливаем активный модуль
     context.user_data['active_module'] = 'test_part'
     
@@ -338,7 +338,7 @@ async def select_exam_num_mode(update: Update, context: ContextTypes.DEFAULT_TYP
 async def select_block_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Выбор режима по блокам."""
     query = update.callback_query
-    
+    context.user_data['user_id'] = query.from_user.id
     # Устанавливаем активный модуль
     context.user_data['active_module'] = 'test_part'
     
@@ -360,7 +360,7 @@ async def select_block_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def select_random_all(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Случайный вопрос из всей базы."""
     query = update.callback_query
-    
+    context.user_data['user_id'] = query.from_user.id
     # Устанавливаем активный модуль
     context.user_data['active_module'] = 'test_part'
     
@@ -416,7 +416,7 @@ async def select_random_all(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def select_block(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Выбор конкретного блока."""
     query = update.callback_query
-    
+    context.user_data['user_id'] = query.from_user.id
     block_name = query.data.split(":", 2)[2]
     if block_name not in AVAILABLE_BLOCKS:
         return states.CHOOSING_BLOCK
@@ -1058,7 +1058,7 @@ async def cmd_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def send_question(message, context: ContextTypes.DEFAULT_TYPE,
                        question_data: dict, last_mode: str):
-    """Отправка вопроса пользователю БЕЗ прогресс-бара."""
+    """Отправка вопроса пользователю с поддержкой изображений и длинных текстов."""
     
     # Устанавливаем активный модуль
     context.user_data['active_module'] = 'test_part'
@@ -1083,9 +1083,7 @@ async def send_question(message, context: ContextTypes.DEFAULT_TYPE,
             await message.reply_text(error_msg)
         return ConversationHandler.END
     
-    question_id = question_data.get('id')
-    
-    # ВАЖНО: Очищаем данные предыдущих вопросов
+    # Очищаем данные предыдущих вопросов
     logger.info(f"Clearing old question data before sending new question {question_id}")
     keys_to_remove = []
     for key in context.user_data.keys():
@@ -1103,8 +1101,8 @@ async def send_question(message, context: ContextTypes.DEFAULT_TYPE,
     logger.info(f"SENDING QUESTION: ID={question_id}, "
                 f"Answer={question_data.get('answer')}, "
                 f"Type={question_data.get('type')}, "
-                f"Topic={question_data.get('topic')}")
-   
+                f"Topic={question_data.get('topic')}, "
+                f"Has image={bool(question_data.get('image_url'))}")
     
     # Добавляем информацию о блоке и теме
     if 'block' not in question_data and context.user_data.get('selected_block'):
@@ -1116,31 +1114,129 @@ async def send_question(message, context: ContextTypes.DEFAULT_TYPE,
     if last_mode == 'exam_num' and 'exam_number' in question_data:
         context.user_data['current_exam_number'] = question_data['exam_number']
     
-    # Получаем user_id
-    if hasattr(message, 'from_user'):
-        user_id = message.from_user.id
-    elif hasattr(message, 'chat_id'):
-        user_id = message.chat_id
-    else:
-        user_id = message.message.chat_id
+    # ИСПРАВЛЕНО: Правильное получение user_id
+    # Сначала пробуем получить из контекста (самый надежный способ)
+    user_id = context.user_data.get('user_id')
     
-    # Форматируем текст вопроса БЕЗ прогресс-бара
+    if not user_id:
+        # Если нет в контексте, пробуем получить из сообщения
+        if hasattr(message, 'from_user') and message.from_user:
+            user_id = message.from_user.id
+        elif hasattr(message, 'chat') and message.chat:
+            user_id = message.chat.id
+        else:
+            # Крайний случай - пробуем найти в message.message
+            if hasattr(message, 'message') and hasattr(message.message, 'chat'):
+                user_id = message.message.chat.id
+    
+    # Проверка что user_id корректный (не ID бота)
+    if not user_id:
+        logger.error("Cannot determine user_id!")
+        await message.reply_text("Ошибка: не удалось определить пользователя")
+        return ConversationHandler.END
+    
+    # Сохраняем user_id в контекст для будущего использования
+    context.user_data['user_id'] = user_id
+    
+    logger.debug(f"Determined user_id: {user_id}")
+    
+    # Форматируем текст вопроса
     text = utils.format_question_text(question_data)
     
-    # Отправляем сообщение
+    # Проверяем наличие изображения
+    image_url = question_data.get('image_url')
+    
     try:
-        if hasattr(message, 'edit_text'):
-            # Это CallbackQuery - редактируем сообщение
-            await message.edit_text(text, parse_mode=ParseMode.HTML)
-            # Сохраняем ID сообщения
-            context.user_data['current_question_message_id'] = message.message_id
-        else:
-            # Это обычное сообщение - отправляем новое
-            sent_msg = await message.reply_text(text, parse_mode=ParseMode.HTML)
-            # Сохраняем ID нового сообщения
-            if sent_msg:
-                context.user_data['current_question_message_id'] = sent_msg.message_id
+        if image_url:
+            import os
             
+            # Проверяем существование файла
+            if os.path.exists(image_url):
+                # Проверяем длину текста для caption (максимум 1024 символа)
+                MAX_CAPTION_LENGTH = 1024
+                
+                if len(text) <= MAX_CAPTION_LENGTH:
+                    # Текст помещается в caption - отправляем как обычно
+                    if hasattr(message, 'reply_photo'):
+                        # Это обычное сообщение
+                        with open(image_url, 'rb') as photo:
+                            sent_msg = await message.reply_photo(
+                                photo=photo,
+                                caption=text,
+                                parse_mode=ParseMode.HTML
+                            )
+                    else:
+                        # Это CallbackQuery - нужно отправить новое сообщение
+                        try:
+                            await message.delete()
+                        except:
+                            pass
+                        
+                        with open(image_url, 'rb') as photo:
+                            sent_msg = await context.bot.send_photo(
+                                chat_id=user_id,
+                                photo=photo,
+                                caption=text,
+                                parse_mode=ParseMode.HTML
+                            )
+                    
+                    if sent_msg:
+                        context.user_data['current_question_message_id'] = sent_msg.message_id
+                else:
+                    # Текст слишком длинный - отправляем изображение и текст отдельно
+                    logger.info(f"Text too long ({len(text)} chars), sending image and text separately")
+                    
+                    # Удаляем старое сообщение если это CallbackQuery
+                    if hasattr(message, 'delete'):
+                        try:
+                            await message.delete()
+                        except Exception as e:
+                            logger.debug(f"Could not delete message: {e}")
+                    
+                    # Сначала отправляем изображение без текста или с коротким заголовком
+                    with open(image_url, 'rb') as photo:
+                        photo_msg = await context.bot.send_photo(
+                            chat_id=user_id,
+                            photo=photo,
+                            caption="📊 График к заданию"
+                        )
+                    
+                    # Затем отправляем текст вопроса
+                    text_msg = await context.bot.send_message(
+                        chat_id=user_id,
+                        text=text,
+                        parse_mode=ParseMode.HTML
+                    )
+                    
+                    # Сохраняем ID текстового сообщения как основного
+                    if text_msg:
+                        context.user_data['current_question_message_id'] = text_msg.message_id
+                        # Также сохраняем ID сообщения с фото для возможного удаления
+                        context.user_data['current_photo_message_id'] = photo_msg.message_id
+            else:
+                # Файл не найден, отправляем только текст с предупреждением
+                logger.error(f"Image file not found: {image_url}")
+                text = "⚠️ Изображение не найдено\n\n" + text
+                
+                if hasattr(message, 'edit_text'):
+                    await message.edit_text(text, parse_mode=ParseMode.HTML)
+                    context.user_data['current_question_message_id'] = message.message_id
+                else:
+                    sent_msg = await message.reply_text(text, parse_mode=ParseMode.HTML)
+                    if sent_msg:
+                        context.user_data['current_question_message_id'] = sent_msg.message_id
+        else:
+            # Нет изображения - используем стандартную логику
+            if hasattr(message, 'edit_text'):
+                # Это CallbackQuery - редактируем сообщение
+                await message.edit_text(text, parse_mode=ParseMode.HTML)
+                context.user_data['current_question_message_id'] = message.message_id
+            else:
+                # Это обычное сообщение - отправляем новое
+                sent_msg = await message.reply_text(text, parse_mode=ParseMode.HTML)
+                if sent_msg:
+                    context.user_data['current_question_message_id'] = sent_msg.message_id
+                    
     except Exception as e:
         logger.error(f"Ошибка отправки вопроса: {e}")
         try:
@@ -1151,6 +1247,8 @@ async def send_question(message, context: ContextTypes.DEFAULT_TYPE,
         except:
             pass
         return ConversationHandler.END
+    
+    # Устанавливаем состояние пользователя
     from core.state_validator import state_validator
     state_validator.set_state(user_id, states.ANSWERING)
     
@@ -1391,6 +1489,7 @@ async def mistake_nav(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def select_exam_num(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Выбор конкретного номера задания."""
     query = update.callback_query
+    context.user_data['user_id'] = query.from_user.id
     
     try:
         exam_number = int(query.data.split(":", 2)[2])
@@ -1429,7 +1528,7 @@ async def select_exam_num(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def select_mode_random_in_block(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Случайный вопрос из выбранного блока."""
     query = update.callback_query
-    
+    context.user_data['user_id'] = query.from_user.id
     selected_block = context.user_data.get('selected_block')
     if not selected_block or selected_block not in QUESTIONS_DATA:
         await query.answer("❌ Блок не выбран", show_alert=True)
@@ -1469,7 +1568,7 @@ async def select_mode_random_in_block(update: Update, context: ContextTypes.DEFA
 async def select_mode_topic_in_block(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Выбор темы в блоке."""
     query = update.callback_query
-    
+    context.user_data['user_id'] = query.from_user.id
     selected_block = context.user_data.get('selected_block')
     if not selected_block or selected_block not in QUESTIONS_DATA:
         return states.CHOOSING_BLOCK
@@ -1490,7 +1589,7 @@ async def select_mode_topic_in_block(update: Update, context: ContextTypes.DEFAU
 async def select_topic(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Выбор конкретной темы."""
     query = update.callback_query
-    
+    context.user_data['user_id'] = query.from_user.id
     selected_topic = query.data.replace("topic:", "")
     selected_block = context.user_data.get('selected_block')
     
@@ -1526,7 +1625,7 @@ async def select_topic(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def select_mistakes(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Вход в режим работы над ошибками."""
     query = update.callback_query
-    
+    context.user_data['user_id'] = query.from_user.id
     # Устанавливаем активный модуль
     context.user_data['active_module'] = 'test_part'
     
@@ -2118,7 +2217,7 @@ async def test_back_to_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def select_mistakes(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Вход в режим работы над ошибками."""
     query = update.callback_query
-    
+    context.user_data['user_id'] = query.from_user.id
     user_id = query.from_user.id
     mistake_ids = await db.get_mistake_ids(user_id)
     

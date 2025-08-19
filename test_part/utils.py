@@ -515,61 +515,60 @@ async def generate_detailed_report(user_id: int) -> str:
         logger.error(f"Error generating report for user {user_id}: {e}")
         raise
 
-async def purge_old_messages(context: ContextTypes.DEFAULT_TYPE, chat_id: int, keep_id: Optional[int] = None):
+async def purge_old_messages(context: ContextTypes.DEFAULT_TYPE, chat_id: int, keep_id: int = None):
     """
-    Удаляет все сохранённые сообщения из контекста.
+    Удаляет старые сообщения из чата, включая сообщения с изображениями.
     
     Args:
         context: Контекст бота
         chat_id: ID чата
-        keep_id: ID сообщения, которое НЕ нужно удалять (например, loading message)
+        keep_id: ID сообщения, которое НЕ нужно удалять
     """
-    # Проверяем наличие bot instance
-    if not hasattr(context, 'bot') or not context.bot:
-        logger.warning("Bot instance not available for message deletion")
-        return
+    # Список ID сообщений для удаления
+    message_ids_to_delete = []
     
-    # Список всех ключей, содержащих ID сообщений
-    message_keys = [
-        'current_question_message_id',
-        'user_answer_message_id',      # Сообщение пользователя с ответом
-        'answer_message_id', 
-        'feedback_message_id',
-        'checking_message_id',         # Сообщение "Проверяю ваш ответ..."
-        'thinking_message_id',         # Сообщение "Загружаю вопрос..."
-        'loading_message_id'           # Другие временные сообщения
-    ]
+    # Добавляем основное сообщение с вопросом
+    if 'current_question_message_id' in context.user_data:
+        msg_id = context.user_data['current_question_message_id']
+        if msg_id != keep_id:
+            message_ids_to_delete.append(msg_id)
     
-    # Собираем все ID для удаления
-    messages_to_delete = []
-    deleted_count = 0
+    # Добавляем сообщение с фото (если было отправлено отдельно)
+    if 'current_photo_message_id' in context.user_data:
+        photo_id = context.user_data['current_photo_message_id']
+        if photo_id != keep_id:
+            message_ids_to_delete.append(photo_id)
+        # Удаляем из контекста после добавления в список
+        context.user_data.pop('current_photo_message_id', None)
     
-    for key in message_keys:
-        msg_id = context.user_data.get(key)
-        if msg_id and msg_id != keep_id:
-            messages_to_delete.append((key, msg_id))
+    # Добавляем сообщение пользователя с ответом
+    if 'user_answer_message_id' in context.user_data:
+        answer_id = context.user_data['user_answer_message_id']
+        if answer_id != keep_id:
+            message_ids_to_delete.append(answer_id)
     
-    # Добавляем дополнительные сообщения (пояснения и т.д.)
-    extra_messages = context.user_data.get('extra_messages_to_delete', [])
-    for msg_id in extra_messages:
-        if msg_id and msg_id != keep_id:
-            messages_to_delete.append(('extra', msg_id))
+    # Добавляем сообщение с результатом
+    if 'result_message_id' in context.user_data:
+        result_id = context.user_data['result_message_id']
+        if result_id != keep_id:
+            message_ids_to_delete.append(result_id)
     
-    # Удаляем сообщения
-    for key, msg_id in messages_to_delete:
+    # Добавляем дополнительные сообщения (например, пояснения)
+    if 'extra_messages_to_delete' in context.user_data:
+        for msg_id in context.user_data['extra_messages_to_delete']:
+            if msg_id != keep_id:
+                message_ids_to_delete.append(msg_id)
+        context.user_data['extra_messages_to_delete'] = []
+    
+    # Удаляем все сообщения
+    for msg_id in message_ids_to_delete:
         try:
             await context.bot.delete_message(chat_id=chat_id, message_id=msg_id)
-            deleted_count += 1
-            logger.debug(f"Deleted message {key}: {msg_id}")
+            logger.debug(f"Deleted message {msg_id}")
         except Exception as e:
-            logger.warning(f"Failed to delete message {key} {msg_id}: {e}")
+            logger.debug(f"Could not delete message {msg_id}: {e}")
     
-    # Очищаем контекст
-    for key in message_keys:
-        context.user_data.pop(key, None)
-    context.user_data['extra_messages_to_delete'] = []
-    
-    logger.info(f"Deleted {deleted_count}/{len(messages_to_delete)} messages")
+    logger.info(f"Purged {len(message_ids_to_delete)} messages from chat {chat_id}")
 
 def md_to_html(text: str) -> str:
     """
