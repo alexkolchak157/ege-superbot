@@ -160,6 +160,15 @@ def get_after_answer_keyboard(last_mode: str = "random") -> InlineKeyboardMarkup
         [InlineKeyboardButton("🏠 Главное меню", callback_data=CallbackData.TEST_TO_MAIN_MENU)],
     ])
 
+def get_exam_question_keyboard() -> InlineKeyboardMarkup:
+    """Клавиатура для вопроса в режиме экзамена."""
+    return InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("⏭️ Пропустить вопрос", callback_data="exam_skip_question"),
+            InlineKeyboardButton("❌ Прервать экзамен", callback_data="exam_abort")
+        ]
+    ])
+
 def get_mistakes_nav_keyboard() -> InlineKeyboardMarkup:
     """Клавиатура навигации по ошибкам."""
     return InlineKeyboardMarkup([

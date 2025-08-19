@@ -1247,37 +1247,34 @@ async def send_question(message, context: ContextTypes.DEFAULT_TYPE,
     
     logger.debug(f"Determined user_id: {user_id}")
     
-    # Форматируем текст вопроса
     text = utils.format_question_text(question_data)
-    # Формируем текст вопроса
-    question_text = question_data.get('question_text', '')
-    
+
     # Добавляем клавиатуру с кнопкой пропуска
     skip_keyboard = keyboards.get_question_keyboard(last_mode)
-    
+
     # Отправляем вопрос с клавиатурой
     if question_data.get('image_url'):
         # Если есть изображение
         try:
             sent_message = await message.reply_photo(
                 photo=question_data['image_url'],
-                caption=question_text,
+                caption=text,  # ← ИСПРАВЛЕНО: используем отформатированный text
                 parse_mode=ParseMode.HTML,
-                reply_markup=skip_keyboard  # Добавляем клавиатуру
+                reply_markup=skip_keyboard
             )
         except Exception as e:
             # Fallback на текст
             sent_message = await message.reply_text(
-                question_text,
+                text,  # ← ИСПРАВЛЕНО
                 parse_mode=ParseMode.HTML,
-                reply_markup=skip_keyboard  # Добавляем клавиатуру
+                reply_markup=skip_keyboard
             )
     else:
         # Только текст
         sent_message = await message.reply_text(
-            question_text,
+            text,  # ← ИСПРАВЛЕНО
             parse_mode=ParseMode.HTML,
-            reply_markup=skip_keyboard  # Добавляем клавиатуру
+            reply_markup=skip_keyboard
         )
     # Проверяем наличие изображения
     image_url = question_data.get('image_url')

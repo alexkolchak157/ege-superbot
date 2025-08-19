@@ -173,6 +173,8 @@ def normalize_answer(answer: str, question_type: str) -> str:
 
 def format_question_text(question_data: dict) -> str:
     """Форматирование текста вопроса."""
+    import re
+    
     if not question_data:
         return "❌ Ошибка: данные вопроса отсутствуют"
     
@@ -210,33 +212,35 @@ def format_question_text(question_data: dict) -> str:
         text += f"\n✍️ <i>Введите {len(col1_options)} цифр ответа без пробелов</i>"
     
     else:
+        # ИСПРАВЛЕНИЕ: Просто добавляем полный текст вопроса без разбивки
         question_text = question_data.get('question', '')
-        question_text = md_to_html(question_text)
-        parts = question_text.split('\n', 1)
-        instruction = parts[0]
-        options = parts[1] if len(parts) > 1 else ''
-        
-        text += f"❓ <b>{instruction}</b>\n\n"
-        
-        # Форматируем варианты ответов
-        if options:
-            lines = options.split('\n')
-            for line in lines:
-                line = line.strip()
-                if not line:
-                    text += "\n"
-                    continue
-                    
-                # Проверяем, начинается ли строка с цифры и скобки/точки
-                if re.match(r'^\*?\*?\d+[).]', line):
-                    # Это вариант ответа
-                    # Конвертируем markdown в HTML
-                    line = md_to_html(line)
-                    # Добавляем отступ и форматирование
-                    text += f"  {line}\n"
-                else:
-                    # Это продолжение текста
-                    text += f"{line}\n"
+        if question_text:
+            # Конвертируем markdown в HTML для всего текста
+            question_text = md_to_html(question_text)
+            
+            # Добавляем красный вопросительный знак только в начале первой строки
+            lines = question_text.split('\n')
+            if lines:
+                # Первая строка - это инструкция/вопрос
+                first_line = lines[0].strip()
+                if first_line:
+                    text += f"❓ <b>{first_line}</b>\n\n"
+                
+                # Остальные строки - варианты ответов
+                if len(lines) > 1:
+                    for line in lines[1:]:
+                        line = line.strip()
+                        if not line:
+                            continue
+                        # Проверяем, это вариант ответа или обычный текст
+                        if re.match(r'^\d+[).]', line):
+                            # Это вариант ответа - добавляем с отступом
+                            text += f"  {line}\n"
+                        else:
+                            # Обычный текст
+                            text += f"{line}\n"
+        else:
+            text += "❓ <b>Текст вопроса отсутствует</b>\n"
         
         # Подсказка по вводу
         text += "\n"
