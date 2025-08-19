@@ -628,6 +628,19 @@ class TestPartCallbackData:
     TEST_SKIP_MISTAKE = "skip_mistake"
     TEST_EXIT_MISTAKES = "exit_mistakes"
 
+    # Режим экзамена
+    TEST_EXAM_MODE = "initial:exam_mode"
+    TEST_EXAM_SKIP = "exam_skip_question"
+    TEST_EXAM_ABORT = "exam_abort"
+    TEST_EXAM_ABORT_CONFIRM = "exam_abort_confirm"
+    TEST_EXAM_CONTINUE = "exam_continue"
+    TEST_EXAM_START_PARTIAL = "exam_start_partial"
+    TEST_EXAM_DETAILED = "exam_detailed_review"
+    
+    # Пропуск вопросов
+    TEST_SKIP_QUESTION = "skip_question"
+    TEST_SKIP_MISTAKE = "skip_mistake"
+
     # Префиксы и дополнительные действия
     TEST_NEXT_CONTINUE = "test_next_continue"
     TEST_NEXT_SHOW_EXPLANATION = "test_next_show_explanation"

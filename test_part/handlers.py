@@ -948,6 +948,99 @@ async def handle_next_action(update: Update, context: ContextTypes.DEFAULT_TYPE)
         logger.warning(f"Неизвестное действие: {action}")
         return states.CHOOSING_NEXT_ACTION
 
+@safe_handler()
+async def skip_question(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработчик пропуска вопроса."""
+    query = update.callback_query
+    await query.answer("Вопрос пропущен")
+    
+    # Получаем режим из callback_data
+    mode = query.data.split(":")[1] if ":" in query.data else context.user_data.get('last_mode')
+    
+    # Очищаем данные текущего вопроса
+    current_question_id = context.user_data.get('current_question_id')
+    if current_question_id:
+        context.user_data.pop(f'question_{current_question_id}', None)
+    
+    # НЕ записываем в БД как ошибку или правильный ответ
+    # Просто переходим к следующему вопросу
+    
+    loading_msg = await query.message.reply_text("⏳ Загружаю следующий вопрос...")
+    
+    # Логика перехода к следующему вопросу в зависимости от режима
+    if mode == 'random_all':
+        all_questions = []
+        for block_data in QUESTIONS_DATA.values():
+            for topic_questions in block_data.values():
+                all_questions.extend(topic_questions)
+        
+        question_data = await utils.choose_question(query.from_user.id, all_questions)
+        if question_data:
+            await send_question(loading_msg, context, question_data, "random_all")
+            return states.ANSWERING
+            
+    elif mode == 'exam_num':
+        exam_number = context.user_data.get('current_exam_number')
+        if exam_number:
+            questions_with_num = safe_cache_get_by_exam_num(exam_number)
+            question_data = await utils.choose_question(query.from_user.id, questions_with_num)
+            if question_data:
+                await send_question(loading_msg, context, question_data, "exam_num")
+                return states.ANSWERING
+                
+    elif mode == 'topic':
+        selected_topic = context.user_data.get('selected_topic')
+        if selected_topic:
+            questions_in_topic = safe_cache_get_by_topic(selected_topic)
+            question_data = await utils.choose_question(query.from_user.id, questions_in_topic)
+            if question_data:
+                await send_question(loading_msg, context, question_data, "topic")
+                return states.ANSWERING
+                
+    elif mode == 'block':
+        selected_block = context.user_data.get('selected_block')
+        if selected_block:
+            questions_in_block = safe_cache_get_by_block(selected_block)
+            question_data = await utils.choose_question(query.from_user.id, questions_in_block)
+            if question_data:
+                await send_question(loading_msg, context, question_data, "block")
+                return states.ANSWERING
+    
+    # Если нет больше вопросов
+    kb = keyboards.get_initial_choice_keyboard()
+    await loading_msg.edit_text(
+        "Больше нет доступных вопросов в этом режиме.\n\nВыберите другой режим:",
+        reply_markup=kb
+    )
+    return states.CHOOSING_MODE
+
+# Для режима работы над ошибками - отдельный обработчик
+@safe_handler()
+async def skip_mistake(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Пропуск вопроса в режиме работы над ошибками."""
+    query = update.callback_query
+    await query.answer("Вопрос пропущен")
+    
+    mistake_ids = context.user_data.get('mistake_ids', [])
+    current_index = context.user_data.get('current_mistake_index', 0)
+    
+    # Переходим к следующей ошибке без удаления текущей
+    context.user_data['current_mistake_index'] = current_index + 1
+    
+    if current_index + 1 < len(mistake_ids):
+        await send_mistake_question(query.message, context)
+        return states.REVIEWING_MISTAKES
+    else:
+        # Завершаем работу над ошибками
+        kb = keyboards.get_mistakes_finish_keyboard()
+        await query.message.reply_text(
+            "✅ Работа над ошибками завершена!\n\n"
+            "Пропущенные вопросы остались в списке ошибок.",
+            reply_markup=kb,
+            parse_mode=ParseMode.HTML
+        )
+        return states.CHOOSING_MODE
+
 async def cmd_mistakes(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Команда /mistakes - работа над ошибками."""
     user_id = update.effective_user.id
@@ -1156,7 +1249,36 @@ async def send_question(message, context: ContextTypes.DEFAULT_TYPE,
     
     # Форматируем текст вопроса
     text = utils.format_question_text(question_data)
+    # Формируем текст вопроса
+    question_text = question_data.get('question_text', '')
     
+    # Добавляем клавиатуру с кнопкой пропуска
+    skip_keyboard = keyboards.get_question_keyboard(last_mode)
+    
+    # Отправляем вопрос с клавиатурой
+    if question_data.get('image_url'):
+        # Если есть изображение
+        try:
+            sent_message = await message.reply_photo(
+                photo=question_data['image_url'],
+                caption=question_text,
+                parse_mode=ParseMode.HTML,
+                reply_markup=skip_keyboard  # Добавляем клавиатуру
+            )
+        except Exception as e:
+            # Fallback на текст
+            sent_message = await message.reply_text(
+                question_text,
+                parse_mode=ParseMode.HTML,
+                reply_markup=skip_keyboard  # Добавляем клавиатуру
+            )
+    else:
+        # Только текст
+        sent_message = await message.reply_text(
+            question_text,
+            parse_mode=ParseMode.HTML,
+            reply_markup=skip_keyboard  # Добавляем клавиатуру
+        )
     # Проверяем наличие изображения
     image_url = question_data.get('image_url')
     
@@ -1269,6 +1391,254 @@ async def send_question(message, context: ContextTypes.DEFAULT_TYPE,
     return states.ANSWERING
 
 @safe_handler()
+@validate_state_transition({states.CHOOSING_MODE})
+async def start_exam_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Начало режима экзамена."""
+    query = update.callback_query
+    user_id = query.from_user.id
+    
+    # Инициализируем данные экзамена
+    context.user_data['exam_mode'] = True
+    context.user_data['exam_questions'] = []
+    context.user_data['exam_answers'] = {}
+    context.user_data['exam_results'] = {}
+    context.user_data['exam_current'] = 1
+    context.user_data['exam_skipped'] = []
+    
+    await query.edit_message_text(
+        "🎯 <b>Режим экзамена</b>\n\n"
+        "Вам будут предложены вопросы с 1 по 16 номер задания ЕГЭ.\n"
+        "Результаты будут показаны после завершения всех заданий.\n\n"
+        "⏳ Подготавливаю вопросы...",
+        parse_mode=ParseMode.HTML
+    )
+    
+    # Собираем по одному вопросу для каждого номера от 1 до 16
+    exam_questions = []
+    for exam_num in range(1, 17):
+        questions_for_num = safe_cache_get_by_exam_num(exam_num)
+        if questions_for_num:
+            # Выбираем случайный вопрос для этого номера
+            question = await utils.choose_question(user_id, questions_for_num)
+            if question:
+                question['exam_position'] = exam_num
+                exam_questions.append(question)
+    
+    if len(exam_questions) < 16:
+        await query.message.edit_text(
+            f"⚠️ Недостаточно вопросов для полного экзамена.\n"
+            f"Найдено вопросов: {len(exam_questions)}/16\n\n"
+            f"Начать с доступными вопросами?",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("✅ Начать", callback_data="exam_start_partial")],
+                [InlineKeyboardButton("❌ Отмена", callback_data="to_test_part_menu")]
+            ])
+        )
+        context.user_data['exam_questions'] = exam_questions
+        return states.EXAM_MODE
+    
+    context.user_data['exam_questions'] = exam_questions
+    
+    # Отправляем первый вопрос
+    await send_exam_question(query.message, context, 0)
+    return states.EXAM_MODE
+
+async def send_exam_question(message, context: ContextTypes.DEFAULT_TYPE, index: int):
+    """Отправка вопроса в режиме экзамена."""
+    exam_questions = context.user_data.get('exam_questions', [])
+    
+    if index >= len(exam_questions):
+        # Экзамен завершен
+        await show_exam_results(message, context)
+        return
+    
+    question = exam_questions[index]
+    context.user_data['exam_current'] = index + 1
+    context.user_data['current_question_id'] = question['id']
+    context.user_data[f'question_{question["id"]}'] = question
+    
+    # Формируем текст с прогрессом
+    progress_text = f"📝 <b>Вопрос {index + 1} из {len(exam_questions)}</b>\n"
+    progress_text += f"Задание №{question['exam_position']}\n\n"
+    progress_text += question.get('question_text', '')
+    
+    # Клавиатура с кнопкой пропуска
+    exam_keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton(f"⏭️ Пропустить ({16 - index - 1} осталось)", 
+                            callback_data="exam_skip_question")],
+        [InlineKeyboardButton("❌ Завершить экзамен", callback_data="exam_abort")]
+    ])
+    
+    # Отправляем вопрос
+    if question.get('image_url'):
+        try:
+            await message.reply_photo(
+                photo=question['image_url'],
+                caption=progress_text,
+                parse_mode=ParseMode.HTML,
+                reply_markup=exam_keyboard
+            )
+        except:
+            await message.reply_text(
+                progress_text,
+                parse_mode=ParseMode.HTML,
+                reply_markup=exam_keyboard
+            )
+    else:
+        await message.reply_text(
+            progress_text,
+            parse_mode=ParseMode.HTML,
+            reply_markup=exam_keyboard
+        )
+
+@safe_handler()
+async def check_exam_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Проверка ответа в режиме экзамена."""
+    if not context.user_data.get('exam_mode'):
+        return await check_answer(update, context)
+    
+    user_answer = update.message.text.strip()
+    current_question_id = context.user_data.get('current_question_id')
+    current_index = context.user_data.get('exam_current', 1) - 1
+    
+    # Получаем данные вопроса
+    question_data = context.user_data.get(f'question_{current_question_id}')
+    
+    if not question_data:
+        await update.message.reply_text("Ошибка: вопрос не найден.")
+        return states.EXAM_MODE
+    
+    # Проверяем ответ
+    correct_answer = str(question_data.get('answer', ''))
+    question_type = question_data.get('type', 'multiple_choice')
+    
+    is_correct = utils.normalize_answer(user_answer, question_type) == \
+                 utils.normalize_answer(correct_answer, question_type)
+    
+    # Сохраняем результат
+    context.user_data['exam_answers'][current_question_id] = {
+        'user_answer': user_answer,
+        'correct_answer': correct_answer,
+        'is_correct': is_correct,
+        'question_num': question_data['exam_position']
+    }
+    
+    # Краткое подтверждение
+    await update.message.reply_text(
+        f"✅ Ответ принят ({current_index + 1}/{len(context.user_data['exam_questions'])})",
+        parse_mode=ParseMode.HTML
+    )
+    
+    # Переходим к следующему вопросу
+    await send_exam_question(update.message, context, current_index + 1)
+    return states.EXAM_MODE
+
+@safe_handler()
+async def skip_exam_question(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Пропуск вопроса в режиме экзамена."""
+    query = update.callback_query
+    await query.answer("Вопрос пропущен")
+    
+    current_index = context.user_data.get('exam_current', 1) - 1
+    current_question_id = context.user_data.get('current_question_id')
+    
+    # Добавляем в список пропущенных
+    context.user_data['exam_skipped'].append(current_question_id)
+    
+    # Переходим к следующему вопросу
+    await send_exam_question(query.message, context, current_index + 1)
+    return states.EXAM_MODE
+
+async def show_exam_results(message, context: ContextTypes.DEFAULT_TYPE):
+    """Показ результатов экзамена."""
+    exam_questions = context.user_data.get('exam_questions', [])
+    exam_answers = context.user_data.get('exam_answers', {})
+    exam_skipped = context.user_data.get('exam_skipped', [])
+    user_id = context.user_data.get('user_id')
+    
+    # Подсчет результатов
+    total = len(exam_questions)
+    answered = len(exam_answers)
+    skipped = len(exam_skipped)
+    correct = sum(1 for a in exam_answers.values() if a['is_correct'])
+    incorrect = answered - correct
+    
+    # Расчет баллов (примерная шкала)
+    score = correct
+    max_score = 16
+    percentage = (score / max_score) * 100 if max_score > 0 else 0
+    
+    # Формируем текст результатов
+    result_text = "🎯 <b>РЕЗУЛЬТАТЫ ЭКЗАМЕНА</b>\n\n"
+    result_text += f"📊 <b>Общая статистика:</b>\n"
+    result_text += f"• Всего вопросов: {total}\n"
+    result_text += f"• Отвечено: {answered}\n"
+    result_text += f"• Пропущено: {skipped}\n\n"
+    
+    result_text += f"✅ Правильных ответов: {correct}\n"
+    result_text += f"❌ Неправильных ответов: {incorrect}\n\n"
+    
+    result_text += f"🎯 <b>Ваш результат: {score}/{max_score} ({percentage:.1f}%)</b>\n\n"
+    
+    # Оценка результата
+    if percentage >= 80:
+        result_text += "🏆 Отличный результат! Вы готовы к экзамену!"
+    elif percentage >= 60:
+        result_text += "👍 Хороший результат! Продолжайте практиковаться."
+    elif percentage >= 40:
+        result_text += "📚 Неплохо, но есть над чем работать."
+    else:
+        result_text += "💪 Требуется дополнительная подготовка."
+    
+    # Детализация по номерам заданий
+    result_text += "\n\n<b>Результаты по заданиям:</b>\n"
+    for i in range(1, 17):
+        # Находим вопрос с этим номером
+        question = next((q for q in exam_questions if q['exam_position'] == i), None)
+        if question:
+            q_id = question['id']
+            if q_id in exam_answers:
+                if exam_answers[q_id]['is_correct']:
+                    result_text += f"№{i}: ✅\n"
+                else:
+                    result_text += f"№{i}: ❌\n"
+            elif q_id in exam_skipped:
+                result_text += f"№{i}: ⏭️ пропущен\n"
+        else:
+            result_text += f"№{i}: — нет вопроса\n"
+    
+    # Сохраняем неправильные ответы в БД
+    for q_id, answer_data in exam_answers.items():
+        if not answer_data['is_correct']:
+            question = context.user_data.get(f'question_{q_id}')
+            if question:
+                await db.add_mistake(user_id, q_id, question)
+    
+    # Обновляем общую статистику
+    for question in exam_questions:
+        if question['id'] in exam_answers:
+            topic = question.get('topic')
+            is_correct = exam_answers[question['id']]['is_correct']
+            await db.update_progress(user_id, topic, is_correct)
+    
+    # Очищаем данные экзамена
+    context.user_data.pop('exam_mode', None)
+    context.user_data.pop('exam_questions', None)
+    context.user_data.pop('exam_answers', None)
+    context.user_data.pop('exam_results', None)
+    context.user_data.pop('exam_current', None)
+    context.user_data.pop('exam_skipped', None)
+    
+    # Отправляем результаты
+    await message.reply_text(
+        result_text,
+        parse_mode=ParseMode.HTML,
+        reply_markup=keyboards.get_exam_results_keyboard()
+    )
+    
+    return states.CHOOSING_MODE
+
+@safe_handler()
 async def handle_unknown_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработчик неизвестных callback_data в test_part."""
     query = update.callback_query
@@ -1319,6 +1689,115 @@ async def cmd_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.error(f"Ошибка генерации отчета для user {user_id}: {e}")
         await update.message.reply_text("Не удалось сгенерировать отчет. Попробуйте позже.")
 
+@safe_handler()
+async def abort_exam(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Прерывание экзамена."""
+    query = update.callback_query
+    
+    # Подтверждение прерывания
+    kb = InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("✅ Да, завершить", callback_data="exam_abort_confirm"),
+            InlineKeyboardButton("❌ Продолжить экзамен", callback_data="exam_continue")
+        ]
+    ])
+    
+    await query.edit_message_text(
+        "⚠️ <b>Вы уверены, что хотите завершить экзамен?</b>\n\n"
+        "Результаты не будут сохранены.",
+        reply_markup=kb,
+        parse_mode=ParseMode.HTML
+    )
+    return states.EXAM_MODE
+
+@safe_handler()
+async def abort_exam_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Подтверждение прерывания экзамена."""
+    query = update.callback_query
+    
+    # Очищаем данные экзамена
+    context.user_data.pop('exam_mode', None)
+    context.user_data.pop('exam_questions', None)
+    context.user_data.pop('exam_answers', None)
+    context.user_data.pop('exam_results', None)
+    context.user_data.pop('exam_current', None)
+    context.user_data.pop('exam_skipped', None)
+    
+    kb = keyboards.get_initial_choice_keyboard()
+    await query.edit_message_text(
+        "❌ Экзамен прерван.\n\nВыберите режим:",
+        reply_markup=kb,
+        parse_mode=ParseMode.HTML
+    )
+    return states.CHOOSING_MODE
+
+@safe_handler()
+async def exam_continue(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Продолжение экзамена после попытки прерывания."""
+    query = update.callback_query
+    await query.answer("Продолжаем экзамен")
+    
+    # Возвращаем текущий вопрос
+    current_index = context.user_data.get('exam_current', 1) - 1
+    await send_exam_question(query.message, context, current_index)
+    return states.EXAM_MODE
+
+@safe_handler()
+async def start_partial_exam(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Начало неполного экзамена (менее 16 вопросов)."""
+    query = update.callback_query
+    
+    # Отправляем первый вопрос
+    await send_exam_question(query.message, context, 0)
+    return states.EXAM_MODE
+
+@safe_handler()
+async def exam_detailed_review(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Подробный разбор результатов экзамена."""
+    query = update.callback_query
+    user_id = query.from_user.id
+    
+    # Здесь можно добавить подробный разбор каждого вопроса
+    # с показом правильных ответов и объяснений
+    
+    text = "📊 <b>Подробный разбор экзамена</b>\n\n"
+    text += "Функция в разработке. Вы можете:\n"
+    text += "• Использовать режим работы над ошибками\n"
+    text += "• Пройти экзамен заново\n"
+    
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("🔧 Работа над ошибками", callback_data="initial:select_mistakes")],
+        [InlineKeyboardButton("🔄 Новый экзамен", callback_data="initial:exam_mode")],
+        [InlineKeyboardButton("🔙 Назад", callback_data="to_test_part_menu")]
+    ])
+    
+    await query.edit_message_text(
+        text,
+        reply_markup=kb,
+        parse_mode=ParseMode.HTML
+    )
+    return states.CHOOSING_MODE
+
+# Вспомогательная функция для получения вопросов по номерам от 1 до 16
+def safe_cache_get_exam_questions():
+    """Безопасное получение вопросов для экзамена (номера 1-16)."""
+    exam_questions = []
+    
+    for exam_num in range(1, 17):
+        try:
+            # Используем существующую функцию для получения вопросов по номеру
+            questions = safe_cache_get_by_exam_num(exam_num)
+            if questions:
+                exam_questions.append({
+                    'exam_num': exam_num,
+                    'questions': questions
+                })
+        except Exception as e:
+            logger.error(f"Error getting questions for exam_num {exam_num}: {e}")
+            continue
+    
+    return exam_questions
+
 async def send_mistake_question(message, context: ContextTypes.DEFAULT_TYPE):
     """Отправляет вопрос из списка ошибок."""
     mistake_ids = context.user_data.get('mistake_ids', [])
@@ -1347,7 +1826,13 @@ async def send_mistake_question(message, context: ContextTypes.DEFAULT_TYPE):
         # Вопрос не найден, пропускаем
         context.user_data['current_mistake_index'] = current_index + 1
         return await send_mistake_question(message, context)
-    
+
+    # Добавляем клавиатуру с кнопкой пропуска
+    mistake_keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("⏭️ Пропустить", callback_data="skip_mistake")],
+        [InlineKeyboardButton("❌ Завершить", callback_data="test_exit_mistakes")]
+    ])
+
     # Отправляем вопрос
     await send_question(message, context, question_data, "mistakes")
     

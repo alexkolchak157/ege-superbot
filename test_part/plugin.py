@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 
 class TestPartPlugin(BotPlugin):
     code = "test_part"
-    title = "Тестовая часть"
+    title = "📝 Тестовая часть"
     menu_priority = 10
     
     def __init__(self):
@@ -85,6 +85,10 @@ class TestPartPlugin(BotPlugin):
                     CallbackQueryHandler(
                         handlers.select_exam_num_mode, 
                         pattern="^initial:select_exam_num$"
+                    ),
+                    CallbackQueryHandler(
+                        handlers.start_exam_mode,
+                        pattern="^initial:exam_mode$"
                     ),
                     CallbackQueryHandler(
                         handlers.select_block_mode, 
@@ -176,7 +180,15 @@ class TestPartPlugin(BotPlugin):
                         pattern="^test_.*$"
                     ),                    
                 ],
-                
+                states.EXAM_MODE: [
+                    MessageHandler(filters.TEXT & ~filters.COMMAND, handlers.check_exam_answer),
+                    CallbackQueryHandler(handlers.skip_exam_question, pattern="^exam_skip_question$"),
+                    CallbackQueryHandler(handlers.abort_exam, pattern="^exam_abort$"),
+                    CallbackQueryHandler(handlers.abort_exam_confirm, pattern="^exam_abort_confirm$"),
+                    CallbackQueryHandler(handlers.exam_continue, pattern="^exam_continue$"),
+                    CallbackQueryHandler(handlers.start_partial_exam, pattern="^exam_start_partial$"),
+                    CallbackQueryHandler(handlers.exam_detailed_review, pattern="^exam_detailed_review$"),
+                ],
                 states.CHOOSING_TOPIC: [
                     CallbackQueryHandler(
                         handlers.select_topic, 
@@ -231,6 +243,11 @@ class TestPartPlugin(BotPlugin):
                         filters.TEXT & ~filters.COMMAND,  # Убрали & filters.create(...)
                         handlers.check_answer
                     ),
+                    MessageHandler(filters.TEXT & ~filters.COMMAND, handlers.check_answer),
+                    CallbackQueryHandler(
+                        handlers.skip_question,
+                        pattern="^skip_question:"
+                    ),
                     CallbackQueryHandler(
                         handlers.back_to_main_menu,
                         pattern="^to_main_menu$"
@@ -256,6 +273,11 @@ class TestPartPlugin(BotPlugin):
                     MessageHandler(
                         filters.TEXT & ~filters.COMMAND, 
                         handlers.handle_mistake_answer
+                    ),
+                    MessageHandler(filters.TEXT & ~filters.COMMAND, handlers.check_mistake_answer),
+                    CallbackQueryHandler(
+                        handlers.skip_mistake,
+                        pattern="^skip_mistake$"
                     ),
                     CallbackQueryHandler(
                         handlers.mistake_nav,
