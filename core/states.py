@@ -9,6 +9,7 @@ CHOOSING_EXAM_NUMBER = 5  # Выбор номера ЕГЭ
 ANSWERING = 6            # Ответ на вопрос
 CHOOSING_NEXT_ACTION = 7  # После ответа
 REVIEWING_MISTAKES = 8    # Работа над ошибками
+EXAM_MODE = 9  # Режим экзамена
 
 # Состояния для task19
 SELECTING_TOPIC = 10     # Выбор темы для task19
