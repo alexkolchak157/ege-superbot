@@ -146,7 +146,9 @@ class SubscriptionScheduler:
             keyboard.append([InlineKeyboardButton("📋 Мои подписки", 
                                                  callback_data="my_subscriptions")])
             
-            await self.bot.send_message(
+    if bot:
+        try:  # ✅ Добавлен отступ (4 пробела или 1 tab)
+            await self.bot.send_message(  # ✅ Двойной отступ (внутри try)
                 chat_id=user_id,
                 text=text,
                 parse_mode=ParseMode.HTML,
@@ -155,8 +157,10 @@ class SubscriptionScheduler:
             
             logger.info(f"Sent {days_remaining}-day expiry notification to user {user_id}")
             
-        except Exception as e:
+        except Exception as e:  # ✅ На уровне try
             logger.error(f"Error sending expiry notification to user {user_id}: {e}")
+    else:  # На уровне if
+        logger.error("Bot instance not available")
     
     async def check_expired_subscriptions(self):
         """Проверяет и уведомляет об истекших подписках."""
