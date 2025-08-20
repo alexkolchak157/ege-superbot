@@ -99,16 +99,16 @@ class TestPartPlugin(BotPlugin):
                         pattern="^initial:select_random_all$"
                     ),
                     CallbackQueryHandler(
-                        handlers.select_mistakes, 
-                        pattern="^initial:select_mistakes$"
+                        handlers.work_mistakes,  # Изменено с test_mistakes
+                        pattern="^test_mistakes$"
                     ),
                     CallbackQueryHandler(
                         handlers.select_practice_mode,
                         pattern="^test_part_practice$"
                     ),
                     CallbackQueryHandler(
-                        handlers.select_mistakes,
-                        pattern="^test_part_mistakes$"
+                        handlers.work_mistakes,  # Изменено с test_mistakes
+                        pattern="^test_mistakes$"
                     ),
                     CallbackQueryHandler(
                         handlers.detailed_report,
@@ -172,7 +172,7 @@ class TestPartPlugin(BotPlugin):
                         pattern="^test_export_csv$"
                     ),
                     CallbackQueryHandler(
-                        handlers.test_work_mistakes,
+                        handlers.work_mistakes,  # Изменено с test_work_mistakes
                         pattern="^test_work_mistakes$"
                     ),
                     CallbackQueryHandler(
@@ -274,7 +274,6 @@ class TestPartPlugin(BotPlugin):
                         filters.TEXT & ~filters.COMMAND, 
                         handlers.handle_mistake_answer
                     ),
-                    MessageHandler(filters.TEXT & ~filters.COMMAND, handlers.check_mistake_answer),
                     CallbackQueryHandler(
                         handlers.skip_mistake,
                         pattern="^skip_mistake$"
