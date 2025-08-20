@@ -1144,13 +1144,6 @@ async def send_question(message, context: ContextTypes.DEFAULT_TYPE,
     # Устанавливаем активный модуль
     context.user_data['active_module'] = 'test_part'
     
-    # Получаем ID пользователя для управления состоянием
-    user_id = None
-    if hasattr(message, 'from_user'):
-        user_id = message.from_user.id
-    elif hasattr(message, 'chat'):
-        user_id = message.chat.id
-    
     # Очищаем старые данные вопросов ПЕРЕД сохранением нового
     question_id = question_data.get('id')
     keys_to_remove = []
@@ -1182,61 +1175,37 @@ async def send_question(message, context: ContextTypes.DEFAULT_TYPE,
     if last_mode == 'exam_num' and 'exam_number' in question_data:
         context.user_data['current_exam_number'] = question_data['exam_number']
     
-    # ИСПРАВЛЕНО: Правильное получение user_id
-    # Сначала пробуем получить из контекста (самый надежный способ)
+    # Получение user_id
     user_id = context.user_data.get('user_id')
     
     if not user_id:
-        # Если нет в контексте, пробуем получить из сообщения
         if hasattr(message, 'from_user') and message.from_user:
             user_id = message.from_user.id
         elif hasattr(message, 'chat') and message.chat:
             user_id = message.chat.id
         else:
-            # Крайний случай - пробуем найти в message.message
             if hasattr(message, 'message') and hasattr(message.message, 'chat'):
                 user_id = message.message.chat.id
     
-    # Проверка что user_id корректный (не ID бота)
     if not user_id:
         logger.error("Cannot determine user_id!")
         await message.reply_text("Ошибка: не удалось определить пользователя")
         return ConversationHandler.END
     
-    # Сохраняем user_id в контекст для будущего использования
     context.user_data['user_id'] = user_id
-    
     logger.debug(f"Determined user_id: {user_id}")
     
+    # Форматируем текст вопроса
     text = utils.format_question_text(question_data)
-
+    
     # Добавляем клавиатуру с кнопкой пропуска
     skip_keyboard = keyboards.get_question_keyboard(last_mode)
-
-    # Отправляем вопрос с клавиатурой
-    if question_data.get('image_url'):
-        # Если есть изображение
-        try:
-            sent_message = await message.reply_photo(
-                photo=question_data['image_url'],
-                caption=text,  # ← ИСПРАВЛЕНО: используем отформатированный text
-                parse_mode=ParseMode.HTML,
-                reply_markup=skip_keyboard
-            )
-        except Exception as e:
-            # Fallback на текст
-            sent_message = await message.reply_text(
-                text,  # ← ИСПРАВЛЕНО
-                parse_mode=ParseMode.HTML,
-                reply_markup=skip_keyboard
-            )
-    else:
-        # Только текст
-        sent_message = await message.reply_text(
-            text,  # ← ИСПРАВЛЕНО
-            parse_mode=ParseMode.HTML,
-            reply_markup=skip_keyboard
-        )
+    
+    # ВАЖНО: Определяем, это редактирование или новое сообщение
+    # Если у message есть метод edit_text, это означает что мы получили
+    # сообщение после query.edit_message_text("Загружаю...")
+    is_edit_mode = hasattr(message, 'edit_text')
+    
     # Проверяем наличие изображения
     image_url = question_data.get('image_url')
     
@@ -1244,50 +1213,38 @@ async def send_question(message, context: ContextTypes.DEFAULT_TYPE,
         if image_url:
             import os
             
-            # Проверяем существование файла
             if os.path.exists(image_url):
-                # Проверяем длину текста для caption (максимум 1024 символа)
+                # При наличии изображения всегда нужно отправлять новое сообщение
+                # так как нельзя заменить текст на фото через edit
+                
+                # Если мы в режиме редактирования, сначала удаляем старое сообщение
+                if is_edit_mode:
+                    try:
+                        await message.delete()
+                    except Exception as e:
+                        logger.debug(f"Could not delete loading message: {e}")
+                
+                # Проверяем длину текста для caption
                 MAX_CAPTION_LENGTH = 1024
                 
                 if len(text) <= MAX_CAPTION_LENGTH:
-                    # Текст помещается в caption - отправляем как обычно
-                    if hasattr(message, 'reply_photo'):
-                        # Это обычное сообщение
-                        with open(image_url, 'rb') as photo:
-                            sent_msg = await message.reply_photo(
-                                photo=photo,
-                                caption=text,
-                                parse_mode=ParseMode.HTML
-                            )
-                    else:
-                        # Это CallbackQuery - нужно отправить новое сообщение
-                        try:
-                            await message.delete()
-                        except:
-                            pass
-                        
-                        with open(image_url, 'rb') as photo:
-                            sent_msg = await context.bot.send_photo(
-                                chat_id=user_id,
-                                photo=photo,
-                                caption=text,
-                                parse_mode=ParseMode.HTML
-                            )
+                    # Текст помещается в caption
+                    with open(image_url, 'rb') as photo:
+                        sent_msg = await context.bot.send_photo(
+                            chat_id=user_id,
+                            photo=photo,
+                            caption=text,
+                            parse_mode=ParseMode.HTML,
+                            reply_markup=skip_keyboard
+                        )
                     
                     if sent_msg:
                         context.user_data['current_question_message_id'] = sent_msg.message_id
                 else:
-                    # Текст слишком длинный - отправляем изображение и текст отдельно
-                    logger.info(f"Text too long ({len(text)} chars), sending image and text separately")
+                    # Текст слишком длинный - отправляем отдельно
+                    logger.info(f"Text too long ({len(text)} chars), sending separately")
                     
-                    # Удаляем старое сообщение если это CallbackQuery
-                    if hasattr(message, 'delete'):
-                        try:
-                            await message.delete()
-                        except Exception as e:
-                            logger.debug(f"Could not delete message: {e}")
-                    
-                    # Сначала отправляем изображение без текста или с коротким заголовком
+                    # Отправляем изображение
                     with open(image_url, 'rb') as photo:
                         photo_msg = await context.bot.send_photo(
                             chat_id=user_id,
@@ -1295,54 +1252,70 @@ async def send_question(message, context: ContextTypes.DEFAULT_TYPE,
                             caption="📊 График к заданию"
                         )
                     
-                    # Затем отправляем текст вопроса
+                    # Отправляем текст с клавиатурой
                     text_msg = await context.bot.send_message(
                         chat_id=user_id,
                         text=text,
-                        parse_mode=ParseMode.HTML
+                        parse_mode=ParseMode.HTML,
+                        reply_markup=skip_keyboard
                     )
                     
-                    # Сохраняем ID текстового сообщения как основного
                     if text_msg:
                         context.user_data['current_question_message_id'] = text_msg.message_id
-                        # Также сохраняем ID сообщения с фото для возможного удаления
                         context.user_data['current_photo_message_id'] = photo_msg.message_id
             else:
-                # Файл не найден, отправляем только текст с предупреждением
+                # Файл не найден
                 logger.error(f"Image file not found: {image_url}")
                 text = "⚠️ Изображение не найдено\n\n" + text
                 
-                if hasattr(message, 'edit_text'):
-                    await message.edit_text(text, parse_mode=ParseMode.HTML)
+                if is_edit_mode:
+                    await message.edit_text(
+                        text, 
+                        parse_mode=ParseMode.HTML,
+                        reply_markup=skip_keyboard
+                    )
                     context.user_data['current_question_message_id'] = message.message_id
                 else:
-                    sent_msg = await message.reply_text(text, parse_mode=ParseMode.HTML)
+                    sent_msg = await message.reply_text(
+                        text, 
+                        parse_mode=ParseMode.HTML,
+                        reply_markup=skip_keyboard
+                    )
                     if sent_msg:
                         context.user_data['current_question_message_id'] = sent_msg.message_id
         else:
-            # Нет изображения - используем стандартную логику
-            if hasattr(message, 'edit_text'):
-                # Это CallbackQuery - редактируем сообщение
-                await message.edit_text(text, parse_mode=ParseMode.HTML)
+            # Нет изображения - только текст
+            if is_edit_mode:
+                # Редактируем существующее сообщение "Загружаю..."
+                await message.edit_text(
+                    text, 
+                    parse_mode=ParseMode.HTML,
+                    reply_markup=skip_keyboard
+                )
                 context.user_data['current_question_message_id'] = message.message_id
             else:
-                # Это обычное сообщение - отправляем новое
-                sent_msg = await message.reply_text(text, parse_mode=ParseMode.HTML)
+                # Отправляем новое сообщение
+                sent_msg = await message.reply_text(
+                    text, 
+                    parse_mode=ParseMode.HTML,
+                    reply_markup=skip_keyboard
+                )
                 if sent_msg:
                     context.user_data['current_question_message_id'] = sent_msg.message_id
                     
     except Exception as e:
         logger.error(f"Ошибка отправки вопроса: {e}")
         try:
-            if hasattr(message, 'edit_text'):
-                await message.edit_text("Ошибка при отображении вопроса. Попробуйте еще раз.")
+            error_text = "Ошибка при отображении вопроса. Попробуйте еще раз."
+            if is_edit_mode:
+                await message.edit_text(error_text)
             else:
-                await message.reply_text("Ошибка при отображении вопроса. Попробуйте еще раз.")
+                await message.reply_text(error_text)
         except:
             pass
         return ConversationHandler.END
     
-    # В конце функции обязательно устанавливаем правильное состояние
+    # Устанавливаем правильное состояние
     if user_id:
         from core.state_validator import state_validator
         state_validator.set_state(user_id, states.ANSWERING)
@@ -1766,7 +1739,7 @@ async def show_exam_results(message, context: ContextTypes.DEFAULT_TYPE):
         if not answer_data['is_correct']:
             question = context.user_data.get(f'question_{q_id}')
             if question:
-                await db.add_mistake(user_id, q_id, question)
+                await db.record_mistake(user_id, q_id)
     
     # Обновляем общую статистику
     for question in exam_questions:
@@ -1956,37 +1929,39 @@ def safe_cache_get_exam_questions():
 
 async def send_mistake_question(message, context: ContextTypes.DEFAULT_TYPE):
     """Отправка вопроса в режиме работы над ошибками БЕЗ дублирования."""
-    mistake_ids = context.user_data.get('mistake_ids', [])
+    mistake_queue = context.user_data.get('mistake_queue', [])
     current_index = context.user_data.get('current_mistake_index', 0)
     
-    if current_index >= len(mistake_ids):
+    if current_index >= len(mistake_queue):
         # Завершаем работу над ошибками
         kb = keyboards.get_mistakes_finish_keyboard()
-        await message.reply_text(
-            "✅ Работа над ошибками завершена!",
-            reply_markup=kb
-        )
+        
+        # Используем edit_text если возможно, иначе reply_text
+        if hasattr(message, 'edit_text'):
+            await message.edit_text(
+                "✅ Работа над ошибками завершена!",
+                reply_markup=kb
+            )
+        else:
+            await message.reply_text(
+                "✅ Работа над ошибками завершена!",
+                reply_markup=kb
+            )
         return states.CHOOSING_MODE
     
     # Получаем данные вопроса
-    mistake_id = mistake_ids[current_index]
-    question_data = get_question_by_id(mistake_id)
+    mistake_id = mistake_queue[current_index]
+    question_data = utils.find_question_by_id(mistake_id)
     
     if not question_data:
         # Пропускаем несуществующий вопрос
         context.user_data['current_mistake_index'] = current_index + 1
         return await send_mistake_question(message, context)
     
-    # ВАЖНО: Проверяем, не отправляли ли мы уже этот вопрос
-    last_sent_mistake_id = context.user_data.get('last_sent_mistake_id')
-    if last_sent_mistake_id == mistake_id:
-        logger.warning(f"Attempting to send duplicate mistake question: {mistake_id}")
-        return states.REVIEWING_MISTAKES
+    # ВАЖНО: Увеличиваем индекс ПОСЛЕ успешной отправки вопроса
+    context.user_data['current_mistake_index'] = current_index + 1
     
-    # Запоминаем, что отправили этот вопрос
-    context.user_data['last_sent_mistake_id'] = mistake_id
-    
-    # Отправляем вопрос
+    # Отправляем вопрос через единую функцию
     await send_question(message, context, question_data, "mistakes")
     return states.REVIEWING_MISTAKES
 
