@@ -1308,12 +1308,59 @@ async def show_final_consent_screen(update: Update, context: ContextTypes.DEFAUL
     if plan_id.startswith('custom_'):
         modules = context.user_data.get('selected_modules', [])
         monthly_price = calculate_custom_price(modules, 1)
-        total_price = calculate_custom_price(modules, duration)
+def calculate_subscription_price(plan_id, duration, custom_plan=None):
+    """Рассчитать стоимость подписки с учетом скидок."""
+    
+    # Базовые цены
+    base_prices = {
+        'package_full': 490,
+        'package_basic': 290,
+        'package_premium': 690,
+        'custom_base': 290,
+        'custom_standard': 490,
+        'custom_premium': 690
+    }
+    
+    if plan_id.startswith('custom_') and custom_plan:
+        base_price = custom_plan.get('base_price', 490)
     else:
-        from .config import MODULE_PLANS, SUBSCRIPTION_PLANS
-        plan = MODULE_PLANS.get(plan_id) or SUBSCRIPTION_PLANS.get(plan_id)
-        monthly_price = plan['price_rub']
-        total_price = calculate_subscription_price(plan_id, duration)
+        base_price = base_prices.get(plan_id, 490)
+    
+    # Скидки
+    if duration >= 12:
+        multiplier = 0.80  # 20% скидка
+    elif duration >= 6:
+        multiplier = 0.85  # 15% скидка  
+    elif duration >= 3:
+        multiplier = 0.90  # 10% скидка
+    else:
+        multiplier = 1.0
+    
+    return int(base_price * duration * multiplier)
+
+def calculate_custom_price(modules, duration):
+    """Рассчитать цену кастомного плана."""
+    base_price = 100
+    
+    module_prices = {
+        'module_math': 150,
+        'module_russian': 150,
+        'module_physics': 100,
+        'module_chemistry': 100,
+        'module_biology': 100,
+        'module_history': 80,
+        'module_social': 80,
+        'module_english': 120,
+        'module_literature': 100,
+        'module_geography': 80,
+        'module_it': 100
+    }
+    
+    for module in modules:
+        base_price += module_prices.get(module, 0)
+    
+    return calculate_subscription_price('custom', duration, {'base_price': base_price})
+    total_price = 490 * duration  # Временное решение
     
     # Проверяем состояние согласия
     consent_given = context.user_data.get('auto_renewal_consent_confirmed', False)
@@ -2104,7 +2151,9 @@ def register_payment_handlers(app):
                     handle_payment_confirmation_with_recurrent, 
                     pattern="^final_confirm_payment$"
                 ),
-                CallbackQueryHandler(cancel_payment, pattern="^cancel_payment$")
+                CallbackQueryHandler(cancel_payment, pattern="^cancel_payment$"),
+    		CallbackQueryHandler(handle_auto_renewal_choice, pattern="^enable_auto_renewal_payment$"),
+    		CallbackQueryHandler(handle_auto_renewal_choice, pattern="^disable_auto_renewal_payment$")
             ]
         },
         fallbacks=[
