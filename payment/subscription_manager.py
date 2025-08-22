@@ -34,29 +34,123 @@ class SubscriptionManager:
         """Совместимость со старым кодом."""
         return {'SUBSCRIPTION_MODE': self.subscription_mode}
 
+    async def get_failed_renewals(self, hours: int = 24) -> List[Dict]:
+        """Получает список неудачных попыток автопродления."""
+        try:
+            from datetime import datetime, timedelta, timezone
+            
+            since = datetime.now(timezone.utc) - timedelta(hours=hours)
+            
+            async with aiosqlite.connect(self.database_file) as conn:
+                conn.row_factory = aiosqlite.Row
+                
+                cursor = await conn.execute("""
+                    SELECT DISTINCT
+                        ars.user_id,
+                        ars.failures_count,
+                        ars.recurrent_token,
+                        ars.last_renewal_attempt
+                    FROM auto_renewal_settings ars
+                    WHERE 
+                        ars.enabled = 1
+                        AND ars.failures_count > 0
+                        AND ars.failures_count < 3
+                        AND ars.last_renewal_attempt >= ?
+                """, (since,))
+                
+                rows = await cursor.fetchall()
+                return [dict(row) for row in rows]
+                
+        except Exception as e:
+            logger.error(f"Error getting failed renewals: {e}")
+            return []
+
+    async def increment_renewal_failures(self, user_id: int):
+        """Увеличивает счетчик неудачных попыток автопродления."""
+        try:
+            async with aiosqlite.connect(self.database_file) as conn:
+                await conn.execute("""
+                    UPDATE auto_renewal_settings 
+                    SET failures_count = failures_count + 1,
+                        last_renewal_attempt = CURRENT_TIMESTAMP
+                    WHERE user_id = ?
+                """, (user_id,))
+                
+                # Проверяем, не превышен ли лимит
+                cursor = await conn.execute("""
+                    SELECT failures_count FROM auto_renewal_settings WHERE user_id = ?
+                """, (user_id,))
+                
+                row = await cursor.fetchone()
+                if row and row[0] >= 3:
+                    # Отключаем автопродление после 3 неудач
+                    await self.disable_auto_renewal(user_id)
+                    logger.warning(f"Auto-renewal disabled for user {user_id} after 3 failures")
+                
+                await conn.commit()
+                
+        except Exception as e:
+            logger.error(f"Error incrementing renewal failures: {e}")
+
+    async def reset_renewal_failures(self, user_id: int):
+        """Сбрасывает счетчик неудачных попыток."""
+        try:
+            async with aiosqlite.connect(self.database_file) as conn:
+                await conn.execute("""
+                    UPDATE auto_renewal_settings 
+                    SET failures_count = 0
+                    WHERE user_id = ?
+                """, (user_id,))
+                await conn.commit()
+                
+        except Exception as e:
+            logger.error(f"Error resetting renewal failures: {e}")
+
+    async def update_next_renewal_date(self, user_id: int):
+        """Обновляет дату следующего автопродления."""
+        try:
+            from datetime import datetime, timedelta, timezone
+            
+            next_date = datetime.now(timezone.utc) + timedelta(days=30)
+            
+            async with aiosqlite.connect(self.database_file) as conn:
+                await conn.execute("""
+                    UPDATE auto_renewal_settings 
+                    SET next_renewal_date = ?
+                    WHERE user_id = ?
+                """, (next_date, user_id))
+                await conn.commit()
+                
+        except Exception as e:
+            logger.error(f"Error updating next renewal date: {e}")
+
+    async def get_user_email(self, user_id: int) -> str:
+        """Получает email пользователя."""
+        try:
+            async with aiosqlite.connect(self.database_file) as conn:
+                cursor = await conn.execute("""
+                    SELECT email FROM users WHERE user_id = ?
+                """, (user_id,))
+                
+                row = await cursor.fetchone()
+                return row[0] if row else f"user{user_id}@example.com"
+                
+        except Exception as e:
+            logger.error(f"Error getting user email: {e}")
+            return f"user{user_id}@example.com"
+
     async def get_auto_renewal_status(self, user_id: int) -> Optional[Dict]:
         """Получает статус автопродления для пользователя."""
         try:
             async with aiosqlite.connect(self.database_file) as conn:
                 conn.row_factory = aiosqlite.Row
                 cursor = await conn.execute("""
-                    SELECT enabled, payment_method, recurrent_token, card_id, 
-                           next_renewal_date, failures_count, last_renewal_attempt
-                    FROM auto_renewal_settings 
-                    WHERE user_id = ?
+                    SELECT * FROM auto_renewal_settings WHERE user_id = ?
                 """, (user_id,))
                 
                 row = await cursor.fetchone()
                 if row:
-                    return {
-                        'enabled': bool(row['enabled']),
-                        'payment_method': row['payment_method'],
-                        'recurrent_token': row['recurrent_token'],
-                        'card_id': row['card_id'],
-                        'next_renewal_date': datetime.fromisoformat(row['next_renewal_date']) if row['next_renewal_date'] else None,
-                        'failures_count': row['failures_count'],
-                        'last_renewal_attempt': datetime.fromisoformat(row['last_renewal_attempt']) if row['last_renewal_attempt'] else None
-                    }
+                    return dict(row)
                 return None
                 
         except Exception as e:
@@ -159,21 +253,38 @@ class SubscriptionManager:
             logger.error(f"Error saving user email: {e}")
             return False
 
-    async def get_users_for_auto_renewal(self) -> List[int]:
+    async def get_users_for_auto_renewal(self) -> List[Dict]:
         """Получает список пользователей для автопродления."""
         try:
-            today = datetime.now(timezone.utc).date()
+            from datetime import datetime, timezone
             
             async with aiosqlite.connect(self.database_file) as conn:
+                conn.row_factory = aiosqlite.Row
+                
                 cursor = await conn.execute("""
-                    SELECT user_id 
-                    FROM auto_renewal_settings 
-                    WHERE enabled = 1 
-                    AND DATE(next_renewal_date) <= DATE(?)
-                """, (today.isoformat(),))
+                    SELECT 
+                        ars.user_id,
+                        ars.recurrent_token,
+                        ms.plan_id,
+                        p.amount / 100 as amount
+                    FROM auto_renewal_settings ars
+                    INNER JOIN module_subscriptions ms ON ars.user_id = ms.user_id
+                    LEFT JOIN (
+                        SELECT user_id, plan_id, MAX(amount) as amount
+                        FROM payments
+                        WHERE status = 'completed'
+                        GROUP BY user_id, plan_id
+                    ) p ON ars.user_id = p.user_id
+                    WHERE 
+                        ars.enabled = 1 
+                        AND ars.recurrent_token IS NOT NULL
+                        AND ms.is_active = 1
+                        AND ms.expires_at <= datetime('now', '+1 day')
+                        AND ars.failures_count < 3
+                """)
                 
                 rows = await cursor.fetchall()
-                return [row[0] for row in rows]
+                return [dict(row) for row in rows]
                 
         except Exception as e:
             logger.error(f"Error getting users for auto-renewal: {e}")
@@ -999,25 +1110,108 @@ class SubscriptionManager:
             
             await conn.commit()
 
-    async def enable_auto_renewal(self, user_id: int, payment_method: str, 
-                                 recurrent_token: str = None, card_id: str = None) -> bool:
-        """Включает автопродление для пользователя."""
+    async def init_database(self):
+        """Инициализирует базу данных с поддержкой автопродления."""
         try:
             async with aiosqlite.connect(self.database_file) as conn:
-                # Получаем текущую подписку для определения даты следующего продления
-                subscription = await self.check_active_subscription(user_id)
-                if not subscription:
-                    logger.error(f"No active subscription for user {user_id}")
-                    return False
+                # Существующие таблицы
+                await self._create_existing_tables(conn)
                 
-                next_renewal = subscription.get('expires_at')
+                # НОВОЕ: Таблицы для автопродления
+                await conn.execute("""
+                    CREATE TABLE IF NOT EXISTS auto_renewal_settings (
+                        user_id INTEGER PRIMARY KEY,
+                        enabled BOOLEAN DEFAULT 0,
+                        payment_method TEXT CHECK(payment_method IN ('card', 'recurrent')),
+                        recurrent_token TEXT,
+                        next_renewal_date TIMESTAMP,
+                        failures_count INTEGER DEFAULT 0,
+                        last_renewal_attempt TIMESTAMP,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    )
+                """)
                 
                 await conn.execute("""
+                    CREATE TABLE IF NOT EXISTS auto_renewal_history (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        user_id INTEGER NOT NULL,
+                        plan_id TEXT NOT NULL,
+                        payment_id TEXT,
+                        order_id TEXT,
+                        status TEXT CHECK(status IN ('success', 'failed', 'pending')),
+                        amount INTEGER,
+                        error_message TEXT,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    )
+                """)
+                
+                # Добавляем индексы
+                await conn.execute("""
+                    CREATE INDEX IF NOT EXISTS idx_auto_renewal_next_date 
+                    ON auto_renewal_settings(next_renewal_date)
+                """)
+                
+                await conn.execute("""
+                    CREATE INDEX IF NOT EXISTS idx_renewal_history_user 
+                    ON auto_renewal_history(user_id, created_at)
+                """)
+                
+                await conn.commit()
+                logger.info("Database initialized with auto-renewal support")
+                
+        except Exception as e:
+            logger.exception(f"Error initializing database: {e}")
+
+    async def save_rebill_id(self, user_id: int, rebill_id: str, order_id: str):
+        """Сохраняет RebillId после успешного первичного платежа."""
+        try:
+            from datetime import datetime, timedelta, timezone
+            
+            next_renewal = datetime.now(timezone.utc) + timedelta(days=30)
+            
+            async with aiosqlite.connect(self.database_file) as conn:
+                # Сохраняем или обновляем настройки автопродления
+                await conn.execute("""
                     INSERT OR REPLACE INTO auto_renewal_settings 
-                    (user_id, enabled, payment_method, recurrent_token, card_id, 
+                    (user_id, enabled, payment_method, recurrent_token, 
                      next_renewal_date, failures_count, updated_at)
-                    VALUES (?, 1, ?, ?, ?, ?, 0, CURRENT_TIMESTAMP)
-                """, (user_id, payment_method, recurrent_token, card_id, next_renewal))
+                    VALUES (?, 1, 'recurrent', ?, ?, 0, CURRENT_TIMESTAMP)
+                """, (user_id, rebill_id, next_renewal))
+                
+                # Обновляем информацию в таблице payments
+                await conn.execute("""
+                    UPDATE payments 
+                    SET rebill_id = ?, is_recurrent = 1
+                    WHERE order_id = ?
+                """, (rebill_id, order_id))
+                
+                await conn.commit()
+                logger.info(f"RebillId saved for user {user_id}")
+                
+        except Exception as e:
+            logger.error(f"Error saving rebill_id: {e}")
+
+    async def enable_auto_renewal(self, user_id: int, payment_method: str = 'recurrent', 
+                                 recurrent_token: str = None) -> bool:
+        """Включает автопродление для пользователя."""
+        try:
+            from datetime import datetime, timedelta, timezone
+            
+            # Определяем дату следующего продления
+            subscription = await self.get_active_subscription(user_id)
+            if subscription:
+                next_renewal = subscription['expires_at']
+            else:
+                next_renewal = datetime.now(timezone.utc) + timedelta(days=30)
+            
+            async with aiosqlite.connect(self.database_file) as conn:
+                await conn.execute("""
+                    INSERT OR REPLACE INTO auto_renewal_settings
+                    (user_id, enabled, payment_method, recurrent_token, 
+                     next_renewal_date, failures_count, updated_at)
+                    VALUES (?, 1, ?, ?, ?, 0, CURRENT_TIMESTAMP)
+                """, (user_id, payment_method, recurrent_token, next_renewal))
                 
                 await conn.commit()
                 logger.info(f"Auto-renewal enabled for user {user_id}")
@@ -1033,12 +1227,14 @@ class SubscriptionManager:
             async with aiosqlite.connect(self.database_file) as conn:
                 await conn.execute("""
                     UPDATE auto_renewal_settings 
-                    SET enabled = 0, updated_at = CURRENT_TIMESTAMP 
+                    SET enabled = 0, updated_at = CURRENT_TIMESTAMP
                     WHERE user_id = ?
                 """, (user_id,))
+                
                 await conn.commit()
                 logger.info(f"Auto-renewal disabled for user {user_id}")
                 return True
+                
         except Exception as e:
             logger.error(f"Error disabling auto-renewal: {e}")
             return False

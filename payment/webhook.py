@@ -286,7 +286,7 @@ async def notify_user_success(bot, order_id: str):
 
 async def handle_rebill_id(order_id: str, rebill_id: str, user_id: int):
     """
-    Обрабатывает и сохраняет RebillId из уведомления от Т-Банка.
+    ОБНОВЛЕННАЯ версия - обрабатывает и сохраняет RebillId с активацией автопродления.
     
     Args:
         order_id: ID заказа
@@ -294,14 +294,40 @@ async def handle_rebill_id(order_id: str, rebill_id: str, user_id: int):
         user_id: ID пользователя
     """
     try:
-        from .tbank_recurrent import RecurrentPaymentManager
         from .subscription_manager import SubscriptionManager
+        import json
         
         subscription_manager = SubscriptionManager()
-        recurrent_manager = RecurrentPaymentManager(subscription_manager)
         
-        # Сохраняем RebillId
-        await recurrent_manager.save_rebill_id(user_id, order_id, rebill_id)
+        # Сохраняем RebillId в БД
+        await subscription_manager.save_rebill_id(user_id, order_id, rebill_id)
+        
+        # Получаем информацию о платеже
+        payment_info = await subscription_manager.get_payment_by_order_id(order_id)
+        
+        if payment_info:
+            # Проверяем метаданные платежа
+            metadata = json.loads(payment_info.get('metadata', '{}'))
+            
+            # Если пользователь дал согласие на автопродление
+            if metadata.get('enable_auto_renewal'):
+                # Активируем автопродление
+                success = await subscription_manager.enable_auto_renewal(
+                    user_id=user_id,
+                    payment_method='recurrent',
+                    recurrent_token=rebill_id
+                )
+                
+                if success:
+                    logger.info(f"Auto-renewal enabled for user {user_id} with RebillId")
+                    
+                    # Отправляем уведомление пользователю (если есть bot в контексте)
+                    # Это нужно добавить в handle_tinkoff_webhook
+                    return True
+                else:
+                    logger.error(f"Failed to enable auto-renewal for user {user_id}")
+            else:
+                logger.info(f"RebillId saved but auto-renewal not requested by user {user_id}")
         
         logger.info(f"RebillId processed for order {order_id}, user {user_id}")
         
