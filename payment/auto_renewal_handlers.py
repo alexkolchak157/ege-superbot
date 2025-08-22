@@ -5,7 +5,14 @@ from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes, CallbackQueryHandler, CommandHandler
 from telegram.constants import ParseMode
 from .subscription_manager import SubscriptionManager
-from core.error_handler import safe_handler  # Исправленный импорт
+try:
+    from core.error_handler import safe_handler
+except ImportError:
+    # Fallback если модуль error_handler недоступен
+    def safe_handler():
+        def decorator(func):
+            return func
+        return decorator
 
 logger = logging.getLogger(__name__)
 
@@ -142,27 +149,27 @@ async def handle_enable_auto_renewal(update: Update, context: ContextTypes.DEFAU
 
 @safe_handler()
 async def handle_disable_auto_renewal(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обработка отключения автопродления."""
+    """Отключает автопродление."""
     query = update.callback_query
     await query.answer()
     
-    user_id = update.effective_user.id
-    subscription_manager = context.bot_data.get('subscription_manager', SubscriptionManager())
-    
-    # Подтверждение отключения
     if query.data == "disable_auto_renewal":
+        # Показываем подтверждение
         text = """⚠️ <b>Отключение автопродления</b>
 
 Вы уверены, что хотите отключить автопродление?
 
-После отключения ваша подписка не будет продлеваться автоматически, и вы можете потерять доступ к материалам после истечения текущего периода."""
+После отключения:
+- Подписка НЕ будет продлеваться автоматически
+- Доступ сохранится до конца оплаченного периода
+- Вы сможете включить автопродление снова в любой момент"""
         
         keyboard = [
             [
-                InlineKeyboardButton("❌ Да, отключить", 
+                InlineKeyboardButton("✅ Да, отключить", 
                                    callback_data="confirm_disable_auto_renewal"),
-                InlineKeyboardButton("✅ Оставить", 
-                                   callback_data="close_message")
+                InlineKeyboardButton("❌ Отмена", 
+                                   callback_data="cancel_disable_auto_renewal")
             ]
         ]
         
@@ -171,6 +178,15 @@ async def handle_disable_auto_renewal(update: Update, context: ContextTypes.DEFA
             parse_mode=ParseMode.HTML,
             reply_markup=InlineKeyboardMarkup(keyboard)
         )
+    
+    elif query.data == "cancel_disable_auto_renewal":
+        # Возвращаемся к статусу автопродления
+        return await cmd_auto_renewal_status(update, context)
+        
+    elif query.data == "confirm_disable_auto_renewal":
+        # Здесь существующий код отключения автопродления
+        user_id = update.effective_user.id
+        subscription_manager = context.bot_data.get('subscription_manager')
         return
     
     # Подтверждено - отключаем
@@ -252,6 +268,64 @@ async def handle_renew_subscription(update: Update, context: ContextTypes.DEFAUL
         logger.error(f"Error handling subscription renewal: {e}")
         await query.edit_message_text("❌ Произошла ошибка. Попробуйте позже.")
 
+@safe_handler()
+async def manage_auto_renewal_from_subscriptions(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Управление автопродлением из меню подписок."""
+    query = update.callback_query
+    await query.answer()
+    
+    user_id = update.effective_user.id
+    subscription_manager = context.bot_data.get('subscription_manager')
+    
+    if not subscription_manager:
+        await query.edit_message_text("❌ Сервис временно недоступен.")
+        return
+    
+    try:
+        auto_renewal = await subscription_manager.get_auto_renewal_status(user_id)
+        
+        if not auto_renewal or not auto_renewal.get('enabled'):
+            # Предлагаем включить
+            text = """🔄 <b>Управление автопродлением</b>
+
+Автопродление отключено.
+
+Включите автопродление, чтобы не беспокоиться о продлении подписки - она будет обновляться автоматически каждый месяц."""
+            
+            keyboard = [
+                [InlineKeyboardButton("✅ Включить автопродление", 
+                                    callback_data="enable_auto_renewal")],
+                [InlineKeyboardButton("◀️ Назад", callback_data="my_subscriptions")]
+            ]
+        else:
+            # Показываем информацию и опцию отключения
+            text = f"""🔄 <b>Управление автопродлением</b>
+
+✅ Автопродление включено
+
+📅 Следующее списание: {auto_renewal['next_renewal_date'].strftime('%d.%m.%Y')}
+💰 Сумма: {auto_renewal.get('amount', 0)} ₽
+
+Подписка продлевается автоматически каждый месяц."""
+            
+            keyboard = [
+                [InlineKeyboardButton("❌ Отключить автопродление", 
+                                    callback_data="disable_auto_renewal")],
+                [InlineKeyboardButton("◀️ Назад", callback_data="my_subscriptions")]
+            ]
+        
+        await query.edit_message_text(
+            text,
+            parse_mode=ParseMode.HTML,
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+        
+    except Exception as e:
+        logger.error(f"Error managing auto-renewal: {e}")
+        await query.edit_message_text(
+            "❌ Произошла ошибка. Попробуйте позже."
+        )
+
 def register_auto_renewal_handlers(app):
     """Регистрирует обработчики автопродления."""
     
@@ -265,11 +339,17 @@ def register_auto_renewal_handlers(app):
     ))
     app.add_handler(CallbackQueryHandler(
         handle_disable_auto_renewal, 
-        pattern="^(disable_auto_renewal|confirm_disable_auto_renewal)$"
+        pattern="^(disable_auto_renewal|confirm_disable_auto_renewal|cancel_disable_auto_renewal)$"
     ))
     app.add_handler(CallbackQueryHandler(
         handle_renew_subscription, 
         pattern="^renew_subscription$"
+    ))
+    
+    # Обработчик для управления автопродлением из my_subscriptions
+    app.add_handler(CallbackQueryHandler(
+        manage_auto_renewal_from_subscriptions,
+        pattern="^manage_auto_renewal$"
     ))
     
     logger.info("Auto-renewal handlers registered")

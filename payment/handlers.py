@@ -1308,59 +1308,11 @@ async def show_final_consent_screen(update: Update, context: ContextTypes.DEFAUL
     if plan_id.startswith('custom_'):
         modules = context.user_data.get('selected_modules', [])
         monthly_price = calculate_custom_price(modules, 1)
-def calculate_subscription_price(plan_id, duration, custom_plan=None):
-    """Рассчитать стоимость подписки с учетом скидок."""
-    
-    # Базовые цены
-    base_prices = {
-        'package_full': 490,
-        'package_basic': 290,
-        'package_premium': 690,
-        'custom_base': 290,
-        'custom_standard': 490,
-        'custom_premium': 690
-    }
-    
-    if plan_id.startswith('custom_') and custom_plan:
-        base_price = custom_plan.get('base_price', 490)
+        total_price = calculate_custom_price(modules, duration)
     else:
-        base_price = base_prices.get(plan_id, 490)
-    
-    # Скидки
-    if duration >= 12:
-        multiplier = 0.80  # 20% скидка
-    elif duration >= 6:
-        multiplier = 0.85  # 15% скидка  
-    elif duration >= 3:
-        multiplier = 0.90  # 10% скидка
-    else:
-        multiplier = 1.0
-    
-    return int(base_price * duration * multiplier)
-
-def calculate_custom_price(modules, duration):
-    """Рассчитать цену кастомного плана."""
-    base_price = 100
-    
-    module_prices = {
-        'module_math': 150,
-        'module_russian': 150,
-        'module_physics': 100,
-        'module_chemistry': 100,
-        'module_biology': 100,
-        'module_history': 80,
-        'module_social': 80,
-        'module_english': 120,
-        'module_literature': 100,
-        'module_geography': 80,
-        'module_it': 100
-    }
-    
-    for module in modules:
-        base_price += module_prices.get(module, 0)
-    
-    return calculate_subscription_price('custom', duration, {'base_price': base_price})
-    total_price = 490 * duration  # Временное решение
+        plan_info = SUBSCRIPTION_PLANS.get(plan_id, {})
+        monthly_price = plan_info.get('price_rub', 490)
+        total_price = calculate_subscription_price(plan_id, duration, plan_info)
     
     # Проверяем состояние согласия
     consent_given = context.user_data.get('auto_renewal_consent_confirmed', False)
@@ -1376,11 +1328,11 @@ def calculate_custom_price(modules, duration):
 <b>Согласие на автопродление:</b>
 {checkbox} Я соглашаюсь на автоматическое ежемесячное списание {monthly_price} ₽ с моей карты для продления подписки. Я понимаю, что:
 
-• Списание будет происходить автоматически каждый месяц
-• Я получу уведомление за 3 дня до списания
-• Я могу отменить автопродление в любой момент
-• При отмене возврат осуществляется согласно правилам сервиса
-• Мои платежные данные будут сохранены в защищенном виде
+- Списание будет происходить автоматически каждый месяц
+- Я получу уведомление за 3 дня до списания
+- Я могу отменить автопродление в любой момент
+- При отмене возврат осуществляется согласно правилам сервиса
+- Мои платежные данные будут сохранены в защищенном виде
 
 <b>Нажмите на чек-бокс выше, чтобы дать согласие</b>"""
     
@@ -1414,6 +1366,61 @@ def calculate_custom_price(modules, duration):
         parse_mode=ParseMode.HTML,
         reply_markup=InlineKeyboardMarkup(keyboard)
     )
+    
+    return FINAL_CONSENT
+
+def calculate_subscription_price(plan_id, duration, custom_plan=None):
+    """Рассчитывает стоимость подписки с учетом скидок."""
+    
+    # Базовые цены
+    base_prices = {
+        'package_full': 490,
+        'package_basic': 290,
+        'package_premium': 690,
+        'custom_base': 290,
+        'custom_standard': 490,
+        'custom_premium': 690
+    }
+    
+    if plan_id.startswith('custom_') and custom_plan:
+        base_price = custom_plan.get('base_price', 490)
+    else:
+        base_price = base_prices.get(plan_id, 490)
+    
+    # Скидки за длительность
+    if duration >= 12:
+        multiplier = 0.80  # 20% скидка
+    elif duration >= 6:
+        multiplier = 0.85  # 15% скидка  
+    elif duration >= 3:
+        multiplier = 0.90  # 10% скидка
+    else:
+        multiplier = 1.0
+    
+    return int(base_price * duration * multiplier)
+
+def calculate_custom_price(modules, duration):
+    """Рассчитывает цену кастомного плана."""
+    base_price = 100  # Базовая цена
+    
+    module_prices = {
+        'module_math': 150,
+        'module_russian': 150,
+        'module_physics': 100,
+        'module_chemistry': 100,
+        'module_biology': 100,
+        'module_history': 80,
+        'module_social': 80,
+        'module_english': 120,
+        'module_literature': 100,
+        'module_geography': 80,
+        'module_it': 100
+    }
+    
+    for module in modules:
+        base_price += module_prices.get(module, 0)
+    
+    return calculate_subscription_price('custom', duration, {'base_price': base_price})
 
 @safe_handler()
 async def toggle_consent(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1433,8 +1440,7 @@ async def toggle_consent(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.answer("Согласие отменено", show_alert=False)
     
     # Обновляем экран
-    await show_final_consent_screen(update, context)
-    return FINAL_CONSENT
+    return await show_final_consent_screen(update, context)
 
 @safe_handler()
 async def confirm_with_auto_renewal(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1509,144 +1515,67 @@ async def show_auto_renewal_terms(update: Update, context: ContextTypes.DEFAULT_
 
 @safe_handler()
 async def handle_payment_confirmation_with_recurrent(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обработка подтверждения платежа с опцией включения автопродления."""
+    """Создает платеж с поддержкой рекуррентных платежей."""
     query = update.callback_query
-    await query.answer()
-    
-    if query.data == "cancel_payment":
-        context.user_data.pop('in_payment_process', None)
-        await query.edit_message_text("❌ Оформление подписки отменено.")
-        return ConversationHandler.END
-    
-    user_id = update.effective_user.id
-    plan_id = context.user_data['selected_plan']
-    duration = context.user_data.get('duration_months', 1)
-    email = context.user_data['user_email']
-    is_trial = context.user_data.get('is_trial', False)
-    enable_auto_renewal = context.user_data.get('enable_auto_renewal', False)
-    consent_data = context.user_data.get('consent_data', {}) 
-    
-    # Получаем план
-    if plan_id.startswith('custom_'):
-        plan = context.user_data.get('custom_plan')
-        if not plan:
-            logger.error(f"Custom plan data not found for {plan_id}")
-            await query.edit_message_text("❌ Ошибка: данные плана не найдены. Попробуйте заново.")
-            context.user_data.pop('in_payment_process', None)
-            return ConversationHandler.END
-        modules_to_activate = plan.get('modules', [])
-    else:
-        # Ищем план сначала в MODULE_PLANS, потом в SUBSCRIPTION_PLANS
-        plan = MODULE_PLANS.get(plan_id)
-        if not plan:
-            plan = SUBSCRIPTION_PLANS.get(plan_id)
-        
-        if not plan:
-            logger.error(f"Plan not found: {plan_id}")
-            await query.edit_message_text("❌ Ошибка: план не найден. Обратитесь к администратору.")
-            context.user_data.pop('in_payment_process', None)
-            return ConversationHandler.END
-        
-        modules_to_activate = plan.get('modules', [])
-    
-    # Вычисляем цену с учетом типа плана
-    if is_trial:
-        # Пробный период - 1 рубль
-        amount_kopecks = 100
-    else:
-        # Рассчитываем цену с учетом скидок
-        from payment.config import DURATION_DISCOUNTS
-        base_price = plan['price_rub']
-        
-        if duration in DURATION_DISCOUNTS:
-            multiplier = DURATION_DISCOUNTS[duration]['multiplier']
-            total_price = int(base_price * multiplier)
-        else:
-            total_price = base_price * duration
-        
-        amount_kopecks = total_price * 100
     
     try:
-        # Рассчитываем цену
-        total_price = calculate_subscription_price(plan_id, duration, plan if plan_id.startswith('custom_') else None)
+        user_id = update.effective_user.id
+        plan_id = context.user_data.get('selected_plan')
+        duration = context.user_data.get('duration_months', 1)
+        enable_auto_renewal = context.user_data.get('enable_auto_renewal', False)
+        email = context.user_data.get('email', '')
         
-        # Создаем уникальный order_id
-        order_id = f"ORD_{user_id}_{int(datetime.now().timestamp())}"
+        # Рассчитываем стоимость
+        if plan_id.startswith('custom_'):
+            modules = context.user_data.get('selected_modules', [])
+            amount = calculate_custom_price(modules, duration)
+        else:
+            plan_info = SUBSCRIPTION_PLANS.get(plan_id, {})
+            amount = calculate_subscription_price(plan_id, duration, plan_info)
         
-        # Подготавливаем метаданные
-        payment_metadata = {
+        # Создаем платеж через Tinkoff API
+        payment_data = {
+            'amount': amount * 100,  # В копейках
             'user_id': user_id,
             'plan_id': plan_id,
-            'duration_months': duration,
-            'modules': modules_to_activate if plan_id.startswith('custom_') else None,
-            'is_trial': is_trial,
-            'enable_auto_renewal': enable_auto_renewal  # НОВОЕ
+            'duration': duration,
+            'recurrent': enable_auto_renewal,  # Флаг рекуррентного платежа
+            'customer_key': str(user_id),  # Идентификатор клиента для рекуррентов
+            'email': email,  # Добавляем email
+            'description': f"Подписка {plan_id} на {duration} мес."
         }
         
-        # Сохраняем email
-        await subscription_manager.save_user_email(user_id, email)
+        # Убираем metadata, так как метод его не принимает
+        payment_result = await tinkoff_payment.create_payment(payment_data)
         
-        # Создаем запись о платеже
-        payment_info = await subscription_manager.create_payment(
-            user_id=user_id,
-            plan_id=plan_id,
-            amount_kopecks=total_price,
-            metadata=json.dumps(payment_metadata)
-        )
-        
-        # НОВОЕ: Используем рекуррентный API если нужно автопродление
-        if enable_auto_renewal:
-            # Добавляем в metadata информацию о согласии
-            metadata['consent_timestamp'] = consent_data.get('timestamp')
-            metadata['consent_message_id'] = consent_data.get('message_id')
+        if payment_result['success']:
+            payment_url = payment_result['payment_url']
+            payment_id = payment_result['payment_id']
             
-            # Создаем платеж с рекуррентными параметрами
-            payment_result = await tinkoff_payment.init_payment(
-                order_id=order_id,
-                amount_kopecks=total_price * 100,
-                description=f"Подписка {plan_name} с автопродлением",
-                user_email=email,
-                receipt_items=receipt_items,
-                bot_username=context.bot.username,
-                enable_recurrent=True,  # ВАЖНО!
-                customer_key=str(user_id)  # ВАЖНО!
+            # Сохраняем информацию о платеже
+            await subscription_manager.save_payment_info(
+                user_id=user_id,
+                payment_id=payment_id,
+                amount=amount,
+                plan_id=plan_id,
+                duration=duration,
+                auto_renewal=enable_auto_renewal
             )
-        else:
-            # Обычный платеж без рекуррентов
-            payment_result = await tinkoff_payment.init_payment(
-                order_id=order_id,
-                amount_kopecks=total_price * 100,
-                description=f"Подписка {plan_name}",
-                user_email=email,
-                receipt_items=receipt_items,
-                bot_username=context.bot.username,
-                enable_recurrent=False,
-                customer_key=None
-            )
-        
-        if payment_result.get('success'):
-            payment_url = payment_result.get('payment_url')
             
-            # Сохраняем payment_id
-            await subscription_manager.update_payment_id(order_id, payment_result.get('payment_id'))
-            
-            text = f"""💳 <b>Переход к оплате</b>
+            text = f"""✅ <b>Платеж создан</b>
 
-План: {plan['name']}
-Срок: {duration} мес.
-{'🔄 Автопродление: включено' if enable_auto_renewal else ''}
-Сумма: {total_price // 100} ₽
+💳 Сумма к оплате: <b>{amount} ₽</b>
+📅 Срок подписки: <b>{duration} мес.</b>
+🔄 Автопродление: <b>{'Включено' if enable_auto_renewal else 'Выключено'}</b>
 
-Сейчас вы будете перенаправлены на страницу оплаты Т-Банка.
-
-После успешной оплаты подписка будет активирована автоматически."""
+Нажмите кнопку ниже для перехода к оплате.
+После оплаты нажмите "Проверить оплату"."""
             
-            keyboard = [[
-                InlineKeyboardButton("💳 Перейти к оплате", url=payment_url)
-            ]]
-            
-            if enable_auto_renewal:
-                text += "\n\n✅ После оплаты автопродление будет настроено автоматически."
+            keyboard = [
+                [InlineKeyboardButton("💳 Оплатить", url=payment_url)],
+                [InlineKeyboardButton("🔄 Проверить оплату", callback_data="check_payment")],
+                [InlineKeyboardButton("❌ Отменить", callback_data="cancel_payment")]
+            ]
             
             await query.edit_message_text(
                 text,
@@ -1654,22 +1583,25 @@ async def handle_payment_confirmation_with_recurrent(update: Update, context: Co
                 reply_markup=InlineKeyboardMarkup(keyboard)
             )
             
-            # Очищаем флаг процесса оплаты
-            context.user_data.pop('in_payment_process', None)
-            return ConversationHandler.END
-            
         else:
             error_msg = payment_result.get('error', 'Неизвестная ошибка')
             await query.edit_message_text(
-                f"❌ Ошибка создания платежа: {error_msg}\n\n"
-                "Попробуйте позже или обратитесь в поддержку."
+                f"❌ Ошибка создания платежа: {error_msg}",
+                reply_markup=InlineKeyboardMarkup([[
+                    InlineKeyboardButton("◀️ Назад", callback_data="back_to_main")
+                ]])
             )
-            return ConversationHandler.END
             
     except Exception as e:
-        logger.error(f"Payment creation error: {e}")
-        await query.edit_message_text("❌ Ошибка создания платежа. Попробуйте позже.")
-        return ConversationHandler.END
+        logger.error(f"Error creating payment: {e}")
+        await query.edit_message_text(
+            "❌ Произошла ошибка. Обратитесь в поддержку.",
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("◀️ Назад", callback_data="back_to_main")
+            ]])
+        )
+    
+    return ConversationHandler.END
 
 async def cancel_payment(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Отмена процесса оплаты."""
@@ -2152,8 +2084,6 @@ def register_payment_handlers(app):
                     pattern="^final_confirm_payment$"
                 ),
                 CallbackQueryHandler(cancel_payment, pattern="^cancel_payment$"),
-    		CallbackQueryHandler(handle_auto_renewal_choice, pattern="^enable_auto_renewal_payment$"),
-    		CallbackQueryHandler(handle_auto_renewal_choice, pattern="^disable_auto_renewal_payment$")
             ]
         },
         fallbacks=[

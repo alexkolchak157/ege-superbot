@@ -27,6 +27,8 @@ class SubscriptionManager:
         """Инициализация менеджера подписок."""
         # Не используем динамический класс, чтобы избежать проблем с pickle
         self.subscription_mode = SUBSCRIPTION_MODE
+        # ДОБАВИТЬ ЭТУ СТРОКУ:
+        self.database_file = DATABASE_FILE  # Используем импортированный DATABASE_FILE
         logger.info(f"SubscriptionManager initialized with mode: {self.subscription_mode}")
     
     @property

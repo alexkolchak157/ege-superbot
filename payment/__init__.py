@@ -1,15 +1,15 @@
 # payment/__init__.py
-"""Модуль платежей и подписок."""
+"""Модуль платежей и подписок с поддержкой автопродления."""
 import logging
 import asyncio
 from telegram.ext import Application
-from .auto_renewal_scheduler import AutoRenewalScheduler
 from .subscription_manager import SubscriptionManager
 from .handlers import register_payment_handlers
 from .middleware import setup_subscription_middleware
 from .decorators import requires_subscription
 from .webhook import start_webhook_server, stop_webhook_server
 from .admin_commands import register_admin_commands
+from .tinkoff import TinkoffPayment
 from core import config
 
 logger = logging.getLogger(__name__)
@@ -24,82 +24,126 @@ __all__ = [
 # Глобальные объекты
 subscription_manager = None
 webhook_task = None
+auto_renewal_scheduler = None
 
 
 async def init_payment_module(app: Application):
-    """Инициализирует модуль платежей."""
-    global subscription_manager, webhook_task
+    """Инициализирует модуль платежей с поддержкой автопродления."""
+    global subscription_manager, webhook_task, auto_renewal_scheduler
     
     logger.info("Initializing payment module...")
     
-    # Создаем менеджер подписок
-    subscription_manager = SubscriptionManager()
-    
-    # Сохраняем менеджер в bot_data для доступа из других модулей
-    app.bot_data['subscription_manager'] = subscription_manager
-    
-    # Инициализируем таблицы БД
-    await subscription_manager.init_tables()
-    
-    # Регистрируем обработчики
-    register_payment_handlers(app)
-    
-    # Регистрируем админские команды (если пользователь админ)
-    if hasattr(config, 'ADMIN_IDS') and config.ADMIN_IDS:
-        register_admin_commands(app)
-        logger.info("Admin commands registered")
-    
-    # Регистрируем middleware для проверки подписок
-    setup_subscription_middleware(app)
-    
-    # Пробуем импортировать и регистрировать обработчики автопродления
     try:
-        from .auto_renewal_handlers import register_auto_renewal_handlers
-        register_auto_renewal_handlers(app)
-        logger.info("Auto-renewal handlers registered")
-    except ImportError as e:
-        logger.warning(f"Auto-renewal handlers not available: {e}")
+        # Создаем менеджер подписок
+        subscription_manager = SubscriptionManager()
+        
+        # Сохраняем менеджер в bot_data для доступа из других модулей
+        app.bot_data['subscription_manager'] = subscription_manager
+        
+        # Инициализируем таблицы БД
+        await subscription_manager.init_tables()
+        logger.info("Database tables initialized")
+        
+        # Регистрируем основные обработчики платежей
+        register_payment_handlers(app)
+        logger.info("Payment handlers registered")
+        
+        # Регистрируем обработчики автопродления
+        try:
+            from .auto_renewal_handlers import register_auto_renewal_handlers
+            register_auto_renewal_handlers(app)
+            logger.info("Auto-renewal handlers registered")
+        except ImportError as e:
+            logger.warning(f"Auto-renewal handlers not available: {e}")
+        except Exception as e:
+            logger.error(f"Error registering auto-renewal handlers: {e}")
+        
+        # Регистрируем админские команды (если пользователь админ)
+        if hasattr(config, 'ADMIN_IDS') and config.ADMIN_IDS:
+            try:
+                register_admin_commands(app)
+                logger.info("Admin commands registered")
+            except Exception as e:
+                logger.error(f"Error registering admin commands: {e}")
+        
+        # Регистрируем middleware для проверки подписок
+        try:
+            setup_subscription_middleware(app)
+            logger.info("Subscription middleware setup complete")
+        except Exception as e:
+            logger.error(f"Error setting up middleware: {e}")
+        
+        # Запускаем планировщик автопродления
+        try:
+            from .auto_renewal_scheduler import AutoRenewalScheduler
+            
+            auto_renewal_scheduler = AutoRenewalScheduler(
+                bot=app.bot,
+                subscription_manager=subscription_manager,
+                tinkoff_api=TinkoffPayment()
+            )
+            auto_renewal_scheduler.start()
+            app.bot_data['auto_renewal_scheduler'] = auto_renewal_scheduler
+            logger.info("Auto-renewal scheduler started")
+            
+            # Регистрируем обработчик остановки планировщика
+            async def shutdown_scheduler(application: Application) -> None:
+                """Останавливает планировщик при завершении работы бота."""
+                if 'auto_renewal_scheduler' in application.bot_data:
+                    scheduler = application.bot_data['auto_renewal_scheduler']
+                    if hasattr(scheduler, 'stop'):
+                        scheduler.stop()
+                        logger.info("Auto-renewal scheduler stopped")
+            
+            # Добавляем обработчик через post_shutdown
+            app.post_shutdown(shutdown_scheduler)
+            
+        except ImportError:
+            logger.warning("Auto-renewal scheduler not available (missing apscheduler)")
+        except Exception as e:
+            logger.error(f"Error starting auto-renewal scheduler: {e}")
+        
+        # Запускаем webhook сервер для приема уведомлений от платежной системы
+        try:
+            webhook_task = asyncio.create_task(
+                start_webhook_server(
+                    subscription_manager=subscription_manager,
+                    bot=app.bot
+                )
+            )
+            logger.info("Payment webhook server started")
+        except Exception as e:
+            logger.error(f"Error starting webhook server: {e}")
+        
+        logger.info("✅ Payment module initialized successfully")
+        
     except Exception as e:
-        logger.error(f"Error registering auto-renewal handlers: {e}")
+        logger.error(f"Failed to initialize payment module: {e}")
+        raise
+
+
+async def shutdown_payment_module(app: Application):
+    """Корректно завершает работу модуля платежей."""
+    global webhook_task, auto_renewal_scheduler
     
-    # Пробуем запустить планировщик (если доступен)
-    try:
-        from .scheduler import SubscriptionScheduler
-        scheduler = AutoRenewalScheduler(
-            bot=app.bot,
-            subscription_manager=subscription_manager,
-            tinkoff_api=TinkoffPayment()
-        )
-        scheduler.start()
-        app.bot_data['auto_renewal_scheduler'] = scheduler
-        
-        # ИСПРАВЛЕНИЕ: Используем правильный метод для регистрации обработчика завершения
-        async def shutdown_scheduler(application: Application) -> None:
-            if 'subscription_scheduler' in application.bot_data:
-                application.bot_data['subscription_scheduler'].stop()
-        
-        # Регистрируем через post_shutdown (это метод, а не список!)
-        app.post_shutdown(shutdown_scheduler)
-        logger.info("Subscription scheduler initialized")
-        
-    except ImportError:
-        logger.info("Subscription scheduler not available (scheduler.py not found)")
-    except Exception as e:
-        logger.error(f"Error initializing subscription scheduler: {e}")
+    logger.info("Shutting down payment module...")
     
-    # ИСПРАВЛЕНИЕ: Передаем объект бота в webhook сервер
-    webhook_task = asyncio.create_task(start_webhook_server(bot=app.bot))
+    # Останавливаем webhook сервер
+    if webhook_task:
+        try:
+            await stop_webhook_server()
+            webhook_task.cancel()
+            await webhook_task
+        except asyncio.CancelledError:
+            pass
+        except Exception as e:
+            logger.error(f"Error stopping webhook server: {e}")
     
-async def shutdown_webhook(application: Application) -> None:
-    """Останавливает webhook сервер при завершении приложения."""
-    if 'auto_renewal_scheduler' in app.bot_data:
-        app.bot_data['auto_renewal_scheduler'].stop()
-    if webhook_task and not webhook_task.done():
-        await stop_webhook_server()
+    # Останавливаем планировщик
+    if auto_renewal_scheduler:
+        try:
+            auto_renewal_scheduler.stop()
+        except Exception as e:
+            logger.error(f"Error stopping scheduler: {e}")
     
-    # Регистрируем через post_shutdown (это метод, а не список!)
-    app.post_shutdown(shutdown_webhook)
-    
-    logger.info("Payment module initialized successfully")
-    
-    return subscription_manager
+    logger.info("Payment module shutdown complete")
