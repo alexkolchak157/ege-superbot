@@ -20,6 +20,13 @@ from telegram.ext import (
     MessageHandler,
     filters
 )
+from .auto_renewal_consent import (
+    AutoRenewalConsent, 
+    show_auto_renewal_choice,
+    SHOWING_TERMS, 
+    CONSENT_CHECKBOX, 
+    FINAL_CONFIRMATION
+)
 import aiosqlite
 from core.error_handler import safe_handler
 from .config import (
@@ -1049,7 +1056,7 @@ async def request_email(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.edit_message_text(text, parse_mode=ParseMode.HTML)
     return ENTERING_EMAIL
 
-
+# payment/handlers.py - Исправленная версия handle_email_input
 @safe_handler()
 async def handle_email_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработка ввода email с правильным расчетом цен и сроков."""
@@ -1094,9 +1101,16 @@ async def handle_email_input(update: Update, context: ContextTypes.DEFAULT_TYPE)
             await update.message.reply_text("❌ Ошибка: план не найден")
             return ConversationHandler.END
 
-    # Сохраняем расчеты для использования в следующих шагах
+    # Сохраняем данные плана для последующего использования
+    context.user_data['plan_name'] = plan['name']
+    
+    # Рассчитываем цены и сохраняем в контекст для использования в следующих шагах
     if is_trial:
-        context.user_data['total_price'] = 1  # 1 рубль за триал
+        # Пробный период - 1 рубль
+        context.user_data['total_price'] = 1
+        context.user_data['base_price'] = plan['price_rub']  # Цена после триала
+        context.user_data['discount_info'] = {'label': '7 дней (пробный период)'}
+        context.user_data['saved_amount'] = 0
     else:
         # Рассчитываем цену с учетом скидок
         base_price = plan['price_rub']
@@ -1114,26 +1128,74 @@ async def handle_email_input(update: Update, context: ContextTypes.DEFAULT_TYPE)
         multiplier = discount_info.get('multiplier', duration)
         total_price = int(base_price * multiplier)
         
-        # Сохраняем рассчитанную цену
+        # Сохраняем все рассчитанные данные
         context.user_data['total_price'] = total_price
-        context.user_data['discount_info'] = discount_info
         context.user_data['base_price'] = base_price
+        context.user_data['discount_info'] = discount_info
         context.user_data['saved_amount'] = (base_price * duration) - total_price if duration > 1 and multiplier < duration else 0
 
-    # Сохраняем данные плана для последующего использования
-    context.user_data['plan_name'] = plan['name']
+    # Сохраняем месячную цену для автопродления
+    context.user_data['monthly_price'] = plan['price_rub']
     
-    # ============= ИЗМЕНЕНИЕ: Переходим к выбору автопродления =============
+    # ============= ИЗМЕНЕНИЕ: Переход к выбору автопродления =============
     # Вместо показа подтверждения сразу, показываем экран выбора автопродления
     
+    # Уведомляем что email сохранен
     await update.message.reply_text(
         f"✅ Email сохранен: {email}\n\n"
-        "Теперь выберите тип оплаты..."
+        "Настройка способа оплаты..."
     )
     
-    # Показываем опции автопродления
-    await show_auto_renewal_choice(update, context)
-    return AUTO_RENEWAL_CHOICE  # Новое состояние
+    # Проверяем, импортирована ли функция show_auto_renewal_choice
+    try:
+        # Пробуем использовать новую функцию из модуля consent
+        from .auto_renewal_consent import show_auto_renewal_choice
+        return await show_auto_renewal_choice(update, context)
+    except ImportError:
+        # Если модуль еще не создан, используем временную заглушку
+        logger.warning("auto_renewal_consent module not found, using fallback")
+        
+        # Временный fallback - показываем простое подтверждение
+        if is_trial:
+            text = f"""📋 <b>Подтверждение заказа</b>
+
+✅ План: {plan['name']}
+📧 Email: {email}
+📅 Срок: 7 дней (пробный период)
+💰 К оплате: 1 ₽
+
+Все верно?"""
+        else:
+            # Получаем сохраненные данные
+            total_price = context.user_data.get('total_price')
+            discount_info = context.user_data.get('discount_info')
+            saved_amount = context.user_data.get('saved_amount', 0)
+            
+            text = f"""📋 <b>Подтверждение заказа</b>
+
+✅ План: {plan['name']}
+📧 Email: {email}
+📅 Срок: {discount_info.get('label', f'{duration} мес.')}"""
+            
+            # Добавляем информацию об экономии если есть скидка
+            if saved_amount > 0:
+                text += f" (экономия {saved_amount}₽)"
+            
+            text += f"\n💰 К оплате: {total_price} ₽\n\nВсе верно?"
+
+        # Создаем клавиатуру
+        keyboard = [
+            [InlineKeyboardButton("✅ Подтвердить и оплатить", callback_data="confirm_payment")],
+            [InlineKeyboardButton("❌ Отмена", callback_data="cancel_payment")]
+        ]
+
+        await update.message.reply_text(
+            text,
+            parse_mode=ParseMode.HTML,
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+
+        return CONFIRMING
 
 # payment/handlers.py - Добавить после функции handle_email_input
 
@@ -1414,7 +1476,8 @@ async def handle_payment_confirmation_with_recurrent(update: Update, context: Co
     duration = context.user_data.get('duration_months', 1)
     email = context.user_data['user_email']
     is_trial = context.user_data.get('is_trial', False)
-    enable_auto_renewal = context.user_data.get('enable_auto_renewal', False)  
+    enable_auto_renewal = context.user_data.get('enable_auto_renewal', False)
+    consent_data = context.user_data.get('consent_data', {}) 
     
     # Получаем план
     if plan_id.startswith('custom_'):
@@ -1486,25 +1549,32 @@ async def handle_payment_confirmation_with_recurrent(update: Update, context: Co
         
         # НОВОЕ: Используем рекуррентный API если нужно автопродление
         if enable_auto_renewal:
-            from .tbank_recurrent import TBankRecurrentPayments
+            # Добавляем в metadata информацию о согласии
+            metadata['consent_timestamp'] = consent_data.get('timestamp')
+            metadata['consent_message_id'] = consent_data.get('message_id')
             
-            tbank_api = TBankRecurrentPayments()
-            
-            # Инициализируем первичный платеж с Recurrent=Y
-            payment_result = await tbank_api.init_primary_payment(
+            # Создаем платеж с рекуррентными параметрами
+            payment_result = await tinkoff_payment.init_payment(
                 order_id=order_id,
-                amount_kopecks=total_price,
-                customer_key=str(user_id),  # Используем user_id как CustomerKey
-                description=f"Подписка {plan['name']} на {duration} мес. с автопродлением",
-                user_email=email
+                amount_kopecks=total_price * 100,
+                description=f"Подписка {plan_name} с автопродлением",
+                user_email=email,
+                receipt_items=receipt_items,
+                bot_username=context.bot.username,
+                enable_recurrent=True,  # ВАЖНО!
+                customer_key=str(user_id)  # ВАЖНО!
             )
         else:
             # Обычный платеж без рекуррентов
-            payment_result = await tinkoff_payment.create_payment(
+            payment_result = await tinkoff_payment.init_payment(
                 order_id=order_id,
-                amount_kopecks=total_price,
-                description=f"Подписка {plan['name']} на {duration} мес.",
-                user_email=email
+                amount_kopecks=total_price * 100,
+                description=f"Подписка {plan_name}",
+                user_email=email,
+                receipt_items=receipt_items,
+                bot_username=context.bot.username,
+                enable_recurrent=False,
+                customer_key=None
             )
         
         if payment_result.get('success'):
@@ -1933,6 +2003,10 @@ def register_payment_handlers(app):
     """Регистрирует обработчики платежей."""
     logger.info("Registering payment handlers...")
     
+    # Инициализируем обработчик согласия
+    subscription_manager = app.bot_data.get('subscription_manager', SubscriptionManager())
+    consent_handler = AutoRenewalConsent(subscription_manager)
+    
     # Создаем ConversationHandler для процесса оплаты
     payment_conv = ConversationHandler(
         entry_points=[
@@ -1947,6 +2021,7 @@ def register_payment_handlers(app):
                 CallbackQueryHandler(show_modular_interface, pattern="^back_to_main$"),
                 CallbackQueryHandler(handle_my_subscriptions, pattern="^my_subscriptions$")
             ],
+            
             CHOOSING_MODULES: [
                 CallbackQueryHandler(toggle_module_selection, pattern="^toggle_"),
                 CallbackQueryHandler(show_module_info, pattern="^info_"),
@@ -1955,40 +2030,79 @@ def register_payment_handlers(app):
                 CallbackQueryHandler(handle_plan_selection, pattern="^pay_package_"),
                 CallbackQueryHandler(show_modular_interface, pattern="^back_to_main$")
             ],
+            
             CHOOSING_DURATION: [
                 CallbackQueryHandler(handle_duration_selection, pattern="^duration_"),
                 CallbackQueryHandler(show_individual_modules, pattern="^back_to_modules$"),
                 CallbackQueryHandler(show_modular_interface, pattern="^back_to_plans$")
             ],
+            
             ENTERING_EMAIL: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, handle_email_input)
             ],
-            AUTO_RENEWAL_CHOICE: [  # НОВОЕ состояние
+            
+            # НОВОЕ: Состояние выбора типа оплаты
+            SHOWING_TERMS: [
                 CallbackQueryHandler(
-                    handle_auto_renewal_consent_choice, 
-                    pattern="^(consent_auto_renewal|no_auto_renewal|auto_renewal_terms)$"
+                    consent_handler.handle_choice_selection,
+                    pattern="^(choose_auto_renewal|choose_no_auto_renewal|show_auto_renewal_terms)$"
                 ),
                 CallbackQueryHandler(
-                    show_auto_renewal_options,
-                    pattern="^back_to_auto_renewal_choice$"
+                    consent_handler.handle_back_navigation,
+                    pattern="^back_to_payment_choice$"
                 )
             ],
-            FINAL_CONSENT: [  # НОВОЕ состояние
-                CallbackQueryHandler(toggle_consent, pattern="^toggle_consent$"),
-                CallbackQueryHandler(confirm_with_auto_renewal, pattern="^confirm_with_auto_renewal$"),
+            
+            # НОВОЕ: Состояние согласия с чек-боксом
+            CONSENT_CHECKBOX: [
                 CallbackQueryHandler(
-                    lambda u, c: show_auto_renewal_options(u, c) or AUTO_RENEWAL_CHOICE,
-                    pattern="^back_to_auto_renewal_options$"
+                    consent_handler.toggle_consent,
+                    pattern="^toggle_consent_checkbox$"
                 ),
                 CallbackQueryHandler(
-                    lambda u, c: u.callback_query.answer("⚠️ Необходимо отметить согласие", show_alert=True) or FINAL_CONSENT,
-                    pattern="^need_consent$"
+                    consent_handler.confirm_with_auto_renewal,
+                    pattern="^confirm_with_auto_renewal$"
+                ),
+                CallbackQueryHandler(
+                    lambda u, c: u.callback_query.answer("⚠️ Сначала отметьте согласие", show_alert=True) or CONSENT_CHECKBOX,
+                    pattern="^need_consent_reminder$"
+                ),
+                CallbackQueryHandler(
+                    consent_handler.show_detailed_terms,
+                    pattern="^show_user_agreement$"
+                ),
+                CallbackQueryHandler(
+                    consent_handler.handle_back_navigation,
+                    pattern="^back_to_payment_choice$"
                 )
             ],
-            CONFIRMING: [
+            
+            # НОВОЕ: Финальное подтверждение
+            FINAL_CONFIRMATION: [
                 CallbackQueryHandler(
                     handle_payment_confirmation_with_recurrent,
-                    pattern="^(confirm_payment|final_confirm_payment)$"
+                    pattern="^proceed_to_payment$"
+                ),
+                CallbackQueryHandler(
+                    consent_handler.handle_back_navigation,
+                    pattern="^back_to_payment_choice$"
+                ),
+                CallbackQueryHandler(
+                    cancel_payment,
+                    pattern="^cancel_payment$"
+                )
+            ],
+            
+            # Существующее состояние CONFIRMING (для обратной совместимости)
+            CONFIRMING: [
+                CallbackQueryHandler(ask_auto_renewal, pattern="^confirm_payment$"),
+                CallbackQueryHandler(
+                    handle_auto_renewal_choice, 
+                    pattern="^(enable|disable)_auto_renewal_payment$"
+                ),
+                CallbackQueryHandler(
+                    handle_payment_confirmation_with_recurrent, 
+                    pattern="^final_confirm_payment$"
                 ),
                 CallbackQueryHandler(cancel_payment, pattern="^cancel_payment$")
             ]

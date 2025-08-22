@@ -90,12 +90,12 @@ async def init_payment_module(app: Application):
     # ИСПРАВЛЕНИЕ: Передаем объект бота в webhook сервер
     webhook_task = asyncio.create_task(start_webhook_server(bot=app.bot))
     
-    # ИСПРАВЛЕНИЕ: Правильная регистрация обработчика для webhook
-    async def shutdown_webhook(application: Application) -> None:
-        if 'auto_renewal_scheduler' in app.bot_data:
-            app.bot_data['auto_renewal_scheduler'].stop()        """Останавливает webhook сервер при завершении приложения."""
-        if webhook_task and not webhook_task.done():
-            await stop_webhook_server()
+async def shutdown_webhook(application: Application) -> None:
+    """Останавливает webhook сервер при завершении приложения."""
+    if 'auto_renewal_scheduler' in app.bot_data:
+        app.bot_data['auto_renewal_scheduler'].stop()
+    if webhook_task and not webhook_task.done():
+        await stop_webhook_server()
     
     # Регистрируем через post_shutdown (это метод, а не список!)
     app.post_shutdown(shutdown_webhook)
