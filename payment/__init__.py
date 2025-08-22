@@ -3,7 +3,7 @@
 import logging
 import asyncio
 from telegram.ext import Application
-
+from .auto_renewal_scheduler import AutoRenewalScheduler
 from .subscription_manager import SubscriptionManager
 from .handlers import register_payment_handlers
 from .middleware import setup_subscription_middleware
@@ -65,17 +65,23 @@ async def init_payment_module(app: Application):
     # Пробуем запустить планировщик (если доступен)
     try:
         from .scheduler import SubscriptionScheduler
-        subscription_scheduler = SubscriptionScheduler(app.bot, subscription_manager)
-        subscription_scheduler.start()
-        app.bot_data['subscription_scheduler'] = subscription_scheduler
+        scheduler = AutoRenewalScheduler(
+            bot=app.bot,
+            subscription_manager=subscription_manager,
+            tinkoff_api=TinkoffPayment()
+        )
+        scheduler.start()
+        app.bot_data['auto_renewal_scheduler'] = scheduler
         
-        # Добавляем остановку планировщика при завершении
-        async def shutdown_scheduler():
-            if 'subscription_scheduler' in app.bot_data:
-                app.bot_data['subscription_scheduler'].stop()
+        # ИСПРАВЛЕНИЕ: Используем правильный метод для регистрации обработчика завершения
+        async def shutdown_scheduler(application: Application) -> None:
+            if 'subscription_scheduler' in application.bot_data:
+                application.bot_data['subscription_scheduler'].stop()
         
-        app.post_shutdown.append(shutdown_scheduler)
+        # Регистрируем через post_shutdown (это метод, а не список!)
+        app.post_shutdown(shutdown_scheduler)
         logger.info("Subscription scheduler initialized")
+        
     except ImportError:
         logger.info("Subscription scheduler not available (scheduler.py not found)")
     except Exception as e:
@@ -84,13 +90,15 @@ async def init_payment_module(app: Application):
     # ИСПРАВЛЕНИЕ: Передаем объект бота в webhook сервер
     webhook_task = asyncio.create_task(start_webhook_server(bot=app.bot))
     
-    # Добавляем обработчик для корректной остановки webhook при завершении
-    async def shutdown_webhook():
-        """Останавливает webhook сервер при завершении приложения."""
+    # ИСПРАВЛЕНИЕ: Правильная регистрация обработчика для webhook
+    async def shutdown_webhook(application: Application) -> None:
+        if 'auto_renewal_scheduler' in app.bot_data:
+            app.bot_data['auto_renewal_scheduler'].stop()        """Останавливает webhook сервер при завершении приложения."""
         if webhook_task and not webhook_task.done():
             await stop_webhook_server()
     
-    app.post_shutdown.append(shutdown_webhook)
+    # Регистрируем через post_shutdown (это метод, а не список!)
+    app.post_shutdown(shutdown_webhook)
     
     logger.info("Payment module initialized successfully")
     

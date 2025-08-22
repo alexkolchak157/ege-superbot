@@ -41,7 +41,9 @@ CHOOSING_DURATION = "choosing_duration"
 ENTERING_EMAIL = "entering_email"
 CONFIRMING = "confirming"
 CHOOSING_MODULES = "choosing_modules"  # Новое состояние
-PAYMENT_STATES = [CHOOSING_PLAN, CHOOSING_MODULES, CHOOSING_DURATION, ENTERING_EMAIL, CONFIRMING]
+AUTO_RENEWAL_CHOICE = "auto_renewal_choice"  # НОВОЕ
+FINAL_CONSENT = "final_consent"              # НОВОЕ
+PAYMENT_STATES = [CHOOSING_PLAN, CHOOSING_MODULES, CHOOSING_DURATION, ENTERING_EMAIL,FINAL_CONSENT, AUTO_RENEWAL_CHOICE, CONFIRMING]
 
 # Инициализация менеджеров
 subscription_manager = SubscriptionManager()
@@ -1092,16 +1094,9 @@ async def handle_email_input(update: Update, context: ContextTypes.DEFAULT_TYPE)
             await update.message.reply_text("❌ Ошибка: план не найден")
             return ConversationHandler.END
 
-    # Формируем текст подтверждения
+    # Сохраняем расчеты для использования в следующих шагах
     if is_trial:
-        text = f"""📋 <b>Подтверждение заказа</b>
-
-✅ План: {plan['name']}
-📧 Email: {email}
-📅 Срок: 7 дней (пробный период)
-💰 К оплате: 1 ₽
-
-Все верно?"""
+        context.user_data['total_price'] = 1  # 1 рубль за триал
     else:
         # Рассчитываем цену с учетом скидок
         base_price = plan['price_rub']
@@ -1119,33 +1114,289 @@ async def handle_email_input(update: Update, context: ContextTypes.DEFAULT_TYPE)
         multiplier = discount_info.get('multiplier', duration)
         total_price = int(base_price * multiplier)
         
-        # Формируем текст
-        text = f"""📋 <b>Подтверждение заказа</b>
+        # Сохраняем рассчитанную цену
+        context.user_data['total_price'] = total_price
+        context.user_data['discount_info'] = discount_info
+        context.user_data['base_price'] = base_price
+        context.user_data['saved_amount'] = (base_price * duration) - total_price if duration > 1 and multiplier < duration else 0
 
-✅ План: {plan['name']}
-📧 Email: {email}
-📅 Срок: {discount_info.get('label', f'{duration} мес.')}"""
-        
-        # Добавляем информацию об экономии если есть скидка
-        if duration > 1 and multiplier < duration:
-            saved = (base_price * duration) - total_price
-            text += f" (экономия {saved}₽)"
-        
-        text += f"\n💰 К оплате: {total_price} ₽\n\nВсе верно?"
-
-    # Создаем клавиатуру
-    keyboard = [
-        [InlineKeyboardButton("✅ Подтвердить и оплатить", callback_data="confirm_payment")],
-        [InlineKeyboardButton("❌ Отмена", callback_data="cancel_payment")]  # Исправлено с pay_cancel
-    ]
-
+    # Сохраняем данные плана для последующего использования
+    context.user_data['plan_name'] = plan['name']
+    
+    # ============= ИЗМЕНЕНИЕ: Переходим к выбору автопродления =============
+    # Вместо показа подтверждения сразу, показываем экран выбора автопродления
+    
     await update.message.reply_text(
+        f"✅ Email сохранен: {email}\n\n"
+        "Теперь выберите тип оплаты..."
+    )
+    
+    # Показываем опции автопродления
+    await show_auto_renewal_choice(update, context)
+    return AUTO_RENEWAL_CHOICE  # Новое состояние
+
+# payment/handlers.py - Добавить после функции handle_email_input
+
+@safe_handler()
+async def show_auto_renewal_options(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Показывает опции автопродления после ввода email."""
+    query = update.callback_query
+    if query:
+        await query.answer()
+    
+    # Получаем информацию о выбранном плане
+    plan_id = context.user_data.get('selected_plan')
+    duration = context.user_data.get('duration_months', 1)
+    
+    # Определяем цену для ежемесячного продления
+    if plan_id.startswith('custom_'):
+        modules = context.user_data.get('selected_modules', [])
+        monthly_price = calculate_custom_price(modules, 1)
+        plan_name = f"Пакет из {len(modules)} модулей"
+    else:
+        from .config import MODULE_PLANS, SUBSCRIPTION_PLANS
+        plan = MODULE_PLANS.get(plan_id) or SUBSCRIPTION_PLANS.get(plan_id)
+        monthly_price = plan['price_rub']
+        plan_name = plan['name']
+    
+    # Текст с полным описанием автопродления (по требованиям Т-Банка)
+    text = f"""🔄 <b>Настройка автоматического продления</b>
+
+<b>Ваша подписка:</b>
+📦 {plan_name}
+⏱ Первый период: {duration} мес.
+💰 Далее: {monthly_price} ₽/месяц
+
+<b>Выберите вариант оплаты:</b>
+
+✅ <b>С автопродлением (рекомендуется)</b>
+• Автоматическое списание {monthly_price} ₽ каждый месяц
+• Непрерывный доступ к материалам
+• Уведомление за 3 дня до списания
+• Отмена в любой момент через /my_subscriptions
+• Первое автосписание: {(datetime.now() + timedelta(days=30*duration)).strftime('%d.%m.%Y')}
+
+❌ <b>Без автопродления</b>
+• Разовая оплата на {duration} мес.
+• Нужно будет продлевать вручную
+• Риск потерять доступ при забывчивости
+
+⚠️ <b>Важно:</b> Выбирая автопродление, вы соглашаетесь на ежемесячные списания до момента отмены подписки."""
+    
+    keyboard = [
+        [InlineKeyboardButton(
+            "✅ Включить автопродление", 
+            callback_data="consent_auto_renewal"
+        )],
+        [InlineKeyboardButton(
+            "❌ Оплатить без автопродления", 
+            callback_data="no_auto_renewal"
+        )],
+        [InlineKeyboardButton(
+            "ℹ️ Подробнее об условиях", 
+            callback_data="auto_renewal_terms"
+        )]
+    ]
+    
+    if query:
+        await query.edit_message_text(
+            text,
+            parse_mode=ParseMode.HTML,
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+    else:
+        await update.message.reply_text(
+            text,
+            parse_mode=ParseMode.HTML,
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+    
+    return AUTO_RENEWAL_CHOICE  # Новое состояние
+
+@safe_handler()
+async def handle_auto_renewal_consent_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обрабатывает выбор пользователя по автопродлению."""
+    query = update.callback_query
+    await query.answer()
+    
+    if query.data == "consent_auto_renewal":
+        # Показываем финальное подтверждение с чек-боксом
+        await show_final_consent_screen(update, context)
+        return FINAL_CONSENT
+        
+    elif query.data == "no_auto_renewal":
+        context.user_data['enable_auto_renewal'] = False
+        # Переходим к оплате без автопродления
+        return await handle_payment_confirmation_with_recurrent(update, context)
+        
+    elif query.data == "auto_renewal_terms":
+        await show_auto_renewal_terms(update, context)
+        return AUTO_RENEWAL_CHOICE
+
+@safe_handler()
+async def show_final_consent_screen(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Показывает финальный экран согласия с имитацией чек-бокса."""
+    query = update.callback_query
+    await query.answer()
+    
+    plan_id = context.user_data.get('selected_plan')
+    duration = context.user_data.get('duration_months', 1)
+    
+    # Определяем цену
+    if plan_id.startswith('custom_'):
+        modules = context.user_data.get('selected_modules', [])
+        monthly_price = calculate_custom_price(modules, 1)
+        total_price = calculate_custom_price(modules, duration)
+    else:
+        from .config import MODULE_PLANS, SUBSCRIPTION_PLANS
+        plan = MODULE_PLANS.get(plan_id) or SUBSCRIPTION_PLANS.get(plan_id)
+        monthly_price = plan['price_rub']
+        total_price = calculate_subscription_price(plan_id, duration)
+    
+    # Проверяем состояние согласия
+    consent_given = context.user_data.get('auto_renewal_consent_confirmed', False)
+    checkbox = "☑️" if consent_given else "⬜"
+    
+    text = f"""📋 <b>Подтверждение автоматического продления</b>
+
+<b>Условия подписки:</b>
+💳 Первый платеж: {total_price} ₽ (за {duration} мес.)
+🔄 Далее: {monthly_price} ₽ ежемесячно
+📅 Дата первого автосписания: {(datetime.now() + timedelta(days=30*duration)).strftime('%d.%m.%Y')}
+
+<b>Согласие на автопродление:</b>
+{checkbox} Я соглашаюсь на автоматическое ежемесячное списание {monthly_price} ₽ с моей карты для продления подписки. Я понимаю, что:
+
+• Списание будет происходить автоматически каждый месяц
+• Я получу уведомление за 3 дня до списания
+• Я могу отменить автопродление в любой момент
+• При отмене возврат осуществляется согласно правилам сервиса
+• Мои платежные данные будут сохранены в защищенном виде
+
+<b>Нажмите на чек-бокс выше, чтобы дать согласие</b>"""
+    
+    keyboard = []
+    
+    # Кнопка-чекбокс
+    keyboard.append([InlineKeyboardButton(
+        f"{checkbox} Согласие на автопродление",
+        callback_data="toggle_consent"
+    )])
+    
+    # Кнопки действий
+    if consent_given:
+        keyboard.append([InlineKeyboardButton(
+            "✅ Подтвердить и перейти к оплате",
+            callback_data="confirm_with_auto_renewal"
+        )])
+    else:
+        keyboard.append([InlineKeyboardButton(
+            "⚠️ Отметьте согласие для продолжения",
+            callback_data="need_consent"
+        )])
+    
+    keyboard.append([InlineKeyboardButton(
+        "◀️ Назад",
+        callback_data="back_to_auto_renewal_options"
+    )])
+    
+    await query.edit_message_text(
         text,
         parse_mode=ParseMode.HTML,
         reply_markup=InlineKeyboardMarkup(keyboard)
     )
 
-    return CONFIRMING
+@safe_handler()
+async def toggle_consent(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Переключает состояние согласия."""
+    query = update.callback_query
+    
+    # Переключаем состояние
+    current = context.user_data.get('auto_renewal_consent_confirmed', False)
+    context.user_data['auto_renewal_consent_confirmed'] = not current
+    
+    if not current:
+        # Сохраняем время и данные согласия
+        context.user_data['consent_timestamp'] = datetime.now().isoformat()
+        context.user_data['consent_user_id'] = update.effective_user.id
+        await query.answer("✅ Согласие получено", show_alert=False)
+    else:
+        await query.answer("Согласие отменено", show_alert=False)
+    
+    # Обновляем экран
+    await show_final_consent_screen(update, context)
+    return FINAL_CONSENT
+
+@safe_handler()
+async def confirm_with_auto_renewal(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Подтверждает оплату с автопродлением после получения явного согласия."""
+    query = update.callback_query
+    
+    if not context.user_data.get('auto_renewal_consent_confirmed', False):
+        await query.answer(
+            "⚠️ Необходимо дать согласие на автопродление",
+            show_alert=True
+        )
+        return FINAL_CONSENT
+    
+    await query.answer("✅ Переход к оплате...")
+    
+    # Устанавливаем флаг автопродления
+    context.user_data['enable_auto_renewal'] = True
+    
+    # Переходим к оплате
+    return await handle_payment_confirmation_with_recurrent(update, context)
+
+@safe_handler()
+async def show_auto_renewal_terms(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Показывает подробные условия автопродления."""
+    query = update.callback_query
+    await query.answer()
+    
+    text = """📜 <b>Условия автоматического продления подписки</b>
+
+<b>1. Общие положения</b>
+• Автопродление активируется после первой успешной оплаты
+• Списания происходят ежемесячно в день окончания текущего периода
+• Услуга предоставляется ИП "Фролов Роман Антонович" (ИНН: 772459778593)
+
+<b>2. Стоимость и списания</b>
+• Стоимость указывается при оформлении подписки
+• Списание происходит с карты, использованной при первой оплате
+• При недостатке средств делается 3 попытки списания
+
+<b>3. Уведомления</b>
+• За 3 дня до списания - напоминание на email и в Telegram
+• После успешного списания - подтверждение продления
+• При проблемах - уведомление с инструкциями
+
+<b>4. Отмена и возврат</b>
+• Отмена доступна в любой момент через /my_subscriptions
+• Отмена вступает в силу немедленно
+• Доступ сохраняется до конца оплаченного периода
+• Возврат возможен в течение 14 дней согласно ЗоЗПП
+
+<b>5. Безопасность</b>
+• Платежи обрабатывает Т-Банк (лицензия ЦБ РФ №2673)
+• Данные карты хранятся в токенизированном виде
+• Соответствие стандарту PCI DSS
+• Защита 3D-Secure
+
+<b>6. Поддержка</b>
+📱 Telegram: @obshestvonapalcahsupport
+
+<b>Нажимая "Согласен", вы принимаете данные условия</b>"""
+    
+    keyboard = [
+        [InlineKeyboardButton("✅ Понятно", callback_data="back_to_auto_renewal_choice")],
+        [InlineKeyboardButton("◀️ Назад", callback_data="back_to_auto_renewal_choice")]
+    ]
+    
+    await query.edit_message_text(
+        text,
+        parse_mode=ParseMode.HTML,
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
 
 @safe_handler()
 async def handle_payment_confirmation_with_recurrent(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1678,12 +1929,11 @@ async def standalone_pay_handler(update: Update, context: ContextTypes.DEFAULT_T
 
 
 # Замените функцию register_payment_handlers на эту версию:
-def register_payment_handlers(app: Application):
-    """Регистрирует обработчики платежей с правильными приоритетами."""
-    
+def register_payment_handlers(app):
+    """Регистрирует обработчики платежей."""
     logger.info("Registering payment handlers...")
     
-    # 1. Создаем ConversationHandler для процесса оплаты
+    # Создаем ConversationHandler для процесса оплаты
     payment_conv = ConversationHandler(
         entry_points=[
             CommandHandler("subscribe", cmd_subscribe),
@@ -1713,13 +1963,33 @@ def register_payment_handlers(app: Application):
             ENTERING_EMAIL: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, handle_email_input)
             ],
+            AUTO_RENEWAL_CHOICE: [  # НОВОЕ состояние
+                CallbackQueryHandler(
+                    handle_auto_renewal_consent_choice, 
+                    pattern="^(consent_auto_renewal|no_auto_renewal|auto_renewal_terms)$"
+                ),
+                CallbackQueryHandler(
+                    show_auto_renewal_options,
+                    pattern="^back_to_auto_renewal_choice$"
+                )
+            ],
+            FINAL_CONSENT: [  # НОВОЕ состояние
+                CallbackQueryHandler(toggle_consent, pattern="^toggle_consent$"),
+                CallbackQueryHandler(confirm_with_auto_renewal, pattern="^confirm_with_auto_renewal$"),
+                CallbackQueryHandler(
+                    lambda u, c: show_auto_renewal_options(u, c) or AUTO_RENEWAL_CHOICE,
+                    pattern="^back_to_auto_renewal_options$"
+                ),
+                CallbackQueryHandler(
+                    lambda u, c: u.callback_query.answer("⚠️ Необходимо отметить согласие", show_alert=True) or FINAL_CONSENT,
+                    pattern="^need_consent$"
+                )
+            ],
             CONFIRMING: [
-                # НОВОЕ: Добавляем обработку выбора автопродления
-                CallbackQueryHandler(ask_auto_renewal, pattern="^confirm_payment$"),
-                CallbackQueryHandler(handle_auto_renewal_choice, 
-                                   pattern="^(enable|disable)_auto_renewal_payment$"),
-                CallbackQueryHandler(handle_payment_confirmation_with_recurrent, 
-                                   pattern="^final_confirm_payment$"),
+                CallbackQueryHandler(
+                    handle_payment_confirmation_with_recurrent,
+                    pattern="^(confirm_payment|final_confirm_payment)$"
+                ),
                 CallbackQueryHandler(cancel_payment, pattern="^cancel_payment$")
             ]
         },
