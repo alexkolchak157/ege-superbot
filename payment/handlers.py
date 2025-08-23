@@ -27,9 +27,11 @@ from .auto_renewal_consent import (
     CONSENT_CHECKBOX, 
     FINAL_CONFIRMATION
 )
+import re
 import aiosqlite
 from core.error_handler import safe_handler
 from .config import (
+    SUBSCRIPTION_PLANS,
     SUBSCRIPTION_PLANS, 
     SUBSCRIPTION_MODE,
     DURATION_DISCOUNTS,
@@ -163,6 +165,72 @@ async def check_payment_status(update: Update, context: ContextTypes.DEFAULT_TYP
             "❌ Ошибка при проверке статуса платежа.\n\n"
             "Попробуйте позже или обратитесь к администратору."
         )
+
+def validate_email(email: str) -> tuple[bool, str]:
+    """
+    Валидирует email и возвращает (is_valid, error_message).
+    """
+    if not email:
+        return False, "Email не указан"
+    
+    # Базовая проверка формата
+    email = email.strip().lower()
+    
+    # Регулярное выражение для email
+    email_pattern = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
+    
+    if not re.match(email_pattern, email):
+        return False, "Неверный формат email"
+    
+    # Проверка длины
+    if len(email) < 6:  # a@b.co минимум
+        return False, "Email слишком короткий"
+    
+    if len(email) > 100:
+        return False, "Email слишком длинный"
+    
+    # Проверка домена
+    domain = email.split('@')[1]
+    
+    # Список распространенных опечаток
+    common_typos = {
+        'gmail.con': 'gmail.com',
+        'gmail.co': 'gmail.com',
+        'gmail.ru': 'gmail.com',
+        'gmai.com': 'gmail.com',
+        'gmial.com': 'gmail.com',
+        'gnail.com': 'gmail.com',
+        'yamdex.ru': 'yandex.ru',
+        'yadex.ru': 'yandex.ru',
+        'yandex.com': 'yandex.ru',
+        'mail.ri': 'mail.ru',
+        'mail.tu': 'mail.ru',
+        'maio.ru': 'mail.ru',
+        'maol.ru': 'mail.ru',
+        'mali.ru': 'mail.ru',
+        'outlok.com': 'outlook.com',
+        'outlok.ru': 'outlook.com',
+        'hotmial.com': 'hotmail.com',
+        'hotmai.com': 'hotmail.com'
+    }
+    
+    if domain in common_typos:
+        return False, f"Возможна опечатка. Вы имели в виду @{common_typos[domain]}?"
+    
+    # Проверка на невалидные домены
+    invalid_domains = ['gmail.con', 'gmail.co', 'test.com', 'example.com']
+    if domain in invalid_domains:
+        return False, f"Домен {domain} недействителен"
+    
+    # Проверка точек в домене
+    if '..' in domain:
+        return False, "Двойные точки в домене недопустимы"
+    
+    # Минимальная длина домена
+    if len(domain) < 4:  # x.co минимум
+        return False, "Домен слишком короткий"
+    
+    return True, ""
 
 async def show_unified_plans(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Показывает старые единые планы подписки."""
@@ -916,37 +984,106 @@ async def show_duration_options(update: Update, context: ContextTypes.DEFAULT_TY
 
 @safe_handler()
 async def handle_duration_selection(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обработка выбора длительности подписки с правильной обработкой навигации."""
+    """Обрабатывает выбор срока подписки."""
     query = update.callback_query
     await query.answer()
     
-    context.user_data['in_payment_process'] = True
-    
-    # Обрабатываем кнопки "Назад"
-    if query.data == "back_to_modules":
-        # Возвращаемся к выбору модулей
-        return await show_individual_modules(update, context)
-    elif query.data == "back_to_plans":
-        # Возвращаемся к выбору планов
-        return await show_modular_interface(update, context)
-    
-    # Извлекаем количество месяцев
-    try:
-        months = int(query.data.replace("duration_", ""))
-    except ValueError:
-        logger.error(f"Invalid duration callback data: {query.data}")
-        await query.answer("❌ Ошибка выбора срока", show_alert=True)
-        return CHOOSING_DURATION
+    # Извлекаем количество месяцев из callback_data
+    duration_str = query.data.replace("duration_", "")
+    duration = int(duration_str)
     
     # Сохраняем выбранный срок
-    context.user_data['duration_months'] = months
+    context.user_data['duration_months'] = duration
     
-    # Логируем для отладки
-    plan_id = context.user_data.get('selected_plan', 'unknown')
-    logger.info(f"User {update.effective_user.id} selected {months} months for plan {plan_id}")
+    # Получаем план
+    plan_id = context.user_data.get('selected_plan')
     
-    # Запрашиваем email
-    return await request_email(update, context)
+    # ВАЖНО: Рассчитываем и сохраняем правильную цену
+    from payment.config import SUBSCRIPTION_PLANS, MODULE_PLANS, DURATION_DISCOUNTS
+    
+    if plan_id.startswith('custom_'):
+        # Для кастомных планов
+        modules = context.user_data.get('selected_modules', [])
+        base_price = calculate_custom_base_price(modules)  # Базовая месячная цена
+        plan_name = f"Пакет из {len(modules)} модулей"
+    else:
+        # Получаем план из конфига
+        plan = SUBSCRIPTION_PLANS.get(plan_id) or MODULE_PLANS.get(plan_id)
+        if not plan:
+            logger.error(f"Plan {plan_id} not found in duration selection")
+            await query.edit_message_text("❌ Ошибка: план не найден")
+            return ConversationHandler.END
+        
+        base_price = plan['price_rub']
+        plan_name = plan['name']
+    
+    # Рассчитываем итоговую цену с учетом скидки
+    if duration in DURATION_DISCOUNTS:
+        multiplier = DURATION_DISCOUNTS[duration]['multiplier']
+        total_price = int(base_price * multiplier)
+        discount_info = DURATION_DISCOUNTS[duration]
+        
+        # Рассчитываем экономию
+        full_price = base_price * duration
+        saved_amount = full_price - total_price
+        discount_percent = int((saved_amount / full_price) * 100) if full_price > 0 else 0
+    else:
+        total_price = base_price * duration
+        discount_info = {'label': f'{duration} мес.', 'multiplier': duration}
+        saved_amount = 0
+        discount_percent = 0
+    
+    # ВАЖНО: Сохраняем все рассчитанные значения в контекст
+    context.user_data['base_price'] = base_price  # Базовая месячная цена
+    context.user_data['total_price'] = total_price  # Итоговая цена к оплате
+    context.user_data['saved_amount'] = saved_amount  # Размер экономии
+    context.user_data['discount_percent'] = discount_percent  # Процент скидки
+    context.user_data['plan_name'] = plan_name
+    
+    logger.info(f"Duration selected: {duration} months, base_price={base_price}₽, total={total_price}₽, saved={saved_amount}₽")
+    
+    # Показываем сообщение с правильной ценой
+    text = f"""✅ <b>Выбран срок подписки</b>
+
+📦 План: <b>{plan_name}</b>
+⏱ Срок: <b>{duration} мес.</b>
+💰 Стоимость: <b>{total_price} ₽</b>"""
+    
+    if saved_amount > 0:
+        text += f"\n🎁 Экономия: <b>{saved_amount} ₽ ({discount_percent}%)</b>"
+        text += f"\n💡 Цена за месяц: <b>{total_price // duration} ₽</b> вместо <b>{base_price} ₽</b>"
+    
+    text += "\n\n📧 Теперь введите ваш email для отправки чека:"
+    
+    # Клавиатура для отмены
+    keyboard = [[InlineKeyboardButton("❌ Отмена", callback_data="cancel_payment")]]
+    
+    await query.edit_message_text(
+        text,
+        parse_mode=ParseMode.HTML,
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
+    
+    return ENTERING_EMAIL
+
+
+def calculate_custom_base_price(modules):
+    """Рассчитывает базовую месячную цену для кастомного набора модулей."""
+    # Цены на модули (месячная стоимость)
+    module_prices = {
+        'test_part': 298,      # Тестовая часть
+        'task19': 197,         # Задание 19
+        'task20': 197,         # Задание 20
+        'task24': 347,         # Задание 24 (премиум)
+        'task25': 197,         # Задание 25
+        # Добавьте другие модули если есть
+    }
+    
+    total = 0
+    for module in modules:
+        total += module_prices.get(module, 100)  # По умолчанию 100₽ если модуль не найден
+    
+    return total
 
 
 @safe_handler()
@@ -1059,27 +1196,90 @@ async def request_email(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # payment/handlers.py - Исправленная версия handle_email_input
 @safe_handler()
 async def handle_email_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обработка ввода email с правильным расчетом цен и сроков."""
-    # ВАЖНО: Подтверждаем флаг процесса оплаты
-    context.user_data['in_payment_process'] = True
+    """Обрабатывает ввод email с улучшенной валидацией."""
+    email = update.message.text.strip().lower()
+    user_id = update.effective_user.id
     
-    email = update.message.text.strip()
+    # Валидация email
+    is_valid, error_message = validate_email(email)
     
-    # Простая проверка email
-    import re
-    email_pattern = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
-    
-    if not re.match(email_pattern, email):
+    if not is_valid:
+        # Показываем ошибку и просим ввести заново
+        keyboard = [[InlineKeyboardButton("❌ Отмена", callback_data="cancel_payment")]]
+        
         await update.message.reply_text(
-            "❌ Неверный формат email.\n"
-            "Пожалуйста, введите корректный email адрес."
+            f"❌ {error_message}\n\n"
+            f"Вы ввели: <code>{email}</code>\n\n"
+            "Пожалуйста, введите корректный email.\n"
+            "Например: ivanov@gmail.com",
+            parse_mode=ParseMode.HTML,
+            reply_markup=InlineKeyboardMarkup(keyboard)
         )
+        return ENTERING_EMAIL  # Остаемся в том же состоянии
+    
+    # Исправляем распространенные опечатки автоматически
+    domain = email.split('@')[1]
+    auto_corrections = {
+        'gmail.comm': 'gmail.com',
+        'gmai.com': 'gmail.com',
+        'gmil.com': 'gmail.com',
+        'yamdex.ru': 'yandex.ru',
+        'yadex.ru': 'yandex.ru',
+        'maio.ru': 'mail.ru'
+    }
+    
+    if domain in auto_corrections:
+        corrected_email = email.replace(domain, auto_corrections[domain])
+        
+        # Спрашиваем подтверждение
+        keyboard = [
+            [InlineKeyboardButton(f"✅ Да, использовать {corrected_email}", 
+                                callback_data=f"use_email_{corrected_email}")],
+            [InlineKeyboardButton(f"❌ Нет, оставить {email}", 
+                                callback_data=f"use_email_{email}")],
+            [InlineKeyboardButton("🔄 Ввести заново", callback_data="retry_email")]
+        ]
+        
+        await update.message.reply_text(
+            f"🔍 Обнаружена возможная опечатка.\n\n"
+            f"Вы ввели: <code>{email}</code>\n"
+            f"Возможно, вы имели в виду: <code>{corrected_email}</code>?",
+            parse_mode=ParseMode.HTML,
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+        
+        # Сохраняем оба варианта
+        context.user_data['original_email'] = email
+        context.user_data['corrected_email'] = corrected_email
+        
         return ENTERING_EMAIL
     
-    # Сохраняем email
-    context.user_data['user_email'] = email
-
-    # Получаем данные заказа
+    # Email валидный, сохраняем
+    context.user_data['email'] = email
+    
+    # Сохраняем в БД
+    try:
+        from payment.subscription_manager import SubscriptionManager
+        subscription_manager = SubscriptionManager()
+        
+        # Сохраняем email в БД
+        import aiosqlite
+        async with aiosqlite.connect(subscription_manager.database_file) as conn:
+            await conn.execute(
+                """
+                INSERT OR REPLACE INTO user_emails (user_id, email, updated_at)
+                VALUES (?, ?, CURRENT_TIMESTAMP)
+                """,
+                (user_id, email)
+            )
+            await conn.commit()
+            
+        logger.info(f"Email saved for user {user_id}: {email}")
+        
+    except Exception as e:
+        logger.error(f"Error saving email: {e}")
+    
+    # Получаем данные о плане
     plan_id = context.user_data.get('selected_plan')
     duration = context.user_data.get('duration_months', 1)
     is_trial = context.user_data.get('is_trial', False)
@@ -1197,7 +1397,51 @@ async def handle_email_input(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
         return CONFIRMING
 
-# payment/handlers.py - Добавить после функции handle_email_input
+@safe_handler()
+async def handle_email_confirmation(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обрабатывает подтверждение исправленного email."""
+    query = update.callback_query
+    await query.answer()
+    
+    if query.data.startswith("use_email_"):
+        # Извлекаем email из callback_data
+        email = query.data.replace("use_email_", "")
+        context.user_data['email'] = email
+        
+        # Сохраняем в БД
+        user_id = update.effective_user.id
+        try:
+            from payment.subscription_manager import SubscriptionManager
+            subscription_manager = SubscriptionManager()
+            
+            import aiosqlite
+            async with aiosqlite.connect(subscription_manager.database_file) as conn:
+                await conn.execute(
+                    """
+                    INSERT OR REPLACE INTO user_emails (user_id, email, updated_at)
+                    VALUES (?, ?, CURRENT_TIMESTAMP)
+                    """,
+                    (user_id, email)
+                )
+                await conn.commit()
+                
+        except Exception as e:
+            logger.error(f"Error saving email: {e}")
+        
+        await query.edit_message_text(
+            f"✅ Email сохранен: {email}\n\n"
+            "Настройка способа оплаты..."
+        )
+        
+        # Переход к выбору автопродления
+        from .auto_renewal_consent import show_auto_renewal_choice
+        return await show_auto_renewal_choice(update, context)
+    
+    elif query.data == "retry_email":
+        await query.edit_message_text(
+            "📧 Введите ваш email для отправки чека:"
+        )
+        return ENTERING_EMAIL
 
 @safe_handler()
 async def show_auto_renewal_options(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1370,57 +1614,45 @@ async def show_final_consent_screen(update: Update, context: ContextTypes.DEFAUL
     return FINAL_CONSENT
 
 def calculate_subscription_price(plan_id, duration, custom_plan=None):
-    """Рассчитывает стоимость подписки с учетом скидок."""
+    """
+    Рассчитывает стоимость подписки с учетом скидок.
+    ИСПРАВЛЕНО: Использует правильные цены из конфига.
+    """
+    from payment.config import SUBSCRIPTION_PLANS, MODULE_PLANS, DURATION_DISCOUNTS
     
-    # Базовые цены
-    base_prices = {
-        'package_full': 490,
-        'package_basic': 290,
-        'package_premium': 690,
-        'custom_base': 290,
-        'custom_standard': 490,
-        'custom_premium': 690
-    }
-    
+    # Получаем план из конфига
     if plan_id.startswith('custom_') and custom_plan:
         base_price = custom_plan.get('base_price', 490)
     else:
-        base_price = base_prices.get(plan_id, 490)
+        # Ищем план в конфигах
+        plan = SUBSCRIPTION_PLANS.get(plan_id) or MODULE_PLANS.get(plan_id)
+        
+        if not plan:
+            logger.error(f"Plan {plan_id} not found in configs, using default price")
+            base_price = 490
+        else:
+            base_price = plan.get('price_rub', 490)
     
-    # Скидки за длительность
-    if duration >= 12:
-        multiplier = 0.80  # 20% скидка
-    elif duration >= 6:
-        multiplier = 0.85  # 15% скидка  
-    elif duration >= 3:
-        multiplier = 0.90  # 10% скидка
+    # Применяем множители из конфига для многомесячных подписок
+    if duration in DURATION_DISCOUNTS:
+        multiplier = DURATION_DISCOUNTS[duration]['multiplier']
+        total_price = int(base_price * multiplier)
     else:
-        multiplier = 1.0
+        # Если нет в конфиге скидок, применяем старую логику
+        if duration >= 12:
+            multiplier = 9.0  # ~25% скидка
+        elif duration >= 6:
+            multiplier = 5.0  # ~17% скидка
+        elif duration >= 3:
+            multiplier = 2.7  # ~10% скидка
+        else:
+            multiplier = duration
+        
+        total_price = int(base_price * multiplier)
     
-    return int(base_price * duration * multiplier)
-
-def calculate_custom_price(modules, duration):
-    """Рассчитывает цену кастомного плана."""
-    base_price = 100  # Базовая цена
+    logger.debug(f"Price calculation: plan={plan_id}, base={base_price}₽, duration={duration}m, total={total_price}₽")
     
-    module_prices = {
-        'module_math': 150,
-        'module_russian': 150,
-        'module_physics': 100,
-        'module_chemistry': 100,
-        'module_biology': 100,
-        'module_history': 80,
-        'module_social': 80,
-        'module_english': 120,
-        'module_literature': 100,
-        'module_geography': 80,
-        'module_it': 100
-    }
-    
-    for module in modules:
-        base_price += module_prices.get(module, 0)
-    
-    return calculate_subscription_price('custom', duration, {'base_price': base_price})
+    return total_price
 
 @safe_handler()
 async def toggle_consent(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1519,49 +1751,126 @@ async def handle_payment_confirmation_with_recurrent(update: Update, context: Co
     query = update.callback_query
     
     try:
+    from payment.config import SUBSCRIPTION_PLANS, MODULE_PLANS
         user_id = update.effective_user.id
         plan_id = context.user_data.get('selected_plan')
         duration = context.user_data.get('duration_months', 1)
         enable_auto_renewal = context.user_data.get('enable_auto_renewal', False)
-        email = context.user_data.get('email', '')
+        email = context.user_data.get('email', context.user_data.get('user_email', ''))
         
-        # Рассчитываем стоимость
-        if plan_id.startswith('custom_'):
-            modules = context.user_data.get('selected_modules', [])
-            amount = calculate_custom_price(modules, duration)
+        # ИСПРАВЛЕНИЕ: Используем сохраненную правильную цену из контекста
+        # или пересчитываем через правильную функцию
+        if 'total_price' in context.user_data:
+            # Используем уже рассчитанную цену из контекста
+            amount = context.user_data['total_price']
+            logger.info(f"Using cached price from context: {amount}₽")
         else:
-            plan_info = SUBSCRIPTION_PLANS.get(plan_id, {})
-            amount = calculate_subscription_price(plan_id, duration, plan_info)
+            # Рассчитываем стоимость заново
+            if plan_id.startswith('custom_'):
+                modules = context.user_data.get('selected_modules', [])
+                amount = calculate_custom_price(modules, duration)
+            else:
+                # Получаем план из конфига
+                from payment.config import SUBSCRIPTION_PLANS, MODULE_PLANS
+                plan_info = SUBSCRIPTION_PLANS.get(plan_id) or MODULE_PLANS.get(plan_id)
+                
+                if not plan_info:
+                    logger.error(f"Plan {plan_id} not found!")
+                    await query.edit_message_text("❌ Ошибка: план не найден")
+                    return ConversationHandler.END
+                
+                # Используем исправленную функцию
+                amount = calculate_subscription_price(plan_id, duration, plan_info)
+                logger.info(f"Calculated price: plan={plan_id}, duration={duration}, amount={amount}₽")
         
-        # Создаем платеж через Tinkoff API
-        payment_data = {
-            'amount': amount * 100,  # В копейках
-            'user_id': user_id,
-            'plan_id': plan_id,
-            'duration': duration,
-            'recurrent': enable_auto_renewal,  # Флаг рекуррентного платежа
-            'customer_key': str(user_id),  # Идентификатор клиента для рекуррентов
-            'email': email,  # Добавляем email
-            'description': f"Подписка {plan_id} на {duration} мес."
-        }
+        # Генерируем уникальный order_id
+        import uuid
+        from datetime import datetime
+        order_id = f"ORDER_{user_id}_{datetime.now().strftime('%Y%m%d%H%M%S')}_{uuid.uuid4().hex[:8]}"
         
-        # Убираем metadata, так как метод его не принимает
-        payment_result = await tinkoff_payment.create_payment(payment_data)
+        # Описание платежа
+        plan_name = SUBSCRIPTION_PLANS.get(plan_id, {}).get('name', plan_id)
+        description = f"Подписка: {plan_name} на {duration} мес."
         
-        if payment_result['success']:
-            payment_url = payment_result['payment_url']
-            payment_id = payment_result['payment_id']
+        # Получаем username бота
+        bot_username = context.bot.username
+        
+        # Логируем для отладки
+        logger.info(f"Creating payment: order={order_id}, amount={amount}₽, plan={plan_id}, duration={duration}m")
+        
+        # Создаем платеж через Tinkoff
+        try:
+            if enable_auto_renewal:
+                # С рекуррентными платежами
+                tinkoff = TinkoffPayment()
+                
+                receipt_items = [
+                    tinkoff.build_receipt_item(
+                        name=description[:64],
+                        price_kopecks=amount * 100  # Переводим в копейки
+                    )
+                ]
+                
+                user_data = {
+                    "user_id": str(user_id),
+                    "email": email
+                }
+                
+                payment_result = await tinkoff.init_payment(
+                    order_id=order_id,
+                    amount_kopecks=amount * 100,  # В копейках
+                    description=description,
+                    user_email=email,
+                    receipt_items=receipt_items,
+                    user_data=None,  # Не используем DATA
+                    bot_username=bot_username,
+                    enable_recurrent=True,
+                    customer_key=str(user_id)
+                )
+            else:
+                # Обычный платеж
+                payment_url, order_id = await tinkoff_payment.create_payment(
+                    amount_kopecks=amount * 100,  # В копейках
+                    order_id=order_id,
+                    description=description,
+                    customer_email=email,
+                    user_id=user_id,
+                    bot_username=bot_username
+                )
+                
+                payment_result = {
+                    'success': True,
+                    'payment_url': payment_url,
+                    'order_id': order_id
+                }
+        
+        except Exception as e:
+            logger.error(f"Error calling Tinkoff API: {e}")
+            payment_result = {
+                'success': False,
+                'error': str(e)
+            }
+        
+        if payment_result.get('success'):
+            payment_url = payment_result.get('payment_url')
+            payment_id = payment_result.get('payment_id', order_id)
             
-            # Сохраняем информацию о платеже
+            # Сохраняем информацию о платеже в БД
             await subscription_manager.save_payment_info(
                 user_id=user_id,
                 payment_id=payment_id,
-                amount=amount,
+                order_id=order_id,
+                amount=amount,  # В рублях
                 plan_id=plan_id,
                 duration=duration,
-                auto_renewal=enable_auto_renewal
+                email=email,
+                metadata={
+                    'enable_auto_renewal': enable_auto_renewal,
+                    'modules': context.user_data.get('selected_modules', []) if plan_id.startswith('custom_') else []
+                }
             )
             
+            # Формируем сообщение
             text = f"""✅ <b>Платеж создан</b>
 
 💳 Сумма к оплате: <b>{amount} ₽</b>
@@ -1573,7 +1882,7 @@ async def handle_payment_confirmation_with_recurrent(update: Update, context: Co
             
             keyboard = [
                 [InlineKeyboardButton("💳 Оплатить", url=payment_url)],
-                [InlineKeyboardButton("🔄 Проверить оплату", callback_data="check_payment")],
+                [InlineKeyboardButton("🔄 Проверить оплату", callback_data=f"check_payment_{order_id}")],
                 [InlineKeyboardButton("❌ Отменить", callback_data="cancel_payment")]
             ]
             
@@ -1583,21 +1892,27 @@ async def handle_payment_confirmation_with_recurrent(update: Update, context: Co
                 reply_markup=InlineKeyboardMarkup(keyboard)
             )
             
+            logger.info(f"Payment created successfully: order_id={order_id}, user_id={user_id}, amount={amount}₽")
+            
         else:
             error_msg = payment_result.get('error', 'Неизвестная ошибка')
+            logger.error(f"Payment creation failed: {error_msg}")
+            
             await query.edit_message_text(
-                f"❌ Ошибка создания платежа: {error_msg}",
+                f"❌ Ошибка создания платежа:\n{error_msg}\n\nПопробуйте еще раз или обратитесь в поддержку.",
                 reply_markup=InlineKeyboardMarkup([[
-                    InlineKeyboardButton("◀️ Назад", callback_data="back_to_main")
+                    InlineKeyboardButton("🔄 Попробовать снова", callback_data="subscribe_start"),
+                    InlineKeyboardButton("📱 Поддержка", url="https://t.me/obshestvonapalcahsupport")
                 ]])
             )
             
     except Exception as e:
-        logger.error(f"Error creating payment: {e}")
+        logger.error(f"Error in handle_payment_confirmation_with_recurrent: {e}", exc_info=True)
         await query.edit_message_text(
-            "❌ Произошла ошибка. Обратитесь в поддержку.",
+            "❌ Произошла ошибка при создании платежа.\nПожалуйста, попробуйте позже или обратитесь в поддержку.",
             reply_markup=InlineKeyboardMarkup([[
-                InlineKeyboardButton("◀️ Назад", callback_data="back_to_main")
+                InlineKeyboardButton("📱 Поддержка", url="https://t.me/obshestvonapalcahsupport"),
+                InlineKeyboardButton("◀️ Назад", callback_data="subscribe_start")
             ]])
         )
     

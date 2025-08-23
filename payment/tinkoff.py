@@ -33,26 +33,36 @@ class TinkoffPayment:
         token_params = params.copy()
         token_params["Password"] = self.secret_key
         
-        # Удаляем сложные структуры и сам Token
-        for key in ["Receipt", "DATA", "Token"]:
+        # Удаляем параметры, которые не участвуют в подписи
+        exclude_from_token = ["Receipt", "DATA", "Token", "Shops", "Descriptor", "PaymentFormLanguage"]
+        for key in exclude_from_token:
             token_params.pop(key, None)
         
-        # Приводим значения к строкам
+        # Приводим все значения к строкам
         processed = {}
         for key, value in token_params.items():
             if value is None:
                 continue
             elif isinstance(value, bool):
-                processed[key] = str(value).lower()
+                # Для Tinkoff булевы значения должны быть "true"/"false"
+                processed[key] = "true" if value else "false"
+            elif key == "Recurrent" and value == "Y":
+                # Recurrent передается как есть
+                processed[key] = value
             else:
                 processed[key] = str(value)
         
-        # Сортируем и конкатенируем значения
-        sorted_values = [v for k, v in sorted(processed.items())]
+        # Сортируем по ключам и конкатенируем значения
+        sorted_values = [processed[k] for k in sorted(processed.keys())]
         values_string = "".join(sorted_values)
         
         # Вычисляем SHA256
-        return hashlib.sha256(values_string.encode('utf-8')).hexdigest()
+        token = hashlib.sha256(values_string.encode('utf-8')).hexdigest()
+        
+        # Логируем для отладки (без пароля)
+        logger.debug(f"Token calculation: keys={sorted(processed.keys())}, token={token[:10]}...")
+        
+        return token
     
     async def create_payment(
         self,
@@ -142,8 +152,8 @@ class TinkoffPayment:
         receipt_items: list,
         user_data: Optional[Dict[str, str]] = None,
         bot_username: str = None,
-        enable_recurrent: bool = False,  # НОВОЕ: поддержка рекуррентов
-        customer_key: str = None  # НОВОЕ: ID клиента для рекуррентов
+        enable_recurrent: bool = False,
+        customer_key: str = None
     ) -> Dict[str, Any]:
         """
         Инициирует платеж в Tinkoff с поддержкой рекуррентных платежей.
@@ -154,7 +164,7 @@ class TinkoffPayment:
             description: Описание платежа
             user_email: Email пользователя
             receipt_items: Позиции чека
-            user_data: Дополнительные данные
+            user_data: Дополнительные данные (не используется из-за проблем с Tinkoff API)
             bot_username: Username бота для deep links
             enable_recurrent: Включить возможность рекуррентных платежей
             customer_key: ID клиента для рекуррентов (обычно user_id)
@@ -170,32 +180,37 @@ class TinkoffPayment:
         success_deep_link = f"https://t.me/{bot_username}?start=payment_success_{order_id}"
         fail_deep_link = f"https://t.me/{bot_username}?start=payment_fail_{order_id}"
         
+        # Базовые параметры платежа
         payload = {
             "TerminalKey": self.terminal_key,
             "Amount": amount_kopecks,
             "OrderId": order_id,
             "Description": description[:250],
             "SuccessURL": success_deep_link,
-            "FailURL": fail_deep_link,
-            "NotificationURL": f"{WEBHOOK_BASE_URL}{WEBHOOK_PATH}",
-            "Receipt": {
-                "Email": user_email,
-                "Taxation": "usn_income",
-                "Items": receipt_items
-            }
+            "FailURL": fail_deep_link
         }
         
-        # НОВОЕ: Добавляем параметры для рекуррентных платежей
+        # Добавляем NotificationURL только если настроен webhook
+        if WEBHOOK_BASE_URL:
+            payload["NotificationURL"] = f"{WEBHOOK_BASE_URL}{WEBHOOK_PATH}"
+        
+        # Формируем чек
+        payload["Receipt"] = {
+            "Email": user_email,
+            "Taxation": "usn_income",
+            "Items": receipt_items
+        }
+        
+        # Для рекуррентных платежей
         if enable_recurrent and customer_key:
-            payload["Recurrent"] = "Y"  # Включаем рекуррентные платежи
-            payload["CustomerKey"] = str(customer_key)  # ID клиента
+            payload["Recurrent"] = "Y"
+            payload["CustomerKey"] = str(customer_key)
             logger.info(f"Enabling recurrent payments for customer {customer_key}")
         
-        # Добавляем пользовательские данные
-        if user_data:
-            payload["DATA"] = user_data
+        # ВАЖНО: НЕ добавляем DATA - он вызывает ошибку "Отсутствуют обязательные параметры"
+        # Данные пользователя сохраняем в БД по order_id
         
-        # Добавляем токен
+        # Вычисляем токен для подписи
         payload["Token"] = self.calculate_token(payload)
         
         # Отправляем запрос
@@ -213,35 +228,60 @@ class TinkoffPayment:
                     timeout=aiohttp.ClientTimeout(total=20)
                 ) as response:
                     text = await response.text()
-                    data = json.loads(text)
+                    
+                    # Пробуем распарсить JSON
+                    try:
+                        data = json.loads(text)
+                    except json.JSONDecodeError:
+                        logger.error(f"Invalid JSON response: {text}")
+                        return {
+                            "success": False,
+                            "error": "Invalid response from payment gateway"
+                        }
                     
                     if response.status == 200 and data.get("Success"):
-                        logger.info(f"Payment initiated: {order_id}, PaymentId: {data.get('PaymentId')}")
+                        payment_id = data.get("PaymentId")
+                        payment_url = data.get("PaymentURL")
+                        
+                        logger.info(f"Payment initiated successfully: order={order_id}, payment_id={payment_id}")
                         
                         result = {
                             "success": True,
-                            "payment_id": data.get("PaymentId"),
-                            "payment_url": data.get("PaymentURL"),
+                            "payment_id": payment_id,
+                            "payment_url": payment_url,
                             "order_id": order_id
                         }
                         
-                        # НОВОЕ: Отмечаем если рекуррентный платеж включен
+                        # Отмечаем если рекуррентный платеж включен
                         if enable_recurrent:
                             result["recurrent_enabled"] = True
                             result["customer_key"] = customer_key
-                            logger.info(f"Recurrent payment will be available after successful payment")
+                            logger.info(f"✅ Recurrent payment enabled for customer {customer_key}")
+                            logger.info(f"RebillId will be available after successful payment")
                         
                         return result
                     else:
                         error = data.get("Message", "Unknown error")
+                        error_code = data.get("ErrorCode", "")
+                        
                         logger.error(f"Payment init failed: {error}")
+                        if error_code:
+                            logger.error(f"Error code: {error_code}")
+                        
                         return {
                             "success": False,
-                            "error": error
+                            "error": error,
+                            "error_code": error_code
                         }
         
+        except aiohttp.ClientError as e:
+            logger.exception(f"Network error during payment initialization: {e}")
+            return {
+                "success": False,
+                "error": f"Network error: {str(e)}"
+            }
         except Exception as e:
-            logger.exception(f"Error initiating payment: {e}")
+            logger.exception(f"Unexpected error initiating payment: {e}")
             return {
                 "success": False,
                 "error": str(e)

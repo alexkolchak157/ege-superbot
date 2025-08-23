@@ -358,110 +358,137 @@ class SubscriptionManager:
             
             logger.info(f"Saved metadata for payment {payment_id}: {metadata}")
 
-    async def save_payment_info(
-        self,
-        user_id: int,
-        order_id: str,
-        plan_id: str,
-        amount: int,
-        email: str,
-        modules: list = None
-    ) -> bool:
+    # Исправленный метод save_payment_info для payment/subscription_manager.py
+
+    async def save_payment_info(self, user_id: int, payment_id: str, order_id: str, 
+                               amount: int, plan_id: str, duration: int,
+                               email: str, metadata: Dict = None) -> bool:
         """
-        Сохраняет информацию о платеже в БД.
+        Сохраняет информацию о платеже в базу данных.
         
         Args:
             user_id: ID пользователя
+            payment_id: ID платежа от Tinkoff
             order_id: Уникальный ID заказа
-            plan_id: ID плана подписки (включая custom_xxx для custom планов)
             amount: Сумма в рублях
-            email: Email покупателя
-            modules: Список модулей для custom планов
-            
+            plan_id: ID плана подписки
+            duration: Длительность в месяцах
+            email: Email пользователя
+            metadata: Дополнительные данные (опционально)
+        
         Returns:
             True при успешном сохранении
         """
         try:
-            async with aiosqlite.connect(DATABASE_FILE) as conn:
-                # Подготавливаем metadata для custom планов
-                metadata = None
-                if modules:
-                    metadata = json.dumps({
-                        'modules': modules,
-                        'type': 'custom'
-                    })
+            import json
+            from datetime import datetime
+            
+            async with aiosqlite.connect(self.database_file) as conn:
+                # Сначала проверим структуру таблицы payments
+                cursor = await conn.execute("PRAGMA table_info(payments)")
+                columns = await cursor.fetchall()
+                column_names = [col[1] for col in columns]
                 
-                # НЕ создаем таблицу здесь - она должна быть создана в init_tables()
-                # Просто сохраняем данные
-                logger.info(f"Saving payment: order_id={order_id}, user_id={user_id}, plan_id={plan_id}, amount={amount}₽")
+                logger.debug(f"Available columns in payments table: {column_names}")
                 
-                try:
-                    await conn.execute("""
-                        INSERT INTO payments (
-                            user_id, order_id, plan_id, amount_kopecks, 
-                            status, metadata, email, created_at
-                        ) VALUES (?, ?, ?, ?, 'pending', ?, ?, CURRENT_TIMESTAMP)
-                    """, (user_id, order_id, plan_id, amount * 100, metadata, email))
-                    
-                except aiosqlite.OperationalError as e:
-                    if "no such table" in str(e):
-                        # Если таблицы нет, инициализируем её
-                        logger.warning("Table 'payments' not found, initializing...")
-                        await self.init_tables()
-                        
-                        # Повторяем попытку
-                        await conn.execute("""
-                            INSERT INTO payments (
-                                user_id, order_id, plan_id, amount_kopecks, 
-                                status, metadata, email, created_at
-                            ) VALUES (?, ?, ?, ?, 'pending', ?, ?, CURRENT_TIMESTAMP)
-                        """, (user_id, order_id, plan_id, amount * 100, metadata, email))
-                    else:
-                        raise
-                
-                # Проверяем что сохранилось
-                cursor = await conn.execute(
-                    "SELECT order_id, plan_id, email FROM payments WHERE order_id = ?",
-                    (order_id,)
+                # Сохраняем email пользователя
+                await conn.execute(
+                    """
+                    INSERT OR REPLACE INTO user_emails (user_id, email, updated_at)
+                    VALUES (?, ?, CURRENT_TIMESTAMP)
+                    """,
+                    (user_id, email)
                 )
-                saved = await cursor.fetchone()
-                if saved:
-                    logger.info(f"✅ Payment saved successfully: order={saved[0]}, plan={saved[1]}, email={saved[2]}")
-                else:
-                    logger.error(f"❌ Payment not found after saving! order_id={order_id}")
-                    return False
                 
-                # Сохраняем email пользователя в отдельную таблицу для истории
-                try:
+                # Конвертируем metadata в JSON
+                metadata_json = json.dumps(metadata or {})
+                
+                # ИСПРАВЛЕНИЕ: Используем правильное имя столбца amount_kopecks
+                # Проверяем, какие столбцы есть в таблице
+                if 'amount_kopecks' in column_names:
+                    # Используем amount_kopecks (правильное имя)
+                    await conn.execute(
+                        """
+                        INSERT INTO payments (
+                            payment_id, order_id, user_id, plan_id, 
+                            amount_kopecks, status, created_at, metadata
+                        )
+                        VALUES (?, ?, ?, ?, ?, 'pending', CURRENT_TIMESTAMP, ?)
+                        """,
+                        (payment_id, order_id, user_id, plan_id, amount * 100, metadata_json)
+                    )
+                elif 'amount' in column_names:
+                    # Если есть столбец amount (старая версия)
+                    await conn.execute(
+                        """
+                        INSERT INTO payments (
+                            payment_id, order_id, user_id, plan_id, 
+                            amount, status, created_at, metadata
+                        )
+                        VALUES (?, ?, ?, ?, ?, 'pending', CURRENT_TIMESTAMP, ?)
+                        """,
+                        (payment_id, order_id, user_id, plan_id, amount * 100, metadata_json)
+                    )
+                else:
+                    # Если нет ни того, ни другого - создаем таблицу
+                    logger.warning("Column amount/amount_kopecks not found, creating table...")
                     await conn.execute("""
-                        INSERT OR REPLACE INTO user_emails (user_id, email, updated_at)
-                        VALUES (?, ?, CURRENT_TIMESTAMP)
-                    """, (user_id, email))
-                except aiosqlite.OperationalError:
-                    # Если таблицы нет, создаем
-                    await conn.execute("""
-                        CREATE TABLE IF NOT EXISTS user_emails (
-                            user_id INTEGER PRIMARY KEY,
-                            email TEXT NOT NULL,
-                            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                        CREATE TABLE IF NOT EXISTS payments (
+                            payment_id TEXT PRIMARY KEY,
+                            order_id TEXT UNIQUE NOT NULL,
+                            user_id INTEGER NOT NULL,
+                            plan_id TEXT NOT NULL,
+                            amount_kopecks INTEGER NOT NULL,
+                            status TEXT DEFAULT 'pending',
+                            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                            completed_at TIMESTAMP,
+                            metadata TEXT DEFAULT '{}',
+                            rebill_id TEXT,
+                            is_recurrent BOOLEAN DEFAULT 0,
+                            auto_renewal_enabled BOOLEAN DEFAULT 0
                         )
                     """)
-                    await conn.execute("""
-                        INSERT OR REPLACE INTO user_emails (user_id, email, updated_at)
-                        VALUES (?, ?, CURRENT_TIMESTAMP)
-                    """, (user_id, email))
+                    
+                    # И сохраняем данные
+                    await conn.execute(
+                        """
+                        INSERT INTO payments (
+                            payment_id, order_id, user_id, plan_id, 
+                            amount_kopecks, status, created_at, metadata
+                        )
+                        VALUES (?, ?, ?, ?, ?, 'pending', CURRENT_TIMESTAMP, ?)
+                        """,
+                        (payment_id, order_id, user_id, plan_id, amount * 100, metadata_json)
+                    )
+                
+                # Если включено автопродление, сохраняем эту информацию
+                if metadata and metadata.get('enable_auto_renewal'):
+                    await conn.execute(
+                        """
+                        INSERT OR REPLACE INTO auto_renewal_consents (
+                            user_id, plan_id, amount, period_days,
+                            consent_text, consent_checkbox_state,
+                            telegram_chat_id, created_at
+                        )
+                        VALUES (?, ?, ?, ?, ?, 1, ?, CURRENT_TIMESTAMP)
+                        """,
+                        (
+                            user_id, 
+                            plan_id, 
+                            amount, 
+                            duration * 30,
+                            f"Согласие на автопродление подписки {plan_id} на сумму {amount} руб. каждые {duration * 30} дней",
+                            user_id  # telegram_chat_id = user_id
+                        )
+                    )
                 
                 await conn.commit()
                 
-                logger.info(f"✅ Payment info saved: user={user_id}, order={order_id}, plan={plan_id}, amount={amount}₽")
-                if modules:
-                    logger.info(f"Custom plan modules: {modules}")
+                logger.info(f"Payment info saved: order_id={order_id}, user_id={user_id}, amount={amount}₽")
                 return True
                 
         except Exception as e:
-            logger.error(f"❌ Error saving payment info: {e}")
-            import traceback
-            logger.error(f"Traceback: {traceback.format_exc()}")
+            logger.error(f"Error saving payment info: {e}", exc_info=True)
             return False
             
     async def get_user_active_modules(self, user_id: int) -> List[str]:
@@ -1165,34 +1192,50 @@ class SubscriptionManager:
         except Exception as e:
             logger.exception(f"Error initializing database: {e}")
 
-    async def save_rebill_id(self, user_id: int, rebill_id: str, order_id: str):
-        """Сохраняет RebillId после успешного первичного платежа."""
+    async def save_rebill_id(self, user_id: int, order_id: str, rebill_id: str) -> bool:
+        """
+        Сохраняет RebillId для рекуррентных платежей.
+        
+        Args:
+            user_id: ID пользователя
+            order_id: ID заказа
+            rebill_id: Токен для рекуррентных платежей от Tinkoff
+            
+        Returns:
+            True при успешном сохранении
+        """
         try:
-            from datetime import datetime, timedelta, timezone
-            
-            next_renewal = datetime.now(timezone.utc) + timedelta(days=30)
-            
             async with aiosqlite.connect(self.database_file) as conn:
-                # Сохраняем или обновляем настройки автопродления
-                await conn.execute("""
-                    INSERT OR REPLACE INTO auto_renewal_settings 
-                    (user_id, enabled, payment_method, recurrent_token, 
-                     next_renewal_date, failures_count, updated_at)
-                    VALUES (?, 1, 'recurrent', ?, ?, 0, CURRENT_TIMESTAMP)
-                """, (user_id, rebill_id, next_renewal))
-                
-                # Обновляем информацию в таблице payments
-                await conn.execute("""
+                # Обновляем запись платежа
+                await conn.execute(
+                    """
                     UPDATE payments 
                     SET rebill_id = ?, is_recurrent = 1
                     WHERE order_id = ?
-                """, (rebill_id, order_id))
+                    """,
+                    (rebill_id, order_id)
+                )
+                
+                # Сохраняем в таблицу автопродления
+                await conn.execute(
+                    """
+                    INSERT OR REPLACE INTO auto_renewal_settings (
+                        user_id, enabled, payment_method, recurrent_token,
+                        created_at, updated_at
+                    )
+                    VALUES (?, 0, 'recurrent', ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                    """,
+                    (user_id, rebill_id)
+                )
                 
                 await conn.commit()
-                logger.info(f"RebillId saved for user {user_id}")
+                
+                logger.info(f"RebillId saved for user {user_id}, order {order_id}")
+                return True
                 
         except Exception as e:
             logger.error(f"Error saving rebill_id: {e}")
+            return False
 
     async def enable_auto_renewal(self, user_id: int, payment_method: str = 'recurrent', 
                                  recurrent_token: str = None) -> bool:
@@ -1594,26 +1637,38 @@ class SubscriptionManager:
             logger.error(f"Error getting user modules: {e}")
             return []
     
-    async def get_payment_by_order_id(self, order_id: str) -> Optional[Dict[str, Any]]:
-        """Получает информацию о платеже по order_id."""
+    async def get_payment_by_order_id(self, order_id: str) -> Optional[Dict]:
+        """
+        Получает информацию о платеже по order_id.
+        
+        Args:
+            order_id: ID заказа
+            
+        Returns:
+            Словарь с информацией о платеже или None
+        """
         try:
-            async with aiosqlite.connect(DATABASE_FILE) as conn:
+            async with aiosqlite.connect(self.database_file) as conn:
+                conn.row_factory = aiosqlite.Row
                 cursor = await conn.execute(
-                    "SELECT user_id, plan_id, amount_kopecks, status FROM payments WHERE order_id = ?",
+                    """
+                    SELECT 
+                        payment_id, order_id, user_id, plan_id,
+                        amount, status, created_at, completed_at,
+                        metadata, rebill_id
+                    FROM payments
+                    WHERE order_id = ?
+                    """,
                     (order_id,)
                 )
                 row = await cursor.fetchone()
                 
                 if row:
-                    return {
-                        'user_id': row[0],
-                        'plan_id': row[1],
-                        'amount_kopecks': row[2],
-                        'status': row[3]
-                    }
+                    return dict(row)
                 return None
+                
         except Exception as e:
-            logger.error(f"Error getting payment: {e}")
+            logger.error(f"Error getting payment by order_id: {e}")
             return None
     
     async def update_payment_status(self, order_id: str, status: str):
