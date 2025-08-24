@@ -8,8 +8,7 @@ import json
 from telegram import (
     InlineKeyboardButton, 
     InlineKeyboardMarkup, 
-    Update,
-)
+    Update)
 from telegram.error import BadRequest
 from telegram.constants import ParseMode
 from telegram.ext import (
@@ -109,7 +108,7 @@ async def check_payment_status(update: Update, context: ContextTypes.DEFAULT_TYP
                 WHERE user_id = ?
                 ORDER BY created_at DESC
                 LIMIT 1
-            """, (user_id,))
+            """, (user_id))
             
             payment = await cursor.fetchone()
             
@@ -160,7 +159,7 @@ async def check_payment_status(update: Update, context: ContextTypes.DEFAULT_TYP
                     "Попробуйте создать новый платеж.",
                     parse_mode=ParseMode.HTML,
                     reply_markup=InlineKeyboardMarkup([[
-                        InlineKeyboardButton("🔄 Создать новый платеж", callback_data="subscribe")
+                        InlineKeyboardButton("🔄 Создать новый платеж", callback_data="payment_back")
                     ]])
                 )
             else:
@@ -646,7 +645,7 @@ async def cmd_debug_subscription(update: Update, context: ContextTypes.DEFAULT_T
                 ORDER BY created_at DESC 
                 LIMIT 5
                 """,
-                (user_id,)
+                (user_id)
             )
             payments = await cursor.fetchall()
             
@@ -692,7 +691,7 @@ async def show_individual_modules(update: Update, context: ContextTypes.DEFAULT_
         logger.error(f"MODULE_PLANS keys: {list(MODULE_PLANS.keys())}")
         error_text = "❌ Модули временно недоступны. Обратитесь к администратору."
         error_keyboard = [[
-            InlineKeyboardButton("⬅️ Назад", callback_data="subscribe")
+            InlineKeyboardButton("⬅️ Назад", callback_data="back_to_modules")
         ]]
         
         if query:
@@ -746,7 +745,7 @@ async def show_individual_modules(update: Update, context: ContextTypes.DEFAULT_
     
     # Кнопка назад
     keyboard.append([
-        InlineKeyboardButton("⬅️ Назад к планам", callback_data="back_to_main")
+        InlineKeyboardButton("⬅️ Назад к планам", callback_data="back_to_modules")
     ])
     
     # Редактируем сообщение или отправляем новое
@@ -862,7 +861,7 @@ async def show_module_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     # Создаем клавиатуру с кнопкой возврата
     keyboard = [[
-        InlineKeyboardButton("⬅️ Назад к выбору", callback_data="back_to_module_selection")
+        InlineKeyboardButton("⬅️ Назад к выбору", callback_data="back_to_modules")
     ]]
     
     # Редактируем сообщение с обработкой ошибок
@@ -1024,11 +1023,11 @@ async def show_duration_options(update: Update, context: ContextTypes.DEFAULT_TY
     # Кнопка назад в зависимости от типа плана
     if plan_id.startswith('custom_'):
         keyboard.append([
-            InlineKeyboardButton("⬅️ Назад к выбору модулей", callback_data="back_to_modules")
+            InlineKeyboardButton("⬅️ Назад к выбору модулей", callback_data="back_to_module_selection")
         ])
     else:
         keyboard.append([
-            InlineKeyboardButton("⬅️ Назад", callback_data="back_to_plans")
+            InlineKeyboardButton("⬅️ Назад", callback_data="back_to_duration_selection")
         ])
     
     # Пытаемся отредактировать сообщение с обработкой ошибки
@@ -1208,7 +1207,7 @@ async def request_email(update: Update, context: ContextTypes.DEFAULT_TYPE):
             total_price = calculate_subscription_price(plan_id, duration, plan)
             context.user_data['total_price'] = total_price
         else:
-            total_price = 490 * duration  # Fallback
+            total_price = 999 * duration  # Fallback
     
     text = f"""📧 <b>Введите email для отправки чека</b>
 
@@ -1617,7 +1616,7 @@ async def show_final_consent_screen(update: Update, context: ContextTypes.DEFAUL
         total_price = calculate_custom_price(modules, duration)
     else:
         plan_info = SUBSCRIPTION_PLANS.get(plan_id, {})
-        monthly_price = plan_info.get('price_rub', 490)
+        monthly_price = plan_info.get('price_rub', 999)
         total_price = calculate_subscription_price(plan_id, duration, plan_info)
     
     # Проверяем состояние согласия
@@ -1664,7 +1663,7 @@ async def show_final_consent_screen(update: Update, context: ContextTypes.DEFAUL
     
     keyboard.append([InlineKeyboardButton(
         "◀️ Назад",
-        callback_data="back_to_auto_renewal_options"
+        callback_data="payment_back"
     )])
     
     await query.edit_message_text(
@@ -1704,6 +1703,7 @@ def calculate_subscription_price(plan_id: str, duration_months: int = 1) -> int:
     
     # Специальная обработка для пробного периода
     if plan_id == 'trial_7days':
+        logger.info(f"Trial period detected, returning 1₽")
         logger.info(f"Trial period detected, returning 1₽")
         return 1
     
@@ -1802,8 +1802,8 @@ async def show_auto_renewal_terms(update: Update, context: ContextTypes.DEFAULT_
 <b>Нажимая "Согласен", вы принимаете данные условия</b>"""
     
     keyboard = [
-        [InlineKeyboardButton("✅ Понятно", callback_data="back_to_auto_renewal_choice")],
-        [InlineKeyboardButton("◀️ Назад", callback_data="back_to_auto_renewal_choice")]
+        [InlineKeyboardButton("✅ Понятно", callback_data="payment_back")],
+        [InlineKeyboardButton("◀️ Назад", callback_data="back_to_auto_renewal_options")]
     ]
     
     await query.edit_message_text(
@@ -1885,14 +1885,15 @@ async def handle_payment_confirmation_with_recurrent(update: Update, context: Co
         from payment.tinkoff import TinkoffPayment
         tinkoff = TinkoffPayment()
         
+	
         payment_result = await tinkoff.create_payment(
-            order_id=order_id,
-            amount_rubles=amount,  # Уже в рублях
-            description=description,
-            user_id=user_id,
-            email=email,
+       	    order_id=order_id,
+       	    amount_kopecks=amount * 100,  # Конвертируем рубли в копейки
+   	    description=description,
+    	    user_id=user_id,
             recurrent=enable_auto_renewal  # Включаем рекуррентные платежи если нужно
-        )
+	)
+
         
         if payment_result['success']:
             payment_url = payment_result['payment_url']
@@ -2013,7 +2014,7 @@ async def ask_auto_renewal(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if plan_info:
                 total_price = calculate_subscription_price(plan_id, duration, plan_info)
             else:
-                total_price = 490 * duration  # Fallback
+                total_price = 999 * duration  # Fallback
         
         # Сохраняем для следующих шагов
         context.user_data['total_price'] = total_price
@@ -2108,7 +2109,7 @@ async def cmd_my_subscriptions(update: Update, context: ContextTypes.DEFAULT_TYP
     
     # ДОБАВЛЕНО: кнопка главного меню
     keyboard = [
-        [InlineKeyboardButton("🔄 Оформить/Продлить", callback_data="subscribe")],
+        [InlineKeyboardButton("🔄 Оформить/Продлить", callback_data="payment_back")],
         [InlineKeyboardButton("🏠 Главное меню", callback_data="to_main_menu")]
     ]
     
@@ -2184,7 +2185,7 @@ async def handle_my_subscriptions(update: Update, context: ContextTypes.DEFAULT_
             text += "Используйте /subscribe для продления или добавления модулей."
             
             keyboard = [
-                [InlineKeyboardButton("🔄 Продлить/Добавить", callback_data="subscribe")],
+                [InlineKeyboardButton("🔄 Продлить/Добавить", callback_data="payment_back")],
                 [InlineKeyboardButton("🏠 Главное меню", callback_data="to_main_menu")]
             ]
             
@@ -2219,7 +2220,7 @@ async def handle_my_subscriptions(update: Update, context: ContextTypes.DEFAULT_
             text = "📋 <b>Мои подписки</b>\n\nУ вас нет активной подписки.\n\nИспользуйте /subscribe для оформления."
         
         keyboard = [
-            [InlineKeyboardButton("🔄 Оформить/Продлить", callback_data="subscribe")],
+            [InlineKeyboardButton("🔄 Оформить/Продлить", callback_data="payment_back")],
             [InlineKeyboardButton("🏠 Главное меню", callback_data="to_main_menu")]
         ]
         
@@ -2324,7 +2325,7 @@ async def handle_module_info(update: Update, context: ContextTypes.DEFAULT_TYPE)
         await query.edit_message_text(
             "❌ Информация о модуле не найдена",
             reply_markup=InlineKeyboardMarkup([[
-                InlineKeyboardButton("⬅️ Назад", callback_data="subscribe")
+                InlineKeyboardButton("⬅️ Назад", callback_data="back_to_modules")
             ]])
         )
         return
@@ -2338,7 +2339,7 @@ async def handle_module_info(update: Update, context: ContextTypes.DEFAULT_TYPE)
     
     keyboard = [
         [InlineKeyboardButton("💳 Оформить подписку", callback_data="subscribe")],
-        [InlineKeyboardButton("⬅️ Назад", callback_data="subscribe")]
+        [InlineKeyboardButton("⬅️ Назад", callback_data="back_to_modules")]
     ]
     
     await query.edit_message_text(
@@ -2609,3 +2610,5 @@ def register_payment_handlers(app):
     logger.info("Payment handlers registered with priority")
     logger.info("Total handlers registered: 10+")
     logger.info("Priority groups: -50 (ConversationHandler), -48 (redirects), -45 (standalone)")
+
+    # Обработчики навигации

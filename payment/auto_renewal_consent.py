@@ -146,7 +146,7 @@ class AutoRenewalConsent:
             
             plan_name = context.user_data.get('selected_plan', 'Стандарт')
             duration = context.user_data.get('duration_months', 1)
-            price = context.user_data.get('price', 490)
+            price = context.user_data.get('price', 999)
             email = context.user_data.get('email', '')
             auto_renewal = context.user_data.get('enable_auto_renewal', False)
             
@@ -265,7 +265,7 @@ class AutoRenewalConsent:
 class SubscriptionNotificationManager:
     """Менеджер уведомлений о подписках."""
     
-    def __init__(self, bot: Bot, db_path: str = "/opt/ege-bot/subscriptions.db"):
+    def __init__(self, bot, db_path: str = "/opt/ege-bot/subscriptions.db"):
         self.bot = bot
         self.db_path = db_path
         self.is_running = False
@@ -501,7 +501,7 @@ async def show_auto_renewal_choice(update: Update, context: ContextTypes.DEFAULT
         price = 1
     elif plan_id == 'package_full':
         plan_name = "Полный пакет"
-        price = 490 * duration
+        price = 999 * duration
     elif plan_id == 'package_second':
         plan_name = "Подготовка к части 2"
         price = 390 * duration
@@ -512,7 +512,7 @@ async def show_auto_renewal_choice(update: Update, context: ContextTypes.DEFAULT
         price = calculate_custom_price(modules, duration)
     else:
         plan_name = "Стандартный план"
-        price = 490 * duration
+        price = 999 * duration
     
     # Сохраняем цену в контекст
     context.user_data['total_price'] = price
@@ -632,7 +632,7 @@ async def show_auto_renewal_choice(update: Update, context: ContextTypes.DEFAULT
         price = 1
     elif plan_id == 'package_full':
         plan_name = "Полный пакет"
-        price = 490 * duration
+        price = 999 * duration
     elif plan_id == 'package_second':
         plan_name = "Подготовка к части 2"
         price = 390 * duration
@@ -643,7 +643,7 @@ async def show_auto_renewal_choice(update: Update, context: ContextTypes.DEFAULT
         price = calculate_custom_price(modules, duration)
     else:
         plan_name = "Стандартный план"
-        price = 490 * duration
+        price = 999 * duration
     
     # Сохраняем цену в контекст
     context.user_data['total_price'] = price
