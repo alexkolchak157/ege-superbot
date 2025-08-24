@@ -146,7 +146,12 @@ class AutoRenewalConsent:
             
             plan_name = context.user_data.get('selected_plan', 'Стандарт')
             duration = context.user_data.get('duration_months', 1)
-            price = context.user_data.get('price', 999)
+            # Получаем цену с учетом триала
+            plan_id = context.user_data.get('selected_plan')
+            if plan_id == 'trial_7days':
+                price = 1
+            else:
+                price = context.user_data.get('price') or context.user_data.get('total_price', 999)
             email = context.user_data.get('email', '')
             auto_renewal = context.user_data.get('enable_auto_renewal', False)
             
@@ -501,7 +506,21 @@ async def show_auto_renewal_choice(update: Update, context: ContextTypes.DEFAULT
         price = 1
     elif plan_id == 'package_full':
         plan_name = "Полный пакет"
-        price = 999 * duration
+        # Определяем правильную цену
+        plan_id = context.user_data.get('selected_plan')
+        if plan_id == 'trial_7days':
+            price = 1  # Пробный период всегда 1 рубль
+        else:
+            # Получаем цену из контекста или рассчитываем
+            price = context.user_data.get('total_price')
+            if not price:
+                from payment.config import MODULE_PLANS, SUBSCRIPTION_PLANS
+                plan_info = MODULE_PLANS.get(plan_id) or SUBSCRIPTION_PLANS.get(plan_id)
+                if plan_info:
+                    base_price = plan_info.get('price_rub', 999)
+                    price = base_price * duration
+                else:
+                    price = 999 * duration  # Fallback
     elif plan_id == 'package_second':
         plan_name = "Подготовка к части 2"
         price = 390 * duration
@@ -512,7 +531,21 @@ async def show_auto_renewal_choice(update: Update, context: ContextTypes.DEFAULT
         price = calculate_custom_price(modules, duration)
     else:
         plan_name = "Стандартный план"
-        price = 999 * duration
+        # Определяем правильную цену
+        plan_id = context.user_data.get('selected_plan')
+        if plan_id == 'trial_7days':
+            price = 1  # Пробный период всегда 1 рубль
+        else:
+            # Получаем цену из контекста или рассчитываем
+            price = context.user_data.get('total_price')
+            if not price:
+                from payment.config import MODULE_PLANS, SUBSCRIPTION_PLANS
+                plan_info = MODULE_PLANS.get(plan_id) or SUBSCRIPTION_PLANS.get(plan_id)
+                if plan_info:
+                    base_price = plan_info.get('price_rub', 999)
+                    price = base_price * duration
+                else:
+                    price = 999 * duration  # Fallback
     
     # Сохраняем цену в контекст
     context.user_data['total_price'] = price
@@ -632,7 +665,21 @@ async def show_auto_renewal_choice(update: Update, context: ContextTypes.DEFAULT
         price = 1
     elif plan_id == 'package_full':
         plan_name = "Полный пакет"
-        price = 999 * duration
+        # Определяем правильную цену
+        plan_id = context.user_data.get('selected_plan')
+        if plan_id == 'trial_7days':
+            price = 1  # Пробный период всегда 1 рубль
+        else:
+            # Получаем цену из контекста или рассчитываем
+            price = context.user_data.get('total_price')
+            if not price:
+                from payment.config import MODULE_PLANS, SUBSCRIPTION_PLANS
+                plan_info = MODULE_PLANS.get(plan_id) or SUBSCRIPTION_PLANS.get(plan_id)
+                if plan_info:
+                    base_price = plan_info.get('price_rub', 999)
+                    price = base_price * duration
+                else:
+                    price = 999 * duration  # Fallback
     elif plan_id == 'package_second':
         plan_name = "Подготовка к части 2"
         price = 390 * duration
@@ -643,7 +690,21 @@ async def show_auto_renewal_choice(update: Update, context: ContextTypes.DEFAULT
         price = calculate_custom_price(modules, duration)
     else:
         plan_name = "Стандартный план"
-        price = 999 * duration
+        # Определяем правильную цену
+        plan_id = context.user_data.get('selected_plan')
+        if plan_id == 'trial_7days':
+            price = 1  # Пробный период всегда 1 рубль
+        else:
+            # Получаем цену из контекста или рассчитываем
+            price = context.user_data.get('total_price')
+            if not price:
+                from payment.config import MODULE_PLANS, SUBSCRIPTION_PLANS
+                plan_info = MODULE_PLANS.get(plan_id) or SUBSCRIPTION_PLANS.get(plan_id)
+                if plan_info:
+                    base_price = plan_info.get('price_rub', 999)
+                    price = base_price * duration
+                else:
+                    price = 999 * duration  # Fallback
     
     # Сохраняем цену в контекст
     context.user_data['total_price'] = price

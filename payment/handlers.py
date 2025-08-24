@@ -460,23 +460,21 @@ async def show_modular_interface(update: Update, context: ContextTypes.DEFAULT_T
 
 @safe_handler()
 async def handle_plan_selection(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обрабатывает выбор плана подписки."""
+    """Обработчик выбора плана подписки с исправлением для триала."""
     query = update.callback_query
     await query.answer()
     
-    # Извлекаем план из callback_data
     plan_id = query.data.replace("pay_", "")
-    
     logger.info(f"Plan selected: {plan_id}")
     
-    # Проверяем, какой это план
     if plan_id == "trial":
-        # ВАЖНО: Для пробной подписки устанавливаем правильные значения
+        # Для триала устанавливаем все параметры сразу
         plan_id = "trial_7days"
         context.user_data['is_trial'] = True
         context.user_data['selected_plan'] = plan_id
         context.user_data['duration_months'] = 1
-        context.user_data['total_price'] = 1  # КРИТИЧНО: 1 рубль для триала
+        context.user_data['total_price'] = 1  # Фиксированная цена
+        logger.info(f"TRIAL PRICE DEBUG: Set total_price = 1 for user {update.effective_user.id}")
         context.user_data['base_price'] = 1
         context.user_data['plan_name'] = "🎁 Пробный период 7 дней"
         
@@ -525,6 +523,7 @@ async def request_email_for_trial(update: Update, context: ContextTypes.DEFAULT_
     
     # ВАЖНО: Убеждаемся, что цена установлена правильно
     context.user_data['total_price'] = 1
+    logger.info(f"TRIAL PRICE DEBUG: Set total_price = 1 for user {update.effective_user.id}")
     context.user_data['duration_months'] = 1
     context.user_data['plan_name'] = "🎁 Пробный период 7 дней"
     
@@ -1369,6 +1368,7 @@ async def handle_email_input(update: Update, context: ContextTypes.DEFAULT_TYPE)
     if is_trial:
         # Пробный период - 1 рубль
         context.user_data['total_price'] = 1
+        logger.info(f"TRIAL PRICE DEBUG: Set total_price = 1 for user {update.effective_user.id}")
         context.user_data['base_price'] = plan['price_rub']  # Цена после триала
         context.user_data['discount_info'] = {'label': '7 дней (пробный период)'}
         context.user_data['saved_amount'] = 0
@@ -1410,7 +1410,13 @@ async def handle_email_input(update: Update, context: ContextTypes.DEFAULT_TYPE)
     # Проверяем, импортирована ли функция show_auto_renewal_choice
     try:
         # Пробуем использовать новую функцию из модуля consent
-        from .auto_renewal_consent import show_auto_renewal_choice
+        
+    # Убеждаемся что цена правильно сохранена в контексте
+    if context.user_data.get('selected_plan') == 'trial_7days':
+        context.user_data['total_price'] = 1
+        logger.info(f"Trial price set to 1 for user {user_id}")
+    
+    from .auto_renewal_consent import show_auto_renewal_choice
         return await show_auto_renewal_choice(update, context)
     except ImportError:
         # Если модуль еще не создан, используем временную заглушку
@@ -1814,166 +1820,151 @@ async def show_auto_renewal_terms(update: Update, context: ContextTypes.DEFAULT_
 
 async def handle_payment_confirmation_with_recurrent(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Создает платеж с учетом выбора автопродления."""
-    query = update.callback_query
-    await query.answer()
+    import uuid
+    from datetime import datetime
+    from telegram.constants import ParseMode
+    from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+    from payment.tinkoff import TinkoffPayment
+    import aiosqlite
+    import json
+    from core.db import DATABASE_FILE
     
-    try:
-        # Получаем данные из контекста
-        user_id = update.effective_user.id
-        plan_id = context.user_data.get('selected_plan')
-        duration = context.user_data.get('selected_duration', 1)
-        email = context.user_data.get('user_email', '')
-        enable_auto_renewal = context.user_data.get('enable_auto_renewal', False)
-        
-        # ВАЖНО: Используем сохраненную правильную цену из контекста
-        # Если её нет - пересчитываем
-        if 'total_price' in context.user_data:
-            amount = context.user_data['total_price']
-            logger.info(f"Using saved price from context: {amount}₽")
-        else:
+    query = update.callback_query
+    if query:
+        await query.answer("⏳ Создаем платеж...")
+    
+    user_id = update.effective_user.id
+    plan_id = context.user_data.get('selected_plan')
+    duration = context.user_data.get('duration_months', 1)
+    email = context.user_data.get('email', 'noemail@example.com')
+    enable_auto_renewal = context.user_data.get('enable_auto_renewal', False)
+    
+    # КРИТИЧНО: Определяем правильную цену
+    if plan_id == 'trial_7days':
+        amount = 1  # Фиксированная цена для триала
+        plan_name = "🎁 Пробный период 7 дней"
+        duration = 1  # Триал всегда на 1 "месяц"
+    else:
+        # Используем сохраненную цену из контекста
+        amount = context.user_data.get('total_price')
+        if not amount:
+            # Пересчитываем если нет сохраненной цены
             amount = calculate_subscription_price(plan_id, duration)
-            logger.info(f"Calculated price: {amount}₽")
+        plan_name = context.user_data.get('plan_name', 'Подписка')
+    
+    # Создаем уникальный order_id
+    order_id = f"{user_id}_{plan_id}_{uuid.uuid4().hex[:8]}"
+    
+    # Описание платежа
+    if plan_id == 'trial_7days':
+        description = f"Пробный период 7 дней для пользователя {user_id}"
+    else:
+        description = f"Подписка {plan_name} на {duration} мес. для пользователя {user_id}"
+    
+    logger.info(f"Creating payment: order_id={order_id}, amount={amount}₽, plan={plan_id}, duration={duration}")
+    
+    # Сохраняем данные заказа в БД
+    try:
+        metadata = json.dumps({
+            'plan_id': plan_id,
+            'duration_months': duration,
+            'email': email,
+            'enable_auto_renewal': enable_auto_renewal
+        })
         
-        # Получаем название плана
-        from payment.config import MODULE_PLANS, SUBSCRIPTION_PLANS
-        
-        if plan_id in MODULE_PLANS:
-            plan_name = MODULE_PLANS[plan_id]['name']
-        elif plan_id in SUBSCRIPTION_PLANS:
-            plan_name = SUBSCRIPTION_PLANS[plan_id]['name']
-        else:
-            plan_name = plan_id
-        
-        # Создаем уникальный order_id
-        import uuid
-        from datetime import datetime
-        timestamp = datetime.now().strftime('%Y%m%d%H%M%S')
-        order_id = f"ORDER_{user_id}_{timestamp}_{uuid.uuid4().hex[:8]}"
-        
-        # Формируем описание
-        description = f"{plan_name} - {duration} мес."
-        
-        logger.info(f"Creating payment: order_id={order_id}, amount={amount}₽, plan={plan_id}, duration={duration}")
-        
-        # ИСПРАВЛЕНИЕ: Сохраняем данные заказа напрямую в БД вместо несуществующего метода
-        try:
-            import aiosqlite
-            import json
-            from core.db import DATABASE_FILE
-            
-            metadata = json.dumps({
-                'plan_id': plan_id,
-                'duration_months': duration,
-                'email': email,
-                'enable_auto_renewal': enable_auto_renewal
-            })
-            
-            async with aiosqlite.connect(DATABASE_FILE) as conn:
-                await conn.execute("""
-                    INSERT OR REPLACE INTO payments 
-                    (order_id, user_id, plan_id, amount_kopecks, status, metadata, created_at)
-                    VALUES (?, ?, ?, ?, 'pending', ?, CURRENT_TIMESTAMP)
-                """, (order_id, user_id, plan_id, amount * 100, metadata))
-                await conn.commit()
-                logger.info(f"Payment saved to database: {order_id}")
-                
-        except Exception as e:
-            logger.error(f"Error saving payment to database: {e}")
-            # Продолжаем даже если не удалось сохранить
-        
-        # Создаем платеж через Tinkoff
-        from payment.tinkoff import TinkoffPayment
+        async with aiosqlite.connect(DATABASE_FILE) as conn:
+            await conn.execute("""
+                INSERT OR REPLACE INTO payments 
+                (order_id, user_id, plan_id, amount_kopecks, status, metadata, created_at)
+                VALUES (?, ?, ?, ?, 'pending', ?, CURRENT_TIMESTAMP)
+            """, (order_id, user_id, plan_id, amount * 100, metadata))
+            await conn.commit()
+            logger.info(f"Payment saved to database: {order_id}")
+    except Exception as e:
+        logger.error(f"Error saving payment to database: {e}")
+    
+    # Создаем платеж через Tinkoff БЕЗ параметра recurrent
+    try:
         tinkoff = TinkoffPayment()
         
-	
-        payment_result = await tinkoff.create_payment(
-       	    order_id=order_id,
-       	    amount_kopecks=amount * 100,  # Конвертируем рубли в копейки
-   	    description=description,
-    	    user_id=user_id,
-            recurrent=enable_auto_renewal  # Включаем рекуррентные платежи если нужно
-	)
-
+        # Используем базовый метод create_payment без recurrent
+        payment_url, order_id = await tinkoff.create_payment(
+            order_id=order_id,
+            amount_kopecks=amount * 100,
+            description=description,
+            customer_email=email,
+            user_id=user_id
+        )
         
-        if payment_result['success']:
-            payment_url = payment_result['payment_url']
-            payment_id = payment_result['payment_id']
-            
-            # ИСПРАВЛЕНИЕ: Обновляем payment_id напрямую в БД
+        # Если нужны рекуррентные платежи, используем специальный метод
+        if enable_auto_renewal:
+            # Сохраняем флаг автопродления в метаданных
             try:
                 async with aiosqlite.connect(DATABASE_FILE) as conn:
                     await conn.execute("""
                         UPDATE payments 
-                        SET payment_id = ?, updated_at = CURRENT_TIMESTAMP
+                        SET auto_renewal_enabled = 1
                         WHERE order_id = ?
-                    """, (payment_id, order_id))
+                    """, (order_id,))
                     await conn.commit()
-                    logger.info(f"Updated payment_id for order {order_id}")
             except Exception as e:
-                logger.error(f"Error updating payment_id: {e}")
-            
-            # Показываем кнопку оплаты
-            text = f"""💳 <b>Переход к оплате</b>
+                logger.error(f"Error updating auto_renewal flag: {e}")
+        
+        # Показываем кнопку оплаты
+        text = f"""💳 <b>Переход к оплате</b>
 
 📋 <b>Ваш заказ:</b>
 • План: {plan_name}
-• Срок: {duration} мес.
+• Срок: {duration if plan_id != 'trial_7days' else '7 дней'}
 • Сумма: {amount} ₽
 {"• Автопродление: ✅ Включено" if enable_auto_renewal else "• Автопродление: ❌ Выключено"}
 
 Нажмите кнопку ниже для перехода на страницу оплаты Т-Банка.
 
 После успешной оплаты вы автоматически получите доступ к материалам."""
-            
-            keyboard = [
-                [InlineKeyboardButton(f"💳 Оплатить {amount} ₽", url=payment_url)],
-                [InlineKeyboardButton("🔄 Проверить оплату", callback_data="check_payment")],
-                [InlineKeyboardButton("❌ Отменить", callback_data="cancel_payment")]
-            ]
-            
+        
+        keyboard = [
+            [InlineKeyboardButton("💳 Оплатить", url=payment_url)],
+            [InlineKeyboardButton("🔄 Проверить оплату", callback_data="check_payment")],
+            [InlineKeyboardButton("❌ Отменить", callback_data="cancel_payment")]
+        ]
+        
+        if query:
             await query.edit_message_text(
                 text,
                 parse_mode=ParseMode.HTML,
                 reply_markup=InlineKeyboardMarkup(keyboard)
             )
-            
-            # Отправляем уведомление админу
-            from payment.config import PAYMENT_ADMIN_CHAT_ID
-            if PAYMENT_ADMIN_CHAT_ID:
-                admin_text = f"""🆕 Новый платеж:
-                
-User: {update.effective_user.username or update.effective_user.first_name} ({user_id})
-План: {plan_name}
-Срок: {duration} мес.
-Сумма: {amount} ₽
-Order ID: {order_id}
-Автопродление: {"✅" if enable_auto_renewal else "❌"}"""
-                
-                try:
-                    await context.bot.send_message(
-                        chat_id=PAYMENT_ADMIN_CHAT_ID,
-                        text=admin_text
-                    )
-                except Exception as e:
-                    logger.error(f"Error sending admin notification: {e}")
-            
-            return ConversationHandler.END
-            
         else:
-            error = payment_result.get('error', 'Неизвестная ошибка')
-            await query.edit_message_text(
-                f"❌ Ошибка создания платежа:\n{error}\n\n"
-                "Попробуйте позже или обратитесь в поддержку."
+            await update.message.reply_text(
+                text,
+                parse_mode=ParseMode.HTML,
+                reply_markup=InlineKeyboardMarkup(keyboard)
             )
-            return ConversationHandler.END
-            
+        
+        # Сохраняем order_id для проверки
+        context.user_data['pending_order_id'] = order_id
+        
+        return CONFIRMING
+        
     except Exception as e:
         logger.error(f"Error in payment confirmation: {e}")
-        await query.edit_message_text(
-            "❌ Произошла ошибка при создании платежа.\n"
-            "Попробуйте позже или обратитесь в поддержку."
-        )
+        error_text = "❌ Произошла ошибка при создании платежа. Попробуйте еще раз или обратитесь в поддержку."
+        
+        if query:
+            await query.edit_message_text(error_text)
+        else:
+            await update.message.reply_text(error_text)
+        
         return ConversationHandler.END
+
+async def handle_back_to_duration(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Возвращает к выбору длительности подписки."""
+    query = update.callback_query
+    await query.answer()
+    
+    # Возвращаемся к выбору длительности
+    return await show_duration_options(update, context)
 
 async def cancel_payment(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Отмена процесса оплаты."""
@@ -1994,36 +1985,30 @@ async def ask_auto_renewal(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     
-    # Получаем сохраненные данные из контекста
     plan_id = context.user_data.get('selected_plan')
     plan_name = context.user_data.get('plan_name', 'Подписка')
     duration = context.user_data.get('duration_months', 1)
     
-    # ВАЖНО: Используем сохраненную цену из контекста
-    total_price = context.user_data.get('total_price')
-    
-    if not total_price:
-        # Если цена не сохранена, пересчитываем
-        logger.warning(f"Total price not found in ask_auto_renewal for user {update.effective_user.id}")
-        
-        if plan_id == 'trial_7days':
-            total_price = 1
-        else:
+    # ВАЖНО: Правильно определяем цену
+    if plan_id == 'trial_7days':
+        total_price = 1
+    else:
+        total_price = context.user_data.get('total_price')
+        if not total_price:
             from payment.config import MODULE_PLANS, SUBSCRIPTION_PLANS
             plan_info = MODULE_PLANS.get(plan_id) or SUBSCRIPTION_PLANS.get(plan_id)
             if plan_info:
-                total_price = calculate_subscription_price(plan_id, duration, plan_info)
+                total_price = calculate_subscription_price(plan_id, duration)
             else:
-                total_price = 999 * duration  # Fallback
-        
-        # Сохраняем для следующих шагов
-        context.user_data['total_price'] = total_price
+                total_price = 999 * duration
+    
+    context.user_data['total_price'] = total_price
     
     text = f"""💳 <b>Выберите тип оплаты</b>
 
 📋 <b>Ваш заказ:</b>
 • Тариф: {plan_name}
-• Срок: {duration} мес.
+• Срок: {duration if plan_id != 'trial_7days' else '7 дней'}
 • Стоимость: <b>{total_price} ₽</b>
 
 <b>Доступные варианты:</b>
@@ -2039,7 +2024,8 @@ async def ask_auto_renewal(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [
         [InlineKeyboardButton("🔄 С автопродлением", callback_data="consent_auto_renewal")],
         [InlineKeyboardButton("💳 Разовая оплата", callback_data="no_auto_renewal")],
-        [InlineKeyboardButton("❓ Подробнее", callback_data="auto_renewal_terms")]
+        [InlineKeyboardButton("❓ Подробнее", callback_data="auto_renewal_terms")],
+        [InlineKeyboardButton("◀️ Назад", callback_data="back_to_duration")]  # Добавлена кнопка Назад
     ]
     
     await query.edit_message_text(
@@ -2393,6 +2379,26 @@ def register_payment_handlers(app):
             CallbackQueryHandler(show_modular_interface, pattern="^subscribe_start$")
         ],
         states={
+        
+        AUTO_RENEWAL_CHOICE: [
+                CallbackQueryHandler(
+                    consent_handler.handle_choice_selection,
+                    pattern="^(consent_auto_renewal|choose_auto_renewal|choose_no_auto_renewal|show_auto_renewal_terms)$"
+                ),
+                CallbackQueryHandler(
+                    handle_auto_renewal_choice,
+                    pattern="^(no_auto_renewal|auto_renewal_terms)$"
+                ),
+                CallbackQueryHandler(
+                    handle_back_to_duration,  # Новый обработчик
+                    pattern="^back_to_duration$"
+                ),
+                CallbackQueryHandler(
+                    cancel_payment,
+                    pattern="^cancel_payment$"
+                )
+            ],
+        
             CHOOSING_PLAN: [
                 CallbackQueryHandler(handle_plan_selection, pattern="^pay_"),
                 CallbackQueryHandler(show_individual_modules, pattern="^pay_individual_modules$"),
