@@ -140,49 +140,49 @@ class AutoRenewalConsent:
         from .handlers import handle_payment_confirmation_with_recurrent
         return await handle_payment_confirmation_with_recurrent(update, context)
     
-    async def proceed_to_payment(self, update: types.Update, context: FSMContext):
-        """Переход к финальному подтверждению платежа."""
-        query = update.callback_query
-        
-        plan_name = context.user_data.get('selected_plan', 'Стандарт')
-        duration = context.user_data.get('duration_months', 1)
-        price = context.user_data.get('price', 490)
-        email = context.user_data.get('email', '')
-        auto_renewal = context.user_data.get('enable_auto_renewal', False)
-        
-        renewal_text = "🔄 С автопродлением" if auto_renewal else "💳 Разовая оплата"
-        
-        text = f"""✅ <b>Подтверждение оплаты</b>
+    async def proceed_to_payment(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+            """Переход к финальному подтверждению платежа."""
+            query = update.callback_query
+            
+            plan_name = context.user_data.get('selected_plan', 'Стандарт')
+            duration = context.user_data.get('duration_months', 1)
+            price = context.user_data.get('price', 490)
+            email = context.user_data.get('email', '')
+            auto_renewal = context.user_data.get('enable_auto_renewal', False)
+            
+            renewal_text = "🔄 С автопродлением" if auto_renewal else "💳 Разовая оплата"
+            
+            text = f"""✅ <b>Подтверждение оплаты</b>
 
-📋 <b>Детали заказа:</b>
-• Тариф: <b>{plan_name}</b>
-• Период: <b>{duration} мес.</b>
-• Email: <b>{email}</b>
-• Тип оплаты: <b>{renewal_text}</b>
+    📋 <b>Детали заказа:</b>
+    • Тариф: <b>{plan_name}</b>
+    • Период: <b>{duration} мес.</b>
+    • Email: <b>{email}</b>
+    • Тип оплаты: <b>{renewal_text}</b>
 
-💰 <b>К оплате: {price} ₽</b>
+    💰 <b>К оплате: {price} ₽</b>
 
-Нажмите "Оплатить" для перехода к платежной форме."""
+    Нажмите "Оплатить" для перехода к платежной форме."""
 
-        keyboard = [
-            [InlineKeyboardButton(
-                f"💳 Оплатить {price} ₽",
-                callback_data="proceed_to_payment"
-            )],
-            [InlineKeyboardButton(
-                "❌ Отменить",
-                callback_data="cancel_payment"
-            )]
-        ]
+            keyboard = [
+                [InlineKeyboardButton(
+                    f"💳 Оплатить {price} ₽",
+                    callback_data="proceed_to_payment"
+                )],
+                [InlineKeyboardButton(
+                    "❌ Отменить",
+                    callback_data="cancel_payment"
+                )]
+            ]
+            
+            await query.edit_message_text(
+                text,
+                parse_mode=ParseMode.HTML,
+                reply_markup=InlineKeyboardMarkup(keyboard)
+            )
+            
+            return FINAL_CONFIRMATION
         
-        await query.edit_message_text(
-            text,
-            parse_mode=ParseMode.HTML,
-            reply_markup=InlineKeyboardMarkup(keyboard)
-        )
-        
-        return FINAL_CONFIRMATION
-    
     async def save_consent_to_db(self, user_id: int, plan_id: str, amount: int, period_days: int):
         """Сохранить согласие пользователя в БД."""
         import sqlite3
