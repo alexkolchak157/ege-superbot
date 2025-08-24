@@ -104,16 +104,18 @@ async def init_payment_module(app: Application):
             logger.error(f"Error starting auto-renewal scheduler: {e}")
         
         # Запускаем webhook сервер для приема уведомлений от платежной системы
+        # Запускаем webhook сервер для приема уведомлений от платежной системы
         try:
             webhook_task = asyncio.create_task(
                 start_webhook_server(
-                    subscription_manager=subscription_manager,
-                    bot=app.bot
+                    bot=app.bot,  # Правильный параметр
+                    port=8080      # Опционально: можно указать порт
                 )
             )
             logger.info("Payment webhook server started")
         except Exception as e:
             logger.error(f"Error starting webhook server: {e}")
+
         
         logger.info("✅ Payment module initialized successfully")
         
