@@ -292,8 +292,81 @@ class SubscriptionManager:
             logger.error(f"Error getting users for auto-renewal: {e}")
             return []
 
-    async def get_payment_by_order_id(self, order_id: str) -> Optional[Dict]:
-        """Получает информацию о платеже по order_id."""
+    async def update_order_payment_id(self, order_id: str, payment_id: str):
+        """Обновляет payment_id для заказа.
+        
+        Args:
+            order_id: ID заказа
+            payment_id: ID платежа от платежной системы
+            
+        Returns:
+            bool: True если успешно обновлено
+        """
+        try:
+            async with aiosqlite.connect(self.database_file) as conn:
+                await conn.execute("""
+                    UPDATE payments 
+                    SET payment_id = ?, updated_at = CURRENT_TIMESTAMP
+                    WHERE order_id = ?
+                """, (payment_id, order_id))
+                await conn.commit()
+                logger.info(f"Updated payment_id for order {order_id}: {payment_id}")
+                return True
+        except Exception as e:
+            logger.error(f"Error updating payment_id: {e}")
+            return False
+    
+    async def save_pending_order(self, order_id: str, user_id: int, plan_id: str, 
+                                 amount: int, duration_months: int = 1, 
+                                 email: str = None, enable_auto_renewal: bool = False):
+        """Сохраняет информацию о pending заказе.
+        
+        Args:
+            order_id: Уникальный ID заказа
+            user_id: ID пользователя Telegram
+            plan_id: ID плана подписки
+            amount: Сумма в рублях
+            duration_months: Длительность подписки в месяцах
+            email: Email пользователя
+            enable_auto_renewal: Флаг автопродления
+            
+        Returns:
+            bool: True если успешно сохранено
+        """
+        try:
+            import json
+            
+            metadata = json.dumps({
+                'plan_id': plan_id,
+                'duration_months': duration_months,
+                'email': email,
+                'enable_auto_renewal': enable_auto_renewal
+            })
+            
+            async with aiosqlite.connect(self.database_file) as conn:
+                await conn.execute("""
+                    INSERT OR REPLACE INTO payments 
+                    (order_id, user_id, plan_id, amount_kopecks, status, metadata, created_at)
+                    VALUES (?, ?, ?, ?, 'pending', ?, CURRENT_TIMESTAMP)
+                """, (order_id, user_id, plan_id, amount * 100, metadata))
+                await conn.commit()
+                
+                logger.info(f"Saved pending order: {order_id} for user {user_id}")
+                return True
+                
+        except Exception as e:
+            logger.error(f"Error saving pending order: {e}")
+            return False    
+
+    async def get_payment_by_order_id(self, order_id: str) -> Optional[Dict[str, Any]]:
+        """Получает информацию о платеже по order_id.
+        
+        Args:
+            order_id: ID заказа
+            
+        Returns:
+            Словарь с информацией о платеже или None
+        """
         try:
             async with aiosqlite.connect(self.database_file) as conn:
                 conn.row_factory = aiosqlite.Row
@@ -302,7 +375,9 @@ class SubscriptionManager:
                 """, (order_id,))
                 
                 row = await cursor.fetchone()
-                return dict(row) if row else None
+                if row:
+                    return dict(row)
+                return None
                 
         except Exception as e:
             logger.error(f"Error getting payment by order_id: {e}")
@@ -1192,73 +1267,70 @@ class SubscriptionManager:
         except Exception as e:
             logger.exception(f"Error initializing database: {e}")
 
-    async def save_rebill_id(self, user_id: int, order_id: str, rebill_id: str) -> bool:
-        """
-        Сохраняет RebillId для рекуррентных платежей.
+    async def save_rebill_id(self, user_id: int, order_id: str, rebill_id: str):
+        """Сохраняет RebillId для рекуррентных платежей.
         
         Args:
             user_id: ID пользователя
             order_id: ID заказа
-            rebill_id: Токен для рекуррентных платежей от Tinkoff
-            
-        Returns:
-            True при успешном сохранении
+            rebill_id: Токен для рекуррентных платежей
         """
         try:
             async with aiosqlite.connect(self.database_file) as conn:
-                # Обновляем запись платежа
-                await conn.execute(
-                    """
+                # Обновляем RebillId в payments
+                await conn.execute("""
                     UPDATE payments 
-                    SET rebill_id = ?, is_recurrent = 1
+                    SET rebill_id = ?
                     WHERE order_id = ?
-                    """,
-                    (rebill_id, order_id)
-                )
+                """, (rebill_id, order_id))
                 
-                # Сохраняем в таблицу автопродления
-                await conn.execute(
-                    """
-                    INSERT OR REPLACE INTO auto_renewal_settings (
-                        user_id, enabled, payment_method, recurrent_token,
-                        created_at, updated_at
-                    )
-                    VALUES (?, 0, 'recurrent', ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-                    """,
-                    (user_id, rebill_id)
-                )
+                # Сохраняем в auto_renewal_settings
+                await conn.execute("""
+                    INSERT OR REPLACE INTO auto_renewal_settings
+                    (user_id, enabled, payment_method, recurrent_token, last_renewal_attempt, failures_count)
+                    VALUES (?, 1, 'recurrent', ?, CURRENT_TIMESTAMP, 0)
+                """, (user_id, rebill_id))
                 
                 await conn.commit()
-                
-                logger.info(f"RebillId saved for user {user_id}, order {order_id}")
-                return True
+                logger.info(f"Saved RebillId for user {user_id}, order {order_id}")
                 
         except Exception as e:
             logger.error(f"Error saving rebill_id: {e}")
-            return False
 
     async def enable_auto_renewal(self, user_id: int, payment_method: str = 'recurrent', 
-                                 recurrent_token: str = None) -> bool:
-        """Включает автопродление для пользователя."""
+                                  recurrent_token: str = None) -> bool:
+        """Включает автопродление для пользователя.
+        
+        Args:
+            user_id: ID пользователя
+            payment_method: Метод оплаты ('recurrent' или 'card')
+            recurrent_token: Токен для рекуррентных платежей
+            
+        Returns:
+            bool: True если успешно включено
+        """
         try:
             from datetime import datetime, timedelta, timezone
             
-            # Определяем дату следующего продления
+            # Получаем дату следующего продления
             subscription = await self.get_active_subscription(user_id)
             if subscription:
-                next_renewal = subscription['expires_at']
+                if isinstance(subscription, dict):
+                    next_renewal = subscription.get('expires_at')
+                else:
+                    next_renewal = subscription.expires_at if hasattr(subscription, 'expires_at') else None
             else:
+                # Если нет активной подписки, ставим дату через месяц
                 next_renewal = datetime.now(timezone.utc) + timedelta(days=30)
             
             async with aiosqlite.connect(self.database_file) as conn:
                 await conn.execute("""
                     INSERT OR REPLACE INTO auto_renewal_settings
-                    (user_id, enabled, payment_method, recurrent_token, 
-                     next_renewal_date, failures_count, updated_at)
-                    VALUES (?, 1, ?, ?, ?, 0, CURRENT_TIMESTAMP)
+                    (user_id, enabled, payment_method, recurrent_token, next_renewal_date, failures_count)
+                    VALUES (?, 1, ?, ?, ?, 0)
                 """, (user_id, payment_method, recurrent_token, next_renewal))
-                
                 await conn.commit()
+                
                 logger.info(f"Auto-renewal enabled for user {user_id}")
                 return True
                 
@@ -1671,15 +1743,31 @@ class SubscriptionManager:
             logger.error(f"Error getting payment by order_id: {e}")
             return None
     
-    async def update_payment_status(self, order_id: str, status: str):
-        """Обновляет статус платежа."""
+    async def update_payment_status(self, order_id: str, status: str) -> bool:
+        """Обновляет статус платежа.
+        
+        Args:
+            order_id: ID заказа
+            status: Новый статус ('pending', 'completed', 'failed', 'cancelled')
+            
+        Returns:
+            bool: True если успешно обновлено
+        """
         try:
-            await execute_with_retry(
-                "UPDATE payments SET status = ? WHERE order_id = ?",
-                (status, order_id)
-            )
+            async with aiosqlite.connect(self.database_file) as conn:
+                await conn.execute("""
+                    UPDATE payments 
+                    SET status = ?, updated_at = CURRENT_TIMESTAMP
+                    WHERE order_id = ?
+                """, (status, order_id))
+                await conn.commit()
+                
+                logger.info(f"Updated payment status for {order_id}: {status}")
+                return True
+                
         except Exception as e:
             logger.error(f"Error updating payment status: {e}")
+            return False
 
 
 def requires_subscription(module_code: Optional[str] = None):
