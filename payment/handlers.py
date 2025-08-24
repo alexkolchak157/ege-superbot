@@ -1751,7 +1751,7 @@ async def handle_payment_confirmation_with_recurrent(update: Update, context: Co
     query = update.callback_query
     
     try:
-    from payment.config import SUBSCRIPTION_PLANS, MODULE_PLANS
+        from payment.config import SUBSCRIPTION_PLANS, MODULE_PLANS  # ✅ ДОБАВЛЕН ОТСТУП
         user_id = update.effective_user.id
         plan_id = context.user_data.get('selected_plan')
         duration = context.user_data.get('duration_months', 1)
@@ -1771,7 +1771,6 @@ async def handle_payment_confirmation_with_recurrent(update: Update, context: Co
                 amount = calculate_custom_price(modules, duration)
             else:
                 # Получаем план из конфига
-                from payment.config import SUBSCRIPTION_PLANS, MODULE_PLANS
                 plan_info = SUBSCRIPTION_PLANS.get(plan_id) or MODULE_PLANS.get(plan_id)
                 
                 if not plan_info:
@@ -2368,9 +2367,9 @@ def register_payment_handlers(app):
                 CallbackQueryHandler(
                     consent_handler.handle_back_navigation,
                     pattern="^back_to_payment_choice$"
-                )
-            ],
-            
+                )  # ✅ Добавлена закрывающая скобка
+            ],  # ✅ Закрывающая квадратная скобка для списка
+                        
             # НОВОЕ: Финальное подтверждение
             FINAL_CONFIRMATION: [
                 CallbackQueryHandler(

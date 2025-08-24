@@ -30,8 +30,9 @@ FINAL_CONFIRMATION = AutoRenewalStates.FINAL_CONFIRMATION
 class AutoRenewalConsent:
     """Класс для управления согласиями на автопродление."""
     
-    def __init__(self, db_path: str = "/opt/ege-bot/subscriptions.db"):
-        self.db_path = db_path
+    def __init__(self, subscription_manager):
+        self.subscription_manager = subscription_manager
+        self.user_consents = {}
         
     async def show_auto_renewal_choice(self, update: types.Update, context: FSMContext):
         """Показать выбор типа оплаты с автопродлением или без."""
@@ -600,11 +601,83 @@ class MultiMonthSubscriptionManager:
         return options
 
 
-# Функция для использования в handlers.py
-async def show_auto_renewal_choice(update: types.Update, context: FSMContext):
-    """Обертка для вызова из handlers.py."""
-    consent_handler = AutoRenewalConsent()
-    return await consent_handler.show_auto_renewal_choice(update, context)
+async def show_auto_renewal_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Показывает выбор типа оплаты."""
+    
+    # Получаем subscription_manager из контекста приложения
+    from payment.subscription_manager import SubscriptionManager
+    
+    # Попробуем получить из bot_data
+    subscription_manager = context.application.bot_data.get('subscription_manager')
+    if not subscription_manager:
+        subscription_manager = SubscriptionManager()
+    
+    # НЕ создаем новый экземпляр, а используем существующий
+    # Удалите эту строку: consent_handler = AutoRenewalConsent()
+    
+    plan_id = context.user_data.get('selected_plan')
+    duration = context.user_data.get('duration_months', 1)
+    
+    # Определяем цену и название плана
+    if plan_id == 'trial':
+        plan_name = "Пробный период"
+        price = 1
+    elif plan_id == 'package_full':
+        plan_name = "Полный пакет"
+        price = 490 * duration
+    elif plan_id == 'package_second':
+        plan_name = "Подготовка к части 2"
+        price = 390 * duration
+    elif plan_id and plan_id.startswith('custom_'):
+        plan_name = "Индивидуальная подборка"
+        modules = context.user_data.get('selected_modules', [])
+        from payment.handlers import calculate_custom_price
+        price = calculate_custom_price(modules, duration)
+    else:
+        plan_name = "Стандартный план"
+        price = 490 * duration
+    
+    # Сохраняем цену в контекст
+    context.user_data['total_price'] = price
+    
+    text = f"""💳 <b>Выберите тип оплаты</b>
+
+📋 <b>Ваш заказ:</b>
+- Тариф: {plan_name}
+- Срок: {duration} мес.
+- Стоимость: {price} ₽
+
+<b>Доступные варианты:</b>
+
+🔄 <b>С автопродлением</b>
+После окончания срока подписка продлевается автоматически.
+Вы можете отменить автопродление в любой момент.
+
+💳 <b>Разовая оплата</b>
+Подписка действует только выбранный срок.
+После окончания нужно продлить вручную."""
+
+    keyboard = [
+        [InlineKeyboardButton("🔄 С автопродлением", callback_data="choose_auto_renewal")],
+        [InlineKeyboardButton("💳 Разовая оплата", callback_data="choose_no_auto_renewal")],
+        [InlineKeyboardButton("📖 Условия автопродления", callback_data="show_auto_renewal_terms")],
+        [InlineKeyboardButton("⬅️ Назад", callback_data="back_to_duration")]
+    ]
+    
+    if update.callback_query:
+        await update.callback_query.edit_message_text(
+            text,
+            parse_mode=ParseMode.HTML,
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+    else:
+        await update.message.reply_text(
+            text,
+            parse_mode=ParseMode.HTML,
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+    
+    return SHOWING_TERMS
 
 
 # Экспортируем необходимые классы и функции
