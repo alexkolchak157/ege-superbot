@@ -1045,37 +1045,54 @@ class SubscriptionManager:
         logger.info(f"User {user_id} has no access to module {module_code}")
         return False
     
-    async def create_payment(self, user_id: int, plan_id: str, amount_kopecks: int) -> Dict[str, Any]:
-        """Создает запись о платеже."""
+    async def create_payment(self, user_id: int, plan_id: str, amount_kopecks: int, 
+                            duration_months: int = 1, metadata: dict = None) -> Dict[str, Any]:
+        """Создает запись о платеже с сохранением метаданных."""
         import uuid
+        import json
         order_id = f"ORD_{user_id}_{int(datetime.now().timestamp())}_{uuid.uuid4().hex[:8]}"
         
+        # КРИТИЧЕСКИ ВАЖНО: Подготавливаем метаданные
+        payment_metadata = metadata or {}
+        payment_metadata['duration_months'] = duration_months
+        payment_metadata['plan_id'] = plan_id
+        payment_metadata['user_id'] = user_id
+        
         try:
-            await execute_with_retry(
-                """
-                INSERT INTO payments (user_id, order_id, plan_id, amount_kopecks)
-                VALUES (?, ?, ?, ?)
-                """,
-                (user_id, order_id, plan_id, amount_kopecks)
-            )
+            async with aiosqlite.connect(self.database_file) as conn:
+                await conn.execute(
+                    """
+                    INSERT INTO payments (user_id, order_id, plan_id, amount_kopecks, status, metadata, created_at)
+                    VALUES (?, ?, ?, ?, 'pending', ?, CURRENT_TIMESTAMP)
+                    """,
+                    (user_id, order_id, plan_id, amount_kopecks, json.dumps(payment_metadata))
+                )
+                await conn.commit()
+                
+            logger.info(f"Created payment {order_id} with duration_months={duration_months}")
             
             return {
                 'order_id': order_id,
                 'user_id': user_id,
                 'plan_id': plan_id,
-                'amount_kopecks': amount_kopecks
+                'amount_kopecks': amount_kopecks,
+                'duration_months': duration_months
             }
         except Exception as e:
             logger.error(f"Error creating payment: {e}")
             raise
     
-    async def activate_subscription(self, order_id: str, user_id: int = None, plan_id: str = None) -> bool:
-        """Активирует подписку после успешной оплаты с учетом срока."""
+    async def activate_subscription(self, order_id: str, payment_id: str = None) -> bool:
+        """Активирует подписку после успешной оплаты."""
         try:
             async with aiosqlite.connect(self.database_file) as conn:
                 # Получаем информацию о платеже
                 cursor = await conn.execute(
-                    "SELECT user_id, plan_id, metadata FROM payments WHERE order_id = ?",
+                    """
+                    SELECT user_id, plan_id, metadata, status 
+                    FROM payments 
+                    WHERE order_id = ?
+                    """,
                     (order_id,)
                 )
                 payment = await cursor.fetchone()
@@ -1084,71 +1101,62 @@ class SubscriptionManager:
                     logger.error(f"Payment not found for order {order_id}")
                     return False
                 
-                user_id = user_id or payment[0]
-                plan_id = plan_id or payment[1]
+                user_id, plan_id, metadata_str, current_status = payment
                 
-                # ВАЖНО: Извлекаем метаданные для получения duration_months
+                # Проверяем, не был ли платеж уже обработан
+                if current_status in ['confirmed', 'completed']:
+                    logger.warning(f"Payment {order_id} already processed with status {current_status}")
+                    return True
+                
+                # КРИТИЧЕСКИ ВАЖНО: Извлекаем duration_months из metadata
                 metadata = {}
-                if payment[2]:
+                duration_months = 1  # По умолчанию
+                
+                if metadata_str:
                     try:
-                        metadata = json.loads(payment[2])
+                        metadata = json.loads(metadata_str)
+                        duration_months = metadata.get('duration_months', 1)
+                        logger.info(f"Extracted duration_months={duration_months} from metadata")
                     except json.JSONDecodeError:
                         logger.warning(f"Failed to parse metadata for order {order_id}")
+                else:
+                    logger.warning(f"No metadata for order {order_id}, using default duration_months=1")
                 
-                duration_months = metadata.get('duration_months', 1)
-                logger.info(f"Activating subscription for {duration_months} months")
+                logger.info(f"Activating subscription: order={order_id}, user={user_id}, plan={plan_id}, months={duration_months}")
                 
-                # Обработка custom планов
+                # Активируем подписку с правильным сроком
                 if plan_id.startswith('custom_'):
                     modules = metadata.get('modules', [])
-                    if not modules:
-                        # Пытаемся извлечь из plan_id
-                        modules = self._extract_modules_from_plan_id(plan_id)
-                    
-                    if modules:
-                        # ИСПРАВЛЕНИЕ: Передаем duration_months
-                        await self._activate_custom_modules(
-                            user_id, 
-                            modules, 
-                            plan_id, 
-                            payment_id=order_id,
-                            duration_months=duration_months  # Передаем срок
-                        )
+                    await self._activate_custom_modules(
+                        user_id, modules, plan_id, payment_id or order_id,
+                        duration_months=duration_months  # Передаем срок!
+                    )
                 else:
-                    # Для стандартных планов
                     if self.subscription_mode == 'modular':
                         await self._activate_modular_subscription(
-                            user_id, 
-                            plan_id, 
-                            payment_id=order_id,
-                            duration_months=duration_months
+                            user_id, plan_id, payment_id or order_id,
+                            duration_months=duration_months  # Передаем срок!
                         )
                     else:
                         await self._activate_unified_subscription(
-                            user_id, 
-                            plan_id, 
-                            payment_id=order_id,
-                            duration_months=duration_months
+                            user_id, plan_id, payment_id or order_id,
+                            duration_months=duration_months  # Передаем срок!
                         )
                 
                 # Обновляем статус платежа
                 await conn.execute(
-                    "UPDATE payments SET status = 'completed', completed_at = CURRENT_TIMESTAMP WHERE order_id = ?",
-                    (order_id,)
+                    """
+                    UPDATE payments 
+                    SET status = 'confirmed', 
+                        payment_id = ?,
+                        completed_at = CURRENT_TIMESTAMP 
+                    WHERE order_id = ?
+                    """,
+                    (payment_id or order_id, order_id)
                 )
                 await conn.commit()
                 
-                # Проверяем настройку автопродления (если включена соответствующая опция)
-                if metadata.get('enable_auto_renewal'):
-                    recurrent_token = metadata.get('recurrent_token')
-                    if recurrent_token:
-                        await self.enable_auto_renewal(
-                            user_id,
-                            payment_method='recurrent',
-                            recurrent_token=recurrent_token
-                        )
-                
-                logger.info(f"✅ Subscription activated for user {user_id}, order {order_id}, duration {duration_months} months")
+                logger.info(f"✅ Subscription activated for {duration_months} months, order {order_id}")
                 return True
                 
         except Exception as e:

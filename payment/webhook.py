@@ -87,13 +87,13 @@ def verify_tinkoff_signature(data: dict, token: str, terminal_key: str, secret_k
 
 
 async def handle_webhook(request: web.Request) -> web.Response:
-    """Обрабатывает webhook от Т-Банка (исправленная версия)."""
+    """Обработчик webhook от Tinkoff."""
     try:
         # Получаем данные
         data = await request.json()
         logger.info(f"Webhook received: {json.dumps(data, ensure_ascii=False)}")
         
-        # ИСПРАВЛЕНИЕ: используем правильную функцию и передаем нужные параметры
+        # Проверяем подпись
         if not verify_tinkoff_signature(
             data, 
             data.get('Token', ''),
@@ -104,85 +104,66 @@ async def handle_webhook(request: web.Request) -> web.Response:
             return web.Response(text='INVALID_SIGNATURE', status=400)
         
         # Извлекаем данные
+        # Извлекаем данные
         order_id = data.get('OrderId')
         status = data.get('Status')
         payment_id = data.get('PaymentId')
-        rebill_id = data.get('RebillId')  # Получаем RebillId для автопродления
         
         if not all([order_id, status]):
             logger.error(f"Missing required fields: OrderId={order_id}, Status={status}")
             return web.Response(text='MISSING_FIELDS', status=400)
         
-        # Логируем в БД
-        await log_webhook(data)
-        
-        # Проверяем, не обрабатывали ли уже этот webhook
-        if await is_payment_already_processed(order_id, status):
-            logger.info(f"Payment {order_id} with status {status} already processed")
-            return web.Response(text='OK')
+        logger.info(f"Processing payment: order={order_id}, status={status}, payment_id={payment_id}")
         
         # Получаем subscription_manager
         subscription_manager = SubscriptionManager()
         
-        # Обрабатываем различные статусы
+        # Обрабатываем успешные статусы
         if status in ['AUTHORIZED', 'CONFIRMED']:
             logger.info(f"Payment {order_id} confirmed with status {status}")
             
-            # Активируем подписку
-            success = await subscription_manager.activate_subscription(order_id)
+            # ВАЖНО: Активируем подписку
+            success = await subscription_manager.activate_subscription(
+                order_id=order_id,
+                payment_id=payment_id
+            )
             
             if success:
-                # Если есть RebillId, сохраняем его для автопродления
-                if rebill_id:
-                    # Получаем user_id из платежа
-                    payment_info = await subscription_manager.get_payment_by_order_id(order_id)
-                    if payment_info:
-                        user_id = payment_info.get('user_id')
-                        if user_id:
-                            await handle_rebill_id(order_id, rebill_id, user_id)
-                            logger.info(f"RebillId saved for user {user_id}")
+                logger.info(f"✅ Payment {order_id} successfully activated")
                 
-                # Уведомляем пользователя об успешной оплате
+                # Уведомляем пользователя
                 bot = request.app.get('bot')
                 if bot:
                     await notify_user_success(bot, order_id)
-                    
+                
                 return web.Response(text='OK')
             else:
                 logger.error(f"Failed to activate subscription for order {order_id}")
                 return web.Response(text='ACTIVATION_FAILED', status=500)
         
         elif status in ['REJECTED', 'CANCELED']:
-            logger.warning(f"Payment {order_id} rejected/canceled with status {status}")
-            # Обновляем статус платежа
+            logger.warning(f"Payment {order_id} rejected/canceled")
             await subscription_manager.update_payment_status(order_id, 'failed')
-            
-            # Уведомляем пользователя об отмене
-            bot = request.app.get('bot')
-            if bot:
-                await notify_user_failed(bot, order_id)
-            
             return web.Response(text='OK')
         
         else:
-            # Другие статусы просто логируем
             logger.info(f"Payment {order_id} status update: {status}")
             return web.Response(text='OK')
             
-    except json.JSONDecodeError as e:
-        logger.error(f"Invalid JSON in webhook: {e}")
-        return web.Response(text='INVALID_JSON', status=400)
     except Exception as e:
         logger.exception(f"Webhook processing error: {e}")
         return web.Response(text='INTERNAL_ERROR', status=500)
 
 async def is_payment_already_processed(order_id: str, status: str) -> bool:
-    """Проверяет, был ли уже обработан платеж."""
+    """Проверяет, был ли уже обработан платеж с таким статусом."""
     try:
         from core.db import DATABASE_FILE
         async with aiosqlite.connect(DATABASE_FILE) as db:
             cursor = await db.execute(
-                "SELECT COUNT(*) FROM payments WHERE order_id = ? AND status = 'confirmed'",
+                """
+                SELECT COUNT(*) FROM payments 
+                WHERE order_id = ? AND status = 'confirmed'
+                """,
                 (order_id,)
             )
             count = await cursor.fetchone()
