@@ -8,6 +8,7 @@ import json
 from functools import wraps
 from payment.config import SUBSCRIPTION_MODE, SUBSCRIPTION_PLANS
 import aiosqlite
+from enum import Enum
 
 # Используем ваши функции из core.db
 from core.db import DATABASE_FILE, execute_with_retry
@@ -306,7 +307,7 @@ class SubscriptionManager:
             async with aiosqlite.connect(self.database_file) as conn:
                 await conn.execute("""
                     UPDATE payments 
-                    SET payment_id = ?, updated_at = CURRENT_TIMESTAMP
+                    SET payment_id = ?, created_at = CURRENT_TIMESTAMP
                     WHERE order_id = ?
                 """, (payment_id, order_id))
                 await conn.commit()
@@ -789,7 +790,7 @@ class SubscriptionManager:
                     UPDATE module_subscriptions 
                     SET status = 'refunded', 
                         end_date = CURRENT_TIMESTAMP,
-                        updated_at = CURRENT_TIMESTAMP
+                        created_at = CURRENT_TIMESTAMP
                     WHERE user_id = ? AND plan_id = ? AND status = 'active'
                 """, (user_id, plan_id))
                 
@@ -843,7 +844,7 @@ class SubscriptionManager:
                 name = module_names.get(module['module_code'], module['module_code'])
                 active_modules.append(name)
                 
-                if min_expires is None or module['expires_at'] < min_expires:
+                if min_expires is None or (module['expires_at'].replace(tzinfo=None) if hasattr(module['expires_at'], 'tzinfo') else module['expires_at']) < (min_expires.replace(tzinfo=None) if hasattr(min_expires, 'tzinfo') else min_expires):
                     min_expires = module['expires_at']
             
             # ИСПРАВЛЕНИЕ: Добавляем поле is_active
@@ -1083,144 +1084,240 @@ class SubscriptionManager:
             raise
     
     async def activate_subscription(self, order_id: str, payment_id: str = None) -> bool:
-        """Активирует подписку после успешной оплаты."""
-        try:
-            async with aiosqlite.connect(self.database_file) as conn:
-                # Получаем информацию о платеже
-                cursor = await conn.execute(
-                    """
-                    SELECT user_id, plan_id, metadata, status 
-                    FROM payments 
-                    WHERE order_id = ?
-                    """,
-                    (order_id,)
-                )
-                payment = await cursor.fetchone()
-                
-                if not payment:
-                    logger.error(f"Payment not found for order {order_id}")
-                    return False
-                
-                user_id, plan_id, metadata_str, current_status = payment
-                
-                # Проверяем, не был ли платеж уже обработан
-                if current_status in ['confirmed', 'completed']:
-                    logger.warning(f"Payment {order_id} already processed with status {current_status}")
-                    return True
-                
-                # КРИТИЧЕСКИ ВАЖНО: Извлекаем duration_months из metadata
-                metadata = {}
-                duration_months = 1  # По умолчанию
-                
-                if metadata_str:
-                    try:
-                        metadata = json.loads(metadata_str)
-                        duration_months = metadata.get('duration_months', 1)
-                        logger.info(f"Extracted duration_months={duration_months} from metadata")
-                    except json.JSONDecodeError:
-                        logger.warning(f"Failed to parse metadata for order {order_id}")
-                else:
-                    logger.warning(f"No metadata for order {order_id}, using default duration_months=1")
-                
-                logger.info(f"Activating subscription: order={order_id}, user={user_id}, plan={plan_id}, months={duration_months}")
-                
-                # Активируем подписку с правильным сроком
-                if plan_id.startswith('custom_'):
-                    modules = metadata.get('modules', [])
-                    await self._activate_custom_modules(
-                        user_id, modules, plan_id, payment_id or order_id,
-                        duration_months=duration_months  # Передаем срок!
+            """Активирует подписку после успешной оплаты."""
+            try:
+                async with aiosqlite.connect(self.database_file) as conn:
+                    # Получаем информацию о платеже
+                    cursor = await conn.execute(
+                        """
+                        SELECT user_id, plan_id, metadata, status 
+                        FROM payments 
+                        WHERE order_id = ?
+                        """,
+                        (order_id,)
                     )
-                else:
-                    if self.subscription_mode == 'modular':
-                        await self._activate_modular_subscription(
-                            user_id, plan_id, payment_id or order_id,
-                            duration_months=duration_months  # Передаем срок!
+                    
+                    payment_info = await cursor.fetchone()
+                    
+                    if not payment_info:
+                        logger.error(f"Payment not found for order {order_id}")
+                        return False
+                    
+                    user_id, plan_id, metadata_str, current_status = payment_info
+                    
+                    # Проверяем что платеж еще не обработан
+                    if current_status in ['completed', 'activated']:
+                        logger.info(f"Payment {order_id} already activated")
+                        return True
+                    
+                    # Парсим metadata
+                    try:
+                        metadata = json.loads(metadata_str) if metadata_str else {}
+                    except:
+                        metadata = {}
+                    
+                    duration_months = metadata.get('duration_months', 1)
+                    
+                    logger.info(f"Activating subscription: user={user_id}, plan={plan_id}, duration={duration_months}")
+                    
+                    # Активируем в зависимости от типа плана
+                    if plan_id.startswith('custom_'):
+                        # Кастомный план с модулями
+                        success = await self._activate_custom_modules(
+                            user_id, plan_id, duration_months, metadata
                         )
                     else:
-                        await self._activate_unified_subscription(
-                            user_id, plan_id, payment_id or order_id,
-                            duration_months=duration_months  # Передаем срок!
+                        # Стандартный план
+                        success = await self._activate_standard_plan(
+                            user_id, plan_id, duration_months
                         )
-                
-                # Обновляем статус платежа
-                await conn.execute(
-                    """
-                    UPDATE payments 
-                    SET status = 'confirmed', 
-                        payment_id = ?,
-                        completed_at = CURRENT_TIMESTAMP 
-                    WHERE order_id = ?
-                    """,
-                    (payment_id or order_id, order_id)
-                )
-                await conn.commit()
-                
-                logger.info(f"✅ Subscription activated for {duration_months} months, order {order_id}")
-                return True
-                
-        except Exception as e:
-            logger.exception(f"Error activating subscription: {e}")
-            return False
-    
-    async def _activate_custom_modules(self, user_id: int, modules: list, plan_id: str, payment_id: str, duration_months: int = 1):
-        """Исправленная версия активации модулей с поддержкой многомесячных подписок."""
-        from datetime import datetime, timedelta, timezone
-        
-        async with aiosqlite.connect(self.database_file) as conn:
-            for module_code in modules:
-                logger.info(f"Activating module {module_code} for user {user_id} for {duration_months} months")
-                
-                # Проверяем существующую подписку
-                cursor = await conn.execute(
-                    """
-                    SELECT expires_at FROM module_subscriptions 
-                    WHERE user_id = ? AND module_code = ? AND is_active = 1
-                    """,
-                    (user_id, module_code)
-                )
-                existing = await cursor.fetchone()
-                
-                # Вычисляем правильную дату окончания с учетом duration_months
-                duration_days = 30 * duration_months  # Приблизительно
-                
-                if existing:
-                    existing_expires = datetime.fromisoformat(existing[0])
                     
-                    if existing_expires > datetime.now(timezone.utc):
-                        # Продлеваем от текущей даты окончания
-                        new_expires = existing_expires + timedelta(days=duration_days)
-                        logger.info(f"Extending existing subscription for {module_code} by {duration_months} months to {new_expires}")
+                    if success:
+                        # Обновляем статус платежа
+                        await conn.execute(
+                            """
+                            UPDATE payments 
+                            SET status = 'completed', 
+                                completed_at = CURRENT_TIMESTAMP,
+                                payment_id = COALESCE(payment_id, ?)
+                            WHERE order_id = ?
+                            """,
+                            (payment_id, order_id)
+                        )
+                        await conn.commit()
+                        
+                        # Отправляем уведомление пользователю
+                        await self._send_activation_notification(user_id, plan_id, duration_months)
+                        
+                        logger.info(f"Subscription activated successfully for order {order_id}")
+                        return True
                     else:
-                        # Активируем заново
-                        new_expires = datetime.now(timezone.utc) + timedelta(days=duration_days)
-                        logger.info(f"Renewing expired subscription for {module_code} for {duration_months} months")
-                    
+                        logger.error(f"Failed to activate subscription for order {order_id}")
+                        return False
+                        
+            except Exception as e:
+                logger.error(f"Error activating subscription: {e}")
+                import traceback
+                traceback.print_exc()
+                return False
+
+    async def _activate_standard_plan(self, user_id: int, plan_id: str, duration_months: int) -> bool:
+        """Активирует стандартный план подписки."""
+        try:
+            # Определяем модули для плана
+            plan_modules = {
+                'trial_7days': ['test_part', 'task19'],
+                'package_full': ['test_part', 'task19', 'task20', 'task25'],
+                'package_second': ['task19', 'task20', 'task25'],
+                'test_part': ['test_part'],
+                'task19': ['task19'],
+                'task20': ['task20'],
+                'task24': ['task24'],
+                'task25': ['task25']
+            }
+            
+            modules = plan_modules.get(plan_id, [])
+            
+            if not modules:
+                logger.error(f"Unknown plan: {plan_id}")
+                return False
+            
+            # Рассчитываем дату истечения
+            if plan_id == 'trial_7days':
+                expires_at = datetime.now() + timedelta(days=7)
+            else:
+                expires_at = datetime.now() + timedelta(days=30 * duration_months)
+            
+            async with aiosqlite.connect(self.database_file) as conn:
+                for module_code in modules:
+                    # Удаляем старую подписку
                     await conn.execute(
                         """
-                        UPDATE module_subscriptions 
-                        SET expires_at = ?, plan_id = ?, is_active = 1, updated_at = CURRENT_TIMESTAMP
+                        DELETE FROM module_subscriptions 
                         WHERE user_id = ? AND module_code = ?
                         """,
-                        (new_expires, plan_id, user_id, module_code)
+                        (user_id, module_code)
                     )
-                else:
-                    # Создаем новую подписку
-                    new_expires = datetime.now(timezone.utc) + timedelta(days=duration_days)
                     
+                    # Создаем новую
                     await conn.execute(
                         """
-                        INSERT INTO module_subscriptions 
-                        (user_id, module_code, plan_id, expires_at, is_active, created_at)
-                        VALUES (?, ?, ?, ?, 1, CURRENT_TIMESTAMP)
+                        INSERT INTO module_subscriptions (
+                            user_id, module_code, plan_id, expires_at, 
+                            is_active, created_at
+                        ) VALUES (?, ?, ?, ?, 1, CURRENT_TIMESTAMP)
                         """,
-                        (user_id, module_code, plan_id, new_expires)
+                        (user_id, module_code, plan_id, expires_at.isoformat())
                     )
-                    logger.info(f"Created new subscription for {module_code} for {duration_months} months until {new_expires}")
                 
-                logger.info(f"✅ Module {module_code} activated for user {user_id} for {duration_months} months")
+                await conn.commit()
             
-            await conn.commit()
+            logger.info(f"Activated standard plan {plan_id} with {len(modules)} modules for user {user_id}")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error activating standard plan: {e}")
+            return False
+
+    async def _activate_custom_modules(self, user_id: int, plan_id: str, 
+                                          duration_months: int, metadata: dict) -> bool:
+            """
+            Активирует кастомные модули для пользователя.
+            
+            Args:
+                user_id: ID пользователя
+                plan_id: ID кастомного плана (например, custom_testpart_task19)
+                duration_months: Длительность в месяцах
+                metadata: Метаданные с информацией о модулях
+                
+            Returns:
+                True при успешной активации
+            """
+            try:
+                # Получаем список модулей из metadata или из plan_id
+                modules = metadata.get('modules', [])
+                
+                # ВАЖНО: Правильно парсим модули в зависимости от типа
+                if isinstance(modules, str):
+                    # Если modules - это строка, нужно её разбить
+                    if ',' in modules:
+                        # Модули разделены запятыми: "testpart,task19"
+                        modules = [m.strip() for m in modules.split(',') if m.strip()]
+                    elif '_' in modules:
+                        # Модули разделены подчеркиванием: "testpart_task19"
+                        modules = [m.strip() for m in modules.split('_') if m.strip()]
+                    else:
+                        # Одиночный модуль
+                        modules = [modules] if modules else []
+                elif not modules:
+                    # Если модулей нет в metadata, парсим из plan_id
+                    # custom_testpart_task19 -> ['testpart', 'task19']
+                    if plan_id.startswith('custom_'):
+                        modules_str = plan_id.replace('custom_', '')
+                        if modules_str:
+                            modules = [m.strip() for m in modules_str.split('_') if m.strip()]
+                        else:
+                            modules = []
+                    else:
+                        modules = []
+                
+                # Если модули не определены, возвращаем False
+                if not modules:
+                    logger.error(f"No modules found for custom plan {plan_id}")
+                    return False
+                
+                logger.info(f"Activating custom modules for user {user_id}: {modules}")
+                
+                # Рассчитываем дату истечения
+                expires_at = datetime.now() + timedelta(days=30 * duration_months)
+                
+                async with aiosqlite.connect(self.database_file) as conn:
+                    # Активируем каждый модуль
+                    for module_code in modules:
+                        # Пропускаем пустые значения
+                        if not module_code or len(module_code) <= 1:
+                            continue
+                        
+                        # Нормализуем название модуля
+                        if module_code == 'testpart':
+                            module_code = 'test_part'
+                        
+                        # Проверяем что это валидный модуль
+                        valid_modules = ['test_part', 'task19', 'task20', 'task24', 'task25']
+                        if module_code not in valid_modules:
+                            logger.warning(f"Skipping invalid module: {module_code}")
+                            continue
+                        
+                        logger.info(f"Activating module {module_code} until {expires_at}")
+                        
+                        # Удаляем старую подписку если есть
+                        await conn.execute(
+                            """
+                            DELETE FROM module_subscriptions 
+                            WHERE user_id = ? AND module_code = ?
+                            """,
+                            (user_id, module_code)
+                        )
+                        
+                        # Создаем новую подписку
+                        await conn.execute(
+                            """
+                            INSERT INTO module_subscriptions (
+                                user_id, module_code, plan_id, expires_at, 
+                                is_active, created_at
+                            ) VALUES (?, ?, ?, ?, 1, CURRENT_TIMESTAMP)
+                            """,
+                            (user_id, module_code, plan_id, expires_at.isoformat())
+                        )
+                    
+                    await conn.commit()
+                    
+                logger.info(f"Successfully activated {len(modules)} modules for user {user_id}")
+                return True
+                
+            except Exception as e:
+                logger.error(f"Error activating custom modules: {e}")
+                return False
 
     async def init_database(self):
         """Инициализирует базу данных с поддержкой автопродления."""
@@ -1352,7 +1449,7 @@ class SubscriptionManager:
             async with aiosqlite.connect(self.database_file) as conn:
                 await conn.execute("""
                     UPDATE auto_renewal_settings 
-                    SET enabled = 0, updated_at = CURRENT_TIMESTAMP
+                    SET enabled = 0, created_at = CURRENT_TIMESTAMP
                     WHERE user_id = ?
                 """, (user_id,))
                 
@@ -1636,7 +1733,7 @@ class SubscriptionManager:
                     await conn.execute(
                         """
                         UPDATE module_subscriptions 
-                        SET expires_at = ?, plan_id = ?, updated_at = CURRENT_TIMESTAMP 
+                        SET expires_at = ?, plan_id = ?, created_at = CURRENT_TIMESTAMP 
                         WHERE user_id = ? AND module_code = ?
                         """,
                         (new_expires, plan_id, user_id, module_code)
@@ -1717,39 +1814,60 @@ class SubscriptionManager:
             logger.error(f"Error getting user modules: {e}")
             return []
     
-    async def get_payment_by_order_id(self, order_id: str) -> Optional[Dict]:
-        """
-        Получает информацию о платеже по order_id.
-        
-        Args:
-            order_id: ID заказа
+    async def get_payment_by_order_id(self, order_id: str) -> Optional[dict]:
+            """
+            Получает информацию о платеже по order_id.
             
-        Returns:
-            Словарь с информацией о платеже или None
-        """
-        try:
-            async with aiosqlite.connect(self.database_file) as conn:
-                conn.row_factory = aiosqlite.Row
-                cursor = await conn.execute(
-                    """
-                    SELECT 
-                        payment_id, order_id, user_id, plan_id,
-                        amount, status, created_at, completed_at,
-                        metadata, rebill_id
-                    FROM payments
-                    WHERE order_id = ?
-                    """,
-                    (order_id,)
-                )
-                row = await cursor.fetchone()
+            Args:
+                order_id: ID заказа
                 
-                if row:
-                    return dict(row)
+            Returns:
+                Словарь с информацией о платеже или None
+            """
+            try:
+                async with aiosqlite.connect(self.database_file) as conn:
+                    # ВАЖНО: Используем amount_kopecks, а не amount
+                    cursor = await conn.execute(
+                        """
+                        SELECT 
+                            payment_id, user_id, plan_id, 
+                            amount_kopecks, status, metadata,
+                            created_at, completed_at
+                        FROM payments 
+                        WHERE order_id = ?
+                        """,
+                        (order_id,)
+                    )
+                    
+                    row = await cursor.fetchone()
+                    
+                    if row:
+                        payment_id, user_id, plan_id, amount_kopecks, status, metadata_str, created_at, completed_at = row
+                        
+                        # Парсим metadata
+                        try:
+                            metadata = json.loads(metadata_str) if metadata_str else {}
+                        except:
+                            metadata = {}
+                        
+                        return {
+                            'payment_id': payment_id,
+                            'order_id': order_id,
+                            'user_id': user_id,
+                            'plan_id': plan_id,
+                            'amount_kopecks': amount_kopecks,
+                            'amount_rub': amount_kopecks / 100 if amount_kopecks else 0,
+                            'status': status,
+                            'metadata': metadata,
+                            'created_at': created_at,
+                            'completed_at': completed_at
+                        }
+                    
+                    return None
+                    
+            except Exception as e:
+                logger.error(f"Error getting payment by order_id: {e}")
                 return None
-                
-        except Exception as e:
-            logger.error(f"Error getting payment by order_id: {e}")
-            return None
     
     async def update_payment_status(self, order_id: str, status: str) -> bool:
         """Обновляет статус платежа.
@@ -1765,7 +1883,7 @@ class SubscriptionManager:
             async with aiosqlite.connect(self.database_file) as conn:
                 await conn.execute("""
                     UPDATE payments 
-                    SET status = ?, updated_at = CURRENT_TIMESTAMP
+                    SET status = ?, created_at = CURRENT_TIMESTAMP
                     WHERE order_id = ?
                 """, (status, order_id))
                 await conn.commit()
@@ -1777,6 +1895,73 @@ class SubscriptionManager:
             logger.error(f"Error updating payment status: {e}")
             return False
 
+async def _send_activation_notification(self, user_id: int, plan_id: str, duration_months: int):
+        """
+        Отправляет уведомление пользователю об активации подписки.
+        
+        Args:
+            user_id: ID пользователя
+            plan_id: ID плана
+            duration_months: Длительность подписки в месяцах
+        """
+        try:
+            # Получаем бота из контекста если есть
+            from telegram import Bot
+            from core.config import BOT_TOKEN
+            
+            bot = Bot(token=BOT_TOKEN)
+            
+            # Формируем текст уведомления
+            plan_names = {
+                'trial_7days': '🎁 Пробный период (7 дней)',
+                'package_full': '🥇 Полный пакет',
+                'package_second': '🥈 Вторая часть',
+                'test_part': '📝 Тестовая часть',
+                'task19': '🎯 Задание 19',
+                'task20': '📖 Задание 20',
+                'task24': '💎 Задание 24',
+                'task25': '✍️ Задание 25'
+            }
+            
+            plan_name = plan_names.get(plan_id, plan_id)
+            
+            # Для кастомных планов
+            if plan_id.startswith('custom_'):
+                modules_str = plan_id.replace('custom_', '').replace('_', ', ')
+                plan_name = f"Индивидуальный набор: {modules_str}"
+            
+            # Определяем срок
+            if plan_id == 'trial_7days':
+                duration_text = "7 дней"
+            elif duration_months == 1:
+                duration_text = "1 месяц"
+            else:
+                duration_text = f"{duration_months} месяцев"
+            
+            message = f"""✅ <b>Подписка успешно активирована!</b>
+
+📦 Тариф: <b>{plan_name}</b>
+⏱ Срок действия: <b>{duration_text}</b>
+
+Теперь вам доступны все материалы выбранного тарифа.
+
+Используйте /menu для навигации по разделам.
+Проверить статус подписки: /my_subscriptions
+
+Приятного обучения! 🎓"""
+            
+            await bot.send_message(
+                chat_id=user_id,
+                text=message,
+                parse_mode='HTML'
+            )
+            
+            logger.info(f"Sent activation notification to user {user_id}")
+            
+        except Exception as e:
+            # Не критичная ошибка - просто логируем
+            logger.warning(f"Could not send activation notification: {e}")
+            # Не прерываем процесс активации
 
 def requires_subscription(module_code: Optional[str] = None):
     """
