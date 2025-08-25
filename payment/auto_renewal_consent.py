@@ -526,9 +526,20 @@ async def show_auto_renewal_choice(update: Update, context: ContextTypes.DEFAULT
         price = 390 * duration
     elif plan_id and plan_id.startswith('custom_'):
         plan_name = "Индивидуальная подборка"
-        modules = context.user_data.get('selected_modules', [])
-        from payment.handlers import calculate_custom_price
-        price = calculate_custom_price(modules, duration)
+        # Используем уже рассчитанную цену из контекста
+        price = context.user_data.get('total_price')
+        
+        if not price:
+            # Рассчитываем правильно если цены нет
+            custom_plan = context.user_data.get('custom_plan', {})
+            base_price = custom_plan.get('price_rub', 0)
+            
+            from payment.config import DURATION_DISCOUNTS
+            if duration in DURATION_DISCOUNTS:
+                multiplier = DURATION_DISCOUNTS[duration]['multiplier']
+                price = int(base_price * multiplier)
+            else:
+                price = base_price * duration
     else:
         plan_name = "Стандартный план"
         # Определяем правильную цену

@@ -87,14 +87,19 @@ def verify_tinkoff_signature(data: dict, token: str, terminal_key: str, secret_k
 
 
 async def handle_webhook(request: web.Request) -> web.Response:
-    """Обрабатывает webhook от Т-Банка (обновленная версия)."""
+    """Обрабатывает webhook от Т-Банка (исправленная версия)."""
     try:
         # Получаем данные
         data = await request.json()
         logger.info(f"Webhook received: {json.dumps(data, ensure_ascii=False)}")
         
-        # Проверяем подпись
-        if not verify_signature(data):
+        # ИСПРАВЛЕНИЕ: используем правильную функцию и передаем нужные параметры
+        if not verify_tinkoff_signature(
+            data, 
+            data.get('Token', ''),
+            config.TINKOFF_TERMINAL_KEY,
+            config.TINKOFF_SECRET_KEY
+        ):
             logger.error("Invalid webhook signature")
             return web.Response(text='INVALID_SIGNATURE', status=400)
         
@@ -102,7 +107,7 @@ async def handle_webhook(request: web.Request) -> web.Response:
         order_id = data.get('OrderId')
         status = data.get('Status')
         payment_id = data.get('PaymentId')
-        rebill_id = data.get('RebillId')  # НОВОЕ: Получаем RebillId
+        rebill_id = data.get('RebillId')  # Получаем RebillId для автопродления
         
         if not all([order_id, status]):
             logger.error(f"Missing required fields: OrderId={order_id}, Status={status}")
@@ -127,7 +132,7 @@ async def handle_webhook(request: web.Request) -> web.Response:
             success = await subscription_manager.activate_subscription(order_id)
             
             if success:
-                # НОВОЕ: Если есть RebillId, сохраняем его для автопродления
+                # Если есть RebillId, сохраняем его для автопродления
                 if rebill_id:
                     # Получаем user_id из платежа
                     payment_info = await subscription_manager.get_payment_by_order_id(order_id)
@@ -148,23 +153,14 @@ async def handle_webhook(request: web.Request) -> web.Response:
                 return web.Response(text='ACTIVATION_FAILED', status=500)
         
         elif status in ['REJECTED', 'CANCELED']:
-            logger.warning(f"Payment {order_id} failed with status {status}")
-            
+            logger.warning(f"Payment {order_id} rejected/canceled with status {status}")
             # Обновляем статус платежа
             await subscription_manager.update_payment_status(order_id, 'failed')
             
-            # Уведомляем пользователя о неудаче
+            # Уведомляем пользователя об отмене
             bot = request.app.get('bot')
             if bot:
-                await notify_user_failure(bot, order_id, status)
-            
-            return web.Response(text='OK')
-        
-        elif status == 'REFUNDED':
-            logger.info(f"Payment {order_id} refunded")
-            
-            # Обрабатываем возврат
-            await subscription_manager.handle_refund(order_id)
+                await notify_user_failed(bot, order_id)
             
             return web.Response(text='OK')
         
@@ -180,6 +176,36 @@ async def handle_webhook(request: web.Request) -> web.Response:
         logger.exception(f"Webhook processing error: {e}")
         return web.Response(text='INTERNAL_ERROR', status=500)
 
+async def is_payment_already_processed(order_id: str, status: str) -> bool:
+    """Проверяет, был ли уже обработан платеж."""
+    try:
+        from core.db import DATABASE_FILE
+        async with aiosqlite.connect(DATABASE_FILE) as db:
+            cursor = await db.execute(
+                "SELECT COUNT(*) FROM payments WHERE order_id = ? AND status = 'confirmed'",
+                (order_id,)
+            )
+            count = await cursor.fetchone()
+            return count[0] > 0 if count else False
+    except Exception as e:
+        logger.error(f"Error checking payment: {e}")
+        return False
+
+async def notify_user_failed(bot, order_id: str):
+    """Уведомляет пользователя об отмене платежа."""
+    try:
+        user_id = int(order_id.split('_')[0])
+        if bot:
+            await bot.send_message(
+                chat_id=user_id,
+                text="❌ Платеж был отменен или отклонен.\n\nПопробуйте оформить подписку заново."
+            )
+    except Exception as e:
+        logger.error(f"Failed to notify user: {e}")
+
+async def log_webhook(data: dict):
+    """Логирует webhook для отладки (упрощенная версия)."""
+    logger.info(f"Webhook log: OrderId={data.get('OrderId')}, Status={data.get('Status')}, PaymentId={data.get('PaymentId')}")
 # Добавьте эти новые функции:
 
 async def log_webhook_event(data: dict):

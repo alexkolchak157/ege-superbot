@@ -1411,13 +1411,16 @@ async def handle_email_input(update: Update, context: ContextTypes.DEFAULT_TYPE)
     try:
         # Пробуем использовать новую функцию из модуля consent
         
-    # Убеждаемся что цена правильно сохранена в контексте
-    if context.user_data.get('selected_plan') == 'trial_7days':
-        context.user_data['total_price'] = 1
-        logger.info(f"Trial price set to 1 for user {user_id}")
-    
-    from .auto_renewal_consent import show_auto_renewal_choice
+        # ИСПРАВЛЕНИЕ: Добавляем правильный блок кода после условия
+        # Убеждаемся что цена правильно сохранена в контексте
+        if context.user_data.get('selected_plan') == 'trial_7days':
+            context.user_data['total_price'] = 1
+            logger.info(f"Trial price set to 1 for user {user_id}")
+        
+        # Импортируем и вызываем функцию
+        from .auto_renewal_consent import show_auto_renewal_choice
         return await show_auto_renewal_choice(update, context)
+        
     except ImportError:
         # Если модуль еще не создан, используем временную заглушку
         logger.warning("auto_renewal_consent module not found, using fallback")
@@ -1448,20 +1451,20 @@ async def handle_email_input(update: Update, context: ContextTypes.DEFAULT_TYPE)
             if saved_amount > 0:
                 text += f" (экономия {saved_amount}₽)"
             
-            text += f"\n💰 К оплате: {total_price} ₽\n\nВсе верно?"
-
-        # Создаем клавиатуру
+            text += f"\n💰 К оплате: {total_price} ₽\n\nВсе верно?"""
+        
+        # Показываем кнопки подтверждения
         keyboard = [
-            [InlineKeyboardButton("✅ Подтвердить и оплатить", callback_data="confirm_payment")],
+            [InlineKeyboardButton("✅ Подтвердить", callback_data="confirm_payment")],
             [InlineKeyboardButton("❌ Отмена", callback_data="cancel_payment")]
         ]
-
+        
         await update.message.reply_text(
             text,
             parse_mode=ParseMode.HTML,
             reply_markup=InlineKeyboardMarkup(keyboard)
         )
-
+        
         return CONFIRMING
 
 @safe_handler()
@@ -1509,6 +1512,23 @@ async def handle_email_confirmation(update: Update, context: ContextTypes.DEFAUL
             "📧 Введите ваш email для отправки чека:"
         )
         return ENTERING_EMAIL
+
+def calculate_custom_price(modules, duration):
+    """Рассчитывает цену для кастомного набора модулей."""
+    from payment.config import MODULE_PLANS, DURATION_DISCOUNTS
+    
+    base_price = 0
+    for module_id in modules:
+        if module_id in MODULE_PLANS:
+            base_price += MODULE_PLANS[module_id]['price_rub']
+    
+    if duration in DURATION_DISCOUNTS:
+        multiplier = DURATION_DISCOUNTS[duration]['multiplier']
+        total_price = int(base_price * multiplier)
+    else:
+        total_price = base_price * duration
+    
+    return total_price
 
 @safe_handler()
 async def show_auto_renewal_options(update: Update, context: ContextTypes.DEFAULT_TYPE):
