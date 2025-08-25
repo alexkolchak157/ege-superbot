@@ -1059,7 +1059,7 @@ async def show_duration_options(update: Update, context: ContextTypes.DEFAULT_TY
 
 @safe_handler()
 async def handle_duration_selection(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обрабатывает выбор длительности подписки с правильным расчетом цены для custom планов."""
+    """Обрабатывает выбор длительности подписки с правильным расчетом цены."""
     query = update.callback_query
     await query.answer()
     
@@ -1080,23 +1080,26 @@ async def handle_duration_selection(update: Update, context: ContextTypes.DEFAUL
             )
             return ConversationHandler.END
         
-        # ИСПРАВЛЕНО: Правильный расчет цены для custom планов
+        # ИСПРАВЛЕНО: Убираем деление на 100, так как calculate_subscription_price 
+        # из payment/handlers.py уже возвращает цену в рублях
         if plan_id.startswith('custom_'):
             # Для кастомных планов берем данные из контекста
             custom_plan = context.user_data.get('custom_plan')
             if custom_plan:
+                # Используем локальную функцию, которая возвращает рубли
                 total_price = calculate_subscription_price(
                     plan_id, 
                     duration, 
-                    custom_plan_data=custom_plan  # Передаем данные custom плана
-                ) // 100  # Конвертируем из копеек в рубли
+                    custom_plan_data=custom_plan
+                )  # БЕЗ деления на 100!
             else:
                 # Если custom_plan не найден, рассчитываем на основе модулей
                 modules = context.user_data.get('selected_modules', [])
                 total_price = calculate_custom_price(modules, duration)
         else:
-            # Для обычных планов
-            total_price = calculate_subscription_price(plan_id, duration) // 100
+            # Для обычных планов - используем функцию из handlers.py
+            # которая уже возвращает цену в рублях
+            total_price = calculate_subscription_price(plan_id, duration)  # БЕЗ деления на 100!
         
         # ВАЖНО: Сохраняем правильную цену в контекст
         context.user_data['total_price'] = total_price
@@ -1288,10 +1291,9 @@ async def request_email(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     return ENTERING_EMAIL
 
-# payment/handlers.py - Исправленная версия handle_email_input
 @safe_handler()
 async def handle_email_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обрабатывает ввод email с улучшенной валидацией."""
+    """Обрабатывает ввод email и переходит к созданию платежа."""
     email = update.message.text.strip().lower()
     user_id = update.effective_user.id
     
@@ -1312,43 +1314,6 @@ async def handle_email_input(update: Update, context: ContextTypes.DEFAULT_TYPE)
         )
         return ENTERING_EMAIL  # Остаемся в том же состоянии
     
-    # Исправляем распространенные опечатки автоматически
-    domain = email.split('@')[1]
-    auto_corrections = {
-        'gmail.comm': 'gmail.com',
-        'gmai.com': 'gmail.com',
-        'gmil.com': 'gmail.com',
-        'yamdex.ru': 'yandex.ru',
-        'yadex.ru': 'yandex.ru',
-        'maio.ru': 'mail.ru'
-    }
-    
-    if domain in auto_corrections:
-        corrected_email = email.replace(domain, auto_corrections[domain])
-        
-        # Спрашиваем подтверждение
-        keyboard = [
-            [InlineKeyboardButton(f"✅ Да, использовать {corrected_email}", 
-                                callback_data=f"use_email_{corrected_email}")],
-            [InlineKeyboardButton(f"❌ Нет, оставить {email}", 
-                                callback_data=f"use_email_{email}")],
-            [InlineKeyboardButton("🔄 Ввести заново", callback_data="retry_email")]
-        ]
-        
-        await update.message.reply_text(
-            f"🔍 Обнаружена возможная опечатка.\n\n"
-            f"Вы ввели: <code>{email}</code>\n"
-            f"Возможно, вы имели в виду: <code>{corrected_email}</code>?",
-            parse_mode=ParseMode.HTML,
-            reply_markup=InlineKeyboardMarkup(keyboard)
-        )
-        
-        # Сохраняем оба варианта
-        context.user_data['original_email'] = email
-        context.user_data['corrected_email'] = corrected_email
-        
-        return ENTERING_EMAIL
-    
     # Email валидный, сохраняем
     context.user_data['email'] = email
     
@@ -1357,7 +1322,6 @@ async def handle_email_input(update: Update, context: ContextTypes.DEFAULT_TYPE)
         from payment.subscription_manager import SubscriptionManager
         subscription_manager = SubscriptionManager()
         
-        # Сохраняем email в БД
         import aiosqlite
         async with aiosqlite.connect(subscription_manager.database_file) as conn:
             await conn.execute(
@@ -1374,133 +1338,15 @@ async def handle_email_input(update: Update, context: ContextTypes.DEFAULT_TYPE)
     except Exception as e:
         logger.error(f"Error saving email: {e}")
     
-    # Получаем данные о плане
-    plan_id = context.user_data.get('selected_plan')
-    duration = context.user_data.get('duration_months', 1)
-    is_trial = context.user_data.get('is_trial', False)
-
-    # Получаем план
-    if plan_id.startswith('custom_'):
-        plan = context.user_data.get('custom_plan')
-        if not plan:
-            logger.error(f"Custom plan data not found in handle_email_input for {plan_id}")
-            await update.message.reply_text("❌ Ошибка: данные плана не найдены")
-            return ConversationHandler.END
-    else:
-        plan = MODULE_PLANS.get(plan_id)
-        if not plan:
-            plan = SUBSCRIPTION_PLANS.get(plan_id)
-        
-        if not plan:
-            logger.error(f"Plan not found in handle_email_input: {plan_id}")
-            await update.message.reply_text("❌ Ошибка: план не найден")
-            return ConversationHandler.END
-
-    # Сохраняем данные плана для последующего использования
-    context.user_data['plan_name'] = plan['name']
-    
-    # Рассчитываем цены и сохраняем в контекст для использования в следующих шагах
-    if is_trial:
-        # Пробный период - 1 рубль
-        context.user_data['total_price'] = 1
-        logger.info(f"TRIAL PRICE DEBUG: Set total_price = 1 for user {update.effective_user.id}")
-        context.user_data['base_price'] = plan['price_rub']  # Цена после триала
-        context.user_data['discount_info'] = {'label': '7 дней (пробный период)'}
-        context.user_data['saved_amount'] = 0
-    else:
-        # Рассчитываем цену с учетом скидок
-        base_price = plan['price_rub']
-        
-        # Импортируем конфиг для скидок
-        from payment.config import DURATION_DISCOUNTS
-        
-        # Получаем информацию о скидке для выбранного срока
-        discount_info = DURATION_DISCOUNTS.get(duration, {
-            'multiplier': duration, 
-            'label': f'{duration} мес.'
-        })
-        
-        # Рассчитываем итоговую цену
-        multiplier = discount_info.get('multiplier', duration)
-        total_price = int(base_price * multiplier)
-        
-        # Сохраняем все рассчитанные данные
-        context.user_data['total_price'] = total_price
-        context.user_data['base_price'] = base_price
-        context.user_data['discount_info'] = discount_info
-        context.user_data['saved_amount'] = (base_price * duration) - total_price if duration > 1 and multiplier < duration else 0
-
-    # Сохраняем месячную цену для автопродления
-    context.user_data['monthly_price'] = plan['price_rub']
-    
-    # ============= ИЗМЕНЕНИЕ: Переход к выбору автопродления =============
-    # Вместо показа подтверждения сразу, показываем экран выбора автопродления
-    
-    # Уведомляем что email сохранен
+    # ВАЖНО: После успешного ввода email переходим к созданию платежа
+    # с учетом выбранных опций автопродления
     await update.message.reply_text(
-        f"✅ Email сохранен: {email}\n\n"
-        "Настройка способа оплаты..."
+        "✅ Email сохранен. Создаю платеж...",
+        parse_mode=ParseMode.HTML
     )
     
-    # Проверяем, импортирована ли функция show_auto_renewal_choice
-    try:
-        # Пробуем использовать новую функцию из модуля consent
-        
-        # ИСПРАВЛЕНИЕ: Добавляем правильный блок кода после условия
-        # Убеждаемся что цена правильно сохранена в контексте
-        if context.user_data.get('selected_plan') == 'trial_7days':
-            context.user_data['total_price'] = 1
-            logger.info(f"Trial price set to 1 for user {user_id}")
-        
-        # Импортируем и вызываем функцию
-        from .auto_renewal_consent import show_auto_renewal_choice
-        return await show_auto_renewal_choice(update, context)
-        
-    except ImportError:
-        # Если модуль еще не создан, используем временную заглушку
-        logger.warning("auto_renewal_consent module not found, using fallback")
-        
-        # Временный fallback - показываем простое подтверждение
-        if is_trial:
-            text = f"""📋 <b>Подтверждение заказа</b>
-
-✅ План: {plan['name']}
-📧 Email: {email}
-📅 Срок: 7 дней (пробный период)
-💰 К оплате: 1 ₽
-
-Все верно?"""
-        else:
-            # Получаем сохраненные данные
-            total_price = context.user_data.get('total_price')
-            discount_info = context.user_data.get('discount_info')
-            saved_amount = context.user_data.get('saved_amount', 0)
-            
-            text = f"""📋 <b>Подтверждение заказа</b>
-
-✅ План: {plan['name']}
-📧 Email: {email}
-📅 Срок: {discount_info.get('label', f'{duration} мес.')}"""
-            
-            # Добавляем информацию об экономии если есть скидка
-            if saved_amount > 0:
-                text += f" (экономия {saved_amount}₽)"
-            
-            text += f"\n💰 К оплате: {total_price} ₽\n\nВсе верно?"""
-        
-        # Показываем кнопки подтверждения
-        keyboard = [
-            [InlineKeyboardButton("✅ Подтвердить", callback_data="confirm_payment")],
-            [InlineKeyboardButton("❌ Отмена", callback_data="cancel_payment")]
-        ]
-        
-        await update.message.reply_text(
-            text,
-            parse_mode=ParseMode.HTML,
-            reply_markup=InlineKeyboardMarkup(keyboard)
-        )
-        
-        return CONFIRMING
+    # Вызываем функцию создания платежа
+    return await handle_payment_confirmation_with_recurrent(update, context)
 
 @safe_handler()
 async def handle_email_confirmation(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1737,23 +1583,28 @@ async def show_final_consent_screen(update: Update, context: ContextTypes.DEFAUL
     
     return FINAL_CONSENT
 
-def calculate_subscription_price(plan_id: str, duration_months: int = 1) -> int:
-    """Рассчитывает стоимость подписки с учетом скидок.
+def calculate_subscription_price(plan_id: str, duration_months: int, custom_plan_data: dict = None) -> int:
+    """
+    Рассчитывает стоимость подписки в РУБЛЯХ.
     
     Args:
         plan_id: ID плана подписки
         duration_months: Длительность в месяцах
+        custom_plan_data: Данные для custom плана (опционально)
         
     Returns:
-        Итоговая стоимость в рублях
+        Итоговая стоимость в РУБЛЯХ (не в копейках!)
     """
     from payment.config import MODULE_PLANS, SUBSCRIPTION_PLANS, DURATION_DISCOUNTS
     import logging
     
     logger = logging.getLogger(__name__)
     
-    # Определяем источник цен в зависимости от режима и плана
-    if plan_id in MODULE_PLANS:
+    # Определяем базовую цену
+    if plan_id.startswith('custom_') and custom_plan_data:
+        base_price = custom_plan_data.get('price_rub', 999)
+        logger.info(f"Using custom plan price: {base_price}₽")
+    elif plan_id in MODULE_PLANS:
         base_price = MODULE_PLANS[plan_id].get('price_rub', 999)
         logger.info(f"Using MODULE_PLANS price for {plan_id}: {base_price}₽")
     elif plan_id in SUBSCRIPTION_PLANS:
@@ -1766,7 +1617,6 @@ def calculate_subscription_price(plan_id: str, duration_months: int = 1) -> int:
     
     # Специальная обработка для пробного периода
     if plan_id == 'trial_7days':
-        logger.info(f"Trial period detected, returning 1₽")
         logger.info(f"Trial period detected, returning 1₽")
         return 1
     
@@ -1783,6 +1633,10 @@ def calculate_subscription_price(plan_id: str, duration_months: int = 1) -> int:
     logger.info(f"Final calculation: plan={plan_id}, base={base_price}₽, duration={duration_months}m, total={total_price}₽")
     
     return total_price
+
+def get_price_in_kopecks(price_in_rubles: int) -> int:
+    """Конвертирует цену из рублей в копейки для API."""
+    return price_in_rubles * 100
 
 @safe_handler()
 async def toggle_consent(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -2096,7 +1950,7 @@ async def ask_auto_renewal(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 @safe_handler()
 async def handle_auto_renewal_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обрабатывает выбор автопродления при оплате."""
+    """Обрабатывает выбор автопродления и переходит к запросу email."""
     query = update.callback_query
     await query.answer()
     
@@ -2107,8 +1961,8 @@ async def handle_auto_renewal_choice(update: Update, context: ContextTypes.DEFAU
         context.user_data['enable_auto_renewal'] = False
         await query.answer("Автопродление не будет включено")
     
-    # Переходим к подтверждению платежа
-    return await handle_payment_confirmation_with_recurrent(update, context)
+    # ИСПРАВЛЕНИЕ: Переходим к запросу email, а НЕ сразу к оплате!
+    return await request_email(update, context)
 
 @safe_handler()
 async def cmd_my_subscriptions(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -2401,61 +2255,79 @@ async def standalone_pay_handler(update: Update, context: ContextTypes.DEFAULT_T
     # Устанавливаем флаг процесса оплаты
     context.user_data['in_payment_process'] = True
     
-    # Переходим в ConversationHandler через точку входа
+    # Сохраняем callback_data для обработки внутри ConversationHandler
+    context.user_data['standalone_callback'] = query.data
+    
+    # Вместо прямого вызова handle_plan_selection,
+    # эмулируем вход в ConversationHandler через entry point
     if query.data in ["pay_trial", "pay_package_full", "pay_package_second"]:
-        # Вызываем handle_plan_selection и входим в ConversationHandler
-        context.user_data['entry_from_standalone'] = True
-        return await handle_plan_selection(update, context)
+        # Сохраняем выбранный план
+        plan_id = query.data.replace("pay_", "")
+        
+        if plan_id == "trial":
+            plan_id = "trial_7days"
+            context.user_data['is_trial'] = True
+            context.user_data['selected_plan'] = plan_id
+            context.user_data['duration_months'] = 1
+            context.user_data['total_price'] = 1
+            context.user_data['base_price'] = 1
+            context.user_data['plan_name'] = "🎁 Пробный период 7 дней"
+            
+            # Для триала сразу запрашиваем email
+            return await request_email_for_trial(update, context)
+            
+        elif plan_id == "package_full":
+            context.user_data['selected_plan'] = "package_full"
+            context.user_data['is_trial'] = False
+        elif plan_id == "package_second":
+            context.user_data['selected_plan'] = "package_second"
+            context.user_data['is_trial'] = False
+        
+        # Получаем информацию о плане
+        from payment.config import MODULE_PLANS, SUBSCRIPTION_PLANS
+        plan = MODULE_PLANS.get(context.user_data['selected_plan']) or \
+               SUBSCRIPTION_PLANS.get(context.user_data['selected_plan'])
+        
+        if plan:
+            context.user_data['plan_info'] = plan
+            context.user_data['plan_name'] = plan['name']
+            context.user_data['base_price'] = plan['price_rub']
+            
+            # Показываем варианты длительности
+            return await show_duration_options(update, context)
+        else:
+            await query.edit_message_text("❌ Ошибка: план не найден")
+            return
+            
     elif query.data == "pay_individual_modules":
         # Показываем выбор модулей
-        context.user_data['entry_from_standalone'] = True
         return await show_individual_modules(update, context)
     else:
         # Неизвестная кнопка
         context.user_data.pop('in_payment_process', None)
         await query.answer("Неизвестное действие", show_alert=True)
-    
-    # Возвращаем состояние для входа в ConversationHandler
-    return CHOOSING_PLAN
+        return
 
-
-# Замените функцию register_payment_handlers на эту версию:
 def register_payment_handlers(app):
-    """Регистрирует обработчики платежей."""
+    """Регистрирует обработчики платежей с правильным потоком."""
     logger.info("Registering payment handlers...")
     
     # Инициализируем обработчик согласия
     subscription_manager = app.bot_data.get('subscription_manager', SubscriptionManager())
     consent_handler = AutoRenewalConsent(subscription_manager)
     
-    # Создаем ConversationHandler для процесса оплаты
+    # Создаем ConversationHandler с правильными состояниями
     payment_conv = ConversationHandler(
         entry_points=[
             CommandHandler("subscribe", cmd_subscribe),
             CallbackQueryHandler(show_modular_interface, pattern="^subscribe$"),
-            CallbackQueryHandler(show_modular_interface, pattern="^subscribe_start$")
+            CallbackQueryHandler(show_modular_interface, pattern="^subscribe_start$"),
+            CallbackQueryHandler(standalone_pay_handler, pattern="^pay_trial$"),
+            CallbackQueryHandler(standalone_pay_handler, pattern="^pay_package_full$"),
+            CallbackQueryHandler(standalone_pay_handler, pattern="^pay_package_second$"),
+            CallbackQueryHandler(standalone_pay_handler, pattern="^pay_individual_modules$"),
         ],
         states={
-        
-        AUTO_RENEWAL_CHOICE: [
-                CallbackQueryHandler(
-                    consent_handler.handle_choice_selection,
-                    pattern="^(consent_auto_renewal|choose_auto_renewal|choose_no_auto_renewal|show_auto_renewal_terms)$"
-                ),
-                CallbackQueryHandler(
-                    handle_auto_renewal_choice,
-                    pattern="^(no_auto_renewal|auto_renewal_terms)$"
-                ),
-                CallbackQueryHandler(
-                    handle_back_to_duration,  # Новый обработчик
-                    pattern="^back_to_duration$"
-                ),
-                CallbackQueryHandler(
-                    cancel_payment,
-                    pattern="^cancel_payment$"
-                )
-            ],
-        
             CHOOSING_PLAN: [
                 CallbackQueryHandler(handle_plan_selection, pattern="^pay_"),
                 CallbackQueryHandler(show_individual_modules, pattern="^pay_individual_modules$"),
@@ -2478,55 +2350,39 @@ def register_payment_handlers(app):
                 CallbackQueryHandler(show_modular_interface, pattern="^back_to_plans$")
             ],
             
-            ENTERING_EMAIL: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_email_input)
+            # ИСПРАВЛЕНО: Состояние для выбора автопродления
+            CONFIRMING: [
+                # Обработчики для выбора автопродления
+                CallbackQueryHandler(
+                    handle_auto_renewal_choice, 
+                    pattern="^(enable|disable)_auto_renewal_payment$"
+                ),
+                CallbackQueryHandler(
+                    handle_back_to_duration_selection,
+                    pattern="^back_to_duration_selection$"
+                ),
+                CallbackQueryHandler(cancel_payment, pattern="^cancel_payment$"),
             ],
             
-            # НОВОЕ: Состояние выбора типа оплаты
-            SHOWING_TERMS: [
+            # Состояние для ввода email
+            ENTERING_EMAIL: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_email_input),
+                CallbackQueryHandler(cancel_payment, pattern="^cancel_payment$")
+            ],
+            
+            # Дополнительные состояния для автопродления
+            AUTO_RENEWAL_CHOICE: [
                 CallbackQueryHandler(
                     consent_handler.handle_choice_selection,
-                    pattern="^(choose_auto_renewal|choose_no_auto_renewal|show_auto_renewal_terms)$"
+                    pattern="^(consent_auto_renewal|choose_auto_renewal|choose_no_auto_renewal|show_auto_renewal_terms)$"
                 ),
                 CallbackQueryHandler(
-                    consent_handler.handle_back_navigation,
-                    pattern="^back_to_payment_choice$"
-                )
-            ],
-            
-            # НОВОЕ: Состояние согласия с чек-боксом
-            CONSENT_CHECKBOX: [
-                CallbackQueryHandler(
-                    consent_handler.toggle_consent,
-                    pattern="^toggle_consent_checkbox$"
+                    handle_auto_renewal_choice,
+                    pattern="^(no_auto_renewal|auto_renewal_terms)$"
                 ),
                 CallbackQueryHandler(
-                    consent_handler.confirm_with_auto_renewal,
-                    pattern="^confirm_with_auto_renewal$"
-                ),
-                CallbackQueryHandler(
-                    lambda u, c: u.callback_query.answer("⚠️ Сначала отметьте согласие", show_alert=True) or CONSENT_CHECKBOX,
-                    pattern="^need_consent_reminder$"
-                ),
-                CallbackQueryHandler(
-                    consent_handler.show_detailed_terms,
-                    pattern="^show_user_agreement$"
-                ),
-                CallbackQueryHandler(
-                    consent_handler.handle_back_navigation,
-                    pattern="^back_to_payment_choice$"
-                )  # ✅ Добавлена закрывающая скобка
-            ],  # ✅ Закрывающая квадратная скобка для списка
-                        
-            # НОВОЕ: Финальное подтверждение
-            FINAL_CONFIRMATION: [
-                CallbackQueryHandler(
-                    handle_payment_confirmation_with_recurrent,
-                    pattern="^proceed_to_payment$"
-                ),
-                CallbackQueryHandler(
-                    consent_handler.handle_back_navigation,
-                    pattern="^back_to_payment_choice$"
+                    handle_back_to_duration,
+                    pattern="^back_to_duration$"
                 ),
                 CallbackQueryHandler(
                     cancel_payment,
@@ -2534,24 +2390,20 @@ def register_payment_handlers(app):
                 )
             ],
             
-            # Существующее состояние CONFIRMING (для обратной совместимости)
-            CONFIRMING: [
-                CallbackQueryHandler(ask_auto_renewal, pattern="^confirm_payment$"),
+            SHOWING_TERMS: [
                 CallbackQueryHandler(
-                    handle_auto_renewal_choice, 
-                    pattern="^(enable|disable)_auto_renewal_payment$"
+                    consent_handler.handle_choice_selection,
+                    pattern="^(choose_auto_renewal|choose_no_auto_renewal|show_auto_renewal_terms)$"
                 ),
                 CallbackQueryHandler(
-                    handle_back_to_duration_selection,  # ДОБАВИТЬ
-                    pattern="^back_to_duration_selection$"
+                    consent_handler.handle_back_navigation,
+                    pattern="^back_to_duration$"
                 ),
                 CallbackQueryHandler(
-                    handle_payment_confirmation_with_recurrent, 
-                    pattern="^final_confirm_payment$"
-                ),
-                CallbackQueryHandler(cancel_payment, pattern="^cancel_payment$"),
-                
-            ]
+                    cancel_payment,
+                    pattern="^cancel_payment$"
+                )
+            ],
         },
         fallbacks=[
             CommandHandler("cancel", cancel_payment),
@@ -2562,7 +2414,9 @@ def register_payment_handlers(app):
         per_message=False
     )
     
+    # Регистрируем ConversationHandler
     app.add_handler(payment_conv, group=-50)
+    
     app.add_handler(
         CallbackQueryHandler(
             check_payment_status,
@@ -2570,17 +2424,15 @@ def register_payment_handlers(app):
         ),
         group=-45
     )
+    
     app.add_handler(
         CallbackQueryHandler(
             handle_payment_back,
             pattern="^payment_back$"
         ),
-        group=-48
+        group=-45
     )
-    # 2. Регистрируем ConversationHandler с высоким приоритетом
-    app.add_handler(payment_conv, group=-50)
     
-    # 3. Обработчик для my_subscriptions вне ConversationHandler
     app.add_handler(
         CallbackQueryHandler(
             handle_my_subscriptions, 
@@ -2589,57 +2441,12 @@ def register_payment_handlers(app):
         group=-45
     )
     
-    # 4. Обработчики для автономных кнопок оплаты
-    app.add_handler(
-        CallbackQueryHandler(
-            standalone_pay_handler, 
-            pattern="^pay_trial$"
-        ), 
-        group=-48
-    )
-    app.add_handler(
-        CallbackQueryHandler(
-            standalone_pay_handler, 
-            pattern="^pay_package_full$"
-        ), 
-        group=-48
-    )
-    app.add_handler(
-        CallbackQueryHandler(
-            standalone_pay_handler, 
-            pattern="^pay_package_second$"
-        ), 
-        group=-48
-    )
-    app.add_handler(
-        CallbackQueryHandler(
-            standalone_pay_handler, 
-            pattern="^pay_individual_modules$"
-        ), 
-        group=-48
-    )
-    
-    # 5. Обработчик для subscribe вне ConversationHandler
-    async def subscribe_redirect(update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Перенаправляет в интерфейс подписки."""
-        context.user_data['in_payment_process'] = True
-        return await show_modular_interface(update, context)
-    
-    app.add_handler(
-        CallbackQueryHandler(
-            subscribe_redirect,
-            pattern="^subscribe$"
-        ),
-        group=-48
-    )
-    
-    # 6. Команда /my_subscriptions
     app.add_handler(
         CommandHandler("my_subscriptions", cmd_my_subscriptions), 
         group=-45
     )
     
-    # 7. Обработчик для возврата в главное меню
+    # Обработчик для возврата в главное меню
     async def payment_to_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Переход в главное меню из payment."""
         from core.menu_handlers import handle_to_main_menu
@@ -2655,7 +2462,6 @@ def register_payment_handlers(app):
         group=-45
     )
     
-    # 8. Обработчик для back_to_main
     app.add_handler(
         CallbackQueryHandler(
             handle_back_to_main_menu, 
@@ -2664,7 +2470,6 @@ def register_payment_handlers(app):
         group=-49
     )
     
-    # 9. Обработчик информации о модулях
     app.add_handler(
         CallbackQueryHandler(
             handle_module_info, 
@@ -2673,7 +2478,7 @@ def register_payment_handlers(app):
         group=-45
     )
     
-    # 10. Debug команда (проверяем существование)
+    # 8. Debug команда (если существует)
     try:
         app.add_handler(
             CommandHandler("debug_subscription", cmd_debug_subscription), 
@@ -2682,8 +2487,6 @@ def register_payment_handlers(app):
     except NameError:
         logger.info("cmd_debug_subscription not defined, skipping")
     
-    logger.info("Payment handlers registered with priority")
-    logger.info("Total handlers registered: 10+")
-    logger.info("Priority groups: -50 (ConversationHandler), -48 (redirects), -45 (standalone)")
-
-    # Обработчики навигации
+    logger.info("Payment handlers registered successfully")
+    logger.info("ConversationHandler has entry points for all payment buttons")
+    logger.info("Priority groups: -50 (ConversationHandler), -45 (standalone)")

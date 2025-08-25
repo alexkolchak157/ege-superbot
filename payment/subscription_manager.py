@@ -1117,14 +1117,14 @@ class SubscriptionManager:
                 else:
                     # Для стандартных планов
                     if self.subscription_mode == 'modular':
-                        await self._activate_modular_subscription_extended(
+                        await self._activate_modular_subscription(
                             user_id, 
                             plan_id, 
                             payment_id=order_id,
                             duration_months=duration_months
                         )
                     else:
-                        await self._activate_unified_subscription_extended(
+                        await self._activate_unified_subscription(
                             user_id, 
                             plan_id, 
                             payment_id=order_id,
