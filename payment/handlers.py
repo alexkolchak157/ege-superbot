@@ -1057,10 +1057,9 @@ async def show_duration_options(update: Update, context: ContextTypes.DEFAULT_TY
     
     return CHOOSING_DURATION
 
-
 @safe_handler()
 async def handle_duration_selection(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обрабатывает выбор длительности подписки."""
+    """Обрабатывает выбор длительности подписки с правильным расчетом цены для custom планов."""
     query = update.callback_query
     await query.answer()
     
@@ -1069,7 +1068,7 @@ async def handle_duration_selection(update: Update, context: ContextTypes.DEFAUL
     try:
         # Извлекаем длительность из callback_data
         duration = int(query.data.split('_')[1])
-        context.user_data['selected_duration'] = duration
+        context.user_data['duration_months'] = duration
         
         # Получаем план из контекста
         plan_id = context.user_data.get('selected_plan')
@@ -1081,18 +1080,37 @@ async def handle_duration_selection(update: Update, context: ContextTypes.DEFAUL
             )
             return ConversationHandler.END
         
-        # Рассчитываем правильную цену
-        total_price = calculate_subscription_price(plan_id, duration)
+        # ИСПРАВЛЕНО: Правильный расчет цены для custom планов
+        if plan_id.startswith('custom_'):
+            # Для кастомных планов берем данные из контекста
+            custom_plan = context.user_data.get('custom_plan')
+            if custom_plan:
+                total_price = calculate_subscription_price(
+                    plan_id, 
+                    duration, 
+                    custom_plan_data=custom_plan  # Передаем данные custom плана
+                ) // 100  # Конвертируем из копеек в рубли
+            else:
+                # Если custom_plan не найден, рассчитываем на основе модулей
+                modules = context.user_data.get('selected_modules', [])
+                total_price = calculate_custom_price(modules, duration)
+        else:
+            # Для обычных планов
+            total_price = calculate_subscription_price(plan_id, duration) // 100
         
         # ВАЖНО: Сохраняем правильную цену в контекст
         context.user_data['total_price'] = total_price
+        context.user_data['selected_duration'] = duration
         
         logger.info(f"Selected duration: {duration} months, calculated price: {total_price}₽")
         
         # Получаем информацию о плане
         from payment.config import MODULE_PLANS, SUBSCRIPTION_PLANS, DURATION_DISCOUNTS
         
-        if plan_id in MODULE_PLANS:
+        if plan_id.startswith('custom_'):
+            plan_info = context.user_data.get('custom_plan', {})
+            plan_name = plan_info.get('name', 'Индивидуальная подборка')
+        elif plan_id in MODULE_PLANS:
             plan_info = MODULE_PLANS[plan_id]
             plan_name = plan_info['name']
         elif plan_id in SUBSCRIPTION_PLANS:
@@ -1101,6 +1119,9 @@ async def handle_duration_selection(update: Update, context: ContextTypes.DEFAUL
         else:
             plan_name = plan_id
             plan_info = {}
+        
+        # Сохраняем имя плана для использования в следующих шагах
+        context.user_data['plan_name'] = plan_name
         
         # Получаем label для длительности
         duration_label = DURATION_DISCOUNTS.get(duration, {}).get('label', f'{duration} мес.')
@@ -1116,7 +1137,11 @@ async def handle_duration_selection(update: Update, context: ContextTypes.DEFAUL
         
         # Добавляем информацию о скидке если есть
         if duration in DURATION_DISCOUNTS and duration > 1:
-            base_price = plan_info.get('price_rub', 999)
+            if plan_id.startswith('custom_'):
+                base_price = plan_info.get('price_rub', 0)
+            else:
+                base_price = plan_info.get('price_rub', 999)
+            
             full_price = base_price * duration
             discount = full_price - total_price
             if discount > 0:
@@ -1158,24 +1183,34 @@ async def handle_duration_selection(update: Update, context: ContextTypes.DEFAUL
         )
         return ConversationHandler.END
 
+@safe_handler()
+async def handle_back_to_duration_selection(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Возвращает к выбору длительности подписки из экрана подтверждения."""
+    query = update.callback_query
+    await query.answer()
+    
+    # Возвращаемся к выбору длительности
+    return await show_duration_options(update, context)
 
-def calculate_custom_base_price(modules):
-    """Рассчитывает базовую месячную цену для кастомного набора модулей."""
-    # Цены на модули (месячная стоимость)
-    module_prices = {
-        'test_part': 298,      # Тестовая часть
-        'task19': 197,         # Задание 19
-        'task20': 197,         # Задание 20
-        'task24': 347,         # Задание 24 (премиум)
-        'task25': 197,         # Задание 25
-        # Добавьте другие модули если есть
-    }
+
+# 3. НОВАЯ ФУНКЦИЯ: Обработчик для кнопки "Продлить/Добавить"
+@safe_handler()
+async def handle_payment_back(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработчик для кнопки 'Продлить/Добавить' - возвращает к началу процесса оплаты."""
+    query = update.callback_query
+    await query.answer()
     
-    total = 0
-    for module in modules:
-        total += module_prices.get(module, 100)  # По умолчанию 100₽ если модуль не найден
+    # Очищаем старые данные платежа
+    payment_keys = ['selected_plan', 'selected_modules', 'custom_plan', 
+                   'duration_months', 'total_price', 'plan_name']
+    for key in payment_keys:
+        context.user_data.pop(key, None)
     
-    return total
+    # Устанавливаем флаг процесса оплаты
+    context.user_data['in_payment_process'] = True
+    
+    # Показываем интерфейс выбора подписки
+    return await show_modular_interface(update, context)
 
 
 @safe_handler()
@@ -1514,14 +1549,16 @@ async def handle_email_confirmation(update: Update, context: ContextTypes.DEFAUL
         return ENTERING_EMAIL
 
 def calculate_custom_price(modules, duration):
-    """Рассчитывает цену для кастомного набора модулей."""
+    """Рассчитывает цену для кастомного набора модулей с учетом скидок."""
     from payment.config import MODULE_PLANS, DURATION_DISCOUNTS
     
+    # Рассчитываем базовую месячную цену
     base_price = 0
     for module_id in modules:
         if module_id in MODULE_PLANS:
             base_price += MODULE_PLANS[module_id]['price_rub']
     
+    # Применяем скидку для многомесячных подписок
     if duration in DURATION_DISCOUNTS:
         multiplier = DURATION_DISCOUNTS[duration]['multiplier']
         total_price = int(base_price * multiplier)
@@ -2505,10 +2542,15 @@ def register_payment_handlers(app):
                     pattern="^(enable|disable)_auto_renewal_payment$"
                 ),
                 CallbackQueryHandler(
+                    handle_back_to_duration_selection,  # ДОБАВИТЬ
+                    pattern="^back_to_duration_selection$"
+                ),
+                CallbackQueryHandler(
                     handle_payment_confirmation_with_recurrent, 
                     pattern="^final_confirm_payment$"
                 ),
                 CallbackQueryHandler(cancel_payment, pattern="^cancel_payment$"),
+                
             ]
         },
         fallbacks=[
@@ -2527,6 +2569,13 @@ def register_payment_handlers(app):
             pattern="^check_payment$"
         ),
         group=-45
+    )
+    app.add_handler(
+        CallbackQueryHandler(
+            handle_payment_back,
+            pattern="^payment_back$"
+        ),
+        group=-48
     )
     # 2. Регистрируем ConversationHandler с высоким приоритетом
     app.add_handler(payment_conv, group=-50)
