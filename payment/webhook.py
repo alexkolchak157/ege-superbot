@@ -263,7 +263,7 @@ async def is_payment_processed(order_id: str, status: str) -> bool:
         logger.error(f"Error checking payment processing: {e}")
         return False
 
-async def notify_user_success(bot, order_id: str):
+async def notify_user_success_safe(bot, order_id: str):
     """Отправляет уведомление об успешной оплате с защитой от дублирования."""
     import aiosqlite
     

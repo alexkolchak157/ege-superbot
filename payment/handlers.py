@@ -20,6 +20,14 @@ from telegram.ext import (
     MessageHandler,
     filters
 )
+from .promo_handler import (
+    PromoCodeManager, 
+    show_promo_input, 
+    handle_promo_input,
+    skip_promo,
+    retry_promo,
+    PROMO_INPUT
+)
 from .auto_renewal_consent import (
     AutoRenewalConsent, 
     show_auto_renewal_choice,
@@ -55,6 +63,7 @@ FINAL_CONFIRMATION = 7
 logger = logging.getLogger(__name__)
 
 # Состояния для платежного процесса
+PROMO_INPUT = "promo_input"
 CHOOSING_PLAN = "choosing_plan"
 CHOOSING_DURATION = "choosing_duration"  
 ENTERING_EMAIL = "entering_email"
@@ -62,7 +71,11 @@ CONFIRMING = "confirming"
 CHOOSING_MODULES = "choosing_modules"  # Новое состояние
 AUTO_RENEWAL_CHOICE = "auto_renewal_choice"  # НОВОЕ
 FINAL_CONSENT = "final_consent"              # НОВОЕ
-PAYMENT_STATES = [CHOOSING_PLAN, CHOOSING_MODULES, CHOOSING_DURATION, ENTERING_EMAIL,FINAL_CONSENT, AUTO_RENEWAL_CHOICE, CONFIRMING]
+PAYMENT_STATES = [
+    CHOOSING_PLAN, CHOOSING_MODULES, CHOOSING_DURATION, 
+    PROMO_INPUT,  # НОВОЕ состояние
+    ENTERING_EMAIL, FINAL_CONSENT, AUTO_RENEWAL_CHOICE, CONFIRMING
+]
 
 # Инициализация менеджеров
 subscription_manager = SubscriptionManager()
@@ -1059,7 +1072,7 @@ async def show_duration_options(update: Update, context: ContextTypes.DEFAULT_TY
 
 @safe_handler()
 async def handle_duration_selection(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обрабатывает выбор длительности подписки с правильным расчетом цены."""
+    """Обрабатывает выбор длительности подписки и переходит к промокоду."""
     query = update.callback_query
     await query.answer()
     
@@ -1103,6 +1116,7 @@ async def handle_duration_selection(update: Update, context: ContextTypes.DEFAUL
         
         # ВАЖНО: Сохраняем правильную цену в контекст
         context.user_data['total_price'] = total_price
+        context.user_data['original_price'] = total_price  # Сохраняем оригинальную цену для промокода
         context.user_data['selected_duration'] = duration
         
         logger.info(f"Selected duration: {duration} months, calculated price: {total_price}₽")
@@ -1126,50 +1140,12 @@ async def handle_duration_selection(update: Update, context: ContextTypes.DEFAUL
         # Сохраняем имя плана для использования в следующих шагах
         context.user_data['plan_name'] = plan_name
         
-        # Получаем label для длительности
-        duration_label = DURATION_DISCOUNTS.get(duration, {}).get('label', f'{duration} мес.')
+        # ==== ИЗМЕНЕНО: Переходим к вводу промокода вместо автопродления ====
+        # Импортируем функцию показа промокода
+        from .promo_handler import show_promo_input
         
-        # Формируем текст подтверждения
-        text = f"""📋 <b>Подтверждение заказа</b>
-
-🎯 <b>Выбранный план:</b> {plan_name}
-📅 <b>Период:</b> {duration_label}
-💰 <b>Стоимость:</b> {total_price} ₽
-
-"""
-        
-        # Добавляем информацию о скидке если есть
-        if duration in DURATION_DISCOUNTS and duration > 1:
-            if plan_id.startswith('custom_'):
-                base_price = plan_info.get('price_rub', 0)
-            else:
-                base_price = plan_info.get('price_rub', 999)
-            
-            full_price = base_price * duration
-            discount = full_price - total_price
-            if discount > 0:
-                discount_percent = round((discount / full_price) * 100)
-                text += f"💡 <b>Ваша экономия:</b> {discount} ₽ ({discount_percent}%)\n\n"
-        
-        text += "Хотите включить автоматическое продление подписки?"
-        
-        # Кнопки для выбора автопродления
-        keyboard = [
-            [
-                InlineKeyboardButton("✅ Да, включить автопродление", callback_data="enable_auto_renewal_payment"),
-                InlineKeyboardButton("❌ Нет, спасибо", callback_data="disable_auto_renewal_payment")
-            ],
-            [InlineKeyboardButton("⬅️ Назад", callback_data="back_to_duration_selection")],
-            [InlineKeyboardButton("❌ Отменить", callback_data="cancel_payment")]
-        ]
-        
-        await query.edit_message_text(
-            text,
-            parse_mode=ParseMode.HTML,
-            reply_markup=InlineKeyboardMarkup(keyboard)
-        )
-        
-        return CONFIRMING
+        # Переходим к экрану ввода промокода
+        return await show_promo_input(update, context)
         
     except ValueError:
         logger.error(f"Invalid duration in callback_data: {query.data}")
@@ -1730,7 +1706,7 @@ async def show_auto_renewal_terms(update: Update, context: ContextTypes.DEFAULT_
     )
 
 async def handle_payment_confirmation_with_recurrent(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """ИСПРАВЛЕННЫЙ обработчик подтверждения платежа с поддержкой рекуррентных платежей и duration_months."""
+    """ИСПРАВЛЕННЫЙ обработчик подтверждения платежа с поддержкой рекуррентных платежей, duration_months и промокодов."""
     
     # Проверяем источник вызова и корректно обрабатываем
     if update.callback_query:
@@ -1748,6 +1724,12 @@ async def handle_payment_confirmation_with_recurrent(update: Update, context: Co
     user_id = update.effective_user.id
     enable_auto_renewal = context.user_data.get('enable_auto_renewal', False)
     
+    # ==== НОВОЕ: Получаем данные о промокоде ====
+    promo_code = context.user_data.get('promo_code')
+    promo_discount = context.user_data.get('promo_discount', 0)
+    original_price = context.user_data.get('original_price')
+    promo_data = context.user_data.get('promo_data')
+    
     if not all([plan_id, user_email]):
         error_text = (
             "❌ Ошибка: недостаточно данных для создания платежа.\n"
@@ -1760,21 +1742,30 @@ async def handle_payment_confirmation_with_recurrent(update: Update, context: Co
             await message.reply_text(error_text)
         return ConversationHandler.END
     
-    # Рассчитываем стоимость
-    if plan_id.startswith('custom_'):
-        modules = context.user_data.get('selected_modules', [])
-        custom_plan_data = {
-            'price_rub': calculate_custom_price(modules, 1),
-            'modules': modules
-        }
-        total_price_rub = calculate_subscription_price(plan_id, duration_months, custom_plan_data)
+    # ==== ИЗМЕНЕНО: Проверяем, есть ли уже цена со скидкой в контексте ====
+    if promo_code and 'total_price' in context.user_data:
+        # Если промокод применен, используем цену со скидкой
+        total_price_rub = context.user_data['total_price']
     else:
-        from payment.config import MODULE_PLANS, SUBSCRIPTION_PLANS
-        plan_info = SUBSCRIPTION_PLANS.get(plan_id, MODULE_PLANS.get(plan_id))
-        total_price_rub = calculate_subscription_price(plan_id, duration_months, plan_info)
+        # Иначе рассчитываем стандартную цену
+        if plan_id.startswith('custom_'):
+            modules = context.user_data.get('selected_modules', [])
+            custom_plan_data = {
+                'price_rub': calculate_custom_price(modules, 1),
+                'modules': modules
+            }
+            total_price_rub = calculate_subscription_price(plan_id, duration_months, custom_plan_data)
+        else:
+            from payment.config import MODULE_PLANS, SUBSCRIPTION_PLANS
+            plan_info = SUBSCRIPTION_PLANS.get(plan_id, MODULE_PLANS.get(plan_id))
+            total_price_rub = calculate_subscription_price(plan_id, duration_months, plan_info)
     
     # Конвертируем в копейки
     total_price_kopecks = total_price_rub * 100
+    
+    # ==== НОВОЕ: Сохраняем оригинальную цену для отображения скидки ====
+    if not original_price:
+        original_price = total_price_rub
     
     try:
         # Создаем менеджер подписок
@@ -1797,6 +1788,10 @@ async def handle_payment_confirmation_with_recurrent(update: Update, context: Co
             description = f"{plan_name} (1 месяц)"
         else:
             description = f"{plan_name} ({duration_months} месяцев)"
+        
+        # ==== НОВОЕ: Добавляем информацию о промокоде в описание ====
+        if promo_code:
+            description += f" с промокодом {promo_code}"
         
         # Импортируем и создаем объект TinkoffPayment
         from payment.tinkoff import TinkoffPayment
@@ -1836,7 +1831,10 @@ async def handle_payment_confirmation_with_recurrent(update: Update, context: Co
                 "plan_id": plan_id,
                 "duration_months": str(duration_months),
                 "enable_auto_renewal": str(enable_auto_renewal),
-                "modules": ','.join(context.user_data.get('selected_modules', [])) if plan_id.startswith('custom_') else ''
+                "modules": ','.join(context.user_data.get('selected_modules', [])) if plan_id.startswith('custom_') else '',
+                "promo_code": promo_code or "",  # ==== НОВОЕ ====
+                "promo_discount": str(promo_discount) if promo_discount else "0",  # ==== НОВОЕ ====
+                "original_price": str(original_price * 100) if promo_code else ""  # ==== НОВОЕ ====
             },
             enable_recurrent=enable_auto_renewal,
             customer_key=str(user_id) if enable_auto_renewal else None
@@ -1856,7 +1854,10 @@ async def handle_payment_confirmation_with_recurrent(update: Update, context: Co
                         'duration_months': duration_months,
                         'enable_recurrent': enable_auto_renewal,
                         'email': user_email,
-                        'plan_name': plan_name
+                        'plan_name': plan_name,
+                        'promo_code': promo_code,  # ==== НОВОЕ ====
+                        'promo_discount': promo_discount,  # ==== НОВОЕ ====
+                        'original_price': original_price * 100 if promo_code else None  # ==== НОВОЕ ====
                     }
                     
                     # Если это кастомный план, добавляем модули
@@ -1868,8 +1869,8 @@ async def handle_payment_confirmation_with_recurrent(update: Update, context: Co
                         INSERT INTO payments (
                             order_id, user_id, payment_id, amount_kopecks,
                             status, created_at, plan_id, metadata,
-                            auto_renewal_enabled
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            auto_renewal_enabled, promo_code, promo_discount
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                         """,
                         (
                             order_id, 
@@ -1880,7 +1881,9 @@ async def handle_payment_confirmation_with_recurrent(update: Update, context: Co
                             datetime.now().isoformat(), 
                             plan_id,
                             json.dumps(metadata),
-                            1 if enable_auto_renewal else 0
+                            1 if enable_auto_renewal else 0,
+                            promo_code,  # ==== НОВОЕ ====
+                            promo_discount  # ==== НОВОЕ ====
                         )
                     )
                     await conn.commit()
@@ -1899,20 +1902,33 @@ async def handle_payment_confirmation_with_recurrent(update: Update, context: Co
                         )
                         await conn.commit()
                         
-                    logger.info(f"Payment info saved: order_id={order_id}, amount={total_price_kopecks} kopecks")
+                    logger.info(f"Payment info saved: order_id={order_id}, amount={total_price_kopecks} kopecks, promo={promo_code}")
                     
             except Exception as e:
                 logger.error(f"Failed to save payment info: {e}")
             
-            # Формируем сообщение с кнопкой оплаты
-            success_text = f"""✅ <b>Платеж создан успешно!</b>
+            # ==== ИЗМЕНЕНО: Формируем сообщение с учетом промокода ====
+            if promo_code:
+                success_text = f"""✅ <b>Платеж создан успешно!</b>
 
-        📦 План: <b>{plan_name}</b>
-        ⏱ Срок: <b>{duration_months} мес.</b>
-        💰 К оплате: <b>{total_price_rub} ₽</b>
-        {"🔄 Автопродление: включено" if enable_auto_renewal else "💳 Разовая оплата"}
+📦 План: <b>{plan_name}</b>
+⏱ Срок: <b>{duration_months} мес.</b>
+🎁 Промокод: <code>{promo_code}</code>
+💰 Цена: <s>{original_price} ₽</s>
+🎯 К оплате со скидкой: <b>{total_price_rub} ₽</b>
+💸 Ваша выгода: <b>{promo_discount} ₽</b>
+{"🔄 Автопродление: включено" if enable_auto_renewal else "💳 Разовая оплата"}
 
-        Нажмите кнопку ниже для перехода к оплате:"""
+Нажмите кнопку ниже для перехода к оплате:"""
+            else:
+                success_text = f"""✅ <b>Платеж создан успешно!</b>
+
+📦 План: <b>{plan_name}</b>
+⏱ Срок: <b>{duration_months} мес.</b>
+💰 К оплате: <b>{total_price_rub} ₽</b>
+{"🔄 Автопродление: включено" if enable_auto_renewal else "💳 Разовая оплата"}
+
+Нажмите кнопку ниже для перехода к оплате:"""
             
             keyboard = [
                 [InlineKeyboardButton("💳 Оплатить", url=payment_url)],
@@ -2456,6 +2472,14 @@ def register_payment_handlers(app):
                 CallbackQueryHandler(show_individual_modules, pattern="^pay_individual_modules$"),
                 CallbackQueryHandler(show_modular_interface, pattern="^back_to_main$"),
                 CallbackQueryHandler(handle_my_subscriptions, pattern="^my_subscriptions$")
+            ],
+            PROMO_INPUT: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_promo_input),
+                CallbackQueryHandler(skip_promo, pattern="^skip_promo$"),
+                CallbackQueryHandler(retry_promo, pattern="^retry_promo$"),
+                CallbackQueryHandler(show_promo_input, pattern="^retry_promo$"),
+                CallbackQueryHandler(handle_back_to_duration_selection, pattern="^back_to_duration_selection$"),
+                CallbackQueryHandler(cancel_payment, pattern="^cancel_payment$")
             ],
             
             CHOOSING_MODULES: [

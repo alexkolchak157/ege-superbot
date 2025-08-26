@@ -5,10 +5,10 @@ from telegram import Update
 from telegram.ext import ContextTypes, CommandHandler, Application, CallbackQueryHandler
 from telegram.constants import ParseMode
 from functools import wraps
-
+import aiosqlite
 from core import config
 from .subscription_manager import SubscriptionManager
-
+DATABASE_PATH = 'quiz_async.db'
 logger = logging.getLogger(__name__)
 
 
@@ -165,6 +165,193 @@ async def cmd_grant_subscription(update: Update, context: ContextTypes.DEFAULT_T
     except Exception as e:
         logger.exception(f"Error granting subscription: {e}")
         await update.message.reply_text(f"❌ Ошибка: {e}")
+
+@admin_only
+async def cmd_promo_usage(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Показывает детальную статистику использования промокодов."""
+    
+    if not context.args:
+        # Показываем общую статистику
+        try:
+            async with aiosqlite.connect(DATABASE_FILE) as conn:
+                # Общая статистика
+                cursor = await conn.execute("""
+                    SELECT 
+                        COUNT(DISTINCT promo_code) as total_codes,
+                        COUNT(DISTINCT user_id) as unique_users,
+                        COUNT(*) as total_uses,
+                        SUM(discount_applied) as total_discount
+                    FROM promo_usage_log
+                """)
+                stats = await cursor.fetchone()
+                
+                text = "📊 <b>Статистика использования промокодов</b>\n\n"
+                
+                if stats and stats[0]:
+                    text += f"📋 Уникальных кодов: {stats[0]}\n"
+                    text += f"👥 Уникальных пользователей: {stats[1]}\n"
+                    text += f"🔄 Всего использований: {stats[2]}\n"
+                    text += f"💸 Общая скидка: {stats[3] or 0} ₽\n\n"
+                else:
+                    text += "Промокоды еще не использовались\n\n"
+                
+                # Последние использования
+                cursor = await conn.execute("""
+                    SELECT 
+                        p.promo_code,
+                        p.user_id,
+                        u.first_name,
+                        p.discount_applied,
+                        p.used_at
+                    FROM promo_usage_log p
+                    LEFT JOIN users u ON p.user_id = u.user_id
+                    ORDER BY p.used_at DESC
+                    LIMIT 10
+                """)
+                recent = await cursor.fetchall()
+                
+                if recent:
+                    text += "<b>Последние использования:</b>\n"
+                    for code, user_id, name, discount, used_at in recent:
+                        user_text = f"{name or 'User'} ({user_id})"
+                        text += f"• <code>{code}</code> - {user_text} - {discount}₽\n"
+                
+                text += "\n<b>Команды:</b>\n"
+                text += "/promo_usage <code> - детали по коду\n"
+                text += "/promo_usage user <user_id> - история пользователя"
+                
+                await update.message.reply_text(text, parse_mode=ParseMode.HTML)
+                
+        except Exception as e:
+            logger.error(f"Error getting promo usage stats: {e}")
+            await update.message.reply_text(f"❌ Ошибка: {e}")
+    
+    elif context.args[0].lower() == 'user' and len(context.args) > 1:
+        # Показываем историю конкретного пользователя
+        try:
+            user_id = int(context.args[1])
+            
+            async with aiosqlite.connect(DATABASE_FILE) as conn:
+                cursor = await conn.execute("""
+                    SELECT 
+                        promo_code,
+                        discount_applied,
+                        original_price,
+                        final_price,
+                        order_id,
+                        used_at
+                    FROM promo_usage_log
+                    WHERE user_id = ?
+                    ORDER BY used_at DESC
+                """, (user_id,))
+                
+                usage = await cursor.fetchall()
+                
+                text = f"🔍 <b>История промокодов пользователя {user_id}</b>\n\n"
+                
+                if usage:
+                    total_discount = 0
+                    for code, discount, original, final, order_id, used_at in usage:
+                        text += f"📅 {used_at}\n"
+                        text += f"   Промокод: <code>{code}</code>\n"
+                        text += f"   Скидка: {discount} ₽\n"
+                        text += f"   Цена: {original/100 if original else 0}₽ → {final/100 if final else 0}₽\n"
+                        if order_id:
+                            text += f"   Заказ: <code>{order_id}</code>\n"
+                        text += "\n"
+                        total_discount += discount or 0
+                    
+                    text += f"💰 <b>Общая экономия: {total_discount} ₽</b>"
+                else:
+                    text += "Пользователь не использовал промокоды"
+                
+                await update.message.reply_text(text, parse_mode=ParseMode.HTML)
+                
+        except ValueError:
+            await update.message.reply_text("❌ Неверный формат user_id")
+        except Exception as e:
+            logger.error(f"Error getting user promo history: {e}")
+            await update.message.reply_text(f"❌ Ошибка: {e}")
+    
+    else:
+        # Показываем детали конкретного промокода
+        promo_code = context.args[0].upper()
+        
+        try:
+            async with aiosqlite.connect(DATABASE_FILE) as conn:
+                # Информация о промокоде
+                cursor = await conn.execute("""
+                    SELECT 
+                        discount_percent,
+                        discount_amount,
+                        usage_limit,
+                        used_count,
+                        is_active,
+                        created_at
+                    FROM promo_codes
+                    WHERE code = ?
+                """, (promo_code,))
+                
+                promo_info = await cursor.fetchone()
+                
+                if not promo_info:
+                    await update.message.reply_text(f"❌ Промокод {promo_code} не найден")
+                    return
+                
+                text = f"🎁 <b>Промокод {promo_code}</b>\n\n"
+                
+                discount_percent, discount_amount, limit, used, active, created = promo_info
+                
+                text += f"📊 Скидка: "
+                if discount_percent:
+                    text += f"{discount_percent}%\n"
+                else:
+                    text += f"{discount_amount} ₽\n"
+                
+                text += f"📈 Использований: {used}"
+                if limit:
+                    text += f" из {limit}\n"
+                else:
+                    text += " (без лимита)\n"
+                
+                text += f"✅ Статус: {'Активен' if active else 'Неактивен'}\n"
+                text += f"📅 Создан: {created}\n\n"
+                
+                # Кто использовал
+                cursor = await conn.execute("""
+                    SELECT 
+                        p.user_id,
+                        u.first_name,
+                        u.username,
+                        p.discount_applied,
+                        p.used_at
+                    FROM promo_usage_log p
+                    LEFT JOIN users u ON p.user_id = u.user_id
+                    WHERE p.promo_code = ?
+                    ORDER BY p.used_at DESC
+                    LIMIT 20
+                """, (promo_code,))
+                
+                users = await cursor.fetchall()
+                
+                if users:
+                    text += "<b>Использовали:</b>\n"
+                    for user_id, name, username, discount, used_at in users:
+                        user_text = f"{name or 'User'}"
+                        if username:
+                            user_text += f" (@{username})"
+                        user_text += f" [{user_id}]"
+                        
+                        text += f"• {user_text}\n"
+                        text += f"   {used_at} | -{discount}₽\n"
+                else:
+                    text += "Еще никто не использовал"
+                
+                await update.message.reply_text(text, parse_mode=ParseMode.HTML)
+                
+        except Exception as e:
+            logger.error(f"Error getting promo details: {e}")
+            await update.message.reply_text(f"❌ Ошибка: {e}")
 
 @admin_only
 async def cmd_check_user_subscription(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1294,7 +1481,7 @@ def register_admin_commands(app: Application):
     app.add_handler(CommandHandler("stats", cmd_subscribers_count))
     app.add_handler(CommandHandler("check_admin", cmd_check_admin))
     app.add_handler(CommandHandler("list_subscribers", cmd_list_active_subscribers))
-    
+    app.add_handler(CommandHandler("promo_usage", cmd_promo_usage))
     # Обработчики для callback кнопок
     app.add_handler(CallbackQueryHandler(
         handle_export_payments, pattern="^admin:export_payments$"
