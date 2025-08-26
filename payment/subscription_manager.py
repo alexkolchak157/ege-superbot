@@ -68,6 +68,92 @@ class SubscriptionManager:
             logger.error(f"Error getting failed renewals: {e}")
             return []
 
+    async def _send_activation_notification(self, user_id: int, plan_id: str, duration_months: int):
+        """
+        Отправляет уведомление пользователю об активации подписки.
+        
+        Args:
+            user_id: ID пользователя
+            plan_id: ID плана
+            duration_months: Длительность подписки в месяцах
+        """
+        try:
+            # Получаем бота из контекста если есть
+            from telegram import Bot
+            from core.config import BOT_TOKEN
+            
+            bot = Bot(token=BOT_TOKEN)
+            
+            # Формируем текст уведомления
+            # Используем правильные названия с префиксом module_
+            plan_names = {
+                'trial_7days': '🎁 Пробный период (7 дней)',
+                'package_full': '🥇 Полный пакет',
+                'package_second': '🥈 Вторая часть',
+                'module_test_part': '📝 Тестовая часть',
+                'module_task19': '🎯 Задание 19',
+                'module_task20': '📖 Задание 20',
+                'module_task24': '💎 Задание 24',
+                'module_task25': '✍️ Задание 25',
+                # Для обратной совместимости
+                'test_part': '📝 Тестовая часть',
+                'task19': '🎯 Задание 19',
+                'task20': '📖 Задание 20',
+                'task24': '💎 Задание 24',
+                'task25': '✍️ Задание 25'
+            }
+            
+            plan_name = plan_names.get(plan_id, plan_id)
+            
+            # Для кастомных планов
+            if plan_id.startswith('custom_'):
+                # Извлекаем модули из plan_id
+                modules_str = plan_id.replace('custom_', '')
+                modules_list = []
+                
+                # Парсим названия модулей
+                parts = modules_str.split('_')
+                for part in parts:
+                    if part == 'testpart':
+                        modules_list.append('тестовая часть')
+                    elif part.startswith('task'):
+                        modules_list.append(f'задание {part[4:]}')
+                
+                plan_name = f"Индивидуальный набор: {', '.join(modules_list)}"
+            
+            # Определяем срок
+            if plan_id == 'trial_7days':
+                duration_text = "7 дней"
+            elif duration_months == 1:
+                duration_text = "1 месяц"
+            else:
+                duration_text = f"{duration_months} месяца" if duration_months in [2, 3, 4] else f"{duration_months} месяцев"
+            
+            message = f"""✅ <b>Подписка успешно активирована!</b>
+
+📦 Тариф: <b>{plan_name}</b>
+⏱ Срок действия: <b>{duration_text}</b>
+
+Теперь вам доступны все материалы выбранного тарифа.
+
+Используйте /menu для навигации по разделам.
+Проверить статус подписки: /my_subscriptions
+
+Приятного обучения! 🎓"""
+            
+            await bot.send_message(
+                chat_id=user_id,
+                text=message,
+                parse_mode='HTML'
+            )
+            
+            logger.info(f"Sent activation notification to user {user_id}")
+            
+        except Exception as e:
+            # Не критичная ошибка - просто логируем
+            logger.warning(f"Could not send activation notification: {e}")
+            # Не прерываем процесс активации - подписка уже активирована
+
     async def increment_renewal_failures(self, user_id: int):
         """Увеличивает счетчик неудачных попыток автопродления."""
         try:
@@ -385,25 +471,47 @@ class SubscriptionManager:
             return None
 
     def _extract_modules_from_plan_id(self, plan_id: str) -> List[str]:
-        """Извлекает модули из custom plan_id."""
-        modules = []
+        """
+        Извлекает модули из custom plan_id.
+        Возвращает нормализованные названия модулей (без префикса module_).
+        
+        Примеры:
+        - custom_testpart_task19 -> ['test_part', 'task19']
+        - custom_module_test_part_module_task19 -> ['test_part', 'task19']
+        """
+        if not plan_id.startswith('custom_'):
+            return []
         
         # Убираем префикс custom_
-        plan_parts = plan_id.replace('custom_', '')
+        modules_str = plan_id.replace('custom_', '')
+        modules = []
         
-        # Проверяем наличие каждого модуля в имени
-        module_mapping = {
-            'test_part': 'test_part',
-            'test': 'test_part',
-            'task19': 'task19',
-            'task20': 'task20', 
-            'task24': 'task24',
-            'task25': 'task25'
-        }
+        # Разбиваем по подчеркиванию
+        parts = modules_str.split('_')
         
-        for key, module in module_mapping.items():
-            if key in plan_parts and module not in modules:
-                modules.append(module)
+        # Обрабатываем каждую часть
+        i = 0
+        while i < len(parts):
+            # Пропускаем слово "module" если оно встречается
+            if parts[i] == 'module':
+                i += 1
+                continue
+                
+            # Проверяем на составные названия модулей
+            if parts[i] == 'test' and i + 1 < len(parts) and parts[i + 1] == 'part':
+                modules.append('test_part')
+                i += 2
+            elif parts[i] == 'testpart':
+                modules.append('test_part')
+                i += 1
+            elif parts[i].startswith('task'):
+                modules.append(parts[i])
+                i += 1
+            else:
+                # Неизвестный модуль - пробуем добавить как есть
+                if parts[i]:  # Игнорируем пустые строки
+                    modules.append(parts[i])
+                i += 1
         
         return modules
 
@@ -1220,104 +1328,138 @@ class SubscriptionManager:
             return False
 
     async def _activate_custom_modules(self, user_id: int, plan_id: str, 
-                                          duration_months: int, metadata: dict) -> bool:
-            """
-            Активирует кастомные модули для пользователя.
+                                      duration_months: int, metadata: dict) -> bool:
+        """
+        Активирует кастомные модули для пользователя.
+        Работает с модулями в формате module_* из конфигурации.
+        """
+        try:
+            from datetime import datetime, timedelta
             
-            Args:
-                user_id: ID пользователя
-                plan_id: ID кастомного плана (например, custom_testpart_task19)
-                duration_months: Длительность в месяцах
-                metadata: Метаданные с информацией о модулях
-                
-            Returns:
-                True при успешной активации
-            """
-            try:
-                # Получаем список модулей из metadata или из plan_id
-                modules = metadata.get('modules', [])
-                
-                # ВАЖНО: Правильно парсим модули в зависимости от типа
-                if isinstance(modules, str):
-                    # Если modules - это строка, нужно её разбить
-                    if ',' in modules:
-                        # Модули разделены запятыми: "testpart,task19"
-                        modules = [m.strip() for m in modules.split(',') if m.strip()]
-                    elif '_' in modules:
-                        # Модули разделены подчеркиванием: "testpart_task19"
-                        modules = [m.strip() for m in modules.split('_') if m.strip()]
-                    else:
-                        # Одиночный модуль
-                        modules = [modules] if modules else []
-                elif not modules:
-                    # Если модулей нет в metadata, парсим из plan_id
-                    # custom_testpart_task19 -> ['testpart', 'task19']
-                    if plan_id.startswith('custom_'):
-                        modules_str = plan_id.replace('custom_', '')
-                        if modules_str:
-                            modules = [m.strip() for m in modules_str.split('_') if m.strip()]
+            # Получаем список модулей из metadata или из plan_id
+            modules = metadata.get('modules', [])
+            
+            # Если модули не в metadata, извлекаем из plan_id
+            if not modules:
+                modules = self._extract_modules_from_plan_id(plan_id)
+            
+            # Правильно парсим модули в зависимости от типа
+            if isinstance(modules, str):
+                if ',' in modules:
+                    modules = [m.strip() for m in modules.split(',') if m.strip()]
+                elif '_' in modules:
+                    # Для строк вида "testpart_task19"
+                    temp_modules = []
+                    parts = modules.split('_')
+                    i = 0
+                    while i < len(parts):
+                        if parts[i] == 'test' and i + 1 < len(parts) and parts[i + 1] == 'part':
+                            temp_modules.append('test_part')
+                            i += 2
+                        elif parts[i] == 'testpart':
+                            temp_modules.append('test_part')
+                            i += 1
+                        elif parts[i].startswith('task'):
+                            temp_modules.append(parts[i])
+                            i += 1
                         else:
-                            modules = []
+                            temp_modules.append(parts[i])
+                            i += 1
+                    modules = temp_modules
+                else:
+                    modules = [modules]
+            
+            logger.info(f"Activating custom modules for user {user_id}: {modules}")
+            
+            # Маппинг всех возможных вариантов названий к нормализованным модулям
+            # Ключ - то что может прийти, значение - то что должно быть в БД
+            module_mapping = {
+                # Варианты для test_part
+                'test_part': 'test_part',
+                'testpart': 'test_part',
+                'module_test_part': 'test_part',
+                
+                # Варианты для заданий
+                'task19': 'task19',
+                'module_task19': 'task19',
+                
+                'task20': 'task20',
+                'module_task20': 'task20',
+                
+                'task24': 'task24',
+                'module_task24': 'task24',
+                
+                'task25': 'task25',
+                'module_task25': 'task25'
+            }
+            
+            # Нормализуем модули
+            normalized_modules = []
+            for module in modules:
+                # Приводим к нижнему регистру для сравнения
+                module_lower = module.lower().strip()
+                
+                # Проверяем прямое соответствие
+                if module_lower in module_mapping:
+                    normalized = module_mapping[module_lower]
+                    if normalized not in normalized_modules:
+                        normalized_modules.append(normalized)
+                    logger.info(f"Module {module} normalized to {normalized}")
+                else:
+                    # Если не нашли в маппинге, пробуем убрать префикс module_
+                    if module_lower.startswith('module_'):
+                        clean_module = module_lower[7:]  # Убираем 'module_'
+                        if clean_module in module_mapping:
+                            normalized = module_mapping[clean_module]
+                            if normalized not in normalized_modules:
+                                normalized_modules.append(normalized)
+                            logger.info(f"Module {module} normalized to {normalized}")
+                        else:
+                            logger.warning(f"Unknown module after removing prefix: {clean_module}")
                     else:
-                        modules = []
-                
-                # Если модули не определены, возвращаем False
-                if not modules:
-                    logger.error(f"No modules found for custom plan {plan_id}")
-                    return False
-                
-                logger.info(f"Activating custom modules for user {user_id}: {modules}")
-                
-                # Рассчитываем дату истечения
-                expires_at = datetime.now() + timedelta(days=30 * duration_months)
-                
-                async with aiosqlite.connect(self.database_file) as conn:
-                    # Активируем каждый модуль
-                    for module_code in modules:
-                        # Пропускаем пустые значения
-                        if not module_code or len(module_code) <= 1:
-                            continue
-                        
-                        # Нормализуем название модуля
-                        if module_code == 'testpart':
-                            module_code = 'test_part'
-                        
-                        # Проверяем что это валидный модуль
-                        valid_modules = ['test_part', 'task19', 'task20', 'task24', 'task25']
-                        if module_code not in valid_modules:
-                            logger.warning(f"Skipping invalid module: {module_code}")
-                            continue
-                        
-                        logger.info(f"Activating module {module_code} until {expires_at}")
-                        
-                        # Удаляем старую подписку если есть
-                        await conn.execute(
-                            """
-                            DELETE FROM module_subscriptions 
-                            WHERE user_id = ? AND module_code = ?
-                            """,
-                            (user_id, module_code)
-                        )
-                        
-                        # Создаем новую подписку
-                        await conn.execute(
-                            """
-                            INSERT INTO module_subscriptions (
-                                user_id, module_code, plan_id, expires_at, 
-                                is_active, created_at
-                            ) VALUES (?, ?, ?, ?, 1, CURRENT_TIMESTAMP)
-                            """,
-                            (user_id, module_code, plan_id, expires_at.isoformat())
-                        )
-                    
-                    await conn.commit()
-                    
-                logger.info(f"Successfully activated {len(modules)} modules for user {user_id}")
-                return True
-                
-            except Exception as e:
-                logger.error(f"Error activating custom modules: {e}")
+                        logger.warning(f"Unknown module: {module}")
+            
+            if not normalized_modules:
+                logger.error(f"No valid modules found in {modules}")
                 return False
+            
+            logger.info(f"Final normalized modules: {normalized_modules}")
+            
+            # Рассчитываем дату истечения
+            expires_at = datetime.now() + timedelta(days=30 * duration_months)
+            
+            async with aiosqlite.connect(self.database_file) as conn:
+                for module_code in normalized_modules:
+                    # Удаляем старую подписку на модуль
+                    await conn.execute(
+                        """
+                        DELETE FROM module_subscriptions 
+                        WHERE user_id = ? AND module_code = ?
+                        """,
+                        (user_id, module_code)
+                    )
+                    
+                    # Создаем новую подписку
+                    await conn.execute(
+                        """
+                        INSERT INTO module_subscriptions (
+                            user_id, module_code, plan_id, expires_at, 
+                            is_active, created_at
+                        ) VALUES (?, ?, ?, ?, 1, CURRENT_TIMESTAMP)
+                        """,
+                        (user_id, module_code, plan_id, expires_at.isoformat())
+                    )
+                
+                await conn.commit()
+            
+            logger.info(f"Successfully activated {len(normalized_modules)} modules for user {user_id}: {normalized_modules}")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error activating custom modules: {e}")
+            import traceback
+            traceback.print_exc()
+            return False
 
     async def init_database(self):
         """Инициализирует базу данных с поддержкой автопродления."""
@@ -1894,74 +2036,6 @@ class SubscriptionManager:
         except Exception as e:
             logger.error(f"Error updating payment status: {e}")
             return False
-
-async def _send_activation_notification(self, user_id: int, plan_id: str, duration_months: int):
-        """
-        Отправляет уведомление пользователю об активации подписки.
-        
-        Args:
-            user_id: ID пользователя
-            plan_id: ID плана
-            duration_months: Длительность подписки в месяцах
-        """
-        try:
-            # Получаем бота из контекста если есть
-            from telegram import Bot
-            from core.config import BOT_TOKEN
-            
-            bot = Bot(token=BOT_TOKEN)
-            
-            # Формируем текст уведомления
-            plan_names = {
-                'trial_7days': '🎁 Пробный период (7 дней)',
-                'package_full': '🥇 Полный пакет',
-                'package_second': '🥈 Вторая часть',
-                'test_part': '📝 Тестовая часть',
-                'task19': '🎯 Задание 19',
-                'task20': '📖 Задание 20',
-                'task24': '💎 Задание 24',
-                'task25': '✍️ Задание 25'
-            }
-            
-            plan_name = plan_names.get(plan_id, plan_id)
-            
-            # Для кастомных планов
-            if plan_id.startswith('custom_'):
-                modules_str = plan_id.replace('custom_', '').replace('_', ', ')
-                plan_name = f"Индивидуальный набор: {modules_str}"
-            
-            # Определяем срок
-            if plan_id == 'trial_7days':
-                duration_text = "7 дней"
-            elif duration_months == 1:
-                duration_text = "1 месяц"
-            else:
-                duration_text = f"{duration_months} месяцев"
-            
-            message = f"""✅ <b>Подписка успешно активирована!</b>
-
-📦 Тариф: <b>{plan_name}</b>
-⏱ Срок действия: <b>{duration_text}</b>
-
-Теперь вам доступны все материалы выбранного тарифа.
-
-Используйте /menu для навигации по разделам.
-Проверить статус подписки: /my_subscriptions
-
-Приятного обучения! 🎓"""
-            
-            await bot.send_message(
-                chat_id=user_id,
-                text=message,
-                parse_mode='HTML'
-            )
-            
-            logger.info(f"Sent activation notification to user {user_id}")
-            
-        except Exception as e:
-            # Не критичная ошибка - просто логируем
-            logger.warning(f"Could not send activation notification: {e}")
-            # Не прерываем процесс активации
 
 def requires_subscription(module_code: Optional[str] = None):
     """
