@@ -37,6 +37,30 @@ class SubscriptionManager:
         """Совместимость со старым кодом."""
         return {'SUBSCRIPTION_MODE': self.subscription_mode}
 
+    async def is_payment_already_activated(self, order_id: str) -> bool:
+        """
+        Проверяет, был ли платеж уже активирован.
+        Защита от повторной обработки webhook.
+        """
+        try:
+            async with aiosqlite.connect(self.database_file) as conn:
+                cursor = await conn.execute(
+                    """
+                    SELECT status FROM payments 
+                    WHERE order_id = ?
+                    """,
+                    (order_id,)
+                )
+                result = await cursor.fetchone()
+                
+                if result and result[0] in ['completed', 'activated']:
+                    return True
+                return False
+                
+        except Exception as e:
+            logger.error(f"Error checking payment activation status: {e}")
+            return False
+
     async def get_failed_renewals(self, hours: int = 24) -> List[Dict]:
         """Получает список неудачных попыток автопродления."""
         try:
@@ -1192,95 +1216,108 @@ class SubscriptionManager:
             raise
     
     async def activate_subscription(self, order_id: str, payment_id: str = None) -> bool:
-            """Активирует подписку после успешной оплаты."""
-            try:
-                async with aiosqlite.connect(self.database_file) as conn:
-                    # Получаем информацию о платеже
-                    cursor = await conn.execute(
+        """Активирует подписку после успешной оплаты."""
+        try:
+            # НОВОЕ: Проверка на повторную активацию
+            if await self.is_payment_already_activated(order_id):
+                logger.info(f"Payment {order_id} already activated, skipping")
+                return True
+                
+            async with aiosqlite.connect(self.database_file) as conn:
+                # Получаем информацию о платеже
+                cursor = await conn.execute(
+                    """
+                    SELECT user_id, plan_id, metadata, status 
+                    FROM payments 
+                    WHERE order_id = ?
+                    """,
+                    (order_id,)
+                )
+                
+                payment_info = await cursor.fetchone()
+                
+                if not payment_info:
+                    logger.error(f"Payment not found for order {order_id}")
+                    return False
+                
+                user_id, plan_id, metadata_str, current_status = payment_info
+                
+                # Проверяем что платеж еще не обработан
+                if current_status in ['completed', 'activated']:
+                    logger.info(f"Payment {order_id} already activated")
+                    return True
+                
+                # Парсим metadata
+                try:
+                    metadata = json.loads(metadata_str) if metadata_str else {}
+                except:
+                    metadata = {}
+                
+                duration_months = metadata.get('duration_months', 1)
+                
+                logger.info(f"Activating subscription: user={user_id}, plan={plan_id}, duration={duration_months}")
+                
+                # Активируем в зависимости от типа плана
+                if plan_id.startswith('custom_'):
+                    # Кастомный план с модулями
+                    success = await self._activate_custom_modules(
+                        user_id, plan_id, duration_months, metadata
+                    )
+                else:
+                    # Стандартный план
+                    success = await self._activate_standard_plan(
+                        user_id, plan_id, duration_months
+                    )
+                
+                if success:
+                    # Обновляем статус платежа
+                    await conn.execute(
                         """
-                        SELECT user_id, plan_id, metadata, status 
-                        FROM payments 
+                        UPDATE payments 
+                        SET status = 'completed', 
+                            completed_at = CURRENT_TIMESTAMP,
+                            payment_id = COALESCE(payment_id, ?)
                         WHERE order_id = ?
                         """,
-                        (order_id,)
+                        (payment_id, order_id)
                     )
+                    await conn.commit()
+                    logger.info(f"Subscription activated successfully for order {order_id}")
+                    return True
+                else:
+                    logger.error(f"Failed to activate subscription for order {order_id}")
+                    return False
                     
-                    payment_info = await cursor.fetchone()
-                    
-                    if not payment_info:
-                        logger.error(f"Payment not found for order {order_id}")
-                        return False
-                    
-                    user_id, plan_id, metadata_str, current_status = payment_info
-                    
-                    # Проверяем что платеж еще не обработан
-                    if current_status in ['completed', 'activated']:
-                        logger.info(f"Payment {order_id} already activated")
-                        return True
-                    
-                    # Парсим metadata
-                    try:
-                        metadata = json.loads(metadata_str) if metadata_str else {}
-                    except:
-                        metadata = {}
-                    
-                    duration_months = metadata.get('duration_months', 1)
-                    
-                    logger.info(f"Activating subscription: user={user_id}, plan={plan_id}, duration={duration_months}")
-                    
-                    # Активируем в зависимости от типа плана
-                    if plan_id.startswith('custom_'):
-                        # Кастомный план с модулями
-                        success = await self._activate_custom_modules(
-                            user_id, plan_id, duration_months, metadata
-                        )
-                    else:
-                        # Стандартный план
-                        success = await self._activate_standard_plan(
-                            user_id, plan_id, duration_months
-                        )
-                    
-                    if success:
-                        # Обновляем статус платежа
-                        await conn.execute(
-                            """
-                            UPDATE payments 
-                            SET status = 'completed', 
-                                completed_at = CURRENT_TIMESTAMP,
-                                payment_id = COALESCE(payment_id, ?)
-                            WHERE order_id = ?
-                            """,
-                            (payment_id, order_id)
-                        )
-                        await conn.commit()
-                        
-                        # Отправляем уведомление пользователю
-                        await self._send_activation_notification(user_id, plan_id, duration_months)
-                        
-                        logger.info(f"Subscription activated successfully for order {order_id}")
-                        return True
-                    else:
-                        logger.error(f"Failed to activate subscription for order {order_id}")
-                        return False
-                        
-            except Exception as e:
-                logger.error(f"Error activating subscription: {e}")
-                import traceback
-                traceback.print_exc()
-                return False
+        except Exception as e:  # ← ИСПРАВЛЕНО: except теперь на правильном уровне отступа
+            logger.error(f"Error activating subscription: {e}")
+            import traceback
+            traceback.print_exc()
+            return False
 
     async def _activate_standard_plan(self, user_id: int, plan_id: str, duration_months: int) -> bool:
-        """Активирует стандартный план подписки."""
+        """
+        Активирует стандартный план подписки.
+        Обновленная версия с поддержкой модулей с префиксом module_.
+        """
         try:
+            from datetime import datetime, timedelta
+            
             # Определяем модули для плана
+            # Здесь используем нормализованные названия (без префикса module_)
             plan_modules = {
                 'trial_7days': ['test_part', 'task19'],
                 'package_full': ['test_part', 'task19', 'task20', 'task25'],
                 'package_second': ['task19', 'task20', 'task25'],
+                # Поддержка модулей с префиксом и без
+                'module_test_part': ['test_part'],
                 'test_part': ['test_part'],
+                'module_task19': ['task19'],
                 'task19': ['task19'],
+                'module_task20': ['task20'],
                 'task20': ['task20'],
+                'module_task24': ['task24'],
                 'task24': ['task24'],
+                'module_task25': ['task25'],
                 'task25': ['task25']
             }
             

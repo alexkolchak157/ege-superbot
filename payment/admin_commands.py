@@ -148,10 +148,10 @@ async def cmd_grant_subscription(update: Update, context: ContextTypes.DEFAULT_T
         
         # Уведомляем пользователя
         try:
+            # Отправляем простое уведомление без деталей
             await context.bot.send_message(
                 user_id,
-                f"🎁 Вам выдана подписка!\n\n"
-                f"План: {SUBSCRIPTION_PLANS[plan_id]['name']}\n"
+                f"🎁 Администратор активировал для вас подписку!\n\n"
                 f"Используйте /my_subscriptions для просмотра деталей."
             )
         except Exception as e:
@@ -352,18 +352,6 @@ async def cmd_activate_payment(update: Update, context: ContextTypes.DEFAULT_TYP
                 text += f"Действует до: {subscription_info.get('expires_at')}"
             
             await update.message.reply_text(text, parse_mode=ParseMode.HTML)
-            
-            # Уведомляем пользователя
-            try:
-                await context.bot.send_message(
-                    user_id,
-                    f"✅ Ваш платеж подтвержден!\n\n"
-                    f"План: {SUBSCRIPTION_PLANS[plan_id]['name']}\n"
-                    f"Подписка активирована.\n\n"
-                    f"Используйте /my_subscriptions для просмотра деталей."
-                )
-            except Exception as e:
-                logger.error(f"Failed to notify user {user_id}: {e}")
         else:
             await update.message.reply_text(
                 f"❌ Ошибка при активации платежа {order_id}\n"

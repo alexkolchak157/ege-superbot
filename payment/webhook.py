@@ -87,7 +87,10 @@ def verify_tinkoff_signature(data: dict, token: str, terminal_key: str, secret_k
 
 
 async def handle_webhook(request: web.Request) -> web.Response:
-    """Обработчик webhook от Tinkoff."""
+    """Обработчик webhook от Tinkoff с полной защитой от дублирования."""
+    import json
+    import aiosqlite
+    
     try:
         # Получаем данные
         data = await request.json()
@@ -104,7 +107,6 @@ async def handle_webhook(request: web.Request) -> web.Response:
             return web.Response(text='INVALID_SIGNATURE', status=400)
         
         # Извлекаем данные
-        # Извлекаем данные
         order_id = data.get('OrderId')
         status = data.get('Status')
         payment_id = data.get('PaymentId')
@@ -115,6 +117,23 @@ async def handle_webhook(request: web.Request) -> web.Response:
         
         logger.info(f"Processing payment: order={order_id}, status={status}, payment_id={payment_id}")
         
+        # Проверяем, не обработали ли мы уже этот webhook
+        async with aiosqlite.connect(config.DATABASE_PATH) as db:
+            # Пытаемся вставить запись о webhook
+            try:
+                await db.execute(
+                    """
+                    INSERT INTO webhook_logs (order_id, status, payment_id, raw_data)
+                    VALUES (?, ?, ?, ?)
+                    """,
+                    (order_id, status, payment_id, json.dumps(data))
+                )
+                await db.commit()
+            except aiosqlite.IntegrityError:
+                # Если запись уже существует - webhook дублируется
+                logger.info(f"Webhook for order {order_id} with status {status} already processed")
+                return web.Response(text='OK')
+        
         # Получаем subscription_manager
         subscription_manager = SubscriptionManager()
         
@@ -122,7 +141,7 @@ async def handle_webhook(request: web.Request) -> web.Response:
         if status in ['AUTHORIZED', 'CONFIRMED']:
             logger.info(f"Payment {order_id} confirmed with status {status}")
             
-            # ВАЖНО: Активируем подписку
+            # Активируем подписку
             success = await subscription_manager.activate_subscription(
                 order_id=order_id,
                 payment_id=payment_id
@@ -131,10 +150,10 @@ async def handle_webhook(request: web.Request) -> web.Response:
             if success:
                 logger.info(f"✅ Payment {order_id} successfully activated")
                 
-                # Уведомляем пользователя
+                # Отправляем уведомление только если оно еще не было отправлено
                 bot = request.app.get('bot')
                 if bot:
-                    await notify_user_success(bot, order_id)
+                    await notify_user_success_safe(bot, order_id)
                 
                 return web.Response(text='OK')
             else:
@@ -144,6 +163,14 @@ async def handle_webhook(request: web.Request) -> web.Response:
         elif status in ['REJECTED', 'CANCELED']:
             logger.warning(f"Payment {order_id} rejected/canceled")
             await subscription_manager.update_payment_status(order_id, 'failed')
+            
+            bot = request.app.get('bot')
+            if bot:
+                if status == 'REJECTED':
+                    await notify_user_rejected_safe(bot, order_id)
+                else:
+                    await notify_user_canceled_safe(bot, order_id)
+            
             return web.Response(text='OK')
         
         else:
@@ -237,41 +264,58 @@ async def is_payment_processed(order_id: str, status: str) -> bool:
         return False
 
 async def notify_user_success(bot, order_id: str):
-    """Уведомляет пользователя об успешной оплате."""
+    """Отправляет уведомление об успешной оплате с защитой от дублирования."""
+    import aiosqlite
+    
     try:
-        subscription_manager = SubscriptionManager()
-        payment_info = await subscription_manager.get_payment_by_order_id(order_id)
-        
-        if not payment_info:
-            logger.error(f"Payment info not found for order {order_id}")
-            return
+        # Проверяем и записываем факт отправки уведомления
+        async with aiosqlite.connect(config.DATABASE_PATH) as db:
+            # Получаем информацию о платеже
+            cursor = await db.execute(
+                "SELECT user_id, plan_id FROM payments WHERE order_id = ?",
+                (order_id,)
+            )
+            payment_info = await cursor.fetchone()
             
-        # Получаем информацию о плане
-        from .config import SUBSCRIPTION_PLANS
-        plan = SUBSCRIPTION_PLANS.get(payment_info['plan_id'], {})
-        plan_name = plan.get('name', payment_info['plan_id'])
+            if not payment_info:
+                logger.error(f"Payment info not found for order {order_id}")
+                return
+            
+            user_id, plan_id = payment_info
+            
+            # Пытаемся вставить запись об уведомлении
+            try:
+                await db.execute(
+                    """
+                    INSERT INTO notification_history (user_id, order_id, notification_type)
+                    VALUES (?, ?, 'success')
+                    """,
+                    (user_id, order_id)
+                )
+                await db.commit()
+            except aiosqlite.IntegrityError:
+                # Уведомление уже было отправлено
+                logger.info(f"Success notification for order {order_id} already sent")
+                return
         
-        # Формируем сообщение в зависимости от типа подписки
+        # Если дошли сюда - уведомление еще не отправлялось
+        subscription_manager = SubscriptionManager()
+        subscription_info = await subscription_manager.get_subscription_info(user_id)
+        
+        from .config import SUBSCRIPTION_PLANS
+        plan = SUBSCRIPTION_PLANS.get(plan_id, {})
+        plan_name = plan.get('name', plan_id)
+        
+        # Формируем сообщение
         message = f"✅ <b>Оплата прошла успешно!</b>\n\n"
         message += f"План: {plan_name}\n"
         
-        # Получаем детальную информацию о подписке
-        subscription_info = await subscription_manager.get_subscription_info(payment_info['user_id'])
-        
         if subscription_info and subscription_info.get('type') == 'modular':
-            # Модульная подписка
             modules = subscription_info.get('modules', [])
             if modules:
                 message += "\n<b>Активированные модули:</b>\n"
-                module_names = {
-                    'test_part': '📝 Тестовая часть',
-                    'task19': '🎯 Задание 19',
-                    'task20': '📖 Задание 20',
-                    'task24': '💎 Задание 24',
-                    'task25': '✍️ Задание 25'
-                }
                 for module in modules:
-                    message += f"• {module_names.get(module, module)}\n"
+                    message += f"• {module}\n"
         
         if subscription_info and subscription_info.get('expires_at'):
             message += f"\n📅 Действует до: {subscription_info['expires_at'].strftime('%d.%m.%Y')}\n"
@@ -281,12 +325,12 @@ async def notify_user_success(bot, order_id: str):
         
         # Отправляем сообщение
         await bot.send_message(
-            chat_id=payment_info['user_id'],
+            chat_id=user_id,
             text=message,
             parse_mode='HTML'
         )
         
-        logger.info(f"Successfully notified user {payment_info['user_id']} about payment {order_id}")
+        logger.info(f"Successfully notified user {user_id} about payment {order_id}")
         
     except Exception as e:
         logger.exception(f"Failed to notify user about successful payment: {e}")
@@ -342,21 +386,44 @@ async def handle_rebill_id(order_id: str, rebill_id: str, user_id: int):
         logger.error(f"Error handling rebill_id: {e}")
 
 async def notify_user_rejected(bot, order_id: str):
-    """Уведомляет об отклоненном платеже."""
+    """Отправляет уведомление об отклоненном платеже с защитой от дублирования."""
+    import aiosqlite
+    
     try:
-        subscription_manager = SubscriptionManager()
-        payment_info = await subscription_manager.get_payment_by_order_id(order_id)
-        
-        if payment_info:
-            await bot.send_message(
-                payment_info['user_id'],
-                "❌ К сожалению, ваш платеж был отклонен банком.\n\n"
-                "Возможные причины:\n"
-                "• Недостаточно средств на карте\n"
-                "• Превышен лимит операций\n"
-                "• Карта заблокирована\n\n"
-                "Попробуйте оплатить снова или используйте другую карту."
+        async with aiosqlite.connect(config.DATABASE_PATH) as db:
+            cursor = await db.execute(
+                "SELECT user_id FROM payments WHERE order_id = ?",
+                (order_id,)
             )
+            result = await cursor.fetchone()
+            
+            if not result:
+                return
+            
+            user_id = result[0]
+            
+            # Проверяем дублирование
+            try:
+                await db.execute(
+                    """
+                    INSERT INTO notification_history (user_id, order_id, notification_type)
+                    VALUES (?, ?, 'rejected')
+                    """,
+                    (user_id, order_id)
+                )
+                await db.commit()
+            except aiosqlite.IntegrityError:
+                return
+        
+        await bot.send_message(
+            user_id,
+            "❌ К сожалению, ваш платеж был отклонен банком.\n\n"
+            "Возможные причины:\n"
+            "• Недостаточно средств на карте\n"
+            "• Превышен лимит операций\n"
+            "• Карта заблокирована\n\n"
+            "Попробуйте оплатить снова или используйте другую карту."
+        )
     except Exception as e:
         logger.error(f"Failed to notify user about rejection: {e}")
 
@@ -377,18 +444,41 @@ async def notify_user_refunded(bot, order_id: str):
         logger.error(f"Failed to notify user about refund: {e}")
 
 async def notify_user_canceled(bot, order_id: str):
-    """Уведомляет об отмененном платеже."""
+    """Отправляет уведомление об отмененном платеже с защитой от дублирования."""
+    import aiosqlite
+    
     try:
-        subscription_manager = SubscriptionManager()
-        payment_info = await subscription_manager.get_payment_by_order_id(order_id)
-        
-        if payment_info:
-            await bot.send_message(
-                payment_info['user_id'],
-                "⚠️ Платеж был отменен.\n\n"
-                "Если вы хотите оформить подписку, "
-                "попробуйте создать новый платеж."
+        async with aiosqlite.connect(config.DATABASE_PATH) as db:
+            cursor = await db.execute(
+                "SELECT user_id FROM payments WHERE order_id = ?",
+                (order_id,)
             )
+            result = await cursor.fetchone()
+            
+            if not result:
+                return
+            
+            user_id = result[0]
+            
+            # Проверяем дублирование
+            try:
+                await db.execute(
+                    """
+                    INSERT INTO notification_history (user_id, order_id, notification_type)
+                    VALUES (?, ?, 'canceled')
+                    """,
+                    (user_id, order_id)
+                )
+                await db.commit()
+            except aiosqlite.IntegrityError:
+                return
+        
+        await bot.send_message(
+            user_id,
+            "⚠️ Платеж был отменен.\n\n"
+            "Если вы хотите оформить подписку, "
+            "попробуйте создать новый платеж."
+        )
     except Exception as e:
         logger.error(f"Failed to notify user about cancellation: {e}")
 
