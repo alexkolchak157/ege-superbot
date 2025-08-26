@@ -1303,11 +1303,11 @@ class SubscriptionManager:
             from datetime import datetime, timedelta
             
             # Определяем модули для плана
-            # Здесь используем нормализованные названия (без префикса module_)
             plan_modules = {
                 'trial_7days': ['test_part', 'task19'],
                 'package_full': ['test_part', 'task19', 'task20', 'task25'],
                 'package_second': ['task19', 'task20', 'task25'],
+                'package_second_part': ['task19', 'task20', 'task25'],  # Добавлен алиас
                 # Поддержка модулей с префиксом и без
                 'module_test_part': ['test_part'],
                 'test_part': ['test_part'],
@@ -1335,25 +1335,66 @@ class SubscriptionManager:
             
             async with aiosqlite.connect(self.database_file) as conn:
                 for module_code in modules:
-                    # Удаляем старую подписку
-                    await conn.execute(
+                    # Сначала проверяем, есть ли уже запись (активная или нет)
+                    cursor = await conn.execute(
                         """
-                        DELETE FROM module_subscriptions 
+                        SELECT expires_at, is_active FROM module_subscriptions 
                         WHERE user_id = ? AND module_code = ?
                         """,
                         (user_id, module_code)
                     )
+                    existing = await cursor.fetchone()
                     
-                    # Создаем новую
-                    await conn.execute(
-                        """
-                        INSERT INTO module_subscriptions (
-                            user_id, module_code, plan_id, expires_at, 
-                            is_active, created_at
-                        ) VALUES (?, ?, ?, ?, 1, CURRENT_TIMESTAMP)
-                        """,
-                        (user_id, module_code, plan_id, expires_at.isoformat())
-                    )
+                    if existing:
+                        existing_expires, is_active = existing
+                        existing_expires_dt = datetime.fromisoformat(existing_expires)
+                        
+                        # Если подписка активна и еще не истекла - продлеваем от нее
+                        if is_active and existing_expires_dt > datetime.now():
+                            new_expires = existing_expires_dt + timedelta(days=30 * duration_months)
+                        else:
+                            new_expires = expires_at
+                        
+                        # Обновляем существующую запись
+                        await conn.execute(
+                            """
+                            UPDATE module_subscriptions 
+                            SET expires_at = ?, 
+                                plan_id = ?, 
+                                is_active = 1,
+                                created_at = CURRENT_TIMESTAMP 
+                            WHERE user_id = ? AND module_code = ?
+                            """,
+                            (new_expires.isoformat(), plan_id, user_id, module_code)
+                        )
+                        logger.info(f"Updated subscription for user {user_id}, module {module_code}")
+                    else:
+                        # Создаем новую запись только если ее нет
+                        try:
+                            await conn.execute(
+                                """
+                                INSERT INTO module_subscriptions (
+                                    user_id, module_code, plan_id, expires_at, 
+                                    is_active, created_at
+                                ) VALUES (?, ?, ?, ?, 1, CURRENT_TIMESTAMP)
+                                """,
+                                (user_id, module_code, plan_id, expires_at.isoformat())
+                            )
+                            logger.info(f"Created new subscription for user {user_id}, module {module_code}")
+                        except aiosqlite.IntegrityError:
+                            # На случай race condition
+                            logger.warning(f"Race condition for user {user_id}, module {module_code}. Using UPDATE.")
+                            await conn.execute(
+                                """
+                                UPDATE module_subscriptions 
+                                SET expires_at = ?, 
+                                    plan_id = ?, 
+                                    is_active = 1,
+                                    created_at = CURRENT_TIMESTAMP 
+                                WHERE user_id = ? AND module_code = ?
+                                """,
+                                (expires_at.isoformat(), plan_id, user_id, module_code)
+                            )
                 
                 await conn.commit()
             
@@ -1362,6 +1403,8 @@ class SubscriptionManager:
             
         except Exception as e:
             logger.error(f"Error activating standard plan: {e}")
+            import traceback
+            traceback.print_exc()
             return False
 
     async def _activate_custom_modules(self, user_id: int, plan_id: str, 
@@ -1405,38 +1448,32 @@ class SubscriptionManager:
                     modules = temp_modules
                 else:
                     modules = [modules]
+            elif not isinstance(modules, list):
+                logger.error(f"Invalid modules format: {type(modules)}")
+                return False
             
-            logger.info(f"Activating custom modules for user {user_id}: {modules}")
-            
-            # Маппинг всех возможных вариантов названий к нормализованным модулям
-            # Ключ - то что может прийти, значение - то что должно быть в БД
+            # Нормализуем названия модулей
             module_mapping = {
-                # Варианты для test_part
+                # Основные модули
                 'test_part': 'test_part',
                 'testpart': 'test_part',
-                'module_test_part': 'test_part',
-                
-                # Варианты для заданий
+                'test': 'test_part',
                 'task19': 'task19',
-                'module_task19': 'task19',
-                
                 'task20': 'task20',
-                'module_task20': 'task20',
-                
                 'task24': 'task24',
-                'module_task24': 'task24',
-                
                 'task25': 'task25',
-                'module_task25': 'task25'
+                # С префиксом module_
+                'module_test_part': 'test_part',
+                'module_testpart': 'test_part',
+                'module_task19': 'task19',
+                'module_task20': 'task20',
+                'module_task24': 'task24',
+                'module_task25': 'task25',
             }
             
-            # Нормализуем модули
             normalized_modules = []
             for module in modules:
-                # Приводим к нижнему регистру для сравнения
                 module_lower = module.lower().strip()
-                
-                # Проверяем прямое соответствие
                 if module_lower in module_mapping:
                     normalized = module_mapping[module_lower]
                     if normalized not in normalized_modules:
@@ -1467,25 +1504,66 @@ class SubscriptionManager:
             
             async with aiosqlite.connect(self.database_file) as conn:
                 for module_code in normalized_modules:
-                    # Удаляем старую подписку на модуль
-                    await conn.execute(
+                    # Проверяем существующую запись
+                    cursor = await conn.execute(
                         """
-                        DELETE FROM module_subscriptions 
+                        SELECT expires_at, is_active FROM module_subscriptions 
                         WHERE user_id = ? AND module_code = ?
                         """,
                         (user_id, module_code)
                     )
+                    existing = await cursor.fetchone()
                     
-                    # Создаем новую подписку
-                    await conn.execute(
-                        """
-                        INSERT INTO module_subscriptions (
-                            user_id, module_code, plan_id, expires_at, 
-                            is_active, created_at
-                        ) VALUES (?, ?, ?, ?, 1, CURRENT_TIMESTAMP)
-                        """,
-                        (user_id, module_code, plan_id, expires_at.isoformat())
-                    )
+                    if existing:
+                        existing_expires, is_active = existing
+                        existing_expires_dt = datetime.fromisoformat(existing_expires)
+                        
+                        # Если подписка активна и еще не истекла - продлеваем от нее
+                        if is_active and existing_expires_dt > datetime.now():
+                            new_expires = existing_expires_dt + timedelta(days=30 * duration_months)
+                        else:
+                            new_expires = expires_at
+                        
+                        # Обновляем существующую запись
+                        await conn.execute(
+                            """
+                            UPDATE module_subscriptions 
+                            SET expires_at = ?, 
+                                plan_id = ?, 
+                                is_active = 1,
+                                created_at = CURRENT_TIMESTAMP 
+                            WHERE user_id = ? AND module_code = ?
+                            """,
+                            (new_expires.isoformat(), plan_id, user_id, module_code)
+                        )
+                        logger.info(f"Updated subscription for user {user_id}, module {module_code}")
+                    else:
+                        # Создаем новую запись
+                        try:
+                            await conn.execute(
+                                """
+                                INSERT INTO module_subscriptions (
+                                    user_id, module_code, plan_id, expires_at, 
+                                    is_active, created_at
+                                ) VALUES (?, ?, ?, ?, 1, CURRENT_TIMESTAMP)
+                                """,
+                                (user_id, module_code, plan_id, expires_at.isoformat())
+                            )
+                            logger.info(f"Created subscription for user {user_id}, module {module_code}")
+                        except aiosqlite.IntegrityError:
+                            # На случай race condition
+                            logger.warning(f"Race condition for user {user_id}, module {module_code}. Using UPDATE.")
+                            await conn.execute(
+                                """
+                                UPDATE module_subscriptions 
+                                SET expires_at = ?, 
+                                    plan_id = ?, 
+                                    is_active = 1,
+                                    created_at = CURRENT_TIMESTAMP 
+                                WHERE user_id = ? AND module_code = ?
+                                """,
+                                (expires_at.isoformat(), plan_id, user_id, module_code)
+                            )
                 
                 await conn.commit()
             
@@ -1876,7 +1954,7 @@ class SubscriptionManager:
 
     
     async def _activate_modular_subscription(self, user_id: int, plan_id: str, 
-                                                 payment_id: str, duration_months: int = 1):
+                                                payment_id: str, duration_months: int = 1):
         """Расширенная активация модульной подписки с учетом срока."""
         from datetime import datetime, timedelta, timezone
         from .config import SUBSCRIPTION_PLANS
@@ -1891,45 +1969,69 @@ class SubscriptionManager:
         
         async with aiosqlite.connect(self.database_file) as conn:
             for module_code in modules:
-                # Проверяем существующую подписку
+                # Проверяем ЛЮБУЮ существующую подписку (активную или неактивную)
                 cursor = await conn.execute(
                     """
-                    SELECT expires_at FROM module_subscriptions 
-                    WHERE user_id = ? AND module_code = ? AND is_active = 1
+                    SELECT expires_at, is_active FROM module_subscriptions 
+                    WHERE user_id = ? AND module_code = ?
                     """,
                     (user_id, module_code)
                 )
                 existing = await cursor.fetchone()
                 
                 if existing:
-                    existing_expires = datetime.fromisoformat(existing[0])
-                    if existing_expires > datetime.now(timezone.utc):
-                        # Продлеваем от существующей даты
-                        new_expires = existing_expires + timedelta(days=duration_days)
+                    existing_expires, is_active = existing
+                    existing_expires_dt = datetime.fromisoformat(existing_expires)
+                    
+                    # Если подписка активна и еще не истекла - продлеваем от нее
+                    if is_active and existing_expires_dt > datetime.now(timezone.utc):
+                        new_expires = existing_expires_dt + timedelta(days=duration_days)
                     else:
+                        # Иначе - от текущей даты
                         new_expires = expires_at
                     
+                    # Обновляем существующую запись
                     await conn.execute(
                         """
                         UPDATE module_subscriptions 
-                        SET expires_at = ?, plan_id = ?, created_at = CURRENT_TIMESTAMP 
+                        SET expires_at = ?, 
+                            plan_id = ?, 
+                            is_active = 1,
+                            created_at = CURRENT_TIMESTAMP 
                         WHERE user_id = ? AND module_code = ?
                         """,
                         (new_expires, plan_id, user_id, module_code)
                     )
+                    logger.info(f"Updated existing subscription for user {user_id}, module {module_code}")
                 else:
-                    # Создаем новую подписку
-                    await conn.execute(
-                        """
-                        INSERT INTO module_subscriptions 
-                        (user_id, module_code, plan_id, expires_at, is_active, created_at)
-                        VALUES (?, ?, ?, ?, 1, CURRENT_TIMESTAMP)
-                        """,
-                        (user_id, module_code, plan_id, expires_at)
-                    )
+                    # Создаем новую подписку только если записи вообще нет
+                    try:
+                        await conn.execute(
+                            """
+                            INSERT INTO module_subscriptions 
+                            (user_id, module_code, plan_id, expires_at, is_active, created_at)
+                            VALUES (?, ?, ?, ?, 1, CURRENT_TIMESTAMP)
+                            """,
+                            (user_id, module_code, plan_id, expires_at)
+                        )
+                        logger.info(f"Created new subscription for user {user_id}, module {module_code}")
+                    except aiosqlite.IntegrityError:
+                        # На случай race condition - если запись появилась между проверкой и вставкой
+                        logger.warning(f"Race condition detected for user {user_id}, module {module_code}. Trying UPDATE.")
+                        await conn.execute(
+                            """
+                            UPDATE module_subscriptions 
+                            SET expires_at = ?, 
+                                plan_id = ?, 
+                                is_active = 1,
+                                created_at = CURRENT_TIMESTAMP 
+                            WHERE user_id = ? AND module_code = ?
+                            """,
+                            (expires_at, plan_id, user_id, module_code)
+                        )
             
             await conn.commit()
-            logger.info(f"Modular subscription activated for {duration_months} months")
+            logger.info(f"Modular subscription activated for {duration_months} months for user {user_id}")
     
     async def has_used_trial(self, user_id: int) -> bool:
         """Проверяет, использовал ли пользователь пробный период."""
