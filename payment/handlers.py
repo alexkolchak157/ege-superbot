@@ -1039,7 +1039,7 @@ async def show_duration_options(update: Update, context: ContextTypes.DEFAULT_TY
         ])
     else:
         keyboard.append([
-            InlineKeyboardButton("⬅️ Назад", callback_data="back_to_duration_selection")
+            InlineKeyboardButton("⬅️ Назад", callback_data="back_to_plans")
         ])
     
     # Пытаемся отредактировать сообщение с обработкой ошибки
@@ -1269,31 +1269,26 @@ async def request_email(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 @safe_handler()
 async def handle_email_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обрабатывает ввод email и переходит к созданию платежа."""
-    email = update.message.text.strip().lower()
-    user_id = update.effective_user.id
+    """Обрабатывает ввод email и переходит к выбору автопродления."""
+    email = update.message.text.strip()
     
     # Валидация email
-    is_valid, error_message = validate_email(email)
-    
-    if not is_valid:
-        # Показываем ошибку и просим ввести заново
-        keyboard = [[InlineKeyboardButton("❌ Отмена", callback_data="cancel_payment")]]
-        
+    email_pattern = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
+    if not re.match(email_pattern, email):
         await update.message.reply_text(
-            f"❌ {error_message}\n\n"
-            f"Вы ввели: <code>{email}</code>\n\n"
-            "Пожалуйста, введите корректный email.\n"
-            "Например: ivanov@gmail.com",
-            parse_mode=ParseMode.HTML,
-            reply_markup=InlineKeyboardMarkup(keyboard)
+            "❌ Неверный формат email.\n\n"
+            "Пожалуйста, введите корректный email адрес:",
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("❌ Отмена", callback_data="cancel_payment")
+            ]])
         )
-        return ENTERING_EMAIL  # Остаемся в том же состоянии
+        return ENTERING_EMAIL
     
-    # Email валидный, сохраняем
+    # Сохраняем email
     context.user_data['email'] = email
+    user_id = update.effective_user.id
     
-    # Сохраняем в БД
+    # Сохраняем email в БД
     try:
         from payment.subscription_manager import SubscriptionManager
         subscription_manager = SubscriptionManager()
@@ -1309,19 +1304,112 @@ async def handle_email_input(update: Update, context: ContextTypes.DEFAULT_TYPE)
             )
             await conn.commit()
             
-        logger.info(f"Email saved for user {user_id}: {email}")
-        
     except Exception as e:
         logger.error(f"Error saving email: {e}")
     
-    # ВАЖНО: После успешного ввода email переходим к созданию платежа
-    # с учетом выбранных опций автопродления
+    # Проверяем, есть ли 100% скидка (или почти 100%)
+    promo_code = context.user_data.get('promo_code')
+    total_price = context.user_data.get('total_price', 999)
+    original_price = context.user_data.get('original_price', total_price)
+    
+    # Если цена 1 рубль и есть промокод с большой скидкой
+    if total_price == 1 and promo_code and original_price > 100:
+        # Спрашиваем, хочет ли пользователь активировать бесплатно или оплатить 1 рубль
+        text = f"""🎉 <b>Почти бесплатная подписка!</b>
+
+Благодаря промокоду <code>{promo_code}</code> ваша подписка стоит всего 1 ₽!
+
+Это символический платеж, требуемый платежной системой.
+
+Как вы хотите продолжить?"""
+        
+        keyboard = [
+            [InlineKeyboardButton("💳 Оплатить 1 ₽", callback_data="pay_one_ruble")],
+            [InlineKeyboardButton("🎁 Активировать бесплатно", callback_data="activate_free")],
+            [InlineKeyboardButton("❌ Отмена", callback_data="cancel_payment")]
+        ]
+        
+        await update.message.reply_text(
+            text,
+            parse_mode=ParseMode.HTML,
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+        
+        return CONFIRMING
+    
+    logger.info(f"User {user_id} entered email: {email}")
+    
+    # ИЗМЕНЕНИЕ: Показываем экран выбора автопродления вместо прямого перехода к оплате
     await update.message.reply_text(
-        "✅ Email сохранен. Создаю платеж...",
+        f"✅ Email сохранен: {email}\n\n"
+        "Настройка способа оплаты...",
         parse_mode=ParseMode.HTML
     )
     
-    # Вызываем функцию создания платежа
+    # Переходим к выбору автопродления
+    from .auto_renewal_consent import show_auto_renewal_choice
+    return await show_auto_renewal_choice(update, context)
+
+
+@safe_handler()
+async def handle_free_activation(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Активирует подписку бесплатно при 100% скидке."""
+    query = update.callback_query
+    await query.answer()
+    
+    user_id = update.effective_user.id
+    plan_id = context.user_data.get('selected_plan')
+    duration_months = context.user_data.get('duration_months', 1)
+    promo_code = context.user_data.get('promo_code')
+    
+    # Активируем подписку напрямую
+    subscription_manager = context.bot_data.get('subscription_manager')
+    
+    if subscription_manager:
+        # Создаем запись о "платеже" с нулевой суммой
+        order_id = f"free_{user_id}_{int(datetime.now().timestamp())}"
+        
+        # Сохраняем в БД как выполненный платеж
+        success = await subscription_manager.activate_subscription(
+            user_id=user_id,
+            plan_id=plan_id,
+            duration_months=duration_months,
+            order_id=order_id,
+            payment_method="promo_100"
+        )
+        
+        if success:
+            text = f"""🎉 <b>Подписка активирована!</b>
+
+✅ План успешно активирован благодаря промокоду <code>{promo_code}</code>
+📅 Срок действия: {duration_months} месяц(ев)
+
+Используйте /my_subscriptions для просмотра деталей."""
+        else:
+            text = "❌ Ошибка при активации подписки. Обратитесь в поддержку."
+    else:
+        text = "❌ Сервис временно недоступен."
+    
+    await query.edit_message_text(
+        text,
+        parse_mode=ParseMode.HTML,
+        reply_markup=InlineKeyboardMarkup([[
+            InlineKeyboardButton("📋 Мои подписки", callback_data="my_subscriptions")
+        ]])
+    )
+    
+    return ConversationHandler.END
+
+@safe_handler()
+async def handle_pay_one_ruble(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Продолжает с оплатой 1 рубля."""
+    query = update.callback_query
+    await query.answer()
+    
+    # Убеждаемся, что цена установлена в 1 рубль
+    context.user_data['total_price'] = 1
+    
+    # Переходим к обычному процессу оплаты
     return await handle_payment_confirmation_with_recurrent(update, context)
 
 @safe_handler()
@@ -1760,8 +1848,21 @@ async def handle_payment_confirmation_with_recurrent(update: Update, context: Co
             plan_info = SUBSCRIPTION_PLANS.get(plan_id, MODULE_PLANS.get(plan_id))
             total_price_rub = calculate_subscription_price(plan_id, duration_months, plan_info)
     
+    # ==== НОВОЕ: Проверяем минимальную сумму для Tinkoff ====
+    if total_price_rub < 1:
+        logger.warning(f"Price too low for Tinkoff: {total_price_rub}₽, setting to minimum 1₽")
+        total_price_rub = 1
+        
+        # Обновляем в контексте
+        context.user_data['total_price'] = 1
+    
     # Конвертируем в копейки
     total_price_kopecks = total_price_rub * 100
+    
+    # ==== НОВОЕ: Дополнительная проверка для копеек ====
+    if total_price_kopecks < 100:
+        logger.error(f"Invalid amount in kopecks: {total_price_kopecks}")
+        total_price_kopecks = 100
     
     # ==== НОВОЕ: Сохраняем оригинальную цену для отображения скидки ====
     if not original_price:
@@ -2499,7 +2600,11 @@ def register_payment_handlers(app):
             
             # ИСПРАВЛЕНО: Состояние для выбора автопродления
             CONFIRMING: [
-                # Обработчики для выбора автопродления
+                # Добавляем новые обработчики для 100% скидки
+                CallbackQueryHandler(handle_free_activation, pattern="^activate_free$"),
+                CallbackQueryHandler(handle_pay_one_ruble, pattern="^pay_one_ruble$"),
+                
+                # Существующие обработчики
                 CallbackQueryHandler(
                     handle_auto_renewal_choice, 
                     pattern="^(enable|disable)_auto_renewal_payment$"
@@ -2511,13 +2616,11 @@ def register_payment_handlers(app):
                 CallbackQueryHandler(cancel_payment, pattern="^cancel_payment$"),
             ],
             
-            # Состояние для ввода email
             ENTERING_EMAIL: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, handle_email_input),
                 CallbackQueryHandler(cancel_payment, pattern="^cancel_payment$")
             ],
-            
-            # Дополнительные состояния для автопродления
+
             AUTO_RENEWAL_CHOICE: [
                 CallbackQueryHandler(
                     consent_handler.handle_choice_selection,
