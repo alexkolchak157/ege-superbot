@@ -187,21 +187,33 @@ async def cleanup_previous_messages(update: Update, context: ContextTypes.DEFAUL
 @safe_handler()
 @validate_state_transition({states.CHOOSING_MODE, states.ANSWERING, None})
 async def entry_from_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Вход в модуль тестовой части из главного меню."""
+    """Точка входа в тестовую часть из главного меню."""
     query = update.callback_query
     
-    # Очищаем предыдущее состояние
-    user_id = query.from_user.id
-    from core.state_validator import state_validator
-    state_validator.clear_state(user_id)
+    # Очищаем контекст от данных других модулей
+    keys_to_remove = [
+        'current_topic',
+        'task19_current_topic', 
+        'task20_current_topic',
+        'task25_current_topic',
+        'task24_current_topic'
+    ]
     
-    # Устанавливаем корректное состояние
-    state_validator.set_state(user_id, states.CHOOSING_MODE)
+    for key in keys_to_remove:
+        context.user_data.pop(key, None)
+    
+    # Устанавливаем флаг активного модуля
+    context.user_data['active_module'] = 'test_part'
+    
+    # УДАЛЕНО: Проверка подписки больше не нужна
+    # if not await utils.check_subscription(query.from_user.id, context.bot):
+    #     await utils.send_subscription_required(query, REQUIRED_CHANNEL)
+    #     return ConversationHandler.END
     
     kb = keyboards.get_initial_choice_keyboard()
     await query.edit_message_text(
         "📚 <b>Тестовая часть ЕГЭ</b>\n\n"
-        "Выберите режим:",
+        "Выберите режим работы:",
         reply_markup=kb,
         parse_mode=ParseMode.HTML
     )
