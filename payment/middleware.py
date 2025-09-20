@@ -137,6 +137,45 @@ class SubscriptionMiddleware:
         
         user_id = update.effective_user.id
         
+        # ============ НОВОЕ: КРИТИЧЕСКАЯ ПРОВЕРКА КНОПОК ПЛАТНЫХ МОДУЛЕЙ ============
+        # Проверяем callback-кнопки главного меню ДО проверки free_action
+        if update.callback_query and update.callback_query.data:
+            callback_data = update.callback_query.data
+            
+            # Мапинг кнопок главного меню на модули
+            paid_module_callbacks = {
+                'choose_task19': 'task19',
+                'choose_task20': 'task20', 
+                'choose_task24': 'task24',
+                'choose_task25': 'task25'
+            }
+            
+            # Если это кнопка платного модуля из главного меню
+            if callback_data in paid_module_callbacks:
+                module_code = paid_module_callbacks[callback_data]
+                
+                # Получаем менеджер подписок
+                subscription_manager = application.bot_data.get('subscription_manager')
+                
+                if subscription_manager:
+                    # Проверяем доступ к модулю
+                    has_access = await subscription_manager.check_module_access(user_id, module_code)
+                    
+                    if not has_access:
+                        logger.warning(f"User {user_id} tried to access paid module {module_code} via button {callback_data}")
+                        
+                        # Показываем сообщение о необходимости подписки
+                        await self._send_module_subscription_required(update, context, module_code)
+                        
+                        # ВАЖНО: Останавливаем обработку
+                        raise ApplicationHandlerStop()
+                    else:
+                        logger.info(f"User {user_id} has valid subscription for module {module_code}")
+                        # Сохраняем активный модуль в контексте
+                        if context:
+                            context.user_data['active_module'] = module_code
+        # ============ КОНЕЦ НОВОГО БЛОКА ============
+        
         # Проверяем бесплатные действия (включая команды из free_commands)
         if self._is_free_action(update, context):
             logger.debug(f"Free action detected for user {user_id}, skipping subscription check")
@@ -206,11 +245,24 @@ class SubscriptionMiddleware:
                 if text.startswith('/'):
                     command = text.split()[0][1:].split('@')[0].lower()
                     # Список команд, которые ВСЕГДА должны быть бесплатными
-                    always_free = {'start', 'help', 'menu', 'cancel', 'support', 'subscribe'}
+                    always_free = {'start', 'help', 'menu', 'cancel', 'support', 'subscribe', 'my_subscriptions', 'status'}
                     if command in always_free:
                         logger.warning(f"Basic command /{command} reached subscription check - allowing")
                         return True
             
+            # Для callback, проверяем не является ли это навигацией по меню
+            if update.callback_query and update.callback_query.data:
+                callback_data = update.callback_query.data
+                # Бесплатные навигационные callback'и
+                free_navigation = [
+                    'to_main_menu', 'main_menu', 'back_to_main',
+                    'subscribe', 'subscribe_start', 'my_subscriptions',
+                    'cancel', 'help', 'support'
+                ]
+                if any(callback_data.startswith(pattern) for pattern in free_navigation):
+                    logger.debug(f"Free navigation callback {callback_data} - allowing")
+                    return True
+                
             # Для остальных неопределенных действий - проверяем общую подписку
             subscription = await subscription_manager.check_active_subscription(user_id)
             if not subscription:
@@ -225,79 +277,77 @@ class SubscriptionMiddleware:
                     await self._send_subscription_required(update, context)
                     raise ApplicationHandlerStop()
         
-        # Проверяем лимиты использования
-        can_use, used, limit = await self._check_usage_limit(user_id, subscription_manager)
-        
-        if not can_use:
-            await self._send_limit_exceeded(update, context, used, limit)
-            raise ApplicationHandlerStop()
-        
-        # Увеличиваем счетчик использования
-        await self._increment_usage(user_id)
-        
-        # Сохраняем информацию в context для использования в обработчиках
-        if context:
-            context.user_data['subscription_info'] = await subscription_manager.get_subscription_info(user_id)
-            context.user_data['usage_info'] = {'used': used + 1, 'limit': limit}
-        
-        # Показываем оставшийся лимит для базовых подписок
-        if update.callback_query and limit > 0 and limit != -1:
-            remaining = limit - used - 1
-            if remaining > 0 and remaining <= 10:
-                await update.callback_query.answer(f"Осталось вопросов: {remaining}")
+        # Проверяем лимиты использования (если есть подписка)
+        if subscription_manager:
+            can_use, used, limit = await self._check_usage_limit(user_id, subscription_manager)
+            
+            if not can_use:
+                await self._send_limit_exceeded(update, context, used, limit)
+                raise ApplicationHandlerStop()
+            
+            # Увеличиваем счетчик использования только для контентных действий
+            if module_code and module_code != 'test_part':  # test_part не учитываем в лимитах
+                await self._increment_usage(user_id)
+            
+            # Сохраняем информацию в context для использования в обработчиках
+            if context:
+                context.user_data['subscription_info'] = await subscription_manager.get_subscription_info(user_id)
+                context.user_data['usage_info'] = {'used': used + 1, 'limit': limit}
+            
+            # Показываем оставшийся лимит для базовых подписок
+            if update.callback_query and limit > 0 and limit != -1:
+                remaining = limit - used - 1
+                if remaining > 0 and remaining <= 10:
+                    # Показываем только для платных модулей
+                    if module_code and module_code != 'test_part':
+                        await update.callback_query.answer(f"Осталось вопросов: {remaining}")
         
         return True
     
     def _is_free_action(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
         """Проверяет, является ли действие бесплатным."""
         
-        # Проверка команд test_part
+        # ИСПРАВЛЕНИЕ 1: Инициализируем переменную text в начале метода
+        text = None
+        
+        # Проверка команд
         if update.message and update.message.text:
-            text = update.message.text
+            text = update.message.text.strip()  # Теперь text всегда определен
             if text.startswith('/'):
                 command = text.split()[0][1:].split('@')[0].lower()
-                if command in ['quiz', 'test', 'test_stats', 'mistakes']:
+                if command in self.free_commands:
+                    logger.debug(f"Free command detected: /{command}")
                     return True
-                    
-        # НОВОЕ: Полная проверка для бесплатного модуля test_part
-        if context and context.user_data.get('active_module') == 'test_part':
-            return True
         
-        # Проверка callback_data для test_part
-        if update.callback_query and update.callback_query.data:
-            callback_data = update.callback_query.data
-            
-            # Расширенный список паттернов для test_part
-            test_part_patterns = [
-                'choose_test_part', 'test_part', 'to_test_part_menu',
-                'initial:', 'block:', 'topic:', 'exam_num:', 
-                'next_random', 'next_topic', 'skip_question',
-                'mode:', 'exam_', 'mistake_', 'test_',
-                'select_mistakes', 'work_mistakes', 'test_detailed_analysis',
-                'test_export_csv', 'test_part_progress', 'test_part_reset'
-            ]
-            
-            if any(pattern in callback_data for pattern in test_part_patterns):
-                return True
-            else:
-                # ВАЖНО: Проверяем, не является ли это вводом email
-                # Простая проверка на наличие @ в тексте
-                if '@' in text and '.' in text:
-                    logger.debug(f"Detected possible email input: {text[:20]}...")
-                    return True
-                    
-        # Проверяем callback_query
+        # Проверка callback паттернов  
         elif update.callback_query and update.callback_query.data:
             callback_data = update.callback_query.data
-            # Проверяем паттерны
+            
+            # Проверяем бесплатные паттерны
             for pattern in self.free_patterns:
-                if callback_data.startswith(pattern):
+                if pattern.endswith('_') and callback_data.startswith(pattern):
+                    logger.debug(f"Free callback pattern detected: {pattern}")
+                    return True
+                elif callback_data == pattern:
+                    logger.debug(f"Free callback exact match: {pattern}")
                     return True
         
-        # Проверяем inline_query (всегда бесплатно для preview)
-        elif update.inline_query:
+        # Дополнительная проверка для текстовых сообщений в контексте test_part
+        if update.message and update.message.text and context:
+            # Если активный модуль test_part и это ответ на вопрос
+            active_module = context.user_data.get('active_module')
+            if active_module == 'test_part':
+                current_state = context.user_data.get('_state')
+                # Проверяем, что пользователь в состоянии ответа на вопрос
+                if current_state in ['ANSWERING', 'EXAM_MODE']:
+                    logger.debug(f"Free action in test_part answering mode")
+                    return True
+        
+        # ВАЖНО: Проверка на /start должна быть всегда
+        if text and text.startswith('/start'):
+            logger.debug("Command /start is always free")
             return True
-            
+        
         return False
     
     async def _check_subscription(self, user_id: int, bot) -> bool:
