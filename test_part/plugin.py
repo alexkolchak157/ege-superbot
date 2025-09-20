@@ -303,7 +303,11 @@ class TestPartPlugin(BotPlugin):
         # Отдельные команды вне ConversationHandler
         app.add_handler(CommandHandler("mistakes", handlers.cmd_mistakes))
         app.add_handler(CommandHandler("score", handlers.cmd_score))
-        
+        # ДОБАВЬТЕ ЗДЕСЬ обработчик для промо-кнопки
+        app.add_handler(CallbackQueryHandler(
+            handlers.dismiss_promo, 
+            pattern="^dismiss_promo$"
+        ))
         # Регистрируем основной ConversationHandler
         app.add_handler(main_conv_handler)
         

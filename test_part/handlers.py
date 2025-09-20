@@ -6,7 +6,7 @@ import aiosqlite
 import os
 import csv
 import io
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update, Message
 from telegram.constants import ParseMode
 from telegram.ext import ContextTypes, ConversationHandler
 from core.plugin_loader import build_main_menu
@@ -1162,7 +1162,8 @@ async def send_question(message, context: ContextTypes.DEFAULT_TYPE,
     context.user_data[f'question_{question_id}'] = question_data
     context.user_data['last_mode'] = last_mode
     
-    # Логирование для отладки
+    # Логирование для отладки  
+    logger.info(f"Question #{questions_count} sent to user {user_id if 'user_id' in locals() else 'unknown'}")
     logger.info(f"SENDING QUESTION: ID={question_id}, "
                 f"Answer={question_data.get('answer')}, "
                 f"Type={question_data.get('type')}, "
@@ -1206,8 +1207,6 @@ async def send_question(message, context: ContextTypes.DEFAULT_TYPE,
     skip_keyboard = keyboards.get_question_keyboard(last_mode)
     
     # ВАЖНО: Определяем, это редактирование или новое сообщение
-    # Если у message есть метод edit_text, это означает что мы получили
-    # сообщение после query.edit_message_text("Загружаю...")
     is_edit_mode = hasattr(message, 'edit_text')
     
     # Проверяем наличие изображения
@@ -1318,36 +1317,50 @@ async def send_question(message, context: ContextTypes.DEFAULT_TYPE,
         except:
             pass
         return ConversationHandler.END
-    # ДОБАВИТЬ: Промо каждые 20 вопросов
-    if questions_count % 20 == 0:
+
+    # ВАЖНО: Этот блок должен быть ВНУТРИ функции с правильными отступами!
+    # Показываем промо-сообщение каждые 10 вопросов (для теста)
+    if questions_count % 10 == 0:  # Изменил на 10 для быстрого теста
         subscription_manager = context.bot_data.get('subscription_manager')
         if subscription_manager:
-            user_id = context.user_data.get('user_id')
-            has_subscription = await subscription_manager.check_active_subscription(user_id)
-            
-            if not has_subscription:
-                # Случайные мотивирующие сообщения
-                import random
-                promo_messages = [
-                    "🚀 Уже {count} вопросов! С премиум-подпиской откроются задания второй части.",
-                    "💪 {count} вопросов позади! Готовы к заданиям с развёрнутым ответом?",
-                    "🎯 Целых {count} вопросов! ИИ-проверка поможет с заданиями 19-20.",
-                    "📈 {count} вопросов решено! Хотите увидеть детальную аналитику прогресса?"
-                ]
-                
-                promo_text = random.choice(promo_messages).format(count=questions_count)
-                promo_text += "\n\n<b>Попробуйте премиум 7 дней за 1₽!</b>"
-                
-                # Отправляем как отдельное сообщение с кнопками
-                await asyncio.sleep(1)  # Небольшая задержка
-                await message.reply_text(
-                    promo_text,
-                    reply_markup=InlineKeyboardMarkup([
-                        [InlineKeyboardButton("💎 Попробовать", callback_data="pay_trial")],
-                        [InlineKeyboardButton("➡️ Продолжить", callback_data="dismiss_promo")]
-                    ]),
-                    parse_mode=ParseMode.HTML
-                )
+            if user_id:
+                try:
+                    has_subscription = await subscription_manager.check_active_subscription(user_id)
+                    
+                    if not has_subscription:
+                        # Отправляем промо как отдельное сообщение
+                        import random
+                        import asyncio
+                        
+                        promo_messages = [
+                            f"🚀 Уже {questions_count} вопросов! С премиум-подпиской откроются задания второй части.",
+                            f"💪 {questions_count} вопросов позади! Готовы к заданиям с развёрнутым ответом?",
+                            f"🎯 Целых {questions_count} вопросов! ИИ-проверка поможет с заданиями 19-20.",
+                            f"📈 {questions_count} вопросов решено! Хотите увидеть детальную аналитику прогресса?"
+                        ]
+                        
+                        promo_text = random.choice(promo_messages)
+                        promo_text += "\n\n<b>Попробуйте премиум 7 дней за 1₽!</b>"
+                        
+                        # Небольшая задержка перед промо
+                        await asyncio.sleep(0.5)
+                        
+                        # Отправляем промо-сообщение
+                        await context.bot.send_message(
+                            chat_id=user_id,
+                            text=promo_text,
+                            reply_markup=InlineKeyboardMarkup([
+                                [InlineKeyboardButton("💎 Попробовать", callback_data="pay_trial")],
+                                [InlineKeyboardButton("➡️ Продолжить", callback_data="dismiss_promo")]
+                            ]),
+                            parse_mode=ParseMode.HTML
+                        )
+                        
+                        logger.info(f"Promo message sent to user {user_id} after {questions_count} questions")
+                        
+                except Exception as e:
+                    logger.error(f"Error showing promo: {e}")
+    
     # Устанавливаем правильное состояние
     if user_id:
         from core.state_validator import state_validator
@@ -1407,6 +1420,21 @@ async def start_exam_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Отправляем первый вопрос
     await send_exam_question(query.message, context, 0)
     return states.EXAM_MODE
+
+@safe_handler()
+async def dismiss_promo(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Закрывает промо-сообщение."""
+    query = update.callback_query
+    await query.answer("Продолжаем тренировку! 💪")
+    
+    # Удаляем промо-сообщение
+    try:
+        await query.message.delete()
+    except Exception as e:
+        logger.debug(f"Could not delete promo message: {e}")
+    
+    # Не меняем состояние разговора
+    return
 
 async def send_exam_question(message, context: ContextTypes.DEFAULT_TYPE, index: int):
     """Отправка вопроса в режиме экзамена с поддержкой всех типов вопросов."""
