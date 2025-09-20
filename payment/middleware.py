@@ -242,25 +242,18 @@ class SubscriptionMiddleware:
             # Дополнительная защита для базовых команд
             if update.message and update.message.text:
                 text = update.message.text.strip()
-                if text.startswith('/'):
-                    command = text.split()[0][1:].split('@')[0].lower()
-                    # Список команд, которые ВСЕГДА должны быть бесплатными
-                    always_free = {'start', 'help', 'menu', 'cancel', 'support', 'subscribe', 'my_subscriptions', 'status'}
-                    if command in always_free:
-                        logger.warning(f"Basic command /{command} reached subscription check - allowing")
-                        return True
+                if text.startswith('/quiz') or text.startswith('/test'):
+                    logger.info(f"Test part command {text} - bypassing subscription checks")
+                    if context:
+                        context.user_data['active_module'] = 'test_part'
+                    return True
             
-            # Для callback, проверяем не является ли это навигацией по меню
             if update.callback_query and update.callback_query.data:
                 callback_data = update.callback_query.data
-                # Бесплатные навигационные callback'и
-                free_navigation = [
-                    'to_main_menu', 'main_menu', 'back_to_main',
-                    'subscribe', 'subscribe_start', 'my_subscriptions',
-                    'cancel', 'help', 'support'
-                ]
-                if any(callback_data.startswith(pattern) for pattern in free_navigation):
-                    logger.debug(f"Free navigation callback {callback_data} - allowing")
+                if callback_data == 'choose_test_part':
+                    logger.info("Test part button clicked - bypassing subscription checks")
+                    if context:
+                        context.user_data['active_module'] = 'test_part'
                     return True
                 
             # Для остальных неопределенных действий - проверяем общую подписку
@@ -307,23 +300,36 @@ class SubscriptionMiddleware:
     def _is_free_action(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
         """Проверяет, является ли действие бесплатным."""
         
-        # ИСПРАВЛЕНИЕ 1: Инициализируем переменную text в начале метода
+        # ВАЖНО: Инициализируем text в начале
         text = None
         
-        # Проверка команд
-        if update.message and update.message.text:
-            text = update.message.text.strip()  # Теперь text всегда определен
-            if text.startswith('/'):
-                command = text.split()[0][1:].split('@')[0].lower()
-                if command in self.free_commands:
-                    logger.debug(f"Free command detected: /{command}")
-                    return True
-        
-        # Проверка callback паттернов  
-        elif update.callback_query and update.callback_query.data:
+        # Проверка callback для тестовой части ПЕРВОЙ
+        if update.callback_query and update.callback_query.data:
             callback_data = update.callback_query.data
             
-            # Проверяем бесплатные паттерны
+            # Callback'и тестовой части - ВСЕГДА БЕСПЛАТНЫ
+            if any([
+                callback_data == 'choose_test_part',
+                callback_data == 'to_test_part_menu',
+                callback_data.startswith('test_'),
+                callback_data.startswith('initial:'),
+                callback_data.startswith('block:'),
+                callback_data.startswith('topic:'),
+                callback_data.startswith('exam_num:'),
+                callback_data.startswith('mode:'),
+                callback_data.startswith('exam_'),
+                callback_data.startswith('mistake_'),
+                callback_data.startswith('test_part_'),
+                callback_data == 'quiz',
+                callback_data.startswith('next_'),
+                callback_data == 'skip_question',
+                callback_data == 'next_random',
+                callback_data == 'next_topic'
+            ]):
+                logger.debug(f"Test part free callback: {callback_data}")
+                return True
+            
+            # Проверяем остальные бесплатные паттерны
             for pattern in self.free_patterns:
                 if pattern.endswith('_') and callback_data.startswith(pattern):
                     logger.debug(f"Free callback pattern detected: {pattern}")
@@ -332,18 +338,34 @@ class SubscriptionMiddleware:
                     logger.debug(f"Free callback exact match: {pattern}")
                     return True
         
-        # Дополнительная проверка для текстовых сообщений в контексте test_part
-        if update.message and update.message.text and context:
-            # Если активный модуль test_part и это ответ на вопрос
-            active_module = context.user_data.get('active_module')
-            if active_module == 'test_part':
-                current_state = context.user_data.get('_state')
-                # Проверяем, что пользователь в состоянии ответа на вопрос
-                if current_state in ['ANSWERING', 'EXAM_MODE']:
-                    logger.debug(f"Free action in test_part answering mode")
+        # Проверка команд
+        if update.message and update.message.text:
+            text = update.message.text.strip()
+            if text.startswith('/'):
+                command = text.split()[0][1:].split('@')[0].lower()
+                
+                # Команды тестовой части - ВСЕГДА БЕСПЛАТНЫ
+                test_commands = {'quiz', 'test', 'test_stats', 'mistakes', 'score'}
+                if command in test_commands:
+                    logger.debug(f"Test part free command: /{command}")
+                    return True
+                
+                if command in self.free_commands:
+                    logger.debug(f"Free command detected: /{command}")
                     return True
         
-        # ВАЖНО: Проверка на /start должна быть всегда
+        # Проверка текстовых ответов в test_part
+        if update.message and update.message.text and context:
+            active_module = context.user_data.get('active_module')
+            current_state = context.user_data.get('_state')
+            
+            # Если в test_part и отвечаем на вопрос - это бесплатно
+            if active_module == 'test_part':
+                if current_state in ['ANSWERING', 'EXAM_MODE', 'CHOOSING_MODE']:
+                    logger.debug(f"Test part answering mode - free action")
+                    return True
+        
+        # Проверка /start всегда последняя
         if text and text.startswith('/start'):
             logger.debug("Command /start is always free")
             return True
