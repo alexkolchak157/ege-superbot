@@ -1137,9 +1137,13 @@ async def cmd_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     return states.CHOOSING_MODE
 
-async def send_question(message, context: ContextTypes.DEFAULT_TYPE,
-                       question_data: dict, last_mode: str):
-    """Отправка вопроса пользователю БЕЗ дублирования."""
+async def send_question(message, context: ContextTypes.DEFAULT_TYPE, 
+                        question_data: dict, last_mode: str):
+    """Отправляет вопрос пользователю."""
+    
+    # Увеличиваем счетчик вопросов
+    questions_count = context.user_data.get('session_questions_count', 0) + 1
+    context.user_data['session_questions_count'] = questions_count
     
     # Устанавливаем активный модуль
     context.user_data['active_module'] = 'test_part'
@@ -1314,7 +1318,36 @@ async def send_question(message, context: ContextTypes.DEFAULT_TYPE,
         except:
             pass
         return ConversationHandler.END
-    
+    # ДОБАВИТЬ: Промо каждые 20 вопросов
+    if questions_count % 20 == 0:
+        subscription_manager = context.bot_data.get('subscription_manager')
+        if subscription_manager:
+            user_id = context.user_data.get('user_id')
+            has_subscription = await subscription_manager.check_active_subscription(user_id)
+            
+            if not has_subscription:
+                # Случайные мотивирующие сообщения
+                import random
+                promo_messages = [
+                    "🚀 Уже {count} вопросов! С премиум-подпиской откроются задания второй части.",
+                    "💪 {count} вопросов позади! Готовы к заданиям с развёрнутым ответом?",
+                    "🎯 Целых {count} вопросов! ИИ-проверка поможет с заданиями 19-20.",
+                    "📈 {count} вопросов решено! Хотите увидеть детальную аналитику прогресса?"
+                ]
+                
+                promo_text = random.choice(promo_messages).format(count=questions_count)
+                promo_text += "\n\n<b>Попробуйте премиум 7 дней за 1₽!</b>"
+                
+                # Отправляем как отдельное сообщение с кнопками
+                await asyncio.sleep(1)  # Небольшая задержка
+                await message.reply_text(
+                    promo_text,
+                    reply_markup=InlineKeyboardMarkup([
+                        [InlineKeyboardButton("💎 Попробовать", callback_data="pay_trial")],
+                        [InlineKeyboardButton("➡️ Продолжить", callback_data="dismiss_promo")]
+                    ]),
+                    parse_mode=ParseMode.HTML
+                )
     # Устанавливаем правильное состояние
     if user_id:
         from core.state_validator import state_validator
@@ -1618,6 +1651,73 @@ async def send_exam_question(message, context: ContextTypes.DEFAULT_TYPE, index:
             reply_markup=keyboard
         )
 
+async def show_promo_message(context: ContextTypes.DEFAULT_TYPE, message: Message):
+    """Показывает промо-сообщение после N вопросов."""
+    
+    # Считаем количество отвеченных вопросов
+    questions_answered = context.user_data.get('test_questions_answered', 0) + 1
+    context.user_data['test_questions_answered'] = questions_answered
+    
+    # Показываем промо каждые 20 вопросов (не слишком часто)
+    if questions_answered % 20 == 0:
+        subscription_manager = context.bot_data.get('subscription_manager')
+        if subscription_manager:
+            user_id = context.user_data.get('user_id')
+            has_subscription = await subscription_manager.check_active_subscription(user_id)
+            
+            if not has_subscription:
+                # Разные промо-сообщения для разнообразия
+                promo_variants = [
+                    """
+🤖 <b>Представь, что ИИ проверяет твои ответы!</b>
+
+Больше не нужно ждать учителя или искать правильные ответы. 
+Нейросеть проверит твои развёрнутые ответы по критериям ФИПИ за секунды!
+
+✅ Задания 19-20: анализ примеров и аргументов с разбором
+✅ Задание 24: планы с детальной проверкой
+✅ Задание 25: обоснования и примеры
+
+<b>Попробуй 7 дней всего за 1₽!</b>""",
+                    """
+📊 <b>Твоя статистика показывает пробелы в темах</b>
+
+С полной подпиской ты получишь:
+- Умную статистику по каждой теме
+- Персональные рекомендации что повторить
+- Отслеживание прогресса в реальном времени
+
+<b>Больше никаких пробелов в знаниях!</b>
+Подключи премиум от 199₽/месяц""",
+                    """
+⚡ <b>Каждая минута на счету!</b>
+
+Практикуйся где угодно:
+- В транспорте по дороге домой
+- В очереди или на перемене
+- Перед сном вместо соцсетей
+
+С премиум-доступом откроются все задания второй части.
+<b>Пробный период — всего 1₽ на 7 дней!</b>"""
+                ]
+                
+                # Выбираем случайное промо-сообщение
+                import random
+                promo_text = random.choice(promo_variants)
+                promo_text += "\n\n<i>Это сообщение появляется раз в 20 вопросов</i>"
+                
+                promo_keyboard = InlineKeyboardMarkup([
+                    [InlineKeyboardButton("💎 Попробовать за 1₽", callback_data="pay_trial")],
+                    [InlineKeyboardButton("ℹ️ Подробнее о подписке", callback_data="subscribe_start")],
+                    [InlineKeyboardButton("➡️ Продолжить тренировку", callback_data="continue_test")]
+                ])
+                
+                await message.reply_text(
+                    promo_text,
+                    reply_markup=promo_keyboard,
+                    parse_mode=ParseMode.HTML
+                )
+
 @safe_handler()
 async def check_exam_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Проверка ответа в режиме экзамена."""
@@ -1756,14 +1856,47 @@ async def show_exam_results(message, context: ContextTypes.DEFAULT_TYPE):
     context.user_data.pop('exam_current', None)
     context.user_data.pop('exam_skipped', None)
     
+    # После вывода результатов добавляем промо
+    subscription_manager = context.bot_data.get('subscription_manager')
+    if subscription_manager:
+        user_id = context.user_data.get('user_id')
+        has_subscription = await subscription_manager.check_active_subscription(user_id)
+        
+        if not has_subscription:
+            if percentage >= 80:
+                promo_text = "\n\n🎉 <b>Отличный результат!</b>\n"
+                promo_text += "Готовы покорить вторую часть ЕГЭ?\n"
+                promo_text += "🤖 ИИ поможет с заданиями 19,20,25\n"
+                promo_text += "📝 Автопроверка планов в задании 24\n"
+                promo_text += "\n<b>Первые 7 дней — всего 1₽!</b>"
+            elif percentage >= 60:
+                promo_text = "\n\n💪 <b>Хороший результат!</b>\n"
+                promo_text += "С премиум-подпиской прогресс пойдёт быстрее:\n"
+                promo_text += "📊 Умная статистика найдёт все пробелы\n"
+                promo_text += "🎯 Персональный план подготовки\n"
+                promo_text += "\n<b>Попробуйте 7 дней за 1₽!</b>"
+            else:
+                promo_text = "\n\n📚 <b>Нужна помощь с подготовкой?</b>\n"
+                promo_text += "Премиум-функции помогут улучшить результат:\n"
+                promo_text += "🤖 ИИ-проверка с разбором ошибок\n"
+                promo_text += "📈 Отслеживание прогресса по всем темам\n"
+                promo_text += "\n<b>Начните с пробного периода за 1₽!</b>"
+            
+            result_text += promo_text
+            
+            # Обновляем клавиатуру
+            kb = keyboards.get_exam_results_keyboard()
+            new_kb = InlineKeyboardMarkup([
+                [InlineKeyboardButton("💎 Попробовать премиум", callback_data="pay_trial")],
+                *kb.inline_keyboard
+            ])
+    
     # Отправляем результаты
     await message.reply_text(
         result_text,
         parse_mode=ParseMode.HTML,
-        reply_markup=keyboards.get_exam_results_keyboard()
+        reply_markup=new_kb if not has_subscription else keyboards.get_exam_results_keyboard()
     )
-    
-    return states.CHOOSING_MODE
 
 @safe_handler()
 async def handle_unknown_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -2495,8 +2628,24 @@ async def detailed_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif overall_percentage < 60:
             text += "• Уделите больше времени теории перед практикой\n"
         
-        # Используем модифицированную клавиатуру
-        kb = keyboards.get_progress_keyboard()
+        subscription_manager = context.bot_data.get('subscription_manager')
+        if subscription_manager:
+            user_id = query.from_user.id
+            has_subscription = await subscription_manager.check_active_subscription(user_id)
+            
+            if not has_subscription and total_answered >= 20:
+                # Добавляем промо в текст статистики
+                text += "\n\n<b>💎 Откройте больше возможностей!</b>\n"
+                text += "🤖 ИИ-проверка заданий 19-20 за секунды\n"
+                text += "📊 Персональные рекомендации по слабым местам\n" 
+                text += "📚 Все задания второй части с разборами\n"
+                text += "\n<b>Попробуйте 7 дней всего за 1₽!</b>"
+                
+                # Добавляем кнопку в клавиатуру
+                kb = InlineKeyboardMarkup([
+                    [InlineKeyboardButton("💎 Активировать пробный период", callback_data="pay_trial")],
+                    *kb.inline_keyboard  # Существующие кнопки
+                ])
     
     await query.edit_message_text(
         text,
@@ -2544,18 +2693,31 @@ async def work_mistakes(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 Готовы начать?"""
     
-    kb = InlineKeyboardMarkup([
-        [InlineKeyboardButton("✅ Начать", callback_data="test_start_mistakes")],
-        [InlineKeyboardButton("⬅️ Назад", callback_data="test_back_to_mode")]
-    ])
-    
-    await query.edit_message_text(
-        text,
-        reply_markup=kb,
-        parse_mode=ParseMode.HTML
-    )
-    
-    return states.CHOOSING_MODE
+    # ДОБАВИТЬ: Если много ошибок, предлагаем премиум
+    if len(mistake_ids) > 10:
+        subscription_manager = context.bot_data.get('subscription_manager')
+        if subscription_manager:
+            has_subscription = await subscription_manager.check_active_subscription(user_id)
+            
+            if not has_subscription:
+                text = f"📚 <b>Работа над ошибками</b>\n\n"
+                text += f"У вас {len(mistake_ids)} ошибок для проработки.\n\n"
+                text += "💡 <b>Знаете ли вы?</b>\n"
+                text += "С премиум-подпиской вы получите:\n"
+                text += "• 🤖 ИИ-анализ ваших типичных ошибок\n"
+                text += "• 📊 Персональный план устранения пробелов\n"
+                text += "• ✍️ Тренажёр заданий второй части\n\n"
+                text += "<b>Попробуйте 7 дней за 1₽!</b>\n\n"
+                text += "Или продолжите работу над ошибками:"
+                
+                kb = InlineKeyboardMarkup([
+                    [InlineKeyboardButton("💎 Активировать премиум", callback_data="pay_trial")],
+                    [InlineKeyboardButton("📝 Начать работу над ошибками", callback_data="start_mistakes_work")],
+                    [InlineKeyboardButton("⬅️ Назад", callback_data="to_test_part_menu")]
+                ])
+                
+                await query.edit_message_text(text, reply_markup=kb, parse_mode=ParseMode.HTML)
+                return states.CHOOSING_MODE
 
 @safe_handler()
 @validate_state_transition({states.CHOOSING_MODE})
