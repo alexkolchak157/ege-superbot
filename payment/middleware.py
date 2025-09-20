@@ -41,8 +41,13 @@ class SubscriptionMiddleware:
         # Паттерны для определения модулей
         self.module_patterns = {
             'test_part': {
-                'commands': ['test', 'test_stats'],
-                'callbacks': ['choose_test_part', 'to_test_part_menu', 'test_'],
+                'commands': ['test', 'test_stats', 'quiz', 'mistakes', 'score'],
+                'callbacks': [
+                    'choose_test_part', 'to_test_part_menu', 'test_',
+                    'initial:', 'block:', 'topic:', 'exam_num:', 
+                    'next_random', 'next_topic', 'skip_question',
+                    'mode:', 'exam_', 'mistake_', 'test_part_'
+                ],
                 'exclude': ['test_back_to_mode']
             },
             'task19': {
@@ -65,6 +70,13 @@ class SubscriptionMiddleware:
     
     def _get_module_from_update(self, update: Update) -> Optional[str]:
         """Определяет модуль по update."""
+        
+        # ДОБАВИТЬ: Проверка через context (если активный модуль уже установлен)
+        if hasattr(update, 'effective_message'):
+            # Пытаемся получить из контекста через effective_message
+            # Это поможет сохранить контекст модуля при ответах
+            pass
+        
         # Для команд
         if update.message and update.message.text and update.message.text.startswith('/'):
             command = update.message.text.split()[0][1:].split('@')[0].lower()
@@ -86,16 +98,21 @@ class SubscriptionMiddleware:
                 
                 # Проверяем паттерны
                 for pattern in patterns['callbacks']:
-                    # Если паттерн заканчивается на _, это префикс
                     if pattern.endswith('_') and callback_data.startswith(pattern):
                         logger.debug(f"Callback {callback_data} matched module {module_code} by prefix {pattern}")
                         return module_code
-                    # Иначе проверяем точное совпадение
                     elif callback_data == pattern:
                         logger.debug(f"Callback {callback_data} matched module {module_code} exactly")
                         return module_code
         
-        return None        
+        # ДОБАВИТЬ: Для обычных текстовых сообщений - проверяем по состоянию разговора
+        # Это критично для test_part при вводе ответов!
+        elif update.message and update.message.text:
+            # Логика для определения модуля по контексту
+            # Это сложно без доступа к context, поэтому нужен другой подход
+            pass
+        
+        return None
     
     async def process_update(
         self,
@@ -125,20 +142,30 @@ class SubscriptionMiddleware:
             logger.debug(f"Admin user {user_id} - skipping subscription check")
             return True
         
+         # НОВОЕ: Специальная проверка для test_part через активный модуль в контексте
+        active_module = context.user_data.get('active_module')
+        if active_module == 'test_part':
+            logger.info(f"Free access to test_part via active_module for user {user_id}")
+            return True
+        
         # Проверяем, является ли это бесплатным действием
-        if self._is_free_action(update, context):  # ✅ Передаем context
+        if self._is_free_action(update, context):
             logger.debug(f"Free action for user {user_id}")
             return True
         
         # Определяем модуль
         module_code = self._get_module_from_update(update)
+        
+        # НОВОЕ: Если модуль не определен, но есть active_module в контексте
+        if not module_code and active_module:
+            module_code = active_module
+            logger.debug(f"Using active_module from context: {module_code}")
+        
         logger.debug(f"Detected module: {module_code}")
         
-        # НОВОЕ: Специальная обработка для test_part - он всегда бесплатный
+        # НОВОЕ: Проверка для бесплатного модуля test_part
         if module_code == 'test_part':
             logger.info(f"Free access granted to test_part for user {user_id}")
-            # Сохраняем информацию для обработчиков
-            context.user_data['subscription_info'] = {'free_module': 'test_part'}
             return True
         
         # Получаем менеджер подписок
@@ -200,7 +227,8 @@ class SubscriptionMiddleware:
     
     def _is_free_action(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
         """Проверяет, является ли действие бесплатным."""
-        # НОВОЕ: Если активный модуль test_part - это бесплатно
+        
+        # НОВОЕ: Если активный модуль test_part - это всегда бесплатно!
         if context and context.user_data.get('active_module') == 'test_part':
             return True
         
