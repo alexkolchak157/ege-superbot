@@ -122,13 +122,27 @@ class SubscriptionMiddleware:
         context: CallbackContext
     ) -> bool:
         """Обрабатывает обновление и проверяет подписку."""
+        
+        # КРИТИЧЕСКИ ВАЖНО: Явная проверка команды /start
+        # Это гарантирует, что /start ВСЕГДА будет работать
+        if update.message and update.message.text:
+            text = update.message.text.strip()
+            if text.startswith('/start'):
+                logger.info(f"Command /start detected - bypassing ALL subscription checks")
+                return True
+        
         # Пропускаем если нет пользователя
         if not update.effective_user:
             return True
-            
+        
         user_id = update.effective_user.id
         
-        # ИСПРАВЛЕНИЕ: Проверяем админов ДО проверки подписки
+        # Проверяем бесплатные действия (включая команды из free_commands)
+        if self._is_free_action(update, context):
+            logger.debug(f"Free action detected for user {user_id}, skipping subscription check")
+            return True
+        
+        # Проверяем админов
         from core import config
         admin_ids = []
         if hasattr(config, 'ADMIN_IDS') and config.ADMIN_IDS:
@@ -137,33 +151,27 @@ class SubscriptionMiddleware:
             elif isinstance(config.ADMIN_IDS, list):
                 admin_ids = config.ADMIN_IDS
         
-        # Если пользователь админ - пропускаем все проверки
         if user_id in admin_ids:
             logger.debug(f"Admin user {user_id} - skipping subscription check")
             return True
         
-         # НОВОЕ: Специальная проверка для test_part через активный модуль в контексте
-        active_module = context.user_data.get('active_module')
+        # Проверка для test_part через context
+        active_module = context.user_data.get('active_module') if context else None
         if active_module == 'test_part':
             logger.info(f"Free access to test_part via active_module for user {user_id}")
             return True
         
-        # Проверяем, является ли это бесплатным действием
-        if self._is_free_action(update, context):
-            logger.debug(f"Free action for user {user_id}")
-            return True
-        
-        # Определяем модуль
+        # Определяем модуль из update
         module_code = self._get_module_from_update(update)
         
-        # НОВОЕ: Если модуль не определен, но есть active_module в контексте
+        # Если модуль не определен, но есть active_module в контексте
         if not module_code and active_module:
             module_code = active_module
             logger.debug(f"Using active_module from context: {module_code}")
         
         logger.debug(f"Detected module: {module_code}")
         
-        # НОВОЕ: Проверка для бесплатного модуля test_part
+        # Проверка для бесплатного модуля test_part
         if module_code == 'test_part':
             logger.info(f"Free access granted to test_part for user {user_id}")
             return True
@@ -174,7 +182,7 @@ class SubscriptionMiddleware:
             logger.warning("SubscriptionManager not found in bot_data")
             return True
         
-        # Проверяем доступ
+        # Проверяем доступ к конкретному модулю
         if module_code:
             logger.info(f"Checking access for user {user_id} to module {module_code}")
             
@@ -190,7 +198,20 @@ class SubscriptionMiddleware:
             else:
                 logger.info(f"Access granted for user {user_id} to module {module_code}")
         else:
-            # Проверка общей подписки
+            # НЕТ определенного модуля - проверяем базовые команды еще раз
+            
+            # Дополнительная защита для базовых команд
+            if update.message and update.message.text:
+                text = update.message.text.strip()
+                if text.startswith('/'):
+                    command = text.split()[0][1:].split('@')[0].lower()
+                    # Список команд, которые ВСЕГДА должны быть бесплатными
+                    always_free = {'start', 'help', 'menu', 'cancel', 'support', 'subscribe'}
+                    if command in always_free:
+                        logger.warning(f"Basic command /{command} reached subscription check - allowing")
+                        return True
+            
+            # Для остальных неопределенных действий - проверяем общую подписку
             subscription = await subscription_manager.check_active_subscription(user_id)
             if not subscription:
                 # Проверяем подписку на канал
@@ -200,6 +221,7 @@ class SubscriptionMiddleware:
                         await self._send_channel_required(update, context)
                         raise ApplicationHandlerStop()
                 else:
+                    # Показываем сообщение о необходимости подписки
                     await self._send_subscription_required(update, context)
                     raise ApplicationHandlerStop()
         
@@ -214,8 +236,9 @@ class SubscriptionMiddleware:
         await self._increment_usage(user_id)
         
         # Сохраняем информацию в context для использования в обработчиках
-        context.user_data['subscription_info'] = await subscription_manager.get_subscription_info(user_id)
-        context.user_data['usage_info'] = {'used': used + 1, 'limit': limit}
+        if context:
+            context.user_data['subscription_info'] = await subscription_manager.get_subscription_info(user_id)
+            context.user_data['usage_info'] = {'used': used + 1, 'limit': limit}
         
         # Показываем оставшийся лимит для базовых подписок
         if update.callback_query and limit > 0 and limit != -1:
