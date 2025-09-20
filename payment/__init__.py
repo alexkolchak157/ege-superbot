@@ -68,8 +68,19 @@ async def init_payment_module(app: Application):
         
         # Регистрируем middleware для проверки подписок
         try:
-            setup_subscription_middleware(app)
-            logger.info("Subscription middleware setup complete")
+            setup_subscription_middleware(
+                app,
+                free_commands={'start', 'help', 'subscribe', 'menu', 'support', 'my_subscriptions', 'cancel', 'status'},
+                free_patterns={
+                    'subscribe', 'subscribe_start', 'payment_', 'pay_',
+                    'to_main_menu', 'main_menu', 'check_subscription',
+                    'module_info_', 'back_to_main', 'my_subscriptions',
+                    'duration_', 'confirm_payment', 'cancel_',
+                    'support_', 'settings_', 'help_'
+                },
+                check_channel=False  # Или True, если нужна проверка канала
+            )
+            logger.info("Subscription middleware setup complete with explicit free commands")
         except Exception as e:
             logger.error(f"Error setting up middleware: {e}")
         

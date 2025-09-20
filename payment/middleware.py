@@ -228,35 +228,34 @@ class SubscriptionMiddleware:
     def _is_free_action(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
         """Проверяет, является ли действие бесплатным."""
         
-        # НОВОЕ: Если активный модуль test_part - это всегда бесплатно!
+        # Проверка команд test_part
+        if update.message and update.message.text:
+            text = update.message.text
+            if text.startswith('/'):
+                command = text.split()[0][1:].split('@')[0].lower()
+                if command in ['quiz', 'test', 'test_stats', 'mistakes']:
+                    return True
+                    
+        # НОВОЕ: Полная проверка для бесплатного модуля test_part
         if context and context.user_data.get('active_module') == 'test_part':
             return True
         
-        # НОВОЕ: Проверка callback_data для test_part
+        # Проверка callback_data для test_part
         if update.callback_query and update.callback_query.data:
             callback_data = update.callback_query.data
             
-            # Все действия связанные с test_part бесплатны
+            # Расширенный список паттернов для test_part
             test_part_patterns = [
                 'choose_test_part', 'test_part', 'to_test_part_menu',
-                'initial:random_all', 'initial:exam_mode', 'initial:by_blocks',
-                'block:', 'topic:', 'exam_num:', 'next_random', 'next_topic',
-                'skip_question', 'test_mistakes', 'test_detailed_analysis'
+                'initial:', 'block:', 'topic:', 'exam_num:', 
+                'next_random', 'next_topic', 'skip_question',
+                'mode:', 'exam_', 'mistake_', 'test_',
+                'select_mistakes', 'work_mistakes', 'test_detailed_analysis',
+                'test_export_csv', 'test_part_progress', 'test_part_reset'
             ]
             
             if any(pattern in callback_data for pattern in test_part_patterns):
                 return True
-        # Добавляем проверку для пользователей в процессе оплаты
-        if context and context.user_data.get('in_payment_process'):
-            return True
-        # Проверяем команды
-        if update.message and update.message.text:
-            # Извлекаем команду без /
-            text = update.message.text
-            if text.startswith('/'):
-                command = text.split()[0][1:].split('@')[0].lower()
-                if command in self.free_commands:
-                    return True
             else:
                 # ВАЖНО: Проверяем, не является ли это вводом email
                 # Простая проверка на наличие @ в тексте
@@ -407,25 +406,25 @@ class SubscriptionMiddleware:
         elif update.message:
             await update.message.reply_text(text, reply_markup=reply_markup)
 
-    async def _send_module_subscription_required(
-        self, 
-        update: Update, 
-        context: ContextTypes.DEFAULT_TYPE,
-        module_code: str
-    ):
+    async def _send_module_subscription_required(self, update: Update, context: ContextTypes.DEFAULT_TYPE, module_code: str):
         """Отправляет сообщение о необходимости подписки на модуль."""
-        from telegram import InlineKeyboardButton, InlineKeyboardMarkup
-        from telegram.constants import ParseMode
         
+        # Модули и их названия
         module_names = {
-            'task19': 'Задание 19 - Примеры',
-            'task20': 'Задание 20 - Аргументы',
-            'task24': 'Задание 24 - План',
-            'task25': 'Задание 25 - Обоснование и примеры',
-            'test_part': 'Тестовая часть ЕГЭ'
+            'test_part': '📝 Тестовая часть - БЕСПЛАТНО',  # Не должно срабатывать
+            'task19': '🎯 Задание 19 - Анализ суждений',
+            'task20': '📖 Задание 20 - Работа с текстом',
+            'task24': '💎 Задание 24 - Составление плана',
+            'task25': '✍️ Задание 25 - Эссе и сочинения',
+            'full_course': '🎓 Полный курс - Все модули'
         }
         
-        module_name = module_names.get(module_code, f'Модуль {module_code}')
+        module_name = module_names.get(module_code, module_code)
+        
+        # Не должно срабатывать для test_part, но на всякий случай
+        if module_code == 'test_part':
+            logger.error(f"Subscription check triggered for free module test_part!")
+            return
         
         text = f"""🔒 <b>Требуется подписка на модуль!</b>
 
