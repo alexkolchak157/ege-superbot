@@ -196,7 +196,16 @@ async def post_init(application: Application) -> None:
     except Exception as e:
         logger.error(f"Error loading plugins: {e}")
         logger.info("Bot will work without additional plugins")
-    
+    # Инициализируем плагины
+    if 'plugin_post_init_tasks' in application.bot_data:
+        for plugin in application.bot_data['plugin_post_init_tasks']:
+            try:
+                logger.info(f"Running post_init for plugin: {plugin.title}")
+                await plugin.post_init(application)
+                logger.info(f"✅ Plugin {plugin.title} initialized")
+            except Exception as e:
+                logger.error(f"Failed to initialize plugin {plugin.title}: {e}")
+            
     logger.info("Post-init завершен")
 
 async def post_shutdown(application: Application) -> None:
@@ -252,8 +261,75 @@ async def start_command(update: Update, context):
     
     # Проверяем подписку
     subscription_manager = context.bot_data.get('subscription_manager')
+    subscription_info = None
+    
     if subscription_manager:
         subscription_info = await subscription_manager.get_subscription_info(user_id)
+    
+    # Персонализированное приветствие
+    user_name = user.first_name or "друг"
+    current_hour = datetime.now().hour
+    
+    if 5 <= current_hour < 12:
+        greeting = "Доброе утро"
+    elif 12 <= current_hour < 17:
+        greeting = "Добрый день"
+    elif 17 <= current_hour < 23:
+        greeting = "Добрый вечер"
+    else:
+        greeting = "Привет"
+    
+    # Формируем текст в зависимости от статуса подписки
+    if subscription_info and subscription_info.get('is_active'):
+        # Пользователь с активной подпиской
+        expires = subscription_info.get('expires_at').strftime('%d.%m.%Y')
+        welcome_text = f"""
+{greeting}, {user_name}! 👋
+
+<b>✅ У вас активная подписка до {expires}</b>
+
+📚 <b>Всё для подготовки в одном месте!</b>
+Больше не нужно таскать сборники и искать ответы в конце учебника.
+
+<b>💡 Совет дня:</b> Практикуйся в любой момент — едешь в автобусе или ждёшь друга? 
+Каждая свободная минута работает на твой результат!
+
+Выберите модуль для продолжения:"""
+    else:
+        # Новый пользователь или без подписки
+        welcome_text = f"""
+{greeting}, {user_name}! 👋
+
+<b>🎓 Подготовка к ЕГЭ по обществознанию в твоём телефоне!</b>
+
+<b>🆓 БЕСПЛАТНО доступна тестовая часть:</b>
+- 1000+ вопросов с подробными разборами
+- Все темы кодификатора  
+- Режимы тренировки по блокам и номерам
+- Базовая статистика прогресса
+
+<b>💎 Почему стоит оформить подписку от 199₽/мес:</b>
+
+🤖 <b>ИИ-проверка за секунды</b> — специально обученная нейросеть проверяет твои развёрнутые ответы по критериям ФИПИ. Никаких "правильно/неправильно" — получаешь подробный разбор, как от настоящего эксперта.
+
+📚 <b>Всё в одном месте</b> — от тестовой части до сложных планов. Больше не нужно таскать сборники и искать ответы в конце учебника.
+
+⚡ <b>Практика в любой момент</b> — едешь в автобусе? Решай тесты. Ждёшь друга? Тренируй задание 24. Каждая свободная минута работает на твой результат.
+
+📊 <b>Умная статистика</b> — бот запоминает твои ошибки и показывает, над чем работать. Больше никаких пробелов в знаниях!
+
+💰 <b>Честные цены</b> — пробный период всего за 1₽, потом от 199₽/мес за нужные модули. Платишь только за то, что используешь.
+
+<b>👇 Начни прямо сейчас — тестовая часть уже доступна!</b>"""
+    
+    # Получаем меню с индикацией доступа
+    menu_keyboard = await show_main_menu_with_access(context, user_id)
+    
+    await update.message.reply_text(
+        welcome_text,
+        reply_markup=menu_keyboard,
+        parse_mode="HTML"
+    )
         
         if subscription_info:
             if subscription_info.get('type') == 'modular':
@@ -296,49 +372,68 @@ async def start_command(update: Update, context):
     )
 
 async def show_main_menu_with_access(context: ContextTypes.DEFAULT_TYPE, user_id: int) -> InlineKeyboardMarkup:
-    """Показывает главное меню с индикацией доступа к модулям."""
-    from core.plugin_loader import PLUGINS
-    from payment.config import SUBSCRIPTION_MODE
+    """Показывает главное меню с правильной индикацией доступа."""
     
     subscription_manager = context.bot_data.get('subscription_manager')
     buttons = []
     
-    # Соответствие кодов плагинов и модулей
-    plugin_to_module = {
-        'test_part': 'test_part',
-        'task19': 'task19', 
-        'task20': 'task20',
-        't20': 'task20',
-        'task24': 'task24',
-        'task25': 'task25'
-    }
+    # Получаем список плагинов
+    from core import plugin_loader
+    plugins = plugin_loader.get_active_plugins()
     
-    for plugin in PLUGINS:
-        module_code = plugin_to_module.get(plugin.code)
-        
-        if module_code and subscription_manager and SUBSCRIPTION_MODE == 'modular':
-            # Проверяем доступ к модулю
-            has_access = await subscription_manager.check_module_access(user_id, module_code)
+    for plugin in plugins:
+        if plugin.code == 'test_part':
+            # Тестовая часть - всегда доступна бесплатно
+            icon = "🆓"
+            badge = " БЕСПЛАТНО"
+            text = f"{icon} {plugin.title}{badge}"
+            
+        elif subscription_manager:
+            # Проверяем доступ к платным модулям
+            has_access = await subscription_manager.check_module_access(user_id, plugin.code)
             
             if has_access:
-                # Доступ есть - используем оригинальный title плагина (с иконкой)
-                button_text = plugin.title
+                icon = "✅"
+                text = f"{icon} {plugin.title}"
             else:
-                # Доступа нет - показываем с замком
-                button_text = f"🔒 {plugin.title}"
+                icon = "🔒"
+                text = f"{icon} {plugin.title}"
         else:
-            # Если не модульная система или модуль не требует проверки
-            button_text = plugin.title
+            # Если система подписок недоступна
+            icon = "📚"
+            text = f"{icon} {plugin.title}"
         
-        buttons.append([InlineKeyboardButton(
-            button_text,
+        button = InlineKeyboardButton(
+            text=text,
             callback_data=f"choose_{plugin.code}"
-        )])
+        )
+        buttons.append([button])
     
-    # Добавляем дополнительные кнопки
-    buttons.extend([
-        [InlineKeyboardButton("💳 Моя подписка", callback_data="my_subscriptions")],  # ИСПРАВЛЕНО: с 's'
-        #[InlineKeyboardButton("⚙️ Настройки", callback_data="settings")]
+    # Добавляем системные кнопки
+    system_buttons = []
+    
+    if subscription_manager:
+        subscription_info = await subscription_manager.get_subscription_info(user_id)
+        
+        if subscription_info:
+            system_buttons.append(
+                InlineKeyboardButton("💳 Моя подписка", callback_data="my_subscriptions")
+            )
+        else:
+            system_buttons.append(
+                InlineKeyboardButton("💎 Оформить подписку", callback_data="subscribe_start")
+            )
+    
+    system_buttons.append(
+        InlineKeyboardButton("📊 Статистика", callback_data="global_stats")
+    )
+    
+    if system_buttons:
+        buttons.append(system_buttons)
+    
+    # Кнопка поддержки
+    buttons.append([
+        InlineKeyboardButton("💬 Поддержка", callback_data="support")
     ])
     
     return InlineKeyboardMarkup(buttons)
