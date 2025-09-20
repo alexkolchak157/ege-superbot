@@ -21,7 +21,7 @@ WEBHOOK_PORT = 8080
 PAYMENT_ADMIN_CHAT_ID = int(os.getenv('PAYMENT_ADMIN_CHAT_ID', '0'))
 DATABASE_PATH = 'quiz_async.db'  # Укажите путь к вашей БД
 WEBHOOK_URL = 'https://xn--80aaabfr9bnfdntn4cn1bzd.xn--p1ai/payment-notification'
-
+FREE_MODULES = ['test_part']
 # Режим работы подписок
 SUBSCRIPTION_MODE = os.getenv('SUBSCRIPTION_MODE', 'modular')  # 'unified' или 'modular'
 
@@ -82,8 +82,8 @@ MODULE_PLANS = {
             '• Автоматическая проверка ответов',
             '• Детальная статистика ошибок'
         ],
-        'price_rub': 149,
-        'duration_days': 30,
+        'price_rub': 0,  # Бесплатный модуль
+        'is_free': True,  # Флаг бесплатного модуля
         'modules': ['test_part'],
         'type': 'individual'
     },

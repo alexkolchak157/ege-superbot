@@ -134,6 +134,13 @@ class SubscriptionMiddleware:
         module_code = self._get_module_from_update(update)
         logger.debug(f"Detected module: {module_code}")
         
+        # НОВОЕ: Специальная обработка для test_part - он всегда бесплатный
+        if module_code == 'test_part':
+            logger.info(f"Free access granted to test_part for user {user_id}")
+            # Сохраняем информацию для обработчиков
+            context.user_data['subscription_info'] = {'free_module': 'test_part'}
+            return True
+        
         # Получаем менеджер подписок
         subscription_manager = application.bot_data.get('subscription_manager')
         if not subscription_manager:
@@ -193,7 +200,24 @@ class SubscriptionMiddleware:
     
     def _is_free_action(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
         """Проверяет, является ли действие бесплатным."""
+        # НОВОЕ: Если активный модуль test_part - это бесплатно
+        if context and context.user_data.get('active_module') == 'test_part':
+            return True
         
+        # НОВОЕ: Проверка callback_data для test_part
+        if update.callback_query and update.callback_query.data:
+            callback_data = update.callback_query.data
+            
+            # Все действия связанные с test_part бесплатны
+            test_part_patterns = [
+                'choose_test_part', 'test_part', 'to_test_part_menu',
+                'initial:random_all', 'initial:exam_mode', 'initial:by_blocks',
+                'block:', 'topic:', 'exam_num:', 'next_random', 'next_topic',
+                'skip_question', 'test_mistakes', 'test_detailed_analysis'
+            ]
+            
+            if any(pattern in callback_data for pattern in test_part_patterns):
+                return True
         # Добавляем проверку для пользователей в процессе оплаты
         if context and context.user_data.get('in_payment_process'):
             return True
