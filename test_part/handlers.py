@@ -1151,15 +1151,33 @@ async def cmd_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def send_question(message, context: ContextTypes.DEFAULT_TYPE, 
                         question_data: dict, last_mode: str):
-    """Отправляет вопрос пользователю."""
+    """Отправляет вопрос пользователю с промо-логикой."""
     
-    # Увеличиваем счетчик вопросов
-    questions_count = context.user_data.get('session_questions_count', 0) + 1
-    context.user_data['session_questions_count'] = questions_count
+    # ========== 1. ОПРЕДЕЛЕНИЕ USER_ID В НАЧАЛЕ ==========
+    user_id = context.user_data.get('user_id')
+    if not user_id:
+        if hasattr(message, 'from_user') and message.from_user:
+            user_id = message.from_user.id
+        elif hasattr(message, 'chat') and message.chat:
+            user_id = message.chat.id
+        elif hasattr(message, 'message') and hasattr(message.message, 'chat'):
+            user_id = message.message.chat.id
+    
+    if not user_id:
+        logger.error("Cannot determine user_id!")
+        await message.reply_text("Ошибка: не удалось определить пользователя")
+        return ConversationHandler.END
+    
+    context.user_data['user_id'] = user_id
+    
+    # ========== 2. УВЕЛИЧИВАЕМ ЕДИНЫЙ СЧЕТЧИК ==========
+    questions_count = context.user_data.get('test_questions_count', 0) + 1
+    context.user_data['test_questions_count'] = questions_count
     
     # Устанавливаем активный модуль
     context.user_data['active_module'] = 'test_part'
     
+    # ========== 3. ОЧИСТКА И СОХРАНЕНИЕ ДАННЫХ ==========
     # Очищаем старые данные вопросов ПЕРЕД сохранением нового
     question_id = question_data.get('id')
     keys_to_remove = []
@@ -1174,8 +1192,8 @@ async def send_question(message, context: ContextTypes.DEFAULT_TYPE,
     context.user_data[f'question_{question_id}'] = question_data
     context.user_data['last_mode'] = last_mode
     
-    # Логирование для отладки  
-    logger.info(f"Question #{questions_count} sent to user {user_id if 'user_id' in locals() else 'unknown'}")
+    # Логирование для отладки (теперь user_id определен)
+    logger.info(f"Question #{questions_count} sent to user {user_id}")
     logger.info(f"SENDING QUESTION: ID={question_id}, "
                 f"Answer={question_data.get('answer')}, "
                 f"Type={question_data.get('type')}, "
@@ -1192,26 +1210,7 @@ async def send_question(message, context: ContextTypes.DEFAULT_TYPE,
     if last_mode == 'exam_num' and 'exam_number' in question_data:
         context.user_data['current_exam_number'] = question_data['exam_number']
     
-    # Получение user_id
-    user_id = context.user_data.get('user_id')
-    
-    if not user_id:
-        if hasattr(message, 'from_user') and message.from_user:
-            user_id = message.from_user.id
-        elif hasattr(message, 'chat') and message.chat:
-            user_id = message.chat.id
-        else:
-            if hasattr(message, 'message') and hasattr(message.message, 'chat'):
-                user_id = message.message.chat.id
-    
-    if not user_id:
-        logger.error("Cannot determine user_id!")
-        await message.reply_text("Ошибка: не удалось определить пользователя")
-        return ConversationHandler.END
-    
-    context.user_data['user_id'] = user_id
-    logger.debug(f"Determined user_id: {user_id}")
-    
+    # ========== 4. ФОРМАТИРОВАНИЕ И ОТПРАВКА ВОПРОСА ==========
     # Форматируем текст вопроса
     text = utils.format_question_text(question_data)
     
@@ -1330,55 +1329,107 @@ async def send_question(message, context: ContextTypes.DEFAULT_TYPE,
             pass
         return ConversationHandler.END
 
-    # ВАЖНО: Этот блок должен быть ВНУТРИ функции с правильными отступами!
-    # Показываем промо-сообщение каждые 10 вопросов (для теста)
-    if questions_count % 10 == 0:  # Изменил на 10 для быстрого теста
-        subscription_manager = context.bot_data.get('subscription_manager')
-        if subscription_manager:
-            if user_id:
+    # ========== 5. ПРОМО-ЛОГИКА (ПЕРЕНЕСЕНА ИЗ TRY-EXCEPT) ==========
+    # Показываем промо каждые 10 вопросов
+    if questions_count > 0 and questions_count % 10 == 0:
+        # Проверяем, что мы в модуле test_part
+        if context.user_data.get('active_module') == 'test_part':
+            subscription_manager = context.bot_data.get('subscription_manager')
+            if subscription_manager:
                 try:
                     has_subscription = await subscription_manager.check_active_subscription(user_id)
                     
                     if not has_subscription:
-                        # Отправляем промо как отдельное сообщение
                         import random
                         import asyncio
                         
+                        # Варианты промо-сообщений
                         promo_messages = [
-                            f"🚀 Уже {questions_count} вопросов! С премиум-подпиской откроются задания второй части.",
-                            f"💪 {questions_count} вопросов позади! Готовы к заданиям с развёрнутым ответом?",
-                            f"🎯 Целых {questions_count} вопросов! ИИ-проверка поможет с заданиями 19-20.",
-                            f"📈 {questions_count} вопросов решено! Хотите увидеть детальную аналитику прогресса?"
+                            f"🚀 <b>Уже {questions_count} вопросов!</b>\n\n"
+                            f"С премиум-подпиской откроются задания второй части ЕГЭ:\n"
+                            f"• Задание 19 - Примеры и иллюстрации\n"
+                            f"• Задание 20 - Теоретические суждения\n"
+                            f"• Задание 24 - Составление планов\n"
+                            f"• Задание 25 - Развёрнутые ответы",
+                            
+                            f"💪 <b>{questions_count} вопросов позади!</b>\n\n"
+                            f"Готовы к заданиям с развёрнутым ответом?\n"
+                            f"ИИ-проверка поможет подготовиться к второй части ЕГЭ!",
+                            
+                            f"🎯 <b>Целых {questions_count} вопросов!</b>\n\n"
+                            f"Откройте доступ к:\n"
+                            f"• Автоматической проверке заданий 19-20\n"
+                            f"• Составлению планов по заданию 24\n"
+                            f"• Тренажёру задания 25",
+                            
+                            f"📈 <b>{questions_count} вопросов решено!</b>\n\n"
+                            f"Хотите увидеть детальную аналитику и начать готовиться к второй части?"
                         ]
                         
                         promo_text = random.choice(promo_messages)
-                        promo_text += "\n\n<b>Попробуйте премиум 7 дней за 1₽!</b>"
+                        promo_text += "\n\n💎 <b>Попробуйте премиум 7 дней за 1₽!</b>"
                         
                         # Небольшая задержка перед промо
-                        await asyncio.sleep(0.5)
+                        await asyncio.sleep(1)
                         
-                        # Отправляем промо-сообщение
-                        await context.bot.send_message(
-                            chat_id=user_id,
-                            text=promo_text,
-                            reply_markup=InlineKeyboardMarkup([
-                                [InlineKeyboardButton("💎 Попробовать", callback_data="pay_trial")],
-                                [InlineKeyboardButton("➡️ Продолжить", callback_data="dismiss_promo")]
-                            ]),
-                            parse_mode=ParseMode.HTML
-                        )
-                        
-                        logger.info(f"Promo message sent to user {user_id} after {questions_count} questions")
-                        
+                        # Отправляем промо-сообщение  
+                        try:
+                            await context.bot.send_message(
+                                chat_id=user_id,
+                                text=promo_text,
+                                reply_markup=InlineKeyboardMarkup([
+                                    [InlineKeyboardButton("💎 Попробовать за 1₽", callback_data="pay_trial")],
+                                    [InlineKeyboardButton("ℹ️ Подробнее", callback_data="subscribe_start")],
+                                    [InlineKeyboardButton("➡️ Продолжить", callback_data="dismiss_promo")]
+                                ]),
+                                parse_mode=ParseMode.HTML
+                            )
+                            logger.info(f"Promo shown to user {user_id} after {questions_count} questions")
+                        except Exception as e:
+                            logger.error(f"Error showing promo: {e}")
+                
                 except Exception as e:
-                    logger.error(f"Error showing promo: {e}")
+                    logger.error(f"Error checking subscription for promo: {e}")
     
-    # Устанавливаем правильное состояние
+    # ========== 6. ВОЗВРАЩАЕМ СОСТОЯНИЕ ==========
+    # Устанавливаем состояние для state_validator если нужно
     if user_id:
         from core.state_validator import state_validator
         state_validator.set_state(user_id, states.ANSWERING)
     
     return states.ANSWERING
+    
+@safe_handler()
+async def continue_test(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Продолжает тест после промо."""
+    query = update.callback_query
+    await query.answer("Продолжаем! 💪")
+    
+    try:
+        await query.message.delete()
+    except:
+        pass
+    
+    # Остаемся в текущем состоянии
+    return
+
+# Обработчик для перехода к оплате пробного периода
+@safe_handler()  
+async def pay_trial_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Переход к оплате пробного периода."""
+    query = update.callback_query
+    
+    # Сохраняем текущее состояние для возврата
+    context.user_data['return_to_test'] = True
+    
+    # Вызываем обработчик оплаты из payment модуля
+    from payment.handlers import process_payment
+    
+    # Устанавливаем параметры для пробного периода
+    context.user_data['selected_plan'] = 'trial_7days'
+    context.user_data['selected_duration'] = 1
+    
+    return await process_payment(update, context)
 
 @safe_handler()
 @validate_state_transition({states.CHOOSING_MODE})
