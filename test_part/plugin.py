@@ -94,9 +94,9 @@ class TestPartPlugin(BotPlugin):
                         handlers.select_block_mode, 
                         pattern="^initial:select_block$"
                     ),
-                    CallbackQueryHandler(dismiss_promo, pattern="^dismiss_promo$"),
-                    CallbackQueryHandler(continue_test, pattern="^continue_test$"),
-                    CallbackQueryHandler(pay_trial_handler, pattern="^pay_trial$"),
+                    CallbackQueryHandler(handlers.dismiss_promo, pattern="^dismiss_promo$"),
+                    CallbackQueryHandler(handlers.continue_test, pattern="^continue_test$"),
+                    CallbackQueryHandler(handlers.pay_trial_handler, pattern="^pay_trial$"),
                     CallbackQueryHandler(
                         handlers.select_random_all, 
                         pattern="^initial:select_random_all$"

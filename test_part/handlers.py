@@ -219,10 +219,9 @@ async def entry_from_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Устанавливаем флаг активного модуля
     context.user_data['active_module'] = 'test_part'
     
-    # УДАЛЕНО: Проверка подписки больше не нужна
-    # if not await utils.check_subscription(query.from_user.id, context.bot):
-    #     await utils.send_subscription_required(query, REQUIRED_CHANNEL)
-    #     return ConversationHandler.END
+    # Инициализируем счетчик вопросов
+    if 'questions_count' not in context.user_data:
+        context.user_data['questions_count'] = 0
     
     kb = keyboards.get_initial_choice_keyboard()
     await query.edit_message_text(
@@ -1185,8 +1184,15 @@ async def send_question(message, context: ContextTypes.DEFAULT_TYPE,
     context.user_data['user_id'] = user_id
     
     # ========== 2. УВЕЛИЧИВАЕМ ЕДИНЫЙ СЧЕТЧИК ==========
-    questions_count = context.user_data.get('test_questions_count', 0) + 1
-    context.user_data['test_questions_count'] = questions_count
+    # Увеличиваем счетчик
+    questions_count = context.user_data.get('questions_count', 0) + 1
+    context.user_data['questions_count'] = questions_count
+
+    # Показываем промо каждые 10 вопросов
+    if questions_count % 10 == 0:
+        asyncio.create_task(
+            show_promo_message(context, user_id, questions_count)
+        )
     
     # Устанавливаем активный модуль
     context.user_data['active_module'] = 'test_part'
