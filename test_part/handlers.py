@@ -37,6 +37,20 @@ except ImportError:
 
 logger = logging.getLogger(__name__)
 
+# Добавить после строки с импортами (примерно строка 35-40)
+@safe_handler()
+async def dismiss_promo(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Закрывает промо-сообщение."""
+    query = update.callback_query
+    await query.answer("Продолжаем тренировку! 💪")
+    
+    try:
+        await query.message.delete()
+    except Exception as e:
+        logger.debug(f"Could not delete promo message: {e}")
+    
+    return None  # Важно: возвращаем None, а не END
+
 # Добавить после импортов (новые функции):
 def safe_cache_get_by_exam_num(exam_number):
     """Безопасное получение вопросов по номеру ЕГЭ."""
@@ -1483,21 +1497,6 @@ async def start_exam_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Отправляем первый вопрос
     await send_exam_question(query.message, context, 0)
     return states.EXAM_MODE
-
-@safe_handler()
-async def dismiss_promo(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Закрывает промо-сообщение."""
-    query = update.callback_query
-    await query.answer("Продолжаем тренировку! 💪")
-    
-    # Удаляем промо-сообщение
-    try:
-        await query.message.delete()
-    except Exception as e:
-        logger.debug(f"Could not delete promo message: {e}")
-    
-    # Не меняем состояние разговора
-    return
 
 async def send_exam_question(message, context: ContextTypes.DEFAULT_TYPE, index: int):
     """Отправка вопроса в режиме экзамена с поддержкой всех типов вопросов."""
