@@ -1235,69 +1235,64 @@ async def send_question(message, context: ContextTypes.DEFAULT_TYPE,
     """Отправляет вопрос пользователю с улучшенной защитой и промо-логикой."""
     
     # ========== 1. ОПРЕДЕЛЕНИЕ USER_ID И ЗАЩИТА ОТ БОТОВ ==========
+    # ПРИОРИТЕТ 1: Берем из context.user_data (самый надежный источник)
     user_id = context.user_data.get('user_id')
-    effective_user = None
     
-    # Пытаемся получить effective_user для проверки на бота
-    if hasattr(message, 'from_user') and message.from_user:
-        effective_user = message.from_user
-        user_id = user_id or message.from_user.id
-    elif hasattr(message, 'message') and hasattr(message.message, 'from_user'):
-        effective_user = message.message.from_user
-        user_id = user_id or message.message.from_user.id
-    elif hasattr(message, 'chat') and message.chat:
-        user_id = user_id or message.chat.id
-    elif hasattr(message, 'message') and hasattr(message.message, 'chat'):
-        user_id = user_id or message.message.chat.id
+    # ПРИОРИТЕТ 2: Если есть update в context - берем оттуда
+    if not user_id and hasattr(context, '_update') and context._update:
+        update = context._update
+        if update.effective_user and not update.effective_user.is_bot:
+            user_id = update.effective_user.id
+            logger.debug(f"Got user_id from context._update: {user_id}")
     
-    # КРИТИЧЕСКАЯ ПРОВЕРКА: Защита от ботов
-    if effective_user and effective_user.is_bot:
-        logger.warning(f"Attempted to send message to bot with ID {user_id}")
-        return ConversationHandler.END
+    # ПРИОРИТЕТ 3: Пробуем получить из callback_query в update
+    if not user_id and hasattr(context, '_update') and context._update:
+        if hasattr(context._update, 'callback_query') and context._update.callback_query:
+            if context._update.callback_query.from_user:
+                user_id = context._update.callback_query.from_user.id
+                logger.debug(f"Got user_id from callback_query: {user_id}")
     
-    # Дополнительная проверка подозрительных ID (боты обычно имеют ID > 5 млрд)
-    if user_id and user_id > 5000000000:
-        logger.warning(f"Suspicious user ID detected: {user_id}, checking if bot...")
-        try:
-            chat_member = await context.bot.get_chat(chat_id=user_id)
-            if hasattr(chat_member, 'type') and chat_member.type == 'bot':
-                logger.error(f"User {user_id} is a bot, aborting send_question")
-                return ConversationHandler.END
-        except Exception as e:
-            logger.debug(f"Could not verify user {user_id}: {e}")
-            # В случае ошибки проверки - блокируем подозрительный ID
-            if user_id > 5000000000:
-                logger.error(f"Blocking suspicious ID {user_id}")
-                return ConversationHandler.END
-    
+    # ПРИОРИТЕТ 4: Только если нет других вариантов - пробуем из message
     if not user_id:
-        logger.error("Cannot determine user_id!")
-        await message.reply_text("Ошибка: не удалось определить пользователя")
+        # Проверяем, не является ли message.from_user ботом
+        if hasattr(message, 'from_user') and message.from_user and not message.from_user.is_bot:
+            user_id = message.from_user.id
+            logger.debug(f"Got user_id from message.from_user: {user_id}")
+        # Если это сообщение от бота, пробуем получить chat.id
+        elif hasattr(message, 'chat') and message.chat and message.chat.type == 'private':
+            user_id = message.chat.id
+            logger.debug(f"Got user_id from message.chat: {user_id}")
+    
+    # КРИТИЧЕСКАЯ ПРОВЕРКА
+    if not user_id:
+        logger.error("Cannot determine user_id in send_question!")
+        await message.reply_text("❌ Ошибка: не удалось определить пользователя")
         return ConversationHandler.END
     
+    # ❌ УДАЛЕНА НЕВЕРНАЯ ПРОВЕРКА НА ID > 5000000000
+    # Это была ошибка! ID пользователей могут быть любыми большими числами
+    
+    # Проверка на бота через Telegram API (если действительно нужна)
+    # ВАЖНО: Используем эту проверку ТОЛЬКО если есть подозрения
+    if hasattr(context, '_update') and context._update:
+        if context._update.effective_user and context._update.effective_user.is_bot:
+            logger.warning(f"Blocked bot with ID {user_id}")
+            return ConversationHandler.END
+    
+    # Сохраняем правильный user_id
     context.user_data['user_id'] = user_id
+    logger.info(f"send_question: processing for user_id = {user_id}")
     
-    # ========== 2. УВЕЛИЧИВАЕМ СЧЕТЧИК И ОБНОВЛЯЕМ СТРИК ==========
-    questions_count = context.user_data.get('questions_count', 0) + 1
-    context.user_data['questions_count'] = questions_count
-    
-    # Обновляем дневной стрик при первом вопросе за день
-    if questions_count == 1 or context.user_data.get('last_question_date') != date.today().isoformat():
-        try:
-            from datetime import date
-            daily_current, daily_max = await db.update_daily_streak(user_id)
-            context.user_data['last_question_date'] = date.today().isoformat()
-            logger.info(f"Daily streak updated for user {user_id}: {daily_current}/{daily_max}")
-        except Exception as e:
-            logger.error(f"Error updating daily streak: {e}")
+    # ========== 2. УВЕЛИЧИВАЕМ ЕДИНЫЙ СЧЕТЧИК ==========
+    questions_count = context.user_data.get('test_questions_count', 0) + 1
+    context.user_data['test_questions_count'] = questions_count
     
     # Устанавливаем активный модуль
     context.user_data['active_module'] = 'test_part'
     
     # ========== 3. ОЧИСТКА И СОХРАНЕНИЕ ДАННЫХ ==========
+    # Очищаем старые данные вопросов ПЕРЕД сохранением нового
     question_id = question_data.get('id')
-    
-    # Очищаем старые данные вопросов
     keys_to_remove = []
     for key in context.user_data.keys():
         if key.startswith('question_') and key != f'question_{question_id}':
@@ -1310,7 +1305,7 @@ async def send_question(message, context: ContextTypes.DEFAULT_TYPE,
     context.user_data[f'question_{question_id}'] = question_data
     context.user_data['last_mode'] = last_mode
     
-    # Логирование для отладки
+    # Логирование для отладки (теперь user_id определен)
     logger.info(f"Question #{questions_count} sent to user {user_id}")
     logger.info(f"SENDING QUESTION: ID={question_id}, "
                 f"Answer={question_data.get('answer')}, "
@@ -1600,7 +1595,13 @@ async def start_exam_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def send_exam_question(message, context: ContextTypes.DEFAULT_TYPE, index: int):
     """Отправка вопроса в режиме экзамена с поддержкой всех типов вопросов."""
     exam_questions = context.user_data.get('exam_questions', [])
-    
+    # Гарантируем наличие user_id
+    if 'user_id' not in context.user_data:
+        if hasattr(context, '_update') and context._update and context._update.effective_user:
+            context.user_data['user_id'] = context._update.effective_user.id
+        else:
+            logger.error("Cannot determine user_id in [function_name]")
+            return
     if index >= len(exam_questions):
         # Экзамен завершен
         await show_exam_results(message, context)
@@ -2253,7 +2254,13 @@ async def send_mistake_question(message, context: ContextTypes.DEFAULT_TYPE):
     """Отправка вопроса в режиме работы над ошибками БЕЗ дублирования."""
     mistake_queue = context.user_data.get('mistake_queue', [])
     current_index = context.user_data.get('current_mistake_index', 0)
-    
+    # Гарантируем наличие user_id
+    if 'user_id' not in context.user_data:
+        if hasattr(context, '_update') and context._update and context._update.effective_user:
+            context.user_data['user_id'] = context._update.effective_user.id
+        else:
+            logger.error("Cannot determine user_id in [function_name]")
+            return
     if current_index >= len(mistake_queue):
         # Завершаем работу над ошибками
         kb = keyboards.get_mistakes_finish_keyboard()
@@ -2430,6 +2437,8 @@ async def mistake_nav(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def select_exam_num(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Выбор конкретного номера задания."""
     query = update.callback_query
+    context._update = update  # Сохраняем update для send_question
+    context.user_data['user_id'] = query.from_user.id  # Гарантируем правильный user_id
     context.user_data['user_id'] = query.from_user.id
     
     try:
@@ -2469,7 +2478,8 @@ async def select_exam_num(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def select_mode_random_in_block(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Случайный вопрос из выбранного блока."""
     query = update.callback_query
-    context.user_data['user_id'] = query.from_user.id
+    context._update = update  # Сохраняем update для send_question
+    context.user_data['user_id'] = query.from_user.id  # Гарантируем правильный user_id
     selected_block = context.user_data.get('selected_block')
     if not selected_block or selected_block not in QUESTIONS_DATA:
         await query.answer("❌ Блок не выбран", show_alert=True)
@@ -2509,7 +2519,8 @@ async def select_mode_random_in_block(update: Update, context: ContextTypes.DEFA
 async def select_mode_topic_in_block(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Выбор темы в блоке."""
     query = update.callback_query
-    context.user_data['user_id'] = query.from_user.id
+    context._update = update  # Сохраняем update для send_question
+    context.user_data['user_id'] = query.from_user.id  # Гарантируем правильный user_id
     selected_block = context.user_data.get('selected_block')
     if not selected_block or selected_block not in QUESTIONS_DATA:
         return states.CHOOSING_BLOCK
@@ -2530,7 +2541,8 @@ async def select_mode_topic_in_block(update: Update, context: ContextTypes.DEFAU
 async def select_topic(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Выбор конкретной темы."""
     query = update.callback_query
-    context.user_data['user_id'] = query.from_user.id
+    context._update = update  # Сохраняем update для send_question
+    context.user_data['user_id'] = query.from_user.id  # Гарантируем правильный user_id
     selected_topic = query.data.replace("topic:", "")
     selected_block = context.user_data.get('selected_block')
     
@@ -2566,7 +2578,8 @@ async def select_topic(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def select_mistakes(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Вход в режим работы над ошибками."""
     query = update.callback_query
-    context.user_data['user_id'] = query.from_user.id
+    context._update = update  # Сохраняем update для send_question
+    context.user_data['user_id'] = query.from_user.id  # Гарантируем правильный user_id
     # Устанавливаем активный модуль
     context.user_data['active_module'] = 'test_part'
     
