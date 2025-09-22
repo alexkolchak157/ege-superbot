@@ -496,24 +496,64 @@ async def show_progress_enhanced(update: Update, context: ContextTypes.DEFAULT_T
     )
 
 @safe_handler()
-@validate_state_transition({states.ANSWERING})
+@validate_state_transition({states.ANSWERING, states.CHOOSING_NEXT_ACTION})  # Разрешаем оба состояния
 async def check_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Проверка ответа пользователя."""
+    """Проверка ответа пользователя с улучшенной обработкой состояний и стриков."""
+    
+    # ========== СОХРАНЯЕМ UPDATE ДЛЯ ДРУГИХ ФУНКЦИЙ ==========
+    context._update = update  # Важно для send_question!
+    
+    # ========== ЗАЩИТА ОТ БОТОВ ==========
+    if update.effective_user and update.effective_user.is_bot:
+        logger.warning(f"Bot {update.effective_user.id} tried to answer question")
+        return ConversationHandler.END
+    
+    user_id = update.effective_user.id
+    
+    # Сохраняем правильный user_id в context
+    context.user_data['user_id'] = user_id
+    logger.info(f"check_answer processing for user {user_id}")
+    
+    # ========== ПРОВЕРКА И КОРРЕКТИРОВКА СОСТОЯНИЯ ==========
+    from core.state_validator import state_validator
+    current_state = state_validator.get_current_state(user_id)
+    
+    # Логирование состояния для отладки
+    if current_state != states.ANSWERING:
+        logger.warning(f"check_answer called from state {current_state} for user {user_id}, correcting...")
+        state_validator.set_state(user_id, states.ANSWERING)
     
     # Проверяем активный модуль
     if context.user_data.get('active_module') != 'test_part':
-        return states.ANSWERING
+        logger.warning(f"check_answer called but active_module is {context.user_data.get('active_module')}")
+        # Устанавливаем правильный модуль
+        context.user_data['active_module'] = 'test_part'
     
-    # Дополнительная проверка состояния
-    from core.state_validator import state_validator
-    user_id = update.effective_user.id
-    current_state = state_validator.get_current_state(user_id)
+    # ========== ПРОВЕРКА НАЛИЧИЯ ВОПРОСА ==========
+    current_question_id = context.user_data.get('current_question_id')
     
-    if current_state != states.ANSWERING:
-        # Если состояние не установлено, устанавливаем его
-        state_validator.set_state(user_id, states.ANSWERING)
+    if not current_question_id:
+        logger.error(f"No current_question_id for user {user_id}")
+        await update.message.reply_text(
+            "⚠️ Нет активного вопроса. Пожалуйста, выберите режим.",
+            reply_markup=keyboards.get_initial_choice_keyboard()
+        )
+        state_validator.set_state(user_id, states.CHOOSING_MODE)
+        return states.CHOOSING_MODE
     
-    # АНИМИРОВАННОЕ СООБЩЕНИЕ ПРОВЕРКИ
+    # Получаем данные вопроса
+    question_data = context.user_data.get(f'question_{current_question_id}')
+    
+    if not question_data:
+        logger.error(f"No question data for {current_question_id}, user {user_id}")
+        await update.message.reply_text(
+            "⚠️ Данные вопроса не найдены. Начните заново.",
+            reply_markup=keyboards.get_initial_choice_keyboard()
+        )
+        state_validator.set_state(user_id, states.CHOOSING_MODE)
+        return states.CHOOSING_MODE
+    
+    # ========== АНИМАЦИЯ ПРОВЕРКИ ==========
     thinking_msg = await show_thinking_animation(
         update.message,
         text="Проверяю ваш ответ"
@@ -522,86 +562,99 @@ async def check_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Сохраняем ID для удаления
     context.user_data['checking_message_id'] = thinking_msg.message_id
     
-    user_id = update.effective_user.id
     user_answer = update.message.text.strip()
     context.user_data['user_answer_message_id'] = update.message.message_id
-
-    # Получаем текущий вопрос
-    current_question_id = context.user_data.get('current_question_id')
     
-    if not current_question_id:
-        try:
-            await thinking_msg.delete()
-        except Exception:
-            pass
-        await update.message.reply_text("Ошибка: вопрос не найден.")
-        return ConversationHandler.END
-    
-    # Получаем данные вопроса
-    question_data = context.user_data.get(f'question_{current_question_id}')
-    
-    if not question_data:
-        try:
-            await thinking_msg.delete()
-        except Exception:
-            pass
-        await update.message.reply_text("Ошибка: данные вопроса не найдены.")
-        return ConversationHandler.END
-    
-    # Обрабатываем ответ
+    # ========== ОБРАБОТКА ОТВЕТА ==========
     try:
         correct_answer = question_data.get('answer', '').strip()
         is_correct = user_answer.lower() == correct_answer.lower()
+        
+        # Логирование для отладки
+        logger.info(f"User {user_id} answered: '{user_answer}' (correct: '{correct_answer}') - {is_correct}")
         
         # Получаем информацию о вопросе
         question_id = question_data.get('id')
         topic = question_data.get('topic')
         
-        # Обновляем БД
+        # ========== ОБНОВЛЕНИЕ БД И СТАТИСТИКИ ==========
+        # Обновляем прогресс по теме
         if topic and topic != "N/A":
             await db.update_progress(user_id, topic, is_correct)
+            logger.debug(f"Updated progress for user {user_id}, topic {topic}: {is_correct}")
         
+        # Записываем ответ
         if question_id:
             await db.record_answered(user_id, question_id)
+            logger.debug(f"Recorded answer for user {user_id}, question {question_id}")
         
+        # Записываем ошибку если неправильно
         if not is_correct and question_id:
             await db.record_mistake(user_id, question_id)
+            logger.debug(f"Recorded mistake for user {user_id}, question {question_id}")
         
-        # Обновляем стрики
-        daily_current, daily_max = await db.update_daily_streak(user_id)
+        # Увеличиваем счетчик отвеченных вопросов
+        questions_answered = context.user_data.get('questions_answered', 0) + 1
+        context.user_data['questions_answered'] = questions_answered
+        logger.info(f"User {user_id} answered {questions_answered} questions total")
         
+        # ========== ОБНОВЛЕНИЕ СТРИКОВ ==========
+        # Обновляем дневной стрик (если еще не обновлен сегодня)
+        from datetime import date
+        current_date = date.today().isoformat()
+        last_activity_date = context.user_data.get('last_activity_date')
+        
+        if last_activity_date != current_date:
+            daily_current, daily_max = await db.update_daily_streak(user_id)
+            context.user_data['last_activity_date'] = current_date
+            logger.info(f"Daily streak updated for user {user_id}: {daily_current}/{daily_max}")
+        else:
+            # Получаем текущие стрики без обновления
+            streaks = await db.get_user_streaks(user_id)
+            daily_current = streaks.get('current_daily', 0)
+            daily_max = streaks.get('max_daily', 0)
+        
+        # Логирование стриков ДО изменения correct streak
+        streaks_before = await db.get_user_streaks(user_id)
+        logger.info(f"Streaks BEFORE update for user {user_id}: "
+                   f"daily={streaks_before.get('current_daily', 0)}/{streaks_before.get('max_daily', 0)}, "
+                   f"correct={streaks_before.get('current_correct', 0)}/{streaks_before.get('max_correct', 0)}")
+        
+        # Обновляем стрик правильных ответов
         if is_correct:
             correct_current, correct_max = await db.update_correct_streak(user_id)
+            logger.info(f"Correct streak INCREASED for user {user_id}: {correct_current}/{correct_max}")
         else:
             await db.reset_correct_streak(user_id)
             correct_current = 0
-            streaks = await db.get_user_streaks(user_id)
-            correct_max = streaks.get('max_correct', 0)
+            streaks_after_reset = await db.get_user_streaks(user_id)
+            correct_max = streaks_after_reset.get('max_correct', 0)
+            logger.info(f"Correct streak RESET for user {user_id}, max remains {correct_max}")
         
-        # Сохраняем старый стрик
+        # Сохраняем старый стрик для сравнения
         old_correct_streak = context.user_data.get('correct_streak', 0)
         context.user_data['correct_streak'] = correct_current
         
-        # Получаем дополнительные данные
+        # ========== ПОЛУЧЕНИЕ ДОПОЛНИТЕЛЬНЫХ ДАННЫХ ==========
         last_mode = context.user_data.get('last_mode', 'random')
         exam_number = context.user_data.get('current_exam_number')
         selected_topic = context.user_data.get('selected_topic')
         selected_block = context.user_data.get('selected_block')
         
-        # Мотивационная фраза
+        # Мотивационная фраза для неправильных ответов
         motivational_phrase = None
         try:
             if not is_correct:
                 motivational_phrase = await utils.get_random_motivational_phrase()
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"Could not get motivational phrase: {e}")
         
-        # Статистика
+        # Получаем общую статистику
         stats = await db.get_user_stats(user_id)
         total_correct = sum(correct for _, correct, _ in stats) if stats else 0
         total_answered = sum(total for _, _, total in stats) if stats else 0
         
-        # ФОРМИРУЕМ КРАСИВЫЙ ФИДБЕК
+        # ========== ФОРМИРОВАНИЕ ФИДБЕКА ==========
         if is_correct:
             # ПРАВИЛЬНЫЙ ОТВЕТ
             feedback = f"<b>{utils.get_random_correct_phrase()}</b>\n"
@@ -610,34 +663,36 @@ async def check_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
             # Прогресс с визуализацией
             if last_mode == 'exam_num' and exam_number:
                 questions_with_num = safe_cache_get_by_exam_num(exam_number)
-                total_in_mode = len(questions_with_num)
-                # Считаем правильные в этом задании
-                exam_correct = 0
-                for t, c, total in stats:
-                    for q in questions_with_num:
-                        if q.get('topic') == t:
-                            exam_correct += c
-                            break
-                progress_bar = create_visual_progress(exam_correct, total_in_mode)
-                feedback += f"📊 <b>Задание №{exam_number}:</b>\n"
-                feedback += f"{progress_bar}\n"
-                feedback += f"Правильных: {exam_correct}/{total_in_mode}\n\n"
+                if questions_with_num:
+                    total_in_mode = len(questions_with_num)
+                    exam_correct = 0
+                    if stats:
+                        for t, c, total in stats:
+                            for q in questions_with_num:
+                                if q.get('topic') == t:
+                                    exam_correct += c
+                                    break
+                    progress_bar = create_visual_progress(exam_correct, total_in_mode)
+                    feedback += f"📊 <b>Задание №{exam_number}:</b>\n"
+                    feedback += f"{progress_bar}\n"
+                    feedback += f"Правильных: {exam_correct}/{total_in_mode}\n\n"
             elif last_mode == 'topic' and selected_topic:
-                for t, c, total in stats:
-                    if t == selected_topic:
-                        progress_bar = create_visual_progress(c, total)
-                        topic_name = TOPIC_NAMES.get(selected_topic, selected_topic)
-                        feedback += f"📊 <b>{topic_name}:</b>\n"
-                        feedback += f"{progress_bar}\n"
-                        feedback += f"Правильных: {c}/{total}\n\n"
-                        break
+                if stats:
+                    for t, c, total in stats:
+                        if t == selected_topic:
+                            progress_bar = create_visual_progress(c, total)
+                            topic_name = TOPIC_NAMES.get(selected_topic, selected_topic)
+                            feedback += f"📊 <b>{topic_name}:</b>\n"
+                            feedback += f"{progress_bar}\n"
+                            feedback += f"Правильных: {c}/{total}\n\n"
+                            break
             else:
                 progress_bar = create_visual_progress(total_correct, total_answered)
                 feedback += f"📊 <b>Общий прогресс:</b>\n"
                 feedback += f"{progress_bar}\n"
                 feedback += f"Правильных: {total_correct}/{total_answered}\n\n"
             
-            # Стрики с деревом
+            # Стрики с визуализацией
             feedback += f"🔥 <b>Серии:</b>\n"
             feedback += f"├ 📅 Дней подряд: <b>{daily_current}</b>"
             if daily_current == daily_max and daily_max > 1:
@@ -649,7 +704,7 @@ async def check_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 feedback += " 🏆"
             feedback += "\n"
             
-            # Milestone
+            # Вехи достижений
             milestone_phrase = utils.get_streak_milestone_phrase(correct_current)
             if milestone_phrase and correct_current > old_correct_streak:
                 feedback += "\n" + "─" * 30 + "\n"
@@ -671,33 +726,36 @@ async def check_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
             feedback += f"❌ Ваш ответ: <code>{user_answer}</code>\n"
             feedback += f"✅ Правильный ответ: <b>{correct_answer}</b>\n\n"
             
-            # Прогресс
+            # Прогресс для неправильного ответа
             if last_mode == 'exam_num' and exam_number:
                 questions_with_num = safe_cache_get_by_exam_num(exam_number)
-                total_in_mode = len(questions_with_num)
-                exam_correct = 0
-                for t, c, total in stats:
-                    for q in questions_with_num:
-                        if q.get('topic') == t:
-                            exam_correct += c
-                            break
-                progress_bar = create_visual_progress(exam_correct, total_in_mode)
-                feedback += f"📊 <b>Задание №{exam_number}:</b>\n"
-                feedback += f"{progress_bar}\n\n"
+                if questions_with_num:
+                    total_in_mode = len(questions_with_num)
+                    exam_correct = 0
+                    if stats:
+                        for t, c, total in stats:
+                            for q in questions_with_num:
+                                if q.get('topic') == t:
+                                    exam_correct += c
+                                    break
+                    progress_bar = create_visual_progress(exam_correct, total_in_mode)
+                    feedback += f"📊 <b>Задание №{exam_number}:</b>\n"
+                    feedback += f"{progress_bar}\n\n"
             elif last_mode == 'topic' and selected_topic:
-                for t, c, total in stats:
-                    if t == selected_topic:
-                        progress_bar = create_visual_progress(c, total)
-                        topic_name = TOPIC_NAMES.get(selected_topic, selected_topic)
-                        feedback += f"📊 <b>{topic_name}:</b>\n"
-                        feedback += f"{progress_bar}\n\n"
-                        break
+                if stats:
+                    for t, c, total in stats:
+                        if t == selected_topic:
+                            progress_bar = create_visual_progress(c, total)
+                            topic_name = TOPIC_NAMES.get(selected_topic, selected_topic)
+                            feedback += f"📊 <b>{topic_name}:</b>\n"
+                            feedback += f"{progress_bar}\n\n"
+                            break
             else:
                 progress_bar = create_visual_progress(total_correct, total_answered)
                 feedback += f"📊 <b>Общий прогресс:</b>\n"
                 feedback += f"{progress_bar}\n\n"
             
-            # Стрики
+            # Стрики при неправильном ответе
             feedback += f"🔥 <b>Серии:</b>\n"
             feedback += f"├ 📅 Дней подряд: <b>{daily_current}</b>\n"
             
@@ -708,26 +766,27 @@ async def check_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 if correct_max > 0:
                     feedback += f"\n📈 <i>Ваш рекорд: {correct_max}</i>"
             else:
-                feedback += f"└ ✨ Правильных подряд: <b>0</b>"
+                feedback += f"└ ✨ Правильных подряд: <b>0</b>\n"
             
             if motivational_phrase:
                 feedback += "\n\n" + "─" * 30 + "\n"
                 feedback += f"💪 <i>{motivational_phrase}</i>"
         
-        # В функции check_answer, найдите строку где создается клавиатура:
+        # ========== СОЗДАНИЕ КЛАВИАТУРЫ ==========
         has_explanation = bool(question_data.get('explanation'))
-
-        # ИСПРАВЛЕНИЕ: Получаем номер задания для передачи в клавиатуру
-        exam_number = None
+        
+        # Получаем номер задания для клавиатуры
+        exam_number_for_kb = None
         if last_mode == 'exam_num':
-            exam_number = context.user_data.get('current_exam_number')
-
+            exam_number_for_kb = context.user_data.get('current_exam_number')
+        
         kb = keyboards.get_next_action_keyboard(
             last_mode, 
             has_explanation=has_explanation,
-            exam_number=exam_number  # Передаем номер задания
+            exam_number=exam_number_for_kb
         )
         
+        # ========== ОТПРАВКА ФИДБЕКА ==========
         # Удаляем анимацию
         try:
             await thinking_msg.delete()
@@ -744,18 +803,27 @@ async def check_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data['feedback_message_id'] = sent_msg.message_id
         context.user_data['last_answer_correct'] = is_correct
         
+        # Устанавливаем правильное состояние
+        state_validator.set_state(user_id, states.CHOOSING_NEXT_ACTION)
+        logger.debug(f"State set to CHOOSING_NEXT_ACTION for user {user_id}")
+        
         return states.CHOOSING_NEXT_ACTION
         
     except Exception as e:
-        logger.error(f"Error in check_answer: {e}")
+        logger.error(f"Error in check_answer for user {user_id}: {e}", exc_info=True)
         
         try:
             await thinking_msg.delete()
         except Exception:
             pass
-            
-        await update.message.reply_text("Произошла ошибка при проверке ответа")
-        return ConversationHandler.END
+        
+        await update.message.reply_text(
+            "❌ Произошла ошибка при проверке ответа. Попробуйте еще раз.",
+            reply_markup=keyboards.get_initial_choice_keyboard()
+        )
+        
+        state_validator.set_state(user_id, states.CHOOSING_MODE)
+        return states.CHOOSING_MODE
 
 @safe_handler()
 async def handle_next_action(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1164,17 +1232,43 @@ async def cmd_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def send_question(message, context: ContextTypes.DEFAULT_TYPE, 
                         question_data: dict, last_mode: str):
-    """Отправляет вопрос пользователю с промо-логикой."""
+    """Отправляет вопрос пользователю с улучшенной защитой и промо-логикой."""
     
-    # ========== 1. ОПРЕДЕЛЕНИЕ USER_ID В НАЧАЛЕ ==========
+    # ========== 1. ОПРЕДЕЛЕНИЕ USER_ID И ЗАЩИТА ОТ БОТОВ ==========
     user_id = context.user_data.get('user_id')
-    if not user_id:
-        if hasattr(message, 'from_user') and message.from_user:
-            user_id = message.from_user.id
-        elif hasattr(message, 'chat') and message.chat:
-            user_id = message.chat.id
-        elif hasattr(message, 'message') and hasattr(message.message, 'chat'):
-            user_id = message.message.chat.id
+    effective_user = None
+    
+    # Пытаемся получить effective_user для проверки на бота
+    if hasattr(message, 'from_user') and message.from_user:
+        effective_user = message.from_user
+        user_id = user_id or message.from_user.id
+    elif hasattr(message, 'message') and hasattr(message.message, 'from_user'):
+        effective_user = message.message.from_user
+        user_id = user_id or message.message.from_user.id
+    elif hasattr(message, 'chat') and message.chat:
+        user_id = user_id or message.chat.id
+    elif hasattr(message, 'message') and hasattr(message.message, 'chat'):
+        user_id = user_id or message.message.chat.id
+    
+    # КРИТИЧЕСКАЯ ПРОВЕРКА: Защита от ботов
+    if effective_user and effective_user.is_bot:
+        logger.warning(f"Attempted to send message to bot with ID {user_id}")
+        return ConversationHandler.END
+    
+    # Дополнительная проверка подозрительных ID (боты обычно имеют ID > 5 млрд)
+    if user_id and user_id > 5000000000:
+        logger.warning(f"Suspicious user ID detected: {user_id}, checking if bot...")
+        try:
+            chat_member = await context.bot.get_chat(chat_id=user_id)
+            if hasattr(chat_member, 'type') and chat_member.type == 'bot':
+                logger.error(f"User {user_id} is a bot, aborting send_question")
+                return ConversationHandler.END
+        except Exception as e:
+            logger.debug(f"Could not verify user {user_id}: {e}")
+            # В случае ошибки проверки - блокируем подозрительный ID
+            if user_id > 5000000000:
+                logger.error(f"Blocking suspicious ID {user_id}")
+                return ConversationHandler.END
     
     if not user_id:
         logger.error("Cannot determine user_id!")
@@ -1183,23 +1277,27 @@ async def send_question(message, context: ContextTypes.DEFAULT_TYPE,
     
     context.user_data['user_id'] = user_id
     
-    # ========== 2. УВЕЛИЧИВАЕМ ЕДИНЫЙ СЧЕТЧИК ==========
-    # Увеличиваем счетчик
+    # ========== 2. УВЕЛИЧИВАЕМ СЧЕТЧИК И ОБНОВЛЯЕМ СТРИК ==========
     questions_count = context.user_data.get('questions_count', 0) + 1
     context.user_data['questions_count'] = questions_count
-
-    # Показываем промо каждые 10 вопросов
-    if questions_count % 10 == 0:
-        asyncio.create_task(
-            show_promo_message(context, user_id, questions_count)
-        )
+    
+    # Обновляем дневной стрик при первом вопросе за день
+    if questions_count == 1 or context.user_data.get('last_question_date') != date.today().isoformat():
+        try:
+            from datetime import date
+            daily_current, daily_max = await db.update_daily_streak(user_id)
+            context.user_data['last_question_date'] = date.today().isoformat()
+            logger.info(f"Daily streak updated for user {user_id}: {daily_current}/{daily_max}")
+        except Exception as e:
+            logger.error(f"Error updating daily streak: {e}")
     
     # Устанавливаем активный модуль
     context.user_data['active_module'] = 'test_part'
     
     # ========== 3. ОЧИСТКА И СОХРАНЕНИЕ ДАННЫХ ==========
-    # Очищаем старые данные вопросов ПЕРЕД сохранением нового
     question_id = question_data.get('id')
+    
+    # Очищаем старые данные вопросов
     keys_to_remove = []
     for key in context.user_data.keys():
         if key.startswith('question_') and key != f'question_{question_id}':
@@ -1212,7 +1310,7 @@ async def send_question(message, context: ContextTypes.DEFAULT_TYPE,
     context.user_data[f'question_{question_id}'] = question_data
     context.user_data['last_mode'] = last_mode
     
-    # Логирование для отладки (теперь user_id определен)
+    # Логирование для отладки
     logger.info(f"Question #{questions_count} sent to user {user_id}")
     logger.info(f"SENDING QUESTION: ID={question_id}, "
                 f"Answer={question_data.get('answer')}, "
@@ -1231,16 +1329,9 @@ async def send_question(message, context: ContextTypes.DEFAULT_TYPE,
         context.user_data['current_exam_number'] = question_data['exam_number']
     
     # ========== 4. ФОРМАТИРОВАНИЕ И ОТПРАВКА ВОПРОСА ==========
-    # Форматируем текст вопроса
     text = utils.format_question_text(question_data)
-    
-    # Добавляем клавиатуру с кнопкой пропуска
     skip_keyboard = keyboards.get_question_keyboard(last_mode)
-    
-    # ВАЖНО: Определяем, это редактирование или новое сообщение
     is_edit_mode = hasattr(message, 'edit_text')
-    
-    # Проверяем наличие изображения
     image_url = question_data.get('image_url')
     
     try:
@@ -1248,21 +1339,16 @@ async def send_question(message, context: ContextTypes.DEFAULT_TYPE,
             import os
             
             if os.path.exists(image_url):
-                # При наличии изображения всегда нужно отправлять новое сообщение
-                # так как нельзя заменить текст на фото через edit
-                
-                # Если мы в режиме редактирования, сначала удаляем старое сообщение
+                # При наличии изображения всегда отправляем новое сообщение
                 if is_edit_mode:
                     try:
                         await message.delete()
                     except Exception as e:
                         logger.debug(f"Could not delete loading message: {e}")
                 
-                # Проверяем длину текста для caption
                 MAX_CAPTION_LENGTH = 1024
                 
                 if len(text) <= MAX_CAPTION_LENGTH:
-                    # Текст помещается в caption
                     with open(image_url, 'rb') as photo:
                         sent_msg = await context.bot.send_photo(
                             chat_id=user_id,
@@ -1275,10 +1361,8 @@ async def send_question(message, context: ContextTypes.DEFAULT_TYPE,
                     if sent_msg:
                         context.user_data['current_question_message_id'] = sent_msg.message_id
                 else:
-                    # Текст слишком длинный - отправляем отдельно
                     logger.info(f"Text too long ({len(text)} chars), sending separately")
                     
-                    # Отправляем изображение
                     with open(image_url, 'rb') as photo:
                         photo_msg = await context.bot.send_photo(
                             chat_id=user_id,
@@ -1286,7 +1370,6 @@ async def send_question(message, context: ContextTypes.DEFAULT_TYPE,
                             caption="📊 График к заданию"
                         )
                     
-                    # Отправляем текст с клавиатурой
                     text_msg = await context.bot.send_message(
                         chat_id=user_id,
                         text=text,
@@ -1298,7 +1381,6 @@ async def send_question(message, context: ContextTypes.DEFAULT_TYPE,
                         context.user_data['current_question_message_id'] = text_msg.message_id
                         context.user_data['current_photo_message_id'] = photo_msg.message_id
             else:
-                # Файл не найден
                 logger.error(f"Image file not found: {image_url}")
                 text = "⚠️ Изображение не найдено\n\n" + text
                 
@@ -1320,7 +1402,6 @@ async def send_question(message, context: ContextTypes.DEFAULT_TYPE,
         else:
             # Нет изображения - только текст
             if is_edit_mode:
-                # Редактируем существующее сообщение "Загружаю..."
                 await message.edit_text(
                     text, 
                     parse_mode=ParseMode.HTML,
@@ -1328,7 +1409,6 @@ async def send_question(message, context: ContextTypes.DEFAULT_TYPE,
                 )
                 context.user_data['current_question_message_id'] = message.message_id
             else:
-                # Отправляем новое сообщение
                 sent_msg = await message.reply_text(
                     text, 
                     parse_mode=ParseMode.HTML,
@@ -1338,9 +1418,9 @@ async def send_question(message, context: ContextTypes.DEFAULT_TYPE,
                     context.user_data['current_question_message_id'] = sent_msg.message_id
                     
     except Exception as e:
-        logger.error(f"Ошибка отправки вопроса: {e}")
+        logger.error(f"Ошибка отправки вопроса для user {user_id}: {e}", exc_info=True)
         try:
-            error_text = "Ошибка при отображении вопроса. Попробуйте еще раз."
+            error_text = "❌ Ошибка при отображении вопроса. Попробуйте еще раз."
             if is_edit_mode:
                 await message.edit_text(error_text)
             else:
@@ -1349,21 +1429,28 @@ async def send_question(message, context: ContextTypes.DEFAULT_TYPE,
             pass
         return ConversationHandler.END
 
-    # ========== 5. ПРОМО-ЛОГИКА (ПЕРЕНЕСЕНА ИЗ TRY-EXCEPT) ==========
-    # Показываем промо каждые 10 вопросов
+    # ========== 5. УЛУЧШЕННАЯ ПРОМО-ЛОГИКА ==========
+    # Показываем промо каждые 10 вопросов с ограничением по времени
     if questions_count > 0 and questions_count % 10 == 0:
-        # Проверяем, что мы в модуле test_part
         if context.user_data.get('active_module') == 'test_part':
             subscription_manager = context.bot_data.get('subscription_manager')
             if subscription_manager:
                 try:
                     has_subscription = await subscription_manager.check_active_subscription(user_id)
                     
-                    if not has_subscription:
+                    # Проверяем, когда последний раз показывали промо
+                    import time
+                    last_promo = context.user_data.get('last_promo_shown', 0)
+                    current_time = time.time()
+                    time_since_last_promo = current_time - last_promo
+                    
+                    # Показываем промо не чаще чем раз в час (3600 секунд)
+                    if not has_subscription and time_since_last_promo > 3600:
+                        context.user_data['last_promo_shown'] = current_time
+                        
                         import random
                         import asyncio
                         
-                        # Варианты промо-сообщений
                         promo_messages = [
                             f"🚀 <b>Уже {questions_count} вопросов!</b>\n\n"
                             f"С премиум-подпиской откроются задания второй части ЕГЭ:\n"
@@ -1380,21 +1467,16 @@ async def send_question(message, context: ContextTypes.DEFAULT_TYPE,
                             f"Откройте доступ к:\n"
                             f"• Автоматической проверке заданий 19-20\n"
                             f"• Составлению планов по заданию 24\n"
-                            f"• Тренажёру задания 25",
-                            
-                            f"📈 <b>{questions_count} вопросов решено!</b>\n\n"
-                            f"Хотите увидеть детальную аналитику и начать готовиться к второй части?"
+                            f"• Тренажёру задания 25"
                         ]
                         
                         promo_text = random.choice(promo_messages)
                         promo_text += "\n\n💎 <b>Попробуйте премиум 7 дней за 1₽!</b>"
                         
-                        # Небольшая задержка перед промо
-                        await asyncio.sleep(1)
+                        await asyncio.sleep(1)  # Небольшая задержка
                         
-                        # Отправляем промо-сообщение  
                         try:
-                            await context.bot.send_message(
+                            promo_msg = await context.bot.send_message(
                                 chat_id=user_id,
                                 text=promo_text,
                                 reply_markup=InlineKeyboardMarkup([
@@ -1404,18 +1486,29 @@ async def send_question(message, context: ContextTypes.DEFAULT_TYPE,
                                 ]),
                                 parse_mode=ParseMode.HTML
                             )
+                            
+                            # Сохраняем ID промо-сообщения для возможного удаления
+                            context.user_data['last_promo_message_id'] = promo_msg.message_id
                             logger.info(f"Promo shown to user {user_id} after {questions_count} questions")
+                            
                         except Exception as e:
-                            logger.error(f"Error showing promo: {e}")
+                            logger.error(f"Error showing promo to user {user_id}: {e}")
+                    else:
+                        if has_subscription:
+                            logger.debug(f"User {user_id} has subscription, skipping promo")
+                        else:
+                            logger.debug(f"Promo cooldown for user {user_id}: {3600 - time_since_last_promo:.0f}s remaining")
                 
                 except Exception as e:
                     logger.error(f"Error checking subscription for promo: {e}")
     
-    # ========== 6. ВОЗВРАЩАЕМ СОСТОЯНИЕ ==========
-    # Устанавливаем состояние для state_validator если нужно
-    if user_id:
-        from core.state_validator import state_validator
+    # ========== 6. УСТАНОВКА ПРАВИЛЬНОГО СОСТОЯНИЯ ==========
+    from core.state_validator import state_validator
+    try:
         state_validator.set_state(user_id, states.ANSWERING)
+        logger.debug(f"State set to ANSWERING for user {user_id}")
+    except Exception as e:
+        logger.error(f"Error setting state for user {user_id}: {e}")
     
     return states.ANSWERING
     
