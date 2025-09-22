@@ -612,101 +612,240 @@ async def update_daily_streak(user_id: int) -> tuple[int, int]:
     Возвращает (текущий_стрик, максимальный_стрик).
     """
     if not isinstance(user_id, int) or user_id <= 0:
+        logger.warning(f"Invalid user_id for update_daily_streak: {user_id}")
         return (0, 0)
     
     try:
         async with aiosqlite.connect(DATABASE_FILE) as db:
-            # Вставляем запись если не существует
+            # ========== СОЗДАНИЕ ТАБЛИЦЫ ЕСЛИ НЕТ ==========
+            await db.execute(f"""
+                CREATE TABLE IF NOT EXISTS {TABLE_USERS} (
+                    user_id INTEGER PRIMARY KEY,
+                    username TEXT,
+                    first_name TEXT,
+                    last_name TEXT,
+                    current_daily_streak INTEGER DEFAULT 0,
+                    max_daily_streak INTEGER DEFAULT 0,
+                    current_correct_streak INTEGER DEFAULT 0,
+                    max_correct_streak INTEGER DEFAULT 0,
+                    last_activity_date TEXT,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            
+            # ========== ВСТАВКА ЗАПИСИ ЕСЛИ НЕ СУЩЕСТВУЕТ ==========
+            await db.execute(
+                f"""INSERT OR IGNORE INTO {TABLE_USERS} 
+                    (user_id, current_daily_streak, max_daily_streak, last_activity_date) 
+                    VALUES (?, 0, 0, NULL)""",
+                (user_id,)
+            )
+            await db.commit()
+            
+            # ========== ПОЛУЧЕНИЕ ТЕКУЩИХ ДАННЫХ ==========
+            today = date.today()
+            cursor = await db.execute(
+                f"""SELECT last_activity_date, current_daily_streak, max_daily_streak 
+                    FROM {TABLE_USERS} WHERE user_id = ?""",
+                (user_id,)
+            )
+            row = await cursor.fetchone()
+            
+            if not row:
+                logger.error(f"No row found for user {user_id} after INSERT OR IGNORE")
+                return (0, 0)
+            
+            # Разбираем данные из БД
+            last_activity_str = row[0]
+            current_streak = row[1] if row[1] is not None else 0
+            max_streak = row[2] if row[2] is not None else 0
+            
+            logger.info(f"Daily streak check for user {user_id}: "
+                       f"last_activity={last_activity_str}, "
+                       f"current={current_streak}, max={max_streak}")
+            
+            # ========== ЛОГИКА ОБНОВЛЕНИЯ СТРИКА ==========
+            if last_activity_str:
+                try:
+                    # Парсим дату последней активности
+                    last_activity = date.fromisoformat(last_activity_str)
+                    days_diff = (today - last_activity).days
+                    
+                    logger.debug(f"User {user_id}: last activity was {days_diff} days ago")
+                    
+                    if days_diff == 0:
+                        # Уже были сегодня - не меняем стрик
+                        logger.debug(f"User {user_id} already active today, keeping streak at {current_streak}")
+                        return (current_streak, max_streak)
+                        
+                    elif days_diff == 1:
+                        # Вчера были - увеличиваем стрик
+                        current_streak += 1
+                        max_streak = max(max_streak, current_streak)
+                        logger.info(f"User {user_id} streak continues: {current_streak} days")
+                        
+                    elif days_diff > 1:
+                        # Пропустили день или больше - сбрасываем
+                        logger.info(f"User {user_id} missed {days_diff-1} days, resetting streak from {current_streak} to 1")
+                        current_streak = 1
+                        # max_streak остается прежним
+                        
+                    else:
+                        # days_diff < 0 - дата в будущем? Ошибка данных
+                        logger.error(f"User {user_id} has future date: {last_activity_str}")
+                        current_streak = 1
+                        
+                except ValueError as e:
+                    # Не удалось распарсить дату
+                    logger.error(f"Invalid date format for user {user_id}: {last_activity_str}, error: {e}")
+                    current_streak = 1
+                    max_streak = max(max_streak, 1)
+            else:
+                # Первая активность пользователя
+                logger.info(f"First activity for user {user_id}, setting streak to 1")
+                current_streak = 1
+                max_streak = max(max_streak, 1)
+            
+            # ========== ОБНОВЛЕНИЕ БД ==========
+            await db.execute(
+                f"""UPDATE {TABLE_USERS} 
+                    SET current_daily_streak = ?, 
+                        max_daily_streak = ?,
+                        last_activity_date = ?,
+                        updated_at = CURRENT_TIMESTAMP
+                    WHERE user_id = ?""",
+                (current_streak, max_streak, today.isoformat(), user_id)
+            )
+            await db.commit()
+            
+            logger.info(f"Updated daily streak for user {user_id}: current={current_streak}, max={max_streak}")
+            
+            # ========== ПРОВЕРКА ОБНОВЛЕНИЯ ==========
+            # Дополнительная проверка что данные действительно обновились
+            cursor = await db.execute(
+                f"SELECT current_daily_streak, max_daily_streak FROM {TABLE_USERS} WHERE user_id = ?",
+                (user_id,)
+            )
+            check_row = await cursor.fetchone()
+            if check_row:
+                actual_current = check_row[0]
+                actual_max = check_row[1]
+                if actual_current != current_streak or actual_max != max_streak:
+                    logger.error(f"Streak mismatch after update for user {user_id}: "
+                               f"expected ({current_streak}, {max_streak}), "
+                               f"got ({actual_current}, {actual_max})")
+            
+            return (current_streak, max_streak)
+            
+    except aiosqlite.Error as e:
+        logger.error(f"Database error updating daily streak for user {user_id}: {e}", exc_info=True)
+        return (0, 0)
+    except Exception as e:
+        logger.error(f"Unexpected error updating daily streak for user {user_id}: {e}", exc_info=True)
+        return (0, 0)
+
+
+async def reset_correct_streak(user_id: int) -> None:
+    """
+    Сбрасывает стрик правильных ответов до 0.
+    """
+    if not isinstance(user_id, int) or user_id <= 0:
+        logger.warning(f"Invalid user_id for reset_correct_streak: {user_id}")
+        return
+    
+    try:
+        async with aiosqlite.connect(DATABASE_FILE) as db:
+            # Убеждаемся что запись существует
             await db.execute(
                 f"INSERT OR IGNORE INTO {TABLE_USERS} (user_id) VALUES (?)",
                 (user_id,)
             )
             
-            # Получаем текущую дату и последнюю активность
-            today = date.today()
+            # Сбрасываем стрик правильных ответов
+            await db.execute(
+                f"""UPDATE {TABLE_USERS} 
+                    SET current_correct_streak = 0,
+                        updated_at = CURRENT_TIMESTAMP
+                    WHERE user_id = ?""",
+                (user_id,)
+            )
+            await db.commit()
+            
+            logger.info(f"Reset correct streak for user {user_id}")
+            
+    except Exception as e:
+        logger.error(f"Error resetting correct streak for user {user_id}: {e}")
+
+
+async def update_correct_streak(user_id: int) -> tuple[int, int]:
+    """
+    Увеличивает стрик правильных ответов на 1.
+    Возвращает (текущий_стрик, максимальный_стрик).
+    """
+    if not isinstance(user_id, int) or user_id <= 0:
+        logger.warning(f"Invalid user_id for update_correct_streak: {user_id}")
+        return (0, 0)
+    
+    try:
+        async with aiosqlite.connect(DATABASE_FILE) as db:
+            # Создаём таблицу если не существует
+            await db.execute(f"""
+                CREATE TABLE IF NOT EXISTS {TABLE_USERS} (
+                    user_id INTEGER PRIMARY KEY,
+                    username TEXT,
+                    first_name TEXT,
+                    last_name TEXT,
+                    current_daily_streak INTEGER DEFAULT 0,
+                    max_daily_streak INTEGER DEFAULT 0,
+                    current_correct_streak INTEGER DEFAULT 0,
+                    max_correct_streak INTEGER DEFAULT 0,
+                    last_activity_date TEXT,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            
+            # Вставляем запись если не существует
+            await db.execute(
+                f"""INSERT OR IGNORE INTO {TABLE_USERS} 
+                    (user_id, current_correct_streak, max_correct_streak) 
+                    VALUES (?, 0, 0)""",
+                (user_id,)
+            )
+            
+            # Получаем текущие значения
             cursor = await db.execute(
-                f"SELECT last_activity_date, current_daily_streak, max_daily_streak FROM {TABLE_USERS} WHERE user_id = ?",
+                f"""SELECT current_correct_streak, max_correct_streak 
+                    FROM {TABLE_USERS} WHERE user_id = ?""",
                 (user_id,)
             )
             row = await cursor.fetchone()
             
-            if row and row[0]:
-                last_activity = date.fromisoformat(row[0])
-                current_streak = row[1] or 0
-                max_streak = row[2] or 0
-                
-                # Проверяем, нужно ли обновить стрик
-                if last_activity == today:
-                    # Уже были сегодня
-                    return (current_streak, max_streak)
-                elif (today - last_activity).days == 1:
-                    # Вчера были - продолжаем стрик
-                    current_streak += 1
-                    max_streak = max(max_streak, current_streak)
-                else:
-                    # Пропустили день - сбрасываем
-                    current_streak = 1
+            if row:
+                current_streak = (row[0] or 0) + 1
+                max_streak = max(row[1] or 0, current_streak)
             else:
-                # Первый раз
                 current_streak = 1
                 max_streak = 1
             
             # Обновляем БД
             await db.execute(
                 f"""UPDATE {TABLE_USERS} 
-                    SET current_daily_streak = ?, 
-                        max_daily_streak = ?,
-                        last_activity_date = ?
+                    SET current_correct_streak = ?, 
+                        max_correct_streak = ?,
+                        updated_at = CURRENT_TIMESTAMP
                     WHERE user_id = ?""",
-                (current_streak, max_streak, today.isoformat(), user_id)
+                (current_streak, max_streak, user_id)
             )
             await db.commit()
+            
+            logger.info(f"Updated correct streak for user {user_id}: current={current_streak}, max={max_streak}")
             
             return (current_streak, max_streak)
             
     except Exception as e:
-        logger.exception(f"Ошибка обновления дневного стрика: {e}")
-        return (0, 0)
-
-
-async def update_correct_streak(user_id: int) -> tuple[int, int]:
-    """
-    Увеличивает стрик правильных ответов.
-    Возвращает (текущий_стрик, максимальный_стрик).
-    """
-    if not isinstance(user_id, int) or user_id <= 0:
-        return (0, 0)
-    
-    try:
-        async with aiosqlite.connect(DATABASE_FILE) as db:
-            await db.execute(
-                f"INSERT OR IGNORE INTO {TABLE_USERS} (user_id) VALUES (?)",
-                (user_id,)
-            )
-            
-            # Увеличиваем стрик
-            await db.execute(
-                f"""UPDATE {TABLE_USERS}
-                    SET current_correct_streak = current_correct_streak + 1,
-                        max_correct_streak = MAX(max_correct_streak, current_correct_streak + 1)
-                    WHERE user_id = ?""",
-                (user_id,)
-            )
-            await db.commit()
-            
-            # Получаем значения
-            cursor = await db.execute(
-                f"SELECT current_correct_streak, max_correct_streak FROM {TABLE_USERS} WHERE user_id = ?",
-                (user_id,)
-            )
-            row = await cursor.fetchone()
-            
-            if row:
-                return (row[0] or 0, row[1] or 0)
-            return (0, 0)
-            
-    except Exception as e:
-        logger.exception(f"Ошибка обновления стрика правильных ответов: {e}")
+        logger.error(f"Error updating correct streak for user {user_id}: {e}", exc_info=True)
         return (0, 0)
 
 
