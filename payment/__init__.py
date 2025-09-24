@@ -2,7 +2,7 @@
 """Модуль платежей и подписок с поддержкой автопродления."""
 import logging
 import asyncio
-from telegram.ext import Application
+from telegram.ext import Application, CallbackQueryHandler
 from .subscription_manager import SubscriptionManager
 from .handlers import register_payment_handlers
 from .middleware import setup_subscription_middleware
@@ -115,7 +115,6 @@ async def init_payment_module(app: Application):
             logger.error(f"Error starting auto-renewal scheduler: {e}")
         
         # Запускаем webhook сервер для приема уведомлений от платежной системы
-        # Запускаем webhook сервер для приема уведомлений от платежной системы
         try:
             webhook_task = asyncio.create_task(
                 start_webhook_server(
@@ -126,7 +125,6 @@ async def init_payment_module(app: Application):
             logger.info("Payment webhook server started")
         except Exception as e:
             logger.error(f"Error starting webhook server: {e}")
-
         
         logger.info("✅ Payment module initialized successfully")
         

@@ -4,7 +4,7 @@ import logging
 from typing import Optional, Dict, Set, Tuple
 from datetime import datetime, timezone
 from functools import lru_cache
-
+from .config import FREE_MODULES
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.constants import ParseMode
 from telegram.ext import Application, CallbackContext, ApplicationHandlerStop, ContextTypes
@@ -164,10 +164,10 @@ class SubscriptionMiddleware:
         update: Update,
         application: Application,
         check_update: bool,
-        context: CallbackContext
+        context: ContextTypes.DEFAULT_TYPE
     ) -> bool:
         """
-        Основной метод обработки обновления и проверки подписки.
+        Обрабатывает update и проверяет доступ.
         
         Args:
             update: Telegram update
@@ -205,7 +205,7 @@ class SubscriptionMiddleware:
             logger.debug(f"Free action detected for user {user_id}")
             return True
         
-        # Определяем модуль
+        # ИСПРАВЛЕНИЕ: Сначала определяем модуль
         module_code = self._get_module_from_update(update)
         
         # Если модуль не определен, берем из контекста
@@ -221,7 +221,7 @@ class SubscriptionMiddleware:
             logger.debug(f"No module detected for user {user_id}")
             return True
         
-        # Бесплатные модули (test_part) доступны всем
+        # ИСПРАВЛЕНИЕ: Теперь можно проверять FREE_MODULES
         from .config import FREE_MODULES
         if module_code in FREE_MODULES:
             logger.info(f"Free module {module_code} accessed by user {user_id}")
