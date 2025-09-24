@@ -1,8 +1,9 @@
-# payment/middleware.py
+# payment/middleware.py - ПОЛНАЯ версия с оптимизациями
 """Middleware для проверки подписок и лимитов использования с поддержкой модулей."""
 import logging
 from typing import Optional, Dict, Set, Tuple
 from datetime import datetime, timezone
+from functools import lru_cache
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.constants import ParseMode
@@ -15,7 +16,7 @@ logger = logging.getLogger(__name__)
 
 
 class SubscriptionMiddleware:
-    """Middleware для проверки подписок с поддержкой модульной системы."""
+    """Оптимизированный middleware для проверки подписок с поддержкой модульной системы."""
     
     def __init__(
         self,
@@ -23,6 +24,14 @@ class SubscriptionMiddleware:
         free_patterns: Optional[Set[str]] = None,
         check_channel: bool = False
     ):
+        """
+        Инициализация middleware.
+        
+        Args:
+            free_commands: Команды, доступные без подписки
+            free_patterns: Паттерны callback, доступные без подписки
+            check_channel: Проверять ли подписку на канал
+        """
         self.free_commands = free_commands or {
             'start', 'help', 'subscribe', 'status', 
             'my_subscriptions', 'menu', 'cancel', 'support'
@@ -38,7 +47,7 @@ class SubscriptionMiddleware:
         self.check_channel = check_channel
         self.channel = config.REQUIRED_CHANNEL if check_channel else None
         
-        # Паттерны для определения модулей
+        # Паттерны для определения модулей (оптимизированы)
         self.module_patterns = {
             'test_part': {
                 'commands': ['test', 'test_stats', 'quiz', 'mistakes', 'score'],
@@ -67,52 +76,86 @@ class SubscriptionMiddleware:
                 'callbacks': ['choose_task25', 'to_task25_menu', 't25_', 'task25_'],
             }
         }
+        
+        # Кэш для ускорения проверок
+        self._module_cache = {}  # {update_key: module_code}
+        self._access_cache = {}  # {(user_id, module): has_access}
+    
+    @lru_cache(maxsize=256)
+    def _get_update_key(self, update: Update) -> Optional[str]:
+        """Получает уникальный ключ из update для кэширования."""
+        if update.message and update.message.text:
+            return f"msg:{update.message.text}"
+        elif update.callback_query and update.callback_query.data:
+            return f"cb:{update.callback_query.data}"
+        return None
     
     def _get_module_from_update(self, update: Update) -> Optional[str]:
-        """Определяет модуль по update."""
+        """
+        Определяет модуль по update с использованием кэша.
         
-        # ДОБАВИТЬ: Проверка через context (если активный модуль уже установлен)
-        if hasattr(update, 'effective_message'):
-            # Пытаемся получить из контекста через effective_message
-            # Это поможет сохранить контекст модуля при ответах
-            pass
+        Args:
+            update: Telegram update
+            
+        Returns:
+            Код модуля или None
+        """
+        # Пытаемся получить из кэша
+        update_key = self._get_update_key(update)
+        if update_key and update_key in self._module_cache:
+            return self._module_cache[update_key]
+        
+        module_code = None
         
         # Для команд
         if update.message and update.message.text and update.message.text.startswith('/'):
             command = update.message.text.split()[0][1:].split('@')[0].lower()
             
-            for module_code, patterns in self.module_patterns.items():
+            for module, patterns in self.module_patterns.items():
                 if command in patterns['commands']:
-                    logger.debug(f"Command {command} matched module {module_code}")
-                    return module_code
+                    module_code = module
+                    break
         
         # Для callback_query
         elif update.callback_query and update.callback_query.data:
             callback_data = update.callback_query.data
             
-            for module_code, patterns in self.module_patterns.items():
-                # Проверяем исключения
-                if any(callback_data == exc or callback_data.startswith(exc) 
-                       for exc in patterns.get('exclude', [])):
-                    continue
-                
+            # Прямое соответствие для кнопок главного меню
+            direct_mapping = {
+                'choose_test_part': 'test_part',
+                'choose_task19': 'task19',
+                'choose_task20': 'task20',
+                'choose_task24': 'task24',
+                'choose_task25': 'task25',
+            }
+            
+            if callback_data in direct_mapping:
+                module_code = direct_mapping[callback_data]
+            else:
                 # Проверяем паттерны
-                for pattern in patterns['callbacks']:
-                    if pattern.endswith('_') and callback_data.startswith(pattern):
-                        logger.debug(f"Callback {callback_data} matched module {module_code} by prefix {pattern}")
-                        return module_code
-                    elif callback_data == pattern:
-                        logger.debug(f"Callback {callback_data} matched module {module_code} exactly")
-                        return module_code
+                for module, patterns in self.module_patterns.items():
+                    # Проверяем исключения
+                    if any(callback_data == exc or callback_data.startswith(exc) 
+                           for exc in patterns.get('exclude', [])):
+                        continue
+                    
+                    # Проверяем паттерны
+                    for pattern in patterns['callbacks']:
+                        if pattern.endswith('_') and callback_data.startswith(pattern):
+                            module_code = module
+                            break
+                        elif callback_data == pattern:
+                            module_code = module
+                            break
+                    
+                    if module_code:
+                        break
         
-        # ДОБАВИТЬ: Для обычных текстовых сообщений - проверяем по состоянию разговора
-        # Это критично для test_part при вводе ответов!
-        elif update.message and update.message.text:
-            # Логика для определения модуля по контексту
-            # Это сложно без доступа к context, поэтому нужен другой подход
-            pass
+        # Сохраняем в кэш
+        if update_key and module_code:
+            self._module_cache[update_key] = module_code
         
-        return None
+        return module_code
     
     async def process_update(
         self,
@@ -121,14 +164,26 @@ class SubscriptionMiddleware:
         check_update: bool,
         context: CallbackContext
     ) -> bool:
-        """Обрабатывает обновление и проверяет подписку."""
+        """
+        Основной метод обработки обновления и проверки подписки.
         
-        # КРИТИЧЕСКИ ВАЖНО: Явная проверка команды /start
-        # Это гарантирует, что /start ВСЕГДА будет работать
+        Args:
+            update: Telegram update
+            application: Приложение
+            check_update: Проверять ли обновление
+            context: Контекст
+            
+        Returns:
+            True если доступ разрешен
+            
+        Raises:
+            ApplicationHandlerStop: Если доступ запрещен
+        """
+        # КРИТИЧЕСКИ ВАЖНО: /start всегда работает
         if update.message and update.message.text:
             text = update.message.text.strip()
             if text.startswith('/start'):
-                logger.info(f"Command /start detected - bypassing ALL subscription checks")
+                logger.debug(f"Command /start detected - bypassing ALL subscription checks")
                 return True
         
         # Пропускаем если нет пользователя
@@ -137,82 +192,37 @@ class SubscriptionMiddleware:
         
         user_id = update.effective_user.id
         
-        # ============ НОВОЕ: КРИТИЧЕСКАЯ ПРОВЕРКА КНОПОК ПЛАТНЫХ МОДУЛЕЙ ============
-        # Проверяем callback-кнопки главного меню ДО проверки free_action
-        if update.callback_query and update.callback_query.data:
-            callback_data = update.callback_query.data
-            
-            # Мапинг кнопок главного меню на модули
-            paid_module_callbacks = {
-                'choose_task19': 'task19',
-                'choose_task20': 'task20', 
-                'choose_task24': 'task24',
-                'choose_task25': 'task25'
-            }
-            
-            # Если это кнопка платного модуля из главного меню
-            if callback_data in paid_module_callbacks:
-                module_code = paid_module_callbacks[callback_data]
-                
-                # Получаем менеджер подписок
-                subscription_manager = application.bot_data.get('subscription_manager')
-                
-                if subscription_manager:
-                    # Проверяем доступ к модулю
-                    has_access = await subscription_manager.check_module_access(user_id, module_code)
-                    
-                    if not has_access:
-                        logger.warning(f"User {user_id} tried to access paid module {module_code} via button {callback_data}")
-                        
-                        # Показываем сообщение о необходимости подписки
-                        await self._send_module_subscription_required(update, context, module_code)
-                        
-                        # ВАЖНО: Останавливаем обработку
-                        raise ApplicationHandlerStop()
-                    else:
-                        logger.info(f"User {user_id} has valid subscription for module {module_code}")
-                        # Сохраняем активный модуль в контексте
-                        if context:
-                            context.user_data['active_module'] = module_code
-        # ============ КОНЕЦ НОВОГО БЛОКА ============
-        
-        # Проверяем бесплатные действия (включая команды из free_commands)
-        if self._is_free_action(update, context):
-            logger.debug(f"Free action detected for user {user_id}, skipping subscription check")
-            return True
-        
         # Проверяем админов
-        from core import config
-        admin_ids = []
-        if hasattr(config, 'ADMIN_IDS') and config.ADMIN_IDS:
-            if isinstance(config.ADMIN_IDS, str):
-                admin_ids = [int(id.strip()) for id in config.ADMIN_IDS.split(',') if id.strip()]
-            elif isinstance(config.ADMIN_IDS, list):
-                admin_ids = config.ADMIN_IDS
-        
+        admin_ids = self._get_admin_ids()
         if user_id in admin_ids:
             logger.debug(f"Admin user {user_id} - skipping subscription check")
             return True
         
-        # Проверка для test_part через context
-        active_module = context.user_data.get('active_module') if context else None
-        if active_module == 'test_part':
-            logger.info(f"Free access to test_part via active_module for user {user_id}")
+        # Проверяем бесплатные действия
+        if self._is_free_action(update, context):
+            logger.debug(f"Free action detected for user {user_id}")
             return True
         
-        # Определяем модуль из update
+        # Определяем модуль
         module_code = self._get_module_from_update(update)
         
-        # Если модуль не определен, но есть active_module в контексте
-        if not module_code and active_module:
-            module_code = active_module
-            logger.debug(f"Using active_module from context: {module_code}")
+        # Если модуль не определен, берем из контекста
+        if not module_code and context:
+            module_code = context.user_data.get('active_module')
         
-        logger.debug(f"Detected module: {module_code}")
+        # Сохраняем активный модуль в контексте
+        if module_code and context:
+            context.user_data['active_module'] = module_code
         
-        # Проверка для бесплатного модуля test_part
-        if module_code == 'test_part':
-            logger.info(f"Free access granted to test_part for user {user_id}")
+        # Если модуль не определен - пропускаем
+        if not module_code:
+            logger.debug(f"No module detected for user {user_id}")
+            return True
+        
+        # Бесплатные модули (test_part) доступны всем
+        from .config import FREE_MODULES
+        if module_code in FREE_MODULES:
+            logger.info(f"Free module {module_code} accessed by user {user_id}")
             return True
         
         # Получаем менеджер подписок
@@ -221,171 +231,107 @@ class SubscriptionMiddleware:
             logger.warning("SubscriptionManager not found in bot_data")
             return True
         
-        # Проверяем доступ к конкретному модулю
-        if module_code:
-            logger.info(f"Checking access for user {user_id} to module {module_code}")
-            
-            # Проверка доступа к конкретному модулю
-            has_access = await subscription_manager.check_module_access(user_id, module_code)
-            
-            logger.info(f"Access check result for user {user_id}, module {module_code}: {has_access}")
-            
-            if not has_access:
-                logger.warning(f"Access denied for user {user_id} to module {module_code}")
-                await self._send_module_subscription_required(update, context, module_code)
-                raise ApplicationHandlerStop()
-            else:
-                logger.info(f"Access granted for user {user_id} to module {module_code}")
+        # Проверяем доступ к модулю (с кэшем)
+        cache_key = (user_id, module_code)
+        if cache_key in self._access_cache:
+            has_access = self._access_cache[cache_key]
         else:
-            # НЕТ определенного модуля - проверяем базовые команды еще раз
-            
-            # Дополнительная защита для базовых команд
-            if update.message and update.message.text:
-                text = update.message.text.strip()
-                if text.startswith('/quiz') or text.startswith('/test'):
-                    logger.info(f"Test part command {text} - bypassing subscription checks")
-                    if context:
-                        context.user_data['active_module'] = 'test_part'
-                    return True
-            
-            if update.callback_query and update.callback_query.data:
-                callback_data = update.callback_query.data
-                if callback_data == 'choose_test_part':
-                    logger.info("Test part button clicked - bypassing subscription checks")
-                    if context:
-                        context.user_data['active_module'] = 'test_part'
-                    return True
-                
-            # Для остальных неопределенных действий - проверяем общую подписку
-            subscription = await subscription_manager.check_active_subscription(user_id)
-            if not subscription:
-                # Проверяем подписку на канал
-                if self.check_channel and self.channel:
-                    is_member = await self._check_channel_membership(user_id, application.bot)
-                    if not is_member:
-                        await self._send_channel_required(update, context)
-                        raise ApplicationHandlerStop()
-                else:
-                    # Показываем сообщение о необходимости подписки
-                    await self._send_subscription_required(update, context)
-                    raise ApplicationHandlerStop()
+            has_access = await subscription_manager.check_module_access(user_id, module_code)
+            self._access_cache[cache_key] = has_access
         
-        # Проверяем лимиты использования (если есть подписка)
-        if subscription_manager:
-            can_use, used, limit = await self._check_usage_limit(user_id, subscription_manager)
-            
-            if not can_use:
-                await self._send_limit_exceeded(update, context, used, limit)
-                raise ApplicationHandlerStop()
-            
-            # Увеличиваем счетчик использования только для контентных действий
-            if module_code and module_code != 'test_part':  # test_part не учитываем в лимитах
-                await self._increment_usage(user_id)
-            
-            # Сохраняем информацию в context для использования в обработчиках
-            if context:
-                context.user_data['subscription_info'] = await subscription_manager.get_subscription_info(user_id)
-                context.user_data['usage_info'] = {'used': used + 1, 'limit': limit}
-            
-            # Показываем оставшийся лимит для базовых подписок
-            if update.callback_query and limit > 0 and limit != -1:
-                remaining = limit - used - 1
-                if remaining > 0 and remaining <= 10:
-                    # Показываем только для платных модулей
-                    if module_code and module_code != 'test_part':
-                        await update.callback_query.answer(f"Осталось вопросов: {remaining}")
+        if not has_access:
+            logger.info(f"Access denied for user {user_id} to module {module_code}")
+            await self._send_module_subscription_required(update, context, module_code)
+            raise ApplicationHandlerStop()
         
+        # Проверяем лимиты использования
+        can_use, used, limit = await self._check_usage_limit(user_id, subscription_manager)
+        
+        if not can_use:
+            await self._send_limit_exceeded(update, context, used, limit)
+            raise ApplicationHandlerStop()
+        
+        # Увеличиваем счетчик использования для платных модулей
+        if module_code not in FREE_MODULES:
+            await self._increment_usage(user_id)
+        
+        # Сохраняем информацию в context
+        if context:
+            context.user_data['subscription_info'] = await subscription_manager.get_subscription_info(user_id)
+            context.user_data['usage_info'] = {'used': used + 1, 'limit': limit}
+        
+        # Показываем оставшийся лимит при необходимости
+        if update.callback_query and limit > 0 and limit != -1:
+            remaining = limit - used - 1
+            if remaining > 0 and remaining <= 10 and module_code not in FREE_MODULES:
+                await update.callback_query.answer(f"Осталось вопросов: {remaining}")
+        
+        logger.info(f"Access granted for user {user_id} to module {module_code}")
         return True
     
     def _is_free_action(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
-        """Проверяет, является ли действие бесплатным."""
+        """
+        Проверяет, является ли действие бесплатным.
         
-        # ВАЖНО: Инициализируем text в начале
-        text = None
-        
-        # Проверка callback для тестовой части ПЕРВОЙ
-        if update.callback_query and update.callback_query.data:
-            callback_data = update.callback_query.data
+        Args:
+            update: Telegram update
+            context: Контекст
             
-            # Callback'и тестовой части - ВСЕГДА БЕСПЛАТНЫ
-            if any([
-                callback_data == 'choose_test_part',
-                callback_data == 'to_test_part_menu',
-                callback_data.startswith('test_'),
-                callback_data.startswith('initial:'),
-                callback_data.startswith('block:'),
-                callback_data.startswith('topic:'),
-                callback_data.startswith('exam_num:'),
-                callback_data.startswith('mode:'),
-                callback_data.startswith('exam_'),
-                callback_data.startswith('mistake_'),
-                callback_data.startswith('test_part_'),
-                callback_data == 'quiz',
-                callback_data.startswith('next_'),
-                callback_data == 'skip_question',
-                callback_data == 'next_random',
-                callback_data == 'next_topic'
-            ]):
-                logger.debug(f"Test part free callback: {callback_data}")
-                return True
-            
-            # Проверяем остальные бесплатные паттерны
-            for pattern in self.free_patterns:
-                if pattern.endswith('_') and callback_data.startswith(pattern):
-                    logger.debug(f"Free callback pattern detected: {pattern}")
-                    return True
-                elif callback_data == pattern:
-                    logger.debug(f"Free callback exact match: {pattern}")
-                    return True
-        
+        Returns:
+            True если действие бесплатное
+        """
         # Проверка команд
         if update.message and update.message.text:
             text = update.message.text.strip()
+            
             if text.startswith('/'):
                 command = text.split()[0][1:].split('@')[0].lower()
-                
-                # Команды тестовой части - ВСЕГДА БЕСПЛАТНЫ
-                test_commands = {'quiz', 'test', 'test_stats', 'mistakes', 'score'}
-                if command in test_commands:
-                    logger.debug(f"Test part free command: /{command}")
-                    return True
-                
                 if command in self.free_commands:
-                    logger.debug(f"Free command detected: /{command}")
                     return True
         
-        # Проверка текстовых ответов в test_part
-        if update.message and update.message.text and context:
-            active_module = context.user_data.get('active_module')
-            current_state = context.user_data.get('_state')
+        # Проверка callback
+        if update.callback_query and update.callback_query.data:
+            callback_data = update.callback_query.data
             
-            # Если в test_part и отвечаем на вопрос - это бесплатно
-            if active_module == 'test_part':
-                if current_state in ['ANSWERING', 'EXAM_MODE', 'CHOOSING_MODE']:
-                    logger.debug(f"Test part answering mode - free action")
-                    return True
+            # Проверяем по паттернам
+            for pattern in self.free_patterns:
+                if pattern.endswith('_'):
+                    if callback_data.startswith(pattern):
+                        return True
+                else:
+                    if callback_data == pattern:
+                        return True
         
-        # Проверка /start всегда последняя
-        if text and text.startswith('/start'):
-            logger.debug("Command /start is always free")
+        # Проверка состояния тестовой части в контексте
+        if context and context.user_data.get('test_state') in ['ANSWERING', 'EXAM_MODE', 'CHOOSING_MODE']:
             return True
         
         return False
     
-    async def _check_subscription(self, user_id: int, bot) -> bool:
-        """Проверяет наличие активной подписки"""
-        # Импортируем только когда нужно
-        from payment.subscription_manager import SubscriptionManager
-        subscription_manager = SubscriptionManager()
-        
-        subscription = await subscription_manager.check_active_subscription(user_id)
-        return subscription is not None
+    def _get_admin_ids(self) -> list:
+        """Получает список ID администраторов."""
+        admin_ids = []
+        if hasattr(config, 'ADMIN_IDS') and config.ADMIN_IDS:
+            if isinstance(config.ADMIN_IDS, str):
+                admin_ids = [int(id.strip()) for id in config.ADMIN_IDS.split(',') if id.strip()]
+            elif isinstance(config.ADMIN_IDS, list):
+                admin_ids = config.ADMIN_IDS
+        return admin_ids
     
     async def _check_channel_membership(self, user_id: int, bot) -> bool:
-        """Проверяет подписку на канал"""
+        """
+        Проверяет подписку на канал.
+        
+        Args:
+            user_id: ID пользователя
+            bot: Экземпляр бота
+            
+        Returns:
+            True если подписан
+        """
         if not self.channel:
             return True
-            
+        
         try:
             member = await bot.get_chat_member(self.channel, user_id)
             return member.status in ['member', 'administrator', 'creator']
@@ -397,6 +343,10 @@ class SubscriptionMiddleware:
         """
         Проверяет лимиты использования.
         
+        Args:
+            user_id: ID пользователя
+            subscription_manager: Менеджер подписок
+            
         Returns:
             (can_use, used_count, limit)
         """
@@ -408,54 +358,76 @@ class SubscriptionMiddleware:
         subscription = await subscription_manager.check_active_subscription(user_id)
         
         if subscription:
-            # Для активной подписки нет лимитов
-            return (True, usage_count, -1)
+            # Для активной подписки нет лимитов (или большие лимиты)
+            plan_id = subscription.get('plan_id')
+            
+            # Pro планы без лимитов
+            if plan_id in ['pro_month', 'pro_ege', 'package_full']:
+                return (True, usage_count, -1)  # -1 = безлимит
+            
+            # Базовые планы с лимитами
+            elif plan_id in ['basic_month', 'package_second']:
+                limit = 100  # вопросов в день
+                # Проверяем дневной лимит
+                today_count = user_data.get('daily_usage_count', 0)
+                if today_count >= limit:
+                    return (False, today_count, limit)
+                return (True, today_count, limit)
         
-        # Для бесплатных пользователей - лимит
-        FREE_LIMIT = 50  # или другой лимит
+        # Для бесплатных пользователей - месячный лимит
+        FREE_LIMIT = 50
         
         if usage_count >= FREE_LIMIT:
             return (False, usage_count, FREE_LIMIT)
         
         return (True, usage_count, FREE_LIMIT)
-
+    
     async def _increment_usage(self, user_id: int):
-        """Увеличивает счетчик использования."""
+        """
+        Увеличивает счетчик использования.
+        
+        Args:
+            user_id: ID пользователя
+        """
         try:
-            # Используем execute_with_retry из core.db
+            today = datetime.now().date().isoformat()
+            
+            # Обновляем оба счетчика
             await db.execute_with_retry(
-                "UPDATE users SET monthly_usage_count = monthly_usage_count + 1 WHERE user_id = ?",
-                (user_id,)
+                """
+                UPDATE users 
+                SET monthly_usage_count = monthly_usage_count + 1,
+                    daily_usage_count = CASE 
+                        WHEN last_usage_date = ? THEN daily_usage_count + 1 
+                        ELSE 1 
+                    END,
+                    last_usage_date = ?
+                WHERE user_id = ?
+                """,
+                (today, today, user_id)
             )
         except Exception as e:
             logger.error(f"Error incrementing usage for user {user_id}: {e}")
     
     async def _send_subscription_required(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Отправляет сообщение о необходимости подписки"""
-        text = "❌ Для доступа к этой функции необходима подписка!\n\n"
-        text += "💎 Выберите подходящий план:\n"
-        
-        # Импортируем конфигурацию для получения актуальных цен
+        """Отправляет общее сообщение о необходимости подписки."""
         from .config import SUBSCRIPTION_MODE, MODULE_PLANS, LEGACY_SUBSCRIPTION_PLANS
         
+        text = "❌ <b>Для доступа к этой функции необходима подписка!</b>\n\n"
+        
         if SUBSCRIPTION_MODE == 'modular':
-            # Модульная система - показываем модули
-            text += "📦 <b>Модульная система подписок:</b>\n"
-            text += "• Тестовая часть - 149₽/мес\n"
-            text += "• Задания 19, 20, 25 - по 199₽/мес\n"
-            text += "• Задание 24 - 399₽/мес\n"
-            text += "• Пакет 'Вторая часть' - 499₽/мес\n"
-            text += "• Полный доступ - 999₽/мес\n"
+            text += "💎 <b>Доступные пакеты:</b>\n\n"
+            text += "🎁 Пробный период — 1₽ за 7 дней\n"
+            text += "📚 Пакет «Вторая часть» — 499₽/мес\n"
+            text += "👑 Полный доступ — 799₽/мес\n"
         else:
-            # Старая система
             plans = LEGACY_SUBSCRIPTION_PLANS
-            text += f"• {plans['basic_month']['name']} ({plans['basic_month']['price_rub']}₽/мес) - 100 вопросов в день\n"
-            text += f"• {plans['pro_month']['name']} ({plans['pro_month']['price_rub']}₽/мес) - неограниченно\n"
-            text += f"• {plans['pro_ege']['name']} ({plans['pro_ege']['price_rub']}₽) - неограниченно до ЕГЭ 2025\n"
+            text += f"• {plans['basic_month']['name']} — {plans['basic_month']['price_rub']}₽/мес\n"
+            text += f"• {plans['pro_month']['name']} — {plans['pro_month']['price_rub']}₽/мес\n"
         
         keyboard = [
             [InlineKeyboardButton("💳 Оформить подписку", callback_data="subscribe_start")],
-            [InlineKeyboardButton("🔙 Главное меню", callback_data="main_menu")]
+            [InlineKeyboardButton("⬅️ Главное меню", callback_data="to_main_menu")]
         ]
         
         if self.channel and self.check_channel:
@@ -475,87 +447,123 @@ class SubscriptionMiddleware:
         elif update.message:
             await update.message.reply_text(text, reply_markup=reply_markup, parse_mode=ParseMode.HTML)
     
+    async def _send_module_subscription_required(self, update: Update, context: ContextTypes.DEFAULT_TYPE, module_code: str):
+        """
+        Отправляет сообщение о необходимости подписки на конкретный модуль.
+        
+        Args:
+            update: Telegram update
+            context: Контекст
+            module_code: Код модуля
+        """
+        # Названия модулей
+        module_names = {
+            'test_part': '📝 Тестовая часть',
+            'task19': '🎯 Задание 19',
+            'task20': '📖 Задание 20',
+            'task24': '📋 Задание 24',
+            'task25': '✍️ Задание 25'
+        }
+        
+        module_name = module_names.get(module_code, module_code)
+        
+        # Импортируем конфигурацию
+        from .config import MODULE_PLANS, get_module_price
+        
+        # Находим подходящие пакеты
+        suitable_packages = []
+        for plan_id, plan in MODULE_PLANS.items():
+            if module_code in plan.get('modules', []):
+                suitable_packages.append((plan_id, plan))
+        
+        # Формируем сообщение
+        text = f"🔒 <b>Модуль «{module_name}» требует подписку</b>\n\n"
+        
+        # Сортируем пакеты по цене
+        suitable_packages.sort(key=lambda x: x[1]['price_rub'])
+        
+        if suitable_packages:
+            text += "<b>Доступен в пакетах:</b>\n\n"
+            for plan_id, plan in suitable_packages[:3]:  # Показываем топ-3 варианта
+                text += f"• {plan['name']} — {plan['price_rub']}₽\n"
+        
+        # Цена отдельного модуля
+        module_price = get_module_price(module_code)
+        if module_price > 0:
+            text += f"\n<b>Или отдельно:</b> {module_price}₽/мес"
+        
+        text += "\n\n💡 <i>Совет: Попробуйте пробный период за 1₽</i>"
+        
+        # Кнопки
+        buttons = []
+        
+        # Пробный период всегда первый
+        buttons.append([InlineKeyboardButton("🎁 Попробовать за 1₽", callback_data="pay_trial")])
+        
+        # Добавляем подходящие пакеты
+        for plan_id, plan in suitable_packages[:2]:
+            if plan['type'] != 'trial':
+                button_text = f"{plan['name']}"
+                buttons.append([InlineKeyboardButton(button_text, callback_data=f"pay_{plan_id}")])
+        
+        # Кнопка возврата
+        buttons.append([InlineKeyboardButton("⬅️ Главное меню", callback_data="to_main_menu")])
+        
+        reply_markup = InlineKeyboardMarkup(buttons)
+        
+        # Отправляем сообщение
+        if update.callback_query:
+            await update.callback_query.answer(f"❌ {module_name} требует подписку", show_alert=True)
+            await update.callback_query.message.reply_text(
+                text,
+                reply_markup=reply_markup,
+                parse_mode=ParseMode.HTML
+            )
+        else:
+            await update.message.reply_text(
+                text,
+                reply_markup=reply_markup,
+                parse_mode=ParseMode.HTML
+            )
+    
     async def _send_limit_exceeded(self, update: Update, context: ContextTypes.DEFAULT_TYPE, used: int, limit: int):
-        """Отправляет сообщение о превышении лимита"""
+        """
+        Отправляет сообщение о превышении лимита.
+        
+        Args:
+            update: Telegram update  
+            context: Контекст
+            used: Использовано
+            limit: Лимит
+        """
         if limit == 50:
-            text = f"❌ Вы достигли месячного лимита!\n\n"
-            text += f"Использовано: {used}/50 вопросов в месяц\n"
+            text = f"❌ <b>Вы достигли месячного лимита!</b>\n\n"
+            text += f"Использовано: {used}/50 вопросов в месяц\n\n"
             text += "Оформите подписку для увеличения лимита!"
         else:
-            text = f"❌ Вы достигли дневного лимита!\n\n"
-            text += f"Использовано: {used}/{limit} вопросов сегодня\n"
+            text = f"❌ <b>Вы достигли дневного лимита!</b>\n\n"
+            text += f"Использовано: {used}/{limit} вопросов сегодня\n\n"
             text += "Попробуйте завтра или улучшите подписку!"
         
         keyboard = [
             [InlineKeyboardButton("💳 Улучшить подписку", callback_data="subscribe_start")],
-            [InlineKeyboardButton("🔙 Главное меню", callback_data="main_menu")]
+            [InlineKeyboardButton("⬅️ Главное меню", callback_data="to_main_menu")]
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
         
         if update.callback_query:
             await update.callback_query.answer("Лимит исчерпан!", show_alert=True)
             try:
-                await update.callback_query.edit_message_text(text, reply_markup=reply_markup)
+                await update.callback_query.edit_message_text(text, reply_markup=reply_markup, parse_mode=ParseMode.HTML)
             except:
-                await update.callback_query.message.reply_text(text, reply_markup=reply_markup)
+                await update.callback_query.message.reply_text(text, reply_markup=reply_markup, parse_mode=ParseMode.HTML)
         elif update.message:
-            await update.message.reply_text(text, reply_markup=reply_markup)
-
-    async def _send_module_subscription_required(self, update: Update, context: ContextTypes.DEFAULT_TYPE, module_code: str):
-        """Отправляет сообщение о необходимости подписки на модуль."""
-        
-        # Модули и их названия
-        module_names = {
-            'test_part': '📝 Тестовая часть - БЕСПЛАТНО',  # Не должно срабатывать
-            'task19': '🎯 Задание 19 - Анализ суждений',
-            'task20': '📖 Задание 20 - Работа с текстом',
-            'task24': '💎 Задание 24 - Составление плана',
-            'task25': '✍️ Задание 25 - Эссе и сочинения',
-            'full_course': '🎓 Полный курс - Все модули'
-        }
-        
-        module_name = module_names.get(module_code, module_code)
-        
-        # Не должно срабатывать для test_part, но на всякий случай
-        if module_code == 'test_part':
-            logger.error(f"Subscription check triggered for free module test_part!")
-            return
-        
-        text = f"""🔒 <b>Требуется подписка на модуль!</b>
-
-Для доступа к <b>{module_name}</b> необходима активная подписка на этот модуль.
-
-💡 С модульной системой вы платите только за те задания, которые вам нужны!
-
-Используйте команду /subscribe для просмотра доступных модулей и оформления подписки."""
-        
-        keyboard = [[
-            InlineKeyboardButton("💳 Оформить подписку", callback_data="subscribe"),
-            InlineKeyboardButton("ℹ️ Подробнее", callback_data=f"module_info_{module_code}")
-        ]]
-        
-        if update.callback_query:
-            await update.callback_query.answer(
-                f"Требуется подписка на {module_name.split(' - ')[0]}!", 
-                show_alert=True
-            )
-            # Отправляем новое сообщение вместо редактирования
-            await update.callback_query.message.reply_text(
-                text,
-                reply_markup=InlineKeyboardMarkup(keyboard),
-                parse_mode=ParseMode.HTML
-            )
-        elif update.message:
-            await update.message.reply_text(
-                text,
-                reply_markup=InlineKeyboardMarkup(keyboard),
-                parse_mode=ParseMode.HTML
-            )
+            await update.message.reply_text(text, reply_markup=reply_markup, parse_mode=ParseMode.HTML)
     
     async def _send_channel_required(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Отправляет сообщение о необходимости подписки на канал"""
-        text = f"❌ Для использования бота необходима подписка на канал {self.channel}\n\n"
-        text += "После подписки нажмите кнопку 'Проверить подписку'"
+        """Отправляет сообщение о необходимости подписки на канал."""
+        text = f"❌ <b>Для использования бота необходима подписка на канал {self.channel}</b>\n\n"
+        text += "После подписки нажмите кнопку «Проверить подписку»"
         
         keyboard = [
             [InlineKeyboardButton("📣 Подписаться на канал", url=f"https://t.me/{self.channel[1:]}")],
@@ -566,11 +574,29 @@ class SubscriptionMiddleware:
         if update.callback_query:
             await update.callback_query.answer("Требуется подписка на канал!", show_alert=True)
             try:
-                await update.callback_query.edit_message_text(text, reply_markup=reply_markup)
+                await update.callback_query.edit_message_text(text, reply_markup=reply_markup, parse_mode=ParseMode.HTML)
             except:
-                await update.callback_query.message.reply_text(text, reply_markup=reply_markup)
+                await update.callback_query.message.reply_text(text, reply_markup=reply_markup, parse_mode=ParseMode.HTML)
         elif update.message:
-            await update.message.reply_text(text, reply_markup=reply_markup)
+            await update.message.reply_text(text, reply_markup=reply_markup, parse_mode=ParseMode.HTML)
+    
+    def clear_cache(self, user_id: Optional[int] = None):
+        """
+        Очищает кэш.
+        
+        Args:
+            user_id: ID пользователя (если None - очищает весь кэш)
+        """
+        if user_id:
+            # Очищаем кэш для конкретного пользователя
+            self._access_cache = {
+                k: v for k, v in self._access_cache.items()
+                if k[0] != user_id
+            }
+        else:
+            # Полная очистка кэшей
+            self._module_cache.clear()
+            self._access_cache.clear()
 
 
 def setup_subscription_middleware(
@@ -578,8 +604,20 @@ def setup_subscription_middleware(
     free_commands: Optional[Set[str]] = None,
     free_patterns: Optional[Set[str]] = None,
     check_channel: bool = False
-) -> None:
-    """Настраивает middleware для проверки подписок."""
+) -> SubscriptionMiddleware:
+    """
+    Настраивает middleware для проверки подписок.
+    
+    Args:
+        application: Приложение Telegram
+        free_commands: Бесплатные команды
+        free_patterns: Бесплатные паттерны
+        check_channel: Проверять ли канал
+        
+    Returns:
+        Экземпляр middleware
+    """
+    # Дефолтные бесплатные паттерны
     default_free_patterns = {
         # Базовые паттерны
         'main_menu', 'to_main_menu', 'start_', 'help_',
@@ -588,15 +626,14 @@ def setup_subscription_middleware(
         'check_subscription', 'support_', 'settings_',
         
         # Паттерны для подписки
-        'my_subscription', 'subscribe_start',
-        'my_subscriptions',  # ДОБАВИТЬ этот паттерн!
+        'my_subscription', 'subscribe_start', 'my_subscriptions',
         
         # Паттерны для выбора модулей
         'toggle_', 'info_', 'proceed_with_modules',
         'pay_individual_modules', 'pay_package_',
         'pay_trial', 'pay_full',
         
-        # Паттерны для навигации в подписке
+        # Паттерны для навигации
         'back_to_module_selection', 'back_to_main',
         'back_to_plans', 'back_to_modules',
         
@@ -605,46 +642,50 @@ def setup_subscription_middleware(
         'add_user_', 'remove_user_', 'list_users_',
         'refresh_'
     }
-    # Расширяем список бесплатных команд, включая админские
+    
+    # Дефолтные бесплатные команды
     default_free_commands = {
         # Базовые команды
         'start', 'help', 'subscribe', 'status', 
         'my_subscriptions', 'menu', 'cancel', 'support',
         
-        # ВАЖНО: Админские команды должны быть доступны без подписки!
+        # Админские команды
         'grant_subscription', 'activate_payment', 'check_webhook',
         'list_subscriptions', 'check_user_subscription', 'revoke',
         'payment_stats', 'check_admin', 'grant', 'revoke_subscription'
     }
     
-    # Объединяем с пользовательскими командами если есть
+    # Объединяем с пользовательскими
     if free_commands:
         default_free_commands.update(free_commands)
+    if free_patterns:
+        default_free_patterns.update(free_patterns)
     
+    # Создаем middleware
     middleware = SubscriptionMiddleware(
         free_commands=default_free_commands,
-        free_patterns=free_patterns,
+        free_patterns=default_free_patterns,
         check_channel=check_channel
     )
     
-    # Сохраняем middleware в application для доступа из других мест
+    # Сохраняем в bot_data
     application.bot_data['subscription_middleware'] = middleware
     
-    # Создаем обработчик, который будет проверять все обновления
+    # Создаем обработчик
     async def check_subscription_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """Обработчик для проверки подписки перед другими обработчиками"""
+        """Обработчик для проверки подписки."""
         try:
             await middleware.process_update(update, application, True, context)
         except ApplicationHandlerStop:
-            # Останавливаем дальнейшую обработку
             raise
     
-    # Добавляем обработчик с группой -100 (выполняется первым)
-    # TypeHandler обрабатывает ВСЕ типы обновлений
+    # Регистрируем с высоким приоритетом
     from telegram.ext import TypeHandler
     application.add_handler(
         TypeHandler(Update, check_subscription_handler),
-        group=-100
+        group=-100  # Выполняется первым
     )
     
-    logger.info("Subscription middleware установлен с админскими командами в whitelist")
+    logger.info("Subscription middleware установлен с полным функционалом")
+    
+    return middleware
