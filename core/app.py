@@ -385,8 +385,16 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode="HTML"
     )
 
-async def show_main_menu_with_access(context: ContextTypes.DEFAULT_TYPE, user_id: int) -> InlineKeyboardMarkup:
-    """Показывает главное меню с правильной индикацией доступа."""
+async def show_main_menu_with_access(context, user_id):
+    """
+    ИСПРАВЛЕННАЯ ВЕРСИЯ
+    Показывает главное меню с правильной индикацией доступа и системными кнопками.
+    
+    Изменения:
+    1. Исправлен callback_data для "Мои подписки": my_subscriptions → my_subscription
+    2. Добавлено добавление системных кнопок в итоговый массив
+    """
+    from telegram import InlineKeyboardButton, InlineKeyboardMarkup
     
     subscription_manager = context.bot_data.get('subscription_manager')
     buttons = []
@@ -431,12 +439,16 @@ async def show_main_menu_with_access(context: ContextTypes.DEFAULT_TYPE, user_id
         
         if subscription_info:
             system_buttons.append(
-                InlineKeyboardButton("💳 Моя подписка", callback_data="my_subscriptions")
+                InlineKeyboardButton("💳 Моя подписка", callback_data="my_subscription")  # ИСПРАВЛЕНО
             )
         else:
             system_buttons.append(
                 InlineKeyboardButton("💎 Оформить подписку", callback_data="subscribe_start")
             )
+    
+    # ИСПРАВЛЕНИЕ: Добавляем системные кнопки в основной массив
+    if system_buttons:
+        buttons.append(system_buttons)
     
     return InlineKeyboardMarkup(buttons)
 
