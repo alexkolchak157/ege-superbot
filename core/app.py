@@ -87,15 +87,14 @@ async def handle_my_subscription(update: Update, context: ContextTypes.DEFAULT_T
     
     buttons = []
     
-    if not subscription_info:
-        buttons.append([InlineKeyboardButton("💳 Оформить подписку", callback_data="subscribe_start")])  # Изменить с "show_payment_plans"
+    # ИСПРАВЛЕНО: Добавлены кнопки продления и обновления
+    if subscription_info:
+        buttons.append([InlineKeyboardButton("🔄 Продлить подписку", callback_data="renew_subscription")])
+        buttons.append([InlineKeyboardButton("➕ Добавить модули", callback_data="subscribe_start")])
     else:
-        buttons.append([InlineKeyboardButton("🔄 Продлить подписку", callback_data="subscribe")])
+        buttons.append([InlineKeyboardButton("💳 Оформить подписку", callback_data="subscribe_start")])
     
-    buttons.extend([
-        #[InlineKeyboardButton("📊 Моя статистика", callback_data="my_statistics")],
-        [InlineKeyboardButton("⬅️ Главное меню", callback_data="to_main_menu")]
-    ])
+    buttons.append([InlineKeyboardButton("⬅️ Главное меню", callback_data="to_main_menu")])
     
     await query.edit_message_text(
         text,
@@ -479,13 +478,13 @@ async def handle_my_subscription(update: Update, context: ContextTypes.DEFAULT_T
             
             # Проверяем доступ к каждому модулю для детальной информации
             text += "\n📊 <b>Детали доступа:</b>\n"
-            modules_to_check = ['test_part', 'task19', 'task20', 'task24', 'task25']
+            # ИСПРАВЛЕНИЕ 3: Убираем test_part из списка проверяемых модулей
+            modules_to_check = ['task19', 'task20', 'task24', 'task25']
             module_names = {
-                'test_part': 'Тестовая часть',
-                'task19': 'Задание 19',
-                'task20': 'Задание 20',
-                'task24': 'Задание 24',
-                'task25': 'Задание 25'
+                'task19': '🎯 Задание 19',
+                'task20': '📖 Задание 20',
+                'task24': '💎 Задание 24',
+                'task25': '✍️ Задание 25'
             }
             
             for module_code in modules_to_check:
@@ -498,20 +497,36 @@ async def handle_my_subscription(update: Update, context: ContextTypes.DEFAULT_T
             text += f"✅ <b>План:</b> {subscription_info.get('plan_name')}\n"
             text += f"📅 <b>Действует до:</b> {subscription_info.get('expires_at').strftime('%d.%m.%Y')}\n"
     else:
-        text = "❌ <b>У вас нет активной подписки</b>\n\n"
-        text += "Оформите подписку, чтобы получить доступ ко всем модулям:\n\n"
-        text += "📚 <b>Доступные планы:</b>\n"
-        text += "• Пакет «Вторая часть» - задания 19, 20, 25\n"
-        text += "• Полный доступ - все модули\n"
-        text += "• Пробный период - 7 дней\n"
+        text = "💎 <b>Модульная система подписок</b>\n\n"
+        text += "У вас пока нет активной подписки.\n\n"
+        text += "<b>Доступные тарифы:</b>\n\n"
+        
+        text += "🎁 <b>Пробный период</b> — 1₽\n"
+        text += "   • Полный доступ на 7 дней\n"
+        text += "   • Все модули включены\n\n"
+        
+        text += "🎯 <b>Пакет «Вторая часть»</b> — 499₽/мес\n"
+        text += "   • Задание 19, 20, 25\n"
+        text += "   <i>Экономия 98₽</i>\n\n"
+        
+        text += "👑 <b>Полный доступ</b> — 799₽/мес\n"
+        text += "   • Все модули\n"
+        text += "   • Приоритетная поддержка\n"
+        text += "   <i>Экономия 97₽</i>\n\n"
+        
+        text += "📚 Или выберите отдельные модули"
     
     buttons = []
     
-    if not subscription_info:
+    # ИСПРАВЛЕНИЕ 1: Добавляем кнопки продления/обновления подписки
+    if subscription_info:
+        # Пользователь с активной подпиской
+        buttons.append([InlineKeyboardButton("🔄 Продлить подписку", callback_data="renew_subscription")])
+        buttons.append([InlineKeyboardButton("➕ Добавить модули", callback_data="subscribe_start")])
+    else:
+        # Пользователь без подписки
         buttons.append([InlineKeyboardButton("💳 Оформить подписку", callback_data="subscribe_start")])
-
-    # Удалить кнопку "Моя статистика", так как для неё нет обработчика
-    # Или создать заглушку
+    
     buttons.append([InlineKeyboardButton("⬅️ Главное меню", callback_data="to_main_menu")])
     
     await query.edit_message_text(
