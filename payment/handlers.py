@@ -1,3220 +1,2772 @@
+# payment/handlers.py - адаптированная версия с поддержкой модулей
+"""Обработчики команд для работы с платежами (модульная версия)."""
 import logging
-import random
-from datetime import datetime
-from core.state_validator import validate_state_transition, state_validator
-import aiosqlite
-import os
-import csv
-import io
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update, Message
+from datetime import datetime, timedelta, timezone
+import uuid
+from typing import Optional, Dict, Any, List
+import json
+from telegram import (
+    InlineKeyboardButton, 
+    InlineKeyboardMarkup, 
+    Update)
+from telegram.error import BadRequest
 from telegram.constants import ParseMode
-from telegram.ext import ContextTypes, ConversationHandler
-from core.plugin_loader import build_main_menu
-from core import db, states
-from core.admin_tools import admin_manager
-from core.config import DATABASE_FILE, REQUIRED_CHANNEL
-from core.ui_helpers import (create_visual_progress, get_motivational_message,
-                             get_personalized_greeting,
-                             show_streak_notification, show_thinking_animation)
-from core.universal_ui import (AdaptiveKeyboards, MessageFormatter,
-                               UniversalUIComponents)
-from core.error_handler import safe_handler, auto_answer_callback
-from core.utils import check_subscription, send_subscription_required
-from . import keyboards, utils
-from .loader import AVAILABLE_BLOCKS, QUESTIONS_DATA, QUESTIONS_DICT_FLAT
+from telegram.ext import (
+    Application,
+    ContextTypes, 
+    ConversationHandler,
+    CommandHandler,
+    CallbackQueryHandler,
+    MessageHandler,
+    filters
+)
+from .promo_handler import (
+    PromoCodeManager, 
+    show_promo_input, 
+    handle_promo_input,
+    skip_promo,
+    retry_promo,
+    PROMO_INPUT
+)
+from .auto_renewal_consent import (
+    AutoRenewalConsent, 
+    show_auto_renewal_choice,
+    SHOWING_TERMS, 
+    CONSENT_CHECKBOX, 
+    FINAL_CONFIRMATION
+)
+from core.db import DATABASE_FILE
+import re
+import aiosqlite
+from core.error_handler import safe_handler
+from .config import (
+    SUBSCRIPTION_PLANS,
+    SUBSCRIPTION_PLANS, 
+    SUBSCRIPTION_MODE,
+    DURATION_DISCOUNTS,
+    MODULE_PLANS,
+    PAYMENT_ADMIN_CHAT_ID,
+    get_plan_price_kopecks
+)
+from .subscription_manager import SubscriptionManager
+from .tinkoff import TinkoffPayment
 
-try:
-    from .topic_data import TOPIC_NAMES
-except ImportError:
-    logger.warning("Не удалось импортировать TOPIC_NAMES из topic_data.py")
-    TOPIC_NAMES = {}
-
-try:
-    from .cache import questions_cache
-except ImportError:
-    logging.warning("Модуль cache не найден, работаем без кеширования")
-    questions_cache = None
+# Состояния для ConversationHandler
+CHOOSING_PLAN = 1
+CHOOSING_MODULES = 2
+CHOOSING_DURATION = 3
+CONFIRMING = 4
+ENTERING_EMAIL = 5
+CHOOSING_AUTO_RENEWAL = 6
+FINAL_CONFIRMATION = 7
 
 logger = logging.getLogger(__name__)
 
-# Добавить после импортов (новые функции):
-def safe_cache_get_by_exam_num(exam_number):
-    """Безопасное получение вопросов по номеру ЕГЭ."""
-    if questions_cache:
-        return questions_cache.get_by_exam_num(exam_number)
-    
-    # Fallback через QUESTIONS_DATA
-    questions_with_num = []
-    for block_data in QUESTIONS_DATA.values():
-        for topic_questions in block_data.values():
-            for question in topic_questions:
-                if question.get("exam_number") == exam_number:
-                    questions_with_num.append(question)
-    return questions_with_num
+# Состояния для платежного процесса
+PROMO_INPUT = "promo_input"
+CHOOSING_PLAN = "choosing_plan"
+CHOOSING_DURATION = "choosing_duration"  
+ENTERING_EMAIL = "entering_email"
+CONFIRMING = "confirming"
+CHOOSING_MODULES = "choosing_modules"  # Новое состояние
+AUTO_RENEWAL_CHOICE = "auto_renewal_choice"  # НОВОЕ
+FINAL_CONSENT = "final_consent"              # НОВОЕ
+PAYMENT_STATES = [
+    CHOOSING_PLAN, CHOOSING_MODULES, CHOOSING_DURATION, 
+    PROMO_INPUT,  # НОВОЕ состояние
+    ENTERING_EMAIL, FINAL_CONSENT, AUTO_RENEWAL_CHOICE, CONFIRMING
+]
 
-def safe_cache_get_by_topic(topic):
-    """Безопасное получение вопросов по теме."""
-    if questions_cache:
-        return questions_cache.get_by_topic(topic)
-    
-    # Fallback через QUESTIONS_DATA
-    questions_in_topic = []
-    for block_data in QUESTIONS_DATA.values():
-        for topic_name, topic_questions in block_data.items():
-            if topic_name == topic:
-                questions_in_topic.extend(topic_questions)
-    return questions_in_topic
+# Инициализация менеджеров
+subscription_manager = SubscriptionManager()
+tinkoff_payment = TinkoffPayment()
 
-def safe_cache_get_by_block(block):
-    """Безопасное получение вопросов по блоку."""
-    if questions_cache:
-        return questions_cache.get_by_block(block)
-    
-    # Fallback через QUESTIONS_DATA
-    questions_in_block = []
-    for topic_questions in QUESTIONS_DATA.get(block, {}).values():
-        questions_in_block.extend(topic_questions)
-    return questions_in_block
 
-def safe_cache_get_all_exam_numbers():
-    """Безопасное получение всех номеров ЕГЭ."""
-    if questions_cache:
-        return questions_cache.get_all_exam_numbers()
-    
-    # Fallback через QUESTIONS_DATA
-    exam_numbers = set()
-    for block_data in QUESTIONS_DATA.values():
-        for topic_questions in block_data.values():
-            for question in topic_questions:
-                exam_num = question.get("exam_number")
-                if isinstance(exam_num, int):
-                    exam_numbers.add(exam_num)
-    return sorted(list(exam_numbers))
-
-def init_data():
-    """Инициализирует данные вопросов."""
-    global QUESTIONS_DATA, AVAILABLE_BLOCKS, QUESTIONS_LIST
-    try:
-        from .loader import get_questions_data, get_questions_list_flat, get_available_blocks
-        
-        QUESTIONS_DATA = get_questions_data()
-        if QUESTIONS_DATA:
-            AVAILABLE_BLOCKS = get_available_blocks()
-            QUESTIONS_LIST = get_questions_list_flat() or []
-            logger.info(f"Loaded {len(AVAILABLE_BLOCKS)} blocks with questions")
-            logger.info(f"Total questions: {len(QUESTIONS_LIST)}")
+@safe_handler()
+async def cmd_subscribe(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Команда /subscribe - показывает планы подписки."""
+    # Проверяем источник вызова
+    if update.callback_query:
+        # Вызов из callback - используем show_modular_interface
+        return await show_modular_interface(update, context)
+    elif update.message:
+        # Вызов из команды - показываем интерфейс
+        if SUBSCRIPTION_MODE == 'modular':
+            return await show_modular_interface(update, context)
         else:
-            logger.warning("get_questions_data() returned None or empty")
-            QUESTIONS_DATA = {}
-            AVAILABLE_BLOCKS = []
-            QUESTIONS_LIST = []
-            
-    except ImportError as e:
-        logger.error(f"Import error loading questions data: {e}")
-        QUESTIONS_DATA = {}
-        AVAILABLE_BLOCKS = []
-        QUESTIONS_LIST = []
-    except Exception as e:
-        logger.error(f"Error loading questions data: {e}")
-        QUESTIONS_DATA = {}
-        AVAILABLE_BLOCKS = []
-        QUESTIONS_LIST = []
-
-# Вызываем инициализацию при импорте модуля
-init_data()
-
-# Добавьте отладочную проверку после init_data()
-def check_data_loaded():
-    """Проверяет, загружены ли данные."""
-    global QUESTIONS_DATA, AVAILABLE_BLOCKS, QUESTIONS_LIST  # Объявляем global в начале
-    
-    if not QUESTIONS_DATA:
-        logger.error("CRITICAL: QUESTIONS_DATA is empty after init!")
-        
-        # Проверяем путь к файлу
-        questions_file_path = os.path.join(
-            os.path.dirname(os.path.dirname(__file__)), 
-            'data', 
-            'questions.json'
-        )
-        logger.error(f"QUESTIONS_FILE path: {questions_file_path}")
-        logger.error(f"File exists: {os.path.exists(questions_file_path)}")
-        
-        # Попробуем загрузить напрямую
-        try:
-            from .loader import load_questions, get_stats
-            data, flat_list = load_questions()
-            if data:
-                QUESTIONS_DATA = data
-                AVAILABLE_BLOCKS = list(data.keys())
-                QUESTIONS_LIST = flat_list or []
-                logger.info("Successfully loaded questions directly")
-                stats = get_stats()
-                logger.info(f"Questions stats: {stats}")
-            else:
-                logger.error("load_questions() returned empty data")
-        except Exception as e:
-            logger.error(f"Error during direct load: {e}")
-            import traceback
-            logger.error(traceback.format_exc())
+            return await show_unified_plans(update, context)
     else:
-        logger.info(f"Data loaded successfully: {len(AVAILABLE_BLOCKS)} blocks, {len(QUESTIONS_LIST)} questions")
-
-# Вызовите проверку
-check_data_loaded()
+        # Неизвестный источник
+        logger.error("cmd_subscribe called without message or callback_query")
+        return ConversationHandler.END
 
 @safe_handler()
-async def dismiss_promo(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Закрывает промо-сообщение."""
+async def check_payment_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Проверяет статус платежа по запросу пользователя."""
     query = update.callback_query
-    await query.answer("Продолжаем тренировку! 💪")
+    await query.answer("Проверяю статус платежа...")
     
-    # Удаляем промо-сообщение
-    try:
-        await query.message.delete()
-    except Exception as e:
-        logger.debug(f"Could not delete promo message: {e}")
-    
-    # Не меняем состояние разговора
-    return
-
-
-async def cleanup_previous_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Удаляет предыдущие сообщения бота."""
-    messages_to_delete = [
-        'thinking_message_id',      # "Ищу вопрос..."
-        'checking_message_id',      # "Проверяю ваш ответ..."
-        'question_message_id',      # Сообщение с вопросом
-        'feedback_message_id'       # Сообщение с результатом
-    ]
-    
-    for msg_key in messages_to_delete:
-        msg_id = context.user_data.pop(msg_key, None)
-        if msg_id:
-            try:
-                await update.effective_message.bot.delete_message(
-                    chat_id=update.effective_chat.id,
-                    message_id=msg_id
-                )
-            except Exception as e:
-                logger.debug(f"Failed to delete {msg_key}: {e}")
-
-
-@safe_handler()
-@validate_state_transition({states.CHOOSING_MODE, states.ANSWERING, None})
-async def entry_from_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Точка входа в тестовую часть из главного меню."""
-    query = update.callback_query
-    
-    # Очищаем контекст от данных других модулей
-    keys_to_remove = [
-        'current_topic',
-        'task19_current_topic', 
-        'task20_current_topic',
-        'task25_current_topic',
-        'task24_current_topic'
-    ]
-    
-    for key in keys_to_remove:
-        context.user_data.pop(key, None)
-    
-    # Устанавливаем флаг активного модуля
-    context.user_data['active_module'] = 'test_part'
-    
-    # УДАЛЕНО: Проверка подписки больше не нужна
-    # if not await utils.check_subscription(query.from_user.id, context.bot):
-    #     await utils.send_subscription_required(query, REQUIRED_CHANNEL)
-    #     return ConversationHandler.END
-    
-    kb = keyboards.get_initial_choice_keyboard()
-    await query.edit_message_text(
-        "📚 <b>Тестовая часть ЕГЭ</b>\n\n"
-        "Выберите режим работы:",
-        reply_markup=kb,
-        parse_mode=ParseMode.HTML
-    )
-    return states.CHOOSING_MODE
-
-async def cmd_quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Команда /quiz - вход в тестовую часть."""
-    
-    # Очищаем контекст от других модулей
-    keys_to_remove = [
-        'current_topic',
-        'task19_current_topic', 
-        'task20_current_topic',
-        'task25_current_topic',
-        'task24_current_topic'
-    ]
-    
-    for key in keys_to_remove:
-        context.user_data.pop(key, None)
-    
-    # Устанавливаем активный модуль
-    context.user_data['active_module'] = 'test_part'
-    
-    # Убрана проверка подписки - она должна быть на уровне всего бота
-    
-    kb = keyboards.get_initial_choice_keyboard()
-    await update.message.reply_text(
-        "📚 <b>Тестовая часть ЕГЭ</b>\n\n"
-        "Выберите режим работы:",
-        reply_markup=kb,
-        parse_mode=ParseMode.HTML
-    )
-    return states.CHOOSING_MODE
-
-@safe_handler()
-@validate_state_transition({states.CHOOSING_MODE})
-async def test_detailed_analysis(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Показывает детальный анализ ошибок."""
-    context.user_data['conversation_state'] = states.CHOOSING_MODE
-    query = update.callback_query
-    user_id = query.from_user.id
-    
-    # Получаем все ошибки пользователя
-    mistakes = await utils.get_user_mistakes(user_id)
-    
-    if not mistakes:
-        text = "📊 <b>Детальный анализ</b>\n\nУ вас пока нет ошибок для анализа!"
-        kb = InlineKeyboardMarkup([[
-            InlineKeyboardButton("⬅️ Назад", callback_data="test_part_progress")
-        ]])
-        await query.edit_message_text(text, reply_markup=kb, parse_mode=ParseMode.HTML)
-        return states.CHOOSING_MODE
-    
-    # Группируем ошибки по темам
-    mistakes_by_topic = {}
-    for mistake in mistakes:
-        topic = mistake.get('topic', 'Без темы')
-        if topic not in mistakes_by_topic:
-            mistakes_by_topic[topic] = []
-        mistakes_by_topic[topic].append(mistake)
-    
-    # Формируем отчет
-    text = "📊 <b>Детальный анализ ошибок</b>\n\n"
-    
-    for topic, topic_mistakes in mistakes_by_topic.items():
-        text += f"📌 <b>{topic}</b>\n"
-        text += f"   Ошибок: {len(topic_mistakes)}\n"
-        
-        # Показываем типы ошибок
-        error_types = {}
-        for m in topic_mistakes:
-            error_type = m.get('error_type', 'Неверный ответ')
-            error_types[error_type] = error_types.get(error_type, 0) + 1
-        
-        for error_type, count in error_types.items():
-            text += f"   • {error_type}: {count}\n"
-        text += "\n"
-    
-    # Рекомендации
-    text += "💡 <b>Рекомендации:</b>\n"
-    if len(mistakes_by_topic) > 3:
-        text += "• Сосредоточьтесь на 2-3 темах с наибольшим количеством ошибок\n"
-    text += "• Используйте режим 'Работа над ошибками' для тренировки\n"
-    text += "• Изучите теорию по проблемным темам\n"
-    
-    kb = InlineKeyboardMarkup([
-        [InlineKeyboardButton("📥 Экспорт в CSV", callback_data="test_export_csv")],
-        [InlineKeyboardButton("🔄 Работа над ошибками", callback_data="test_work_mistakes")],
-        [InlineKeyboardButton("⬅️ Назад", callback_data="test_part_progress")]
-    ])
-    
-    await query.edit_message_text(
-        text,
-        reply_markup=kb,
-        parse_mode=ParseMode.HTML
-    )
-    return states.CHOOSING_MODE
-@safe_handler()
-@validate_state_transition({states.CHOOSING_MODE})
-async def select_exam_num_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Выбор режима по номеру ЕГЭ."""
-    query = update.callback_query
-    context.user_data['user_id'] = query.from_user.id
-    # Устанавливаем активный модуль
-    context.user_data['active_module'] = 'test_part'
-    
-    # Используем безопасную функцию для получения номеров
-    all_nums = safe_cache_get_all_exam_numbers()
-    
-    if not all_nums:
-        await query.answer("Нет доступных заданий", show_alert=True)
-        return states.CHOOSING_MODE
-    
-    kb = keyboards.get_exam_num_keyboard(all_nums)
-    await query.edit_message_text(
-        "📋 <b>Выберите номер задания ЕГЭ:</b>",
-        reply_markup=kb,
-        parse_mode=ParseMode.HTML
-    )
-    context.user_data['mode'] = 'exam_num'
-    return states.CHOOSING_EXAM_NUMBER
-
-@safe_handler()
-@validate_state_transition({states.CHOOSING_MODE})
-async def select_block_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Выбор режима по блокам."""
-    query = update.callback_query
-    context.user_data['user_id'] = query.from_user.id
-    # Устанавливаем активный модуль
-    context.user_data['active_module'] = 'test_part'
-    
-    if not AVAILABLE_BLOCKS:
-        await query.answer("Блоки не загружены", show_alert=True)
-        return states.CHOOSING_MODE
-    
-    kb = keyboards.get_blocks_keyboard(AVAILABLE_BLOCKS)
-    await query.edit_message_text(
-        "📚 <b>Выберите блок тем:</b>",
-        reply_markup=kb,
-        parse_mode=ParseMode.HTML
-    )
-    context.user_data['mode'] = 'block'
-    return states.CHOOSING_BLOCK
-
-@safe_handler()
-@validate_state_transition({states.CHOOSING_MODE})
-async def select_random_all(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Случайный вопрос из всей базы."""
-    query = update.callback_query
-    
-    # Устанавливаем активный модуль
-    context.user_data['active_module'] = 'test_part'
-    
-    # Собираем все вопросы
-    all_questions = []
-    for block_data in QUESTIONS_DATA.values():
-        for topic_questions in block_data.values():
-            all_questions.extend(topic_questions)
-    
-    if not all_questions:
-        await query.answer("Нет доступных вопросов", show_alert=True)
-        return states.CHOOSING_MODE
-    
-    await query.edit_message_text("⏳ Загружаю случайный вопрос...")
-    
-    # Выбираем вопрос
-    question_data = await utils.choose_question(query.from_user.id, all_questions)
-    if question_data:
-        await send_question(query.message, context, question_data, "random_all")
-        # Устанавливаем состояние пользователя
-        from core.state_validator import state_validator
-        state_validator.set_state(query.from_user.id, states.ANSWERING)
-        return states.ANSWERING
-    else:
-        kb = keyboards.get_initial_choice_keyboard()
-        await query.message.edit_text(
-            "Вы ответили на все вопросы! 🎉\n\nВыберите другой режим:",
-            reply_markup=kb
-        )
-        return states.CHOOSING_MODE
-
-@safe_handler()
-@validate_state_transition({states.CHOOSING_BLOCK})
-async def select_block(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Выбор конкретного блока."""
-    query = update.callback_query
-    context.user_data['user_id'] = query.from_user.id
-    block_name = query.data.split(":", 2)[2]
-    if block_name not in AVAILABLE_BLOCKS:
-        return states.CHOOSING_BLOCK
-    
-    context.user_data['selected_block'] = block_name
-    
-    # Показываем режим внутри блока
-    kb = keyboards.get_mode_keyboard(block_name)
-    await query.edit_message_text(
-        f"Блок: {block_name}\nВыберите режим:",
-        reply_markup=kb
-    )
-    return states.CHOOSING_MODE
-
-@safe_handler()
-async def show_progress_enhanced(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Показ прогресса с улучшенным UI."""
     user_id = update.effective_user.id
     
-    # Получаем статистику из БД
-    stats = await db.get_user_stats(user_id)
-    streaks = await db.get_user_streaks(user_id)
+    # Получаем менеджер подписок
+    subscription_manager = context.bot_data.get('subscription_manager', SubscriptionManager())
     
-    if not stats:
-        greeting = get_personalized_greeting({'total_attempts': 0, 'streak': streaks.get('current_daily', 0)})
-        text = greeting + MessageFormatter.format_welcome_message(
-            "тестовую часть ЕГЭ",
-            is_new_user=True
-        )
-    else:
-        # Подсчет общей статистики
-        total_correct = sum(correct for _, correct, _ in stats)
-        total_answered = sum(total for _, _, total in stats)
-        overall_percentage = (total_correct / total_answered * 100) if total_answered > 0 else 0
-        
-        # Топ темы
-        top_results = []
-        for topic, correct, total in sorted(stats, key=lambda x: x[1]/x[2] if x[2] > 0 else 0, reverse=True)[:3]:
-            percentage = (correct / total * 100) if total > 0 else 0
-            topic_name = TOPIC_NAMES.get(topic, topic)
-            top_results.append({
-                'topic': topic_name,
-                'score': correct,
-                'max_score': total
-            })
-        
-        greeting = get_personalized_greeting({'total_attempts': total_answered, 'streak': streaks.get('current_daily', 0)})
-        text = greeting + MessageFormatter.format_progress_message({
-            'total_attempts': total_answered,
-            'average_score': overall_percentage / 100 * 3,  # Преобразуем в шкалу 0-3
-            'completed': len(stats),
-            'total': len(TOPIC_NAMES),
-            'total_time': 0,  # Можно добавить подсчет времени
-            'top_results': top_results,
-            'current_average': overall_percentage,
-            'previous_average': overall_percentage - 5  # Для демонстрации тренда
-        }, "тестовой части")
-        
-        # Добавляем стрики
-        if streaks:
-            text += f"\n\n<b>🔥 Серии:</b>\n"
-            text += UniversalUIComponents.format_statistics_tree({
-                'Дней подряд': streaks.get('current_daily', 0),
-                'Рекорд дней': streaks.get('max_daily', 0),
-                'Правильных подряд': streaks.get('current_correct', 0),
-                'Рекорд правильных': streaks.get('max_correct', 0)
-            })
-    
-    # Адаптивная клавиатура
-    kb = AdaptiveKeyboards.create_progress_keyboard(
-        has_detailed_stats=bool(stats),
-        can_export=bool(stats),
-        module_code="test"
-    )
-    
-    await update.message.reply_text(
-        text,
-        reply_markup=kb,
-        parse_mode=ParseMode.HTML
-    )
-
-@safe_handler()
-@validate_state_transition({states.ANSWERING})
-async def check_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Проверка ответа пользователя."""
-    
-    # Проверяем активный модуль
-    if context.user_data.get('active_module') != 'test_part':
-        return states.ANSWERING
-    
-    # Дополнительная проверка состояния
-    from core.state_validator import state_validator
-    user_id = update.effective_user.id
-    current_state = state_validator.get_current_state(user_id)
-    
-    if current_state != states.ANSWERING:
-        # Если состояние не установлено, устанавливаем его
-        state_validator.set_state(user_id, states.ANSWERING)
-    
-    # АНИМИРОВАННОЕ СООБЩЕНИЕ ПРОВЕРКИ
-    thinking_msg = await show_thinking_animation(
-        update.message,
-        text="Проверяю ваш ответ"
-    )
-    
-    # Сохраняем ID для удаления
-    context.user_data['checking_message_id'] = thinking_msg.message_id
-    
-    user_id = update.effective_user.id
-    user_answer = update.message.text.strip()
-    context.user_data['user_answer_message_id'] = update.message.message_id
-
-    # Получаем текущий вопрос
-    current_question_id = context.user_data.get('current_question_id')
-    
-    if not current_question_id:
-        try:
-            await thinking_msg.delete()
-        except Exception:
-            pass
-        await update.message.reply_text("Ошибка: вопрос не найден.")
-        return ConversationHandler.END
-    
-    # Получаем данные вопроса
-    question_data = context.user_data.get(f'question_{current_question_id}')
-    
-    if not question_data:
-        try:
-            await thinking_msg.delete()
-        except Exception:
-            pass
-        await update.message.reply_text("Ошибка: данные вопроса не найдены.")
-        return ConversationHandler.END
-    
-    # Обрабатываем ответ
+    # Проверяем последний платеж пользователя
     try:
-        correct_answer = question_data.get('answer', '').strip()
-        is_correct = user_answer.lower() == correct_answer.lower()
-        
-        # Получаем информацию о вопросе
-        question_id = question_data.get('id')
-        topic = question_data.get('topic')
-        
-        # Обновляем БД
-        if topic and topic != "N/A":
-            await db.update_progress(user_id, topic, is_correct)
-        
-        if question_id:
-            await db.record_answered(user_id, question_id)
-        
-        if not is_correct and question_id:
-            await db.record_mistake(user_id, question_id)
-        
-        # Обновляем стрики
-        daily_current, daily_max = await db.update_daily_streak(user_id)
-        
-        if is_correct:
-            correct_current, correct_max = await db.update_correct_streak(user_id)
-        else:
-            await db.reset_correct_streak(user_id)
-            correct_current = 0
-            streaks = await db.get_user_streaks(user_id)
-            correct_max = streaks.get('max_correct', 0)
-        
-        # Сохраняем старый стрик
-        old_correct_streak = context.user_data.get('correct_streak', 0)
-        context.user_data['correct_streak'] = correct_current
-        
-        # Получаем дополнительные данные
-        last_mode = context.user_data.get('last_mode', 'random')
-        exam_number = context.user_data.get('current_exam_number')
-        selected_topic = context.user_data.get('selected_topic')
-        selected_block = context.user_data.get('selected_block')
-        
-        # Мотивационная фраза
-        motivational_phrase = None
-        try:
-            if not is_correct:
-                motivational_phrase = await utils.get_random_motivational_phrase()
-        except Exception:
-            pass
-        
-        # Статистика
-        stats = await db.get_user_stats(user_id)
-        total_correct = sum(correct for _, correct, _ in stats) if stats else 0
-        total_answered = sum(total for _, _, total in stats) if stats else 0
-        
-        # ФОРМИРУЕМ КРАСИВЫЙ ФИДБЕК
-        if is_correct:
-            # ПРАВИЛЬНЫЙ ОТВЕТ
-            feedback = f"<b>{utils.get_random_correct_phrase()}</b>\n"
-            feedback += "─" * 30 + "\n\n"
+        # Получаем последний платеж из БД
+        async with aiosqlite.connect('bot_database.db') as conn:
+            cursor = await conn.execute("""
+                SELECT order_id, status, plan_id, amount
+                FROM payments
+                WHERE user_id = ?
+                ORDER BY created_at DESC
+                LIMIT 1
+            """, (user_id))
             
-            # Прогресс с визуализацией
-            if last_mode == 'exam_num' and exam_number:
-                questions_with_num = safe_cache_get_by_exam_num(exam_number)
-                total_in_mode = len(questions_with_num)
-                # Считаем правильные в этом задании
-                exam_correct = 0
-                for t, c, total in stats:
-                    for q in questions_with_num:
-                        if q.get('topic') == t:
-                            exam_correct += c
-                            break
-                progress_bar = create_visual_progress(exam_correct, total_in_mode)
-                feedback += f"📊 <b>Задание №{exam_number}:</b>\n"
-                feedback += f"{progress_bar}\n"
-                feedback += f"Правильных: {exam_correct}/{total_in_mode}\n\n"
-            elif last_mode == 'topic' and selected_topic:
-                for t, c, total in stats:
-                    if t == selected_topic:
-                        progress_bar = create_visual_progress(c, total)
-                        topic_name = TOPIC_NAMES.get(selected_topic, selected_topic)
-                        feedback += f"📊 <b>{topic_name}:</b>\n"
-                        feedback += f"{progress_bar}\n"
-                        feedback += f"Правильных: {c}/{total}\n\n"
-                        break
-            else:
-                progress_bar = create_visual_progress(total_correct, total_answered)
-                feedback += f"📊 <b>Общий прогресс:</b>\n"
-                feedback += f"{progress_bar}\n"
-                feedback += f"Правильных: {total_correct}/{total_answered}\n\n"
+            payment = await cursor.fetchone()
             
-            # Стрики с деревом
-            feedback += f"🔥 <b>Серии:</b>\n"
-            feedback += f"├ 📅 Дней подряд: <b>{daily_current}</b>"
-            if daily_current == daily_max and daily_max > 1:
-                feedback += " 🏆"
-            feedback += "\n"
-            
-            feedback += f"└ ✨ Правильных подряд: <b>{correct_current}</b>"
-            if correct_current == correct_max and correct_max > 1:
-                feedback += " 🏆"
-            feedback += "\n"
-            
-            # Milestone
-            milestone_phrase = utils.get_streak_milestone_phrase(correct_current)
-            if milestone_phrase and correct_current > old_correct_streak:
-                feedback += "\n" + "─" * 30 + "\n"
-                feedback += f"{milestone_phrase}"
-            
-            # Новый рекорд
-            if correct_current > old_correct_streak and correct_current == correct_max and correct_max > 1:
-                feedback += "\n\n🎊 🎉 <b>НОВЫЙ ЛИЧНЫЙ РЕКОРД!</b> 🎉 🎊"
-            
-            if motivational_phrase:
-                feedback += "\n\n" + "─" * 30 + "\n"
-                feedback += f"💫 <i>{motivational_phrase}</i>"
-                
-        else:
-            # НЕПРАВИЛЬНЫЙ ОТВЕТ
-            feedback = f"<b>{utils.get_random_incorrect_phrase()}</b>\n"
-            feedback += "─" * 30 + "\n\n"
-            
-            feedback += f"❌ Ваш ответ: <code>{user_answer}</code>\n"
-            feedback += f"✅ Правильный ответ: <b>{correct_answer}</b>\n\n"
-            
-            # Прогресс
-            if last_mode == 'exam_num' and exam_number:
-                questions_with_num = safe_cache_get_by_exam_num(exam_number)
-                total_in_mode = len(questions_with_num)
-                exam_correct = 0
-                for t, c, total in stats:
-                    for q in questions_with_num:
-                        if q.get('topic') == t:
-                            exam_correct += c
-                            break
-                progress_bar = create_visual_progress(exam_correct, total_in_mode)
-                feedback += f"📊 <b>Задание №{exam_number}:</b>\n"
-                feedback += f"{progress_bar}\n\n"
-            elif last_mode == 'topic' and selected_topic:
-                for t, c, total in stats:
-                    if t == selected_topic:
-                        progress_bar = create_visual_progress(c, total)
-                        topic_name = TOPIC_NAMES.get(selected_topic, selected_topic)
-                        feedback += f"📊 <b>{topic_name}:</b>\n"
-                        feedback += f"{progress_bar}\n\n"
-                        break
-            else:
-                progress_bar = create_visual_progress(total_correct, total_answered)
-                feedback += f"📊 <b>Общий прогресс:</b>\n"
-                feedback += f"{progress_bar}\n\n"
-            
-            # Стрики
-            feedback += f"🔥 <b>Серии:</b>\n"
-            feedback += f"├ 📅 Дней подряд: <b>{daily_current}</b>\n"
-            
-            if old_correct_streak > 0:
-                feedback += f"└ ✨ Правильных подряд: <b>0</b> "
-                feedback += f"(было {old_correct_streak})\n"
-                feedback += f"\n💔 <i>Серия из {old_correct_streak} правильных ответов прервана!</i>"
-                if correct_max > 0:
-                    feedback += f"\n📈 <i>Ваш рекорд: {correct_max}</i>"
-            else:
-                feedback += f"└ ✨ Правильных подряд: <b>0</b>"
-            
-            if motivational_phrase:
-                feedback += "\n\n" + "─" * 30 + "\n"
-                feedback += f"💪 <i>{motivational_phrase}</i>"
-        
-        # В функции check_answer, найдите строку где создается клавиатура:
-        has_explanation = bool(question_data.get('explanation'))
-
-        # ИСПРАВЛЕНИЕ: Получаем номер задания для передачи в клавиатуру
-        exam_number = None
-        if last_mode == 'exam_num':
-            exam_number = context.user_data.get('current_exam_number')
-
-        kb = keyboards.get_next_action_keyboard(
-            last_mode, 
-            has_explanation=has_explanation,
-            exam_number=exam_number  # Передаем номер задания
-        )
-        
-        # Удаляем анимацию
-        try:
-            await thinking_msg.delete()
-        except Exception as e:
-            logger.debug(f"Failed to delete checking message: {e}")
-        
-        # Отправляем фидбек
-        sent_msg = await update.message.reply_text(
-            feedback,
-            reply_markup=kb,
-            parse_mode=ParseMode.HTML
-        )
-        
-        context.user_data['feedback_message_id'] = sent_msg.message_id
-        context.user_data['last_answer_correct'] = is_correct
-        
-        return states.CHOOSING_NEXT_ACTION
-        
-    except Exception as e:
-        logger.error(f"Error in check_answer: {e}")
-        
-        try:
-            await thinking_msg.delete()
-        except Exception:
-            pass
-            
-        await update.message.reply_text("Произошла ошибка при проверке ответа")
-        return ConversationHandler.END
-
-@safe_handler()
-async def handle_next_action(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обработчик выбора действия после ответа на вопрос."""
-    query = update.callback_query
-    
-    # Отвечаем на callback query только ОДИН раз в начале
-    await query.answer()
-    action = query.data
-    
-    # Проверяем, что action начинается с правильного префикса
-    if not action.startswith("test_"):
-        logger.warning(f"Unexpected action in handle_next_action: {action}")
-        return states.CHOOSING_NEXT_ACTION
-    
-    if action == "test_next_show_explanation":
-        # Показываем пояснение для последнего отвеченного вопроса
-        current_question_id = context.user_data.get('current_question_id')
-        if current_question_id:
-            question_data = context.user_data.get(f'question_{current_question_id}')
-            if question_data and question_data.get('explanation'):
-                explanation_text = question_data['explanation']
-                
-                # Используем централизованную функцию конвертации markdown
-                explanation_text = utils.md_to_html(explanation_text)
-                
-                # Используем HTML для пояснений
-                formatted_text = f"💡 <b>Пояснение к вопросу</b>\n\n"
-                formatted_text += explanation_text
-                
-                try:
-                    sent_msg = await query.message.reply_text(
-                        formatted_text,
-                        parse_mode=ParseMode.HTML
-                    )
-                    # Добавляем это сообщение к списку для удаления
-                    context.user_data.setdefault('extra_messages_to_delete', []).append(sent_msg.message_id)
-                except Exception as e:
-                    logger.error(f"Error sending explanation: {e}")
-            else:
-                # Используем show_alert вместо повторного answer()
-                await query.answer("Пояснение отсутствует", show_alert=True)
-                return states.CHOOSING_NEXT_ACTION
-        else:
-            # Используем show_alert вместо повторного answer()
-            await query.answer("Ошибка: вопрос не найден", show_alert=True)
-            return states.CHOOSING_NEXT_ACTION
-        
-        # УБИРАЕМ дублирующий вызов query.answer()
-        return states.CHOOSING_NEXT_ACTION
-    
-    elif action == "test_next_continue":
-        # Сначала отправляем сообщение "Загружаю..."
-        try:
-            loading_msg = await query.message.reply_text("⏳ Загружаю следующий вопрос...")
-        except Exception as e:
-            logger.error(f"Error sending loading message: {e}")
-            return states.CHOOSING_NEXT_ACTION
-        
-        # ИСПРАВЛЕНИЕ: Передаем chat_id правильно
-        chat_id = query.message.chat_id
-        await utils.purge_old_messages(context, chat_id)
-        
-        # Удаляем предыдущие сообщения используя централизованную функцию
-        await utils.purge_old_messages(context, query.message.chat_id, keep_id=loading_msg.message_id)
-        
-        # Очищаем все данные вопросов
-        logger.info("Clearing all question data before loading next question")
-        keys_to_remove = []
-        for key in context.user_data.keys():
-            if key.startswith('question_'):
-                keys_to_remove.append(key)
-        for key in keys_to_remove:
-            context.user_data.pop(key, None)
-        
-        # Продолжаем в том же режиме
-        last_mode = context.user_data.get('last_mode')
-        
-        if last_mode == 'random_all':
-            all_questions = []
-            for block_data in QUESTIONS_DATA.values():
-                for topic_questions in block_data.values():
-                    all_questions.extend(topic_questions)
-            
-            question_data = await utils.choose_question(query.from_user.id, all_questions)
-            if question_data:
-                await send_question(loading_msg, context, question_data, "random_all")
-                return states.ANSWERING
-            else:
-                kb = keyboards.get_initial_choice_keyboard()
-                await loading_msg.edit_text(
-                    "Вы ответили на все вопросы! 🎉\n\nВыберите режим:",
-                    reply_markup=kb
+            if not payment:
+                await query.edit_message_text(
+                    "❌ Платеж не найден.\n\n"
+                    "Возможно, вы еще не создавали платеж или он был отменен."
                 )
-                return states.CHOOSING_MODE
-        
-        elif last_mode == 'exam_num':
-            # Продолжаем с тем же номером ЕГЭ
-            exam_number = context.user_data.get('current_exam_number')
-            if exam_number:
-                questions_with_num = safe_cache_get_by_exam_num(exam_number)
-                
-                question_data = await utils.choose_question(query.from_user.id, questions_with_num)
-                if question_data:
-                    await send_question(loading_msg, context, question_data, "exam_num")
-                    return states.ANSWERING
-                else:
-                    kb = keyboards.get_initial_choice_keyboard()
-                    await loading_msg.edit_text(
-                        f"Вы ответили на все вопросы задания №{exam_number}! 🎉\n\nВыберите режим:",
-                        reply_markup=kb
-                    )
-                    return states.CHOOSING_MODE
-        
-        elif last_mode == 'block':
-            # Продолжаем с тем же блоком
-            selected_block = context.user_data.get('selected_block')
-            if selected_block:
-                questions_in_block = safe_cache_get_by_block(selected_block)
-                
-                question_data = await utils.choose_question(query.from_user.id, questions_in_block)
-                if question_data:
-                    await send_question(loading_msg, context, question_data, "block")
-                    return states.ANSWERING
-                else:
-                    kb = keyboards.get_blocks_keyboard(AVAILABLE_BLOCKS)
-                    await loading_msg.edit_text(
-                        f"Вы ответили на все вопросы в блоке '{selected_block}'! 🎉\n\nВыберите другой блок:",
-                        reply_markup=kb
-                    )
-                    return states.CHOOSING_BLOCK
-        
-        elif last_mode == 'topic':
-            # Продолжаем с той же темой
-            selected_topic = context.user_data.get('selected_topic')
-            selected_block = context.user_data.get('selected_block')
+                return
             
-            if selected_topic and selected_block:
-                questions_in_topic = safe_cache_get_by_topic(selected_topic)
-                
-                question_data = await utils.choose_question(query.from_user.id, questions_in_topic)
-                if question_data:
-                    await send_question(loading_msg, context, question_data, "topic")
-                    return states.ANSWERING
-                else:
-                    topics = list(QUESTIONS_DATA.get(selected_block, {}).keys())
-                    kb = keyboards.get_topics_keyboard(selected_block, topics)
-                    await loading_msg.edit_text(
-                        f"Вы ответили на все вопросы по теме! 🎉\n\nВыберите другую тему:",
-                        reply_markup=kb
-                    )
-                    return states.CHOOSING_TOPIC
-        
-        elif last_mode == 'mistakes':
-            # Продолжаем работу над ошибками
-            context.user_data['current_mistake_index'] = context.user_data.get('current_mistake_index', 0) + 1
-            await send_mistake_question(loading_msg, context)
-            return states.REVIEWING_MISTAKES
-        
-    elif action == "test_next_change_topic":
-        # Возврат к выбору режима
-        # Сначала удаляем старые сообщения
-        await utils.purge_old_messages(context, query.message.chat_id)
-        
-        kb = keyboards.get_initial_choice_keyboard()
-        await query.message.reply_text(
-            "📚 <b>Тестовая часть ЕГЭ</b>\n\n"
-            "Выберите режим:",
-            reply_markup=kb,
-            parse_mode=ParseMode.HTML
-        )
-        return states.CHOOSING_MODE
-    
-    elif action == "test_next_change_block":
-        # В главное меню
-        # Сначала удаляем старые сообщения
-        await utils.purge_old_messages(context, query.message.chat_id)
-        
-        kb = build_main_menu()
-        
-        await query.message.reply_text(
-            "👋 Что хотите потренировать?",
-            reply_markup=kb
-        )
-        context.user_data.clear()
-        return ConversationHandler.END
-    
-    else:
-        logger.warning(f"Неизвестное действие: {action}")
-        return states.CHOOSING_NEXT_ACTION
-
-@safe_handler()
-async def skip_question(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обработчик пропуска вопроса."""
-    query = update.callback_query
-    await query.answer("Вопрос пропущен")
-    
-    # Получаем режим из callback_data
-    mode = query.data.split(":")[1] if ":" in query.data else context.user_data.get('last_mode')
-    
-    # Очищаем данные текущего вопроса
-    current_question_id = context.user_data.get('current_question_id')
-    if current_question_id:
-        context.user_data.pop(f'question_{current_question_id}', None)
-    
-    # НЕ записываем в БД как ошибку или правильный ответ
-    # Просто переходим к следующему вопросу
-    
-    loading_msg = await query.message.reply_text("⏳ Загружаю следующий вопрос...")
-    
-    # Логика перехода к следующему вопросу в зависимости от режима
-    if mode == 'random_all':
-        all_questions = []
-        for block_data in QUESTIONS_DATA.values():
-            for topic_questions in block_data.values():
-                all_questions.extend(topic_questions)
-        
-        question_data = await utils.choose_question(query.from_user.id, all_questions)
-        if question_data:
-            await send_question(loading_msg, context, question_data, "random_all")
-            return states.ANSWERING
+            order_id, status, plan_id, amount = payment
             
-    elif mode == 'exam_num':
-        exam_number = context.user_data.get('current_exam_number')
-        if exam_number:
-            questions_with_num = safe_cache_get_by_exam_num(exam_number)
-            question_data = await utils.choose_question(query.from_user.id, questions_with_num)
-            if question_data:
-                await send_question(loading_msg, context, question_data, "exam_num")
-                return states.ANSWERING
-                
-    elif mode == 'topic':
-        selected_topic = context.user_data.get('selected_topic')
-        if selected_topic:
-            questions_in_topic = safe_cache_get_by_topic(selected_topic)
-            question_data = await utils.choose_question(query.from_user.id, questions_in_topic)
-            if question_data:
-                await send_question(loading_msg, context, question_data, "topic")
-                return states.ANSWERING
-                
-    elif mode == 'block':
-        selected_block = context.user_data.get('selected_block')
-        if selected_block:
-            questions_in_block = safe_cache_get_by_block(selected_block)
-            question_data = await utils.choose_question(query.from_user.id, questions_in_block)
-            if question_data:
-                await send_question(loading_msg, context, question_data, "block")
-                return states.ANSWERING
-    
-    # Если нет больше вопросов
-    kb = keyboards.get_initial_choice_keyboard()
-    await loading_msg.edit_text(
-        "Больше нет доступных вопросов в этом режиме.\n\nВыберите другой режим:",
-        reply_markup=kb
-    )
-    return states.CHOOSING_MODE
-
-# Для режима работы над ошибками - отдельный обработчик
-@safe_handler()
-async def skip_mistake(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Пропуск вопроса в режиме работы над ошибками."""
-    query = update.callback_query
-    await query.answer("Вопрос пропущен")
-    
-    mistake_ids = context.user_data.get('mistake_ids', [])
-    current_index = context.user_data.get('current_mistake_index', 0)
-    
-    # Переходим к следующей ошибке без удаления текущей
-    context.user_data['current_mistake_index'] = current_index + 1
-    
-    if current_index + 1 < len(mistake_ids):
-        await send_mistake_question(query.message, context)
-        return states.REVIEWING_MISTAKES
-    else:
-        # Завершаем работу над ошибками
-        kb = keyboards.get_mistakes_finish_keyboard()
-        await query.message.reply_text(
-            "✅ Работа над ошибками завершена!\n\n"
-            "Пропущенные вопросы остались в списке ошибок.",
-            reply_markup=kb,
-            parse_mode=ParseMode.HTML
-        )
-        return states.CHOOSING_MODE
-
-async def cmd_mistakes(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Команда /mistakes - работа над ошибками."""
-    user_id = update.effective_user.id
-    mistake_ids = await db.get_mistake_ids(user_id)
-    
-    if not mistake_ids:
-        await update.message.reply_text("👍 У вас нет ошибок для повторения!")
-        return ConversationHandler.END
-    
-    context.user_data['mistake_ids'] = list(mistake_ids)
-    context.user_data['current_mistake_index'] = 0
-    context.user_data['user_id'] = user_id
-    
-    await update.message.reply_text(
-        f"Начинаем работу над ошибками. Всего: {len(mistake_ids)}"
-    )
-    
-    # Отправляем первый вопрос
-    await send_mistake_question(update.message, context)
-    return states.REVIEWING_MISTAKES
-
-async def cmd_score(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Команда /score - показ статистики."""
-    user_id = update.effective_user.id
-    
-    # Получаем данные
-    stats_raw = await db.get_user_stats(user_id)
-    mistake_ids = await db.get_mistake_ids(user_id)
-    streaks = await db.get_user_streaks(user_id)
-    
-    # Формируем текст
-    text = "📊 <b>Ваша статистика:</b>\n\n"
-    
-    if stats_raw:
-        # Группируем по блокам
-        scores_by_block = {}
-        for topic, correct, total in stats_raw:
-            block_name = "Неизвестный блок"
-            for block, topics in QUESTIONS_DATA.items():
-                if topic in topics:
-                    block_name = block
-                    break
+            # Проверяем статус платежа в Tinkoff
+            from payment.tinkoff import TinkoffPayment
+            tinkoff = TinkoffPayment()
+            payment_status = await tinkoff.check_payment_status(order_id)
             
-            if block_name not in scores_by_block:
-                scores_by_block[block_name] = {
-                    'correct': 0, 'total': 0, 'topics': []
-                }
-            
-            scores_by_block[block_name]['correct'] += correct
-            scores_by_block[block_name]['total'] += total
-            
-            percentage = (correct / total * 100) if total > 0 else 0
-            indicator = "✅" if percentage >= 80 else "🟡" if percentage >= 50 else "🔴"
-            scores_by_block[block_name]['topics'].append(
-                f"  {indicator} Тема {topic}: {correct}/{total} ({percentage:.1f}%)"
-            )
-        
-        # Выводим по блокам
-        for block_name, data in sorted(scores_by_block.items()):
-            block_perc = (data['correct'] / data['total'] * 100) if data['total'] > 0 else 0
-            text += f"📌 <b>{block_name}</b> ({block_perc:.1f}%)\n"
-            text += "\n".join(data['topics']) + "\n\n"
-    
-    # Стрики
-    text += "✨ <b>Стрики:</b>\n"
-    text += f"  🔥 Дней подряд: {streaks.get('current_daily', 0)} (макс: {streaks.get('max_daily', 0)})\n"
-    text += f"  🚀 Правильных подряд: {streaks.get('current_correct', 0)} (макс: {streaks.get('max_correct', 0)})\n\n"
-    
-    # Ошибки
-    if mistake_ids:
-        text += f"❗️ У вас {len(mistake_ids)} вопросов с ошибками.\n"
-        text += "Используйте /mistakes для работы над ними."
-    else:
-        text += "👍 Отличная работа, ошибок нет!"
-    
-    await update.message.reply_text(text, parse_mode=ParseMode.HTML)
-
-@safe_handler()
-@validate_state_transition({states.CHOOSING_MODE, states.CHOOSING_BLOCK, states.CHOOSING_TOPIC, states.CHOOSING_EXAM_NUMBER})
-async def back_to_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Возврат к выбору режима тестовой части."""
-    query = update.callback_query
-    
-    kb = keyboards.get_initial_choice_keyboard()
-    await query.edit_message_text(
-        "📚 <b>Тестовая часть ЕГЭ</b>\n\n"
-        "Выберите режим:",
-        reply_markup=kb,
-        parse_mode=ParseMode.HTML
-    )
-    return states.CHOOSING_MODE
-
-@safe_handler()
-async def back_to_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Возврат в главное меню бота."""
-    from core.menu_handlers import handle_to_main_menu
-    return await handle_to_main_menu(update, context)
-    
-@safe_handler()
-@validate_state_transition({states.CHOOSING_MODE, states.CHOOSING_BLOCK, states.CHOOSING_TOPIC, states.ANSWERING})
-async def back_to_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Возврат к выбору режима тестовой части из подменю."""
-    query = update.callback_query
-    
-    kb = keyboards.get_initial_choice_keyboard()
-    await query.edit_message_text(
-        "📚 <b>Тестовая часть ЕГЭ</b>\n\n"
-        "Выберите режим:",
-        reply_markup=kb,
-        parse_mode=ParseMode.HTML
-    )
-    return states.CHOOSING_MODE
-
-async def cmd_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Команда /cancel - отмена действия."""
-    kb = keyboards.get_initial_choice_keyboard()
-    await update.message.reply_text(
-        "Действие отменено. Выберите режим:",
-        reply_markup=kb
-    )
-    return states.CHOOSING_MODE
-
-async def send_question(message, context: ContextTypes.DEFAULT_TYPE, 
-                        question_data: dict, last_mode: str):
-    """Отправляет вопрос пользователю с промо-логикой."""
-    
-    # ========== 1. ОПРЕДЕЛЕНИЕ USER_ID В НАЧАЛЕ ==========
-    user_id = context.user_data.get('user_id')
-    if not user_id:
-        if hasattr(message, 'from_user') and message.from_user:
-            user_id = message.from_user.id
-        elif hasattr(message, 'chat') and message.chat:
-            user_id = message.chat.id
-        elif hasattr(message, 'message') and hasattr(message.message, 'chat'):
-            user_id = message.message.chat.id
-    
-    if not user_id:
-        logger.error("Cannot determine user_id!")
-        await message.reply_text("Ошибка: не удалось определить пользователя")
-        return ConversationHandler.END
-    
-    context.user_data['user_id'] = user_id
-    
-    # ========== 2. УВЕЛИЧИВАЕМ ЕДИНЫЙ СЧЕТЧИК ==========
-    questions_count = context.user_data.get('test_questions_count', 0) + 1
-    context.user_data['test_questions_count'] = questions_count
-    
-    # Устанавливаем активный модуль
-    context.user_data['active_module'] = 'test_part'
-    
-    # ========== 3. ОЧИСТКА И СОХРАНЕНИЕ ДАННЫХ ==========
-    # Очищаем старые данные вопросов ПЕРЕД сохранением нового
-    question_id = question_data.get('id')
-    keys_to_remove = []
-    for key in context.user_data.keys():
-        if key.startswith('question_') and key != f'question_{question_id}':
-            keys_to_remove.append(key)
-    for key in keys_to_remove:
-        context.user_data.pop(key, None)
-    
-    # Сохраняем данные нового вопроса
-    context.user_data['current_question_id'] = question_id
-    context.user_data[f'question_{question_id}'] = question_data
-    context.user_data['last_mode'] = last_mode
-    
-    # Логирование для отладки (теперь user_id определен)
-    logger.info(f"Question #{questions_count} sent to user {user_id}")
-    logger.info(f"SENDING QUESTION: ID={question_id}, "
-                f"Answer={question_data.get('answer')}, "
-                f"Type={question_data.get('type')}, "
-                f"Topic={question_data.get('topic')}, "
-                f"Has image={bool(question_data.get('image_url'))}")
-    
-    # Добавляем информацию о блоке и теме
-    if 'block' not in question_data and context.user_data.get('selected_block'):
-        question_data['block'] = context.user_data['selected_block']
-    if 'topic' not in question_data and context.user_data.get('selected_topic'):
-        question_data['topic'] = context.user_data['selected_topic']
-    
-    # Сохраняем номер задания ЕГЭ для режима exam_num
-    if last_mode == 'exam_num' and 'exam_number' in question_data:
-        context.user_data['current_exam_number'] = question_data['exam_number']
-    
-    # ========== 4. ФОРМАТИРОВАНИЕ И ОТПРАВКА ВОПРОСА ==========
-    # Форматируем текст вопроса
-    text = utils.format_question_text(question_data)
-    
-    # Добавляем клавиатуру с кнопкой пропуска
-    skip_keyboard = keyboards.get_question_keyboard(last_mode)
-    
-    # ВАЖНО: Определяем, это редактирование или новое сообщение
-    is_edit_mode = hasattr(message, 'edit_text')
-    
-    # Проверяем наличие изображения
-    image_url = question_data.get('image_url')
-    
-    try:
-        if image_url:
-            import os
-            
-            if os.path.exists(image_url):
-                # При наличии изображения всегда нужно отправлять новое сообщение
-                # так как нельзя заменить текст на фото через edit
-                
-                # Если мы в режиме редактирования, сначала удаляем старое сообщение
-                if is_edit_mode:
-                    try:
-                        await message.delete()
-                    except Exception as e:
-                        logger.debug(f"Could not delete loading message: {e}")
-                
-                # Проверяем длину текста для caption
-                MAX_CAPTION_LENGTH = 1024
-                
-                if len(text) <= MAX_CAPTION_LENGTH:
-                    # Текст помещается в caption
-                    with open(image_url, 'rb') as photo:
-                        sent_msg = await context.bot.send_photo(
-                            chat_id=user_id,
-                            photo=photo,
-                            caption=text,
-                            parse_mode=ParseMode.HTML,
-                            reply_markup=skip_keyboard
-                        )
-                    
-                    if sent_msg:
-                        context.user_data['current_question_message_id'] = sent_msg.message_id
-                else:
-                    # Текст слишком длинный - отправляем отдельно
-                    logger.info(f"Text too long ({len(text)} chars), sending separately")
-                    
-                    # Отправляем изображение
-                    with open(image_url, 'rb') as photo:
-                        photo_msg = await context.bot.send_photo(
-                            chat_id=user_id,
-                            photo=photo,
-                            caption="📊 График к заданию"
-                        )
-                    
-                    # Отправляем текст с клавиатурой
-                    text_msg = await context.bot.send_message(
-                        chat_id=user_id,
-                        text=text,
-                        parse_mode=ParseMode.HTML,
-                        reply_markup=skip_keyboard
-                    )
-                    
-                    if text_msg:
-                        context.user_data['current_question_message_id'] = text_msg.message_id
-                        context.user_data['current_photo_message_id'] = photo_msg.message_id
-            else:
-                # Файл не найден
-                logger.error(f"Image file not found: {image_url}")
-                text = "⚠️ Изображение не найдено\n\n" + text
-                
-                if is_edit_mode:
-                    await message.edit_text(
-                        text, 
-                        parse_mode=ParseMode.HTML,
-                        reply_markup=skip_keyboard
-                    )
-                    context.user_data['current_question_message_id'] = message.message_id
-                else:
-                    sent_msg = await message.reply_text(
-                        text, 
-                        parse_mode=ParseMode.HTML,
-                        reply_markup=skip_keyboard
-                    )
-                    if sent_msg:
-                        context.user_data['current_question_message_id'] = sent_msg.message_id
-        else:
-            # Нет изображения - только текст
-            if is_edit_mode:
-                # Редактируем существующее сообщение "Загружаю..."
-                await message.edit_text(
-                    text, 
-                    parse_mode=ParseMode.HTML,
-                    reply_markup=skip_keyboard
-                )
-                context.user_data['current_question_message_id'] = message.message_id
-            else:
-                # Отправляем новое сообщение
-                sent_msg = await message.reply_text(
-                    text, 
-                    parse_mode=ParseMode.HTML,
-                    reply_markup=skip_keyboard
-                )
-                if sent_msg:
-                    context.user_data['current_question_message_id'] = sent_msg.message_id
-                    
-    except Exception as e:
-        logger.error(f"Ошибка отправки вопроса: {e}")
-        try:
-            error_text = "Ошибка при отображении вопроса. Попробуйте еще раз."
-            if is_edit_mode:
-                await message.edit_text(error_text)
-            else:
-                await message.reply_text(error_text)
-        except:
-            pass
-        return ConversationHandler.END
-
-    # ========== 5. ПРОМО-ЛОГИКА (ПЕРЕНЕСЕНА ИЗ TRY-EXCEPT) ==========
-    # Показываем промо каждые 10 вопросов
-    if questions_count > 0 and questions_count % 10 == 0:
-        # Проверяем, что мы в модуле test_part
-        if context.user_data.get('active_module') == 'test_part':
-            subscription_manager = context.bot_data.get('subscription_manager')
-            if subscription_manager:
-                try:
-                    has_subscription = await subscription_manager.check_active_subscription(user_id)
-                    
-                    if not has_subscription:
-                        import random
-                        import asyncio
-                        
-                        # Варианты промо-сообщений
-                        promo_messages = [
-                            f"🚀 <b>Уже {questions_count} вопросов!</b>\n\n"
-                            f"С премиум-подпиской откроются задания второй части ЕГЭ:\n"
-                            f"• Задание 19 - Примеры и иллюстрации\n"
-                            f"• Задание 20 - Теоретические суждения\n"
-                            f"• Задание 24 - Составление планов\n"
-                            f"• Задание 25 - Развёрнутые ответы",
-                            
-                            f"💪 <b>{questions_count} вопросов позади!</b>\n\n"
-                            f"Готовы к заданиям с развёрнутым ответом?\n"
-                            f"ИИ-проверка поможет подготовиться к второй части ЕГЭ!",
-                            
-                            f"🎯 <b>Целых {questions_count} вопросов!</b>\n\n"
-                            f"Откройте доступ к:\n"
-                            f"• Автоматической проверке заданий 19-20\n"
-                            f"• Составлению планов по заданию 24\n"
-                            f"• Тренажёру задания 25",
-                            
-                            f"📈 <b>{questions_count} вопросов решено!</b>\n\n"
-                            f"Хотите увидеть детальную аналитику и начать готовиться к второй части?"
-                        ]
-                        
-                        promo_text = random.choice(promo_messages)
-                        promo_text += "\n\n💎 <b>Попробуйте премиум 7 дней за 1₽!</b>"
-                        
-                        # Небольшая задержка перед промо
-                        await asyncio.sleep(1)
-                        
-                        # Отправляем промо-сообщение  
-                        try:
-                            await context.bot.send_message(
-                                chat_id=user_id,
-                                text=promo_text,
-                                reply_markup=InlineKeyboardMarkup([
-                                    [InlineKeyboardButton("💎 Попробовать за 1₽", callback_data="pay_trial")],
-                                    [InlineKeyboardButton("ℹ️ Подробнее", callback_data="subscribe_start")],
-                                    [InlineKeyboardButton("➡️ Продолжить", callback_data="dismiss_promo")]
-                                ]),
-                                parse_mode=ParseMode.HTML
-                            )
-                            logger.info(f"Promo shown to user {user_id} after {questions_count} questions")
-                        except Exception as e:
-                            logger.error(f"Error showing promo: {e}")
-                
-                except Exception as e:
-                    logger.error(f"Error checking subscription for promo: {e}")
-    
-    # ========== 6. ВОЗВРАЩАЕМ СОСТОЯНИЕ ==========
-    # Устанавливаем состояние для state_validator если нужно
-    if user_id:
-        from core.state_validator import state_validator
-        state_validator.set_state(user_id, states.ANSWERING)
-    
-    return states.ANSWERING
-    
-@safe_handler()
-async def continue_test(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Продолжает тест после промо."""
-    query = update.callback_query
-    await query.answer("Продолжаем! 💪")
-    
-    try:
-        await query.message.delete()
-    except:
-        pass
-    
-    # Остаемся в текущем состоянии
-    return
-
-# Обработчик для перехода к оплате пробного периода
-@safe_handler()  
-async def pay_trial_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Переход к оплате пробного периода."""
-    query = update.callback_query
-    
-    # Сохраняем текущее состояние для возврата
-    context.user_data['return_to_test'] = True
-    
-    # Вызываем обработчик оплаты из payment модуля
-    from payment.handlers import process_payment
-    
-    # Устанавливаем параметры для пробного периода
-    context.user_data['selected_plan'] = 'trial_7days'
-    context.user_data['selected_duration'] = 1
-    
-    return await process_payment(update, context)
-
-@safe_handler()
-@validate_state_transition({states.CHOOSING_MODE})
-async def start_exam_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Начало режима экзамена."""
-    query = update.callback_query
-    user_id = query.from_user.id
-    
-    # Инициализируем данные экзамена
-    context.user_data['exam_mode'] = True
-    context.user_data['exam_questions'] = []
-    context.user_data['exam_answers'] = {}
-    context.user_data['exam_results'] = {}
-    context.user_data['exam_current'] = 1
-    context.user_data['exam_skipped'] = []
-    
-    await query.edit_message_text(
-        "🎯 <b>Режим экзамена</b>\n\n"
-        "Вам будут предложены вопросы с 1 по 16 номер задания ЕГЭ.\n"
-        "Результаты будут показаны после завершения всех заданий.\n\n"
-        "⏳ Подготавливаю вопросы...",
-        parse_mode=ParseMode.HTML
-    )
-    
-    # Собираем по одному вопросу для каждого номера от 1 до 16
-    exam_questions = []
-    for exam_num in range(1, 17):
-        questions_for_num = safe_cache_get_by_exam_num(exam_num)
-        if questions_for_num:
-            # Выбираем случайный вопрос для этого номера
-            question = await utils.choose_question(user_id, questions_for_num)
-            if question:
-                question['exam_position'] = exam_num
-                exam_questions.append(question)
-    
-    if len(exam_questions) < 16:
-        await query.message.edit_text(
-            f"⚠️ Недостаточно вопросов для полного экзамена.\n"
-            f"Найдено вопросов: {len(exam_questions)}/16\n\n"
-            f"Начать с доступными вопросами?",
-            reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("✅ Начать", callback_data="exam_start_partial")],
-                [InlineKeyboardButton("❌ Отмена", callback_data="to_test_part_menu")]
-            ])
-        )
-        context.user_data['exam_questions'] = exam_questions
-        return states.EXAM_MODE
-    
-    context.user_data['exam_questions'] = exam_questions
-    
-    # Отправляем первый вопрос
-    await send_exam_question(query.message, context, 0)
-    return states.EXAM_MODE
-
-async def send_exam_question(message, context: ContextTypes.DEFAULT_TYPE, index: int):
-    """Отправка вопроса в режиме экзамена с поддержкой всех типов вопросов."""
-    exam_questions = context.user_data.get('exam_questions', [])
-    
-    if index >= len(exam_questions):
-        # Экзамен завершен
-        await show_exam_results(message, context)
-        return
-    
-    question = exam_questions[index]
-    context.user_data['exam_current'] = index + 1
-    
-    # Сохраняем ID вопроса для последующей проверки
-    question_id = question.get('id', f'exam_q_{index}')
-    context.user_data['current_question_id'] = question_id
-    
-    # Извлекаем текст вопроса в зависимости от типа
-    question_type = question.get('type', 'text')
-    question_text = None
-    
-    if isinstance(question, dict):
-        # Для matching-вопросов текст в поле instruction
-        if question_type == 'matching':
-            question_text = question.get('instruction', '')
-            
-            # Добавляем информацию о колонках для matching
-            if question_text:
-                # Получаем данные колонок
-                col1_header = question.get('column1_header', 'СТОЛБЕЦ 1')
-                col1_options = question.get('column1_options', {})
-                col2_header = question.get('column2_header', 'СТОЛБЕЦ 2')
-                col2_options = question.get('column2_options', {})
-                
-                # Проверяем наличие опций
-                if col1_options and col2_options:
-                    # Формируем полный текст с колонками
-                    full_text = question_text + "\n\n"
-                    
-                    # Первая колонка
-                    full_text += f"<b>{col1_header}:</b>\n"
-                    for letter, option in sorted(col1_options.items()):
-                        full_text += f"{letter}) {option}\n"
-                    
-                    full_text += "\n"
-                    
-                    # Вторая колонка
-                    full_text += f"<b>{col2_header}:</b>\n"
-                    for digit, option in sorted(col2_options.items(), key=lambda x: int(x[0]) if x[0].isdigit() else 0):
-                        full_text += f"{digit}. {option}\n"
-                    
-                    question_text = full_text
-        else:
-            # Для остальных типов пробуем разные поля
-            question_text = (
-                question.get('question') or 
-                question.get('question_text') or 
-                question.get('text') or
-                question.get('instruction', '')
-            )
-    elif isinstance(question, str):
-        question_text = question
-    
-    # Если текст не найден, используем заглушку
-    if not question_text:
-        import json
-        logger.error(f"Empty question text for exam question {index + 1}. Question type: {question_type}. Question data: {json.dumps(question, ensure_ascii=False)[:500]}")
-        question_text = f"[Ошибка загрузки вопроса {index + 1}]"
-    
-    # Формируем текст сообщения
-    text = f"📝 <b>Экзамен • Вопрос {index + 1} из 16</b>"
-    
-    # Добавляем информацию о задании ЕГЭ, сложности и теме
-    if isinstance(question, dict):
-        exam_num = question.get('exam_number', question.get('exam_position'))
-        if exam_num:
-            text += f"\n📚 Задание ЕГЭ №{exam_num}"
-        if question.get('difficulty'):
-            text += f" • Сложность: {question.get('difficulty')}"
-        if question.get('topic'):
-            from test_part.keyboards import TOPIC_NAMES
-            topic_name = TOPIC_NAMES.get(question.get('topic'), question.get('topic'))
-            text += f"\n📖 Тема: {topic_name}"
-    
-    text += "\n" + "━" * 30 + "\n\n"
-    text += question_text
-    
-    # Добавляем подсказку по формату ответа
-    if question_type == 'matching':
-        # Безопасно получаем количество опций
-        col1_options = question.get('column1_options', {}) if isinstance(question, dict) else {}
-        col1_count = len(col1_options) if col1_options else 5  # По умолчанию 5
-        text += f"\n\n✍️ <i>Введите {col1_count} цифр без пробелов</i>"
-    elif question_type == 'multiple_choice':
-        text += f"\n\n✍️ <i>Введите цифры ответов без пробелов</i>"
-    elif question_type == 'single_choice':
-        text += f"\n\n✍️ <i>Введите одну цифру ответа</i>"
-    else:
-        text += f"\n\n✍️ <i>Введите ваш ответ</i>"
-    
-    # Сохраняем данные вопроса и ответ для проверки
-    if isinstance(question, dict):
-        context.user_data[f'question_{question_id}'] = question
-        context.user_data[f'exam_answer_{index}'] = question.get('answer')
-        context.user_data[f'exam_explanation_{index}'] = question.get('explanation')
-        # Сохраняем позицию в экзамене
-        question['exam_position'] = question.get('exam_number', index + 1)
-    
-    # Импортируем функцию из keyboards
-    from test_part.keyboards import get_exam_question_keyboard
-    keyboard = get_exam_question_keyboard()
-    
-    # Проверяем наличие изображения
-    image_url = question.get('image_url') if isinstance(question, dict) else None
-    
-    try:
-        # Импортируем необходимые модули
-        import os
-        from pathlib import Path
-        
-        # Определяем базовую директорию для изображений
-        BASE_DIR = Path("/opt/ege-bot")
-        
-        # Если есть изображение
-        if image_url:
-            # Если путь относительный, делаем его абсолютным
-            if not os.path.isabs(image_url):
-                image_path = BASE_DIR / image_url
-            else:
-                image_path = Path(image_url)
-            
-            # Проверяем существование файла
-            if image_path.exists():
-                # Проверяем длину текста для caption (максимум 1024 символа)
-                MAX_CAPTION_LENGTH = 1024
-                
-                # Получаем chat_id
-                if hasattr(message, 'chat'):
-                    chat_id = message.chat.id
-                elif hasattr(message, 'chat_id'):
-                    chat_id = message.chat_id
-                else:
-                    # Fallback - пробуем получить из контекста
-                    chat_id = context.user_data.get('user_id')
-                
-                if len(text) <= MAX_CAPTION_LENGTH:
-                    # Текст помещается в caption
-                    if hasattr(message, 'edit_text'):
-                        # Это редактирование - нужно удалить старое и отправить новое
-                        try:
-                            await message.delete()
-                        except:
-                            pass
-                        
-                        with open(image_path, 'rb') as photo:
-                            await context.bot.send_photo(
-                                chat_id=chat_id,
-                                photo=photo,
-                                caption=text,
-                                reply_markup=keyboard,
-                                parse_mode='HTML'
-                            )
-                    else:
-                        # Обычная отправка
-                        with open(image_path, 'rb') as photo:
-                            await message.reply_photo(
-                                photo=photo,
-                                caption=text,
-                                reply_markup=keyboard,
-                                parse_mode='HTML'
-                            )
-                else:
-                    # Текст слишком длинный - отправляем раздельно
-                    logger.info(f"Text too long for caption ({len(text)} chars), sending separately")
-                    
-                    if hasattr(message, 'edit_text'):
-                        try:
-                            await message.delete()
-                        except:
-                            pass
-                    
-                    # Сначала изображение с коротким описанием
-                    with open(image_path, 'rb') as photo:
-                        await context.bot.send_photo(
-                            chat_id=chat_id,
-                            photo=photo,
-                            caption=f"📊 График к вопросу {index + 1}"
-                        )
-                    
-                    # Затем текст с клавиатурой
-                    await context.bot.send_message(
-                        chat_id=chat_id,
-                        text=text,
-                        reply_markup=keyboard,
-                        parse_mode='HTML'
-                    )
-            else:
-                # Файл не найден
-                logger.error(f"Image file not found: {image_url}")
-                text = "⚠️ Изображение не найдено\n\n" + text
-                
-                # Отправляем без изображения
-                if hasattr(message, 'reply_text'):
-                    await message.reply_text(
-                        text,
-                        reply_markup=keyboard,
-                        parse_mode='HTML'
-                    )
-                elif hasattr(message, 'edit_text'):
-                    await message.edit_text(
-                        text,
-                        reply_markup=keyboard,
-                        parse_mode='HTML'
-                    )
-        else:
-            # Нет изображения - стандартная отправка
-            if hasattr(message, 'reply_text'):
-                await message.reply_text(
-                    text,
-                    reply_markup=keyboard,
-                    parse_mode='HTML'
-                )
-            elif hasattr(message, 'edit_text'):
-                await message.edit_text(
-                    text,
-                    reply_markup=keyboard,
-                    parse_mode='HTML'
-                )
-            else:
-                # Fallback
-                await message.reply_text(
-                    text,
-                    reply_markup=keyboard,
-                    parse_mode='HTML'
-                )
-    except Exception as e:
-        logger.error(f"Error sending exam question {index + 1}: {e}")
-        # Отправляем без HTML разметки при ошибке
-        text_plain = text.replace('<b>', '').replace('</b>', '').replace('<i>', '').replace('</i>', '')
-        await message.reply_text(
-            text_plain,
-            reply_markup=keyboard
-        )
-
-async def show_promo_message(context: ContextTypes.DEFAULT_TYPE, message: Message):
-    """Показывает промо-сообщение после N вопросов."""
-    
-    # Считаем количество отвеченных вопросов
-    questions_answered = context.user_data.get('test_questions_answered', 0) + 1
-    context.user_data['test_questions_answered'] = questions_answered
-    
-    # Показываем промо каждые 20 вопросов (не слишком часто)
-    if questions_answered % 20 == 0:
-        subscription_manager = context.bot_data.get('subscription_manager')
-        if subscription_manager:
-            user_id = context.user_data.get('user_id')
-            has_subscription = await subscription_manager.check_active_subscription(user_id)
-            
-            if not has_subscription:
-                # Разные промо-сообщения для разнообразия
-                promo_variants = [
-                    """
-🤖 <b>Представь, что ИИ проверяет твои ответы!</b>
-
-Больше не нужно ждать учителя или искать правильные ответы. 
-Нейросеть проверит твои развёрнутые ответы по критериям ФИПИ за секунды!
-
-✅ Задания 19-20: анализ примеров и аргументов с разбором
-✅ Задание 24: планы с детальной проверкой
-✅ Задание 25: обоснования и примеры
-
-<b>Попробуй 7 дней всего за 1₽!</b>""",
-                    """
-📊 <b>Твоя статистика показывает пробелы в темах</b>
-
-С полной подпиской ты получишь:
-- Умную статистику по каждой теме
-- Персональные рекомендации что повторить
-- Отслеживание прогресса в реальном времени
-
-<b>Больше никаких пробелов в знаниях!</b>
-Подключи премиум от 199₽/месяц""",
-                    """
-⚡ <b>Каждая минута на счету!</b>
-
-Практикуйся где угодно:
-- В транспорте по дороге домой
-- В очереди или на перемене
-- Перед сном вместо соцсетей
-
-С премиум-доступом откроются все задания второй части.
-<b>Пробный период — всего 1₽ на 7 дней!</b>"""
-                ]
-                
-                # Выбираем случайное промо-сообщение
-                import random
-                promo_text = random.choice(promo_variants)
-                promo_text += "\n\n<i>Это сообщение появляется раз в 20 вопросов</i>"
-                
-                promo_keyboard = InlineKeyboardMarkup([
-                    [InlineKeyboardButton("💎 Попробовать за 1₽", callback_data="pay_trial")],
-                    [InlineKeyboardButton("ℹ️ Подробнее о подписке", callback_data="subscribe_start")],
-                    [InlineKeyboardButton("➡️ Продолжить тренировку", callback_data="continue_test")]
-                ])
-                
-                await message.reply_text(
-                    promo_text,
-                    reply_markup=promo_keyboard,
+            if payment_status == 'CONFIRMED':
+                # Платеж подтвержден
+                await query.edit_message_text(
+                    "✅ <b>Платеж успешно подтвержден!</b>\n\n"
+                    "Ваша подписка активирована.\n"
+                    "Используйте /my_subscriptions для просмотра деталей.",
                     parse_mode=ParseMode.HTML
                 )
+                
+                # Активируем подписку если еще не активирована
+                if status != 'completed':
+                    await subscription_manager.activate_subscription_from_payment(order_id)
+                    
+            elif payment_status in ['NEW', 'FORM_SHOWED', 'DEADLINE_EXPIRED']:
+                # Платеж еще не оплачен
+                await query.edit_message_text(
+                    "⏳ <b>Платеж ожидает оплаты</b>\n\n"
+                    f"Статус: {payment_status}\n"
+                    f"Сумма: {amount}₽\n\n"
+                    "Если вы уже оплатили, подождите несколько минут и проверьте снова.",
+                    parse_mode=ParseMode.HTML,
+                    reply_markup=InlineKeyboardMarkup([[
+                        InlineKeyboardButton("🔄 Проверить еще раз", callback_data="check_payment")
+                    ]])
+                )
+            elif payment_status in ['REJECTED', 'CANCELED', 'REFUNDED']:
+                # Платеж отклонен/отменен
+                await query.edit_message_text(
+                    f"❌ <b>Платеж отклонен</b>\n\n"
+                    f"Статус: {payment_status}\n\n"
+                    "Попробуйте создать новый платеж.",
+                    parse_mode=ParseMode.HTML,
+                    reply_markup=InlineKeyboardMarkup([[
+                        InlineKeyboardButton("🔄 Создать новый платеж", callback_data="payment_back")
+                    ]])
+                )
+            else:
+                # Неизвестный статус
+                await query.edit_message_text(
+                    f"❓ Неизвестный статус платежа: {payment_status}\n\n"
+                    "Обратитесь к администратору для уточнения."
+                )
+                
+    except Exception as e:
+        logger.error(f"Error checking payment status: {e}")
+        await query.edit_message_text(
+            "❌ Ошибка при проверке статуса платежа.\n\n"
+            "Попробуйте позже или обратитесь к администратору."
+        )
 
-@safe_handler()
-async def check_exam_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Проверка ответа в режиме экзамена."""
-    if not context.user_data.get('exam_mode'):
-        return await check_answer(update, context)
+def validate_email(email: str) -> tuple[bool, str]:
+    """
+    Валидирует email и возвращает (is_valid, error_message).
+    """
+    if not email:
+        return False, "Email не указан"
     
-    user_answer = update.message.text.strip()
-    current_question_id = context.user_data.get('current_question_id')
-    current_index = context.user_data.get('exam_current', 1) - 1
+    # Базовая проверка формата
+    email = email.strip().lower()
     
-    # Получаем данные вопроса
-    question_data = context.user_data.get(f'question_{current_question_id}')
+    # Регулярное выражение для email
+    email_pattern = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
     
-    if not question_data:
-        await update.message.reply_text("Ошибка: вопрос не найден.")
-        return states.EXAM_MODE
+    if not re.match(email_pattern, email):
+        return False, "Неверный формат email"
     
-    # Проверяем ответ
-    correct_answer = str(question_data.get('answer', ''))
-    question_type = question_data.get('type', 'multiple_choice')
+    # Проверка длины
+    if len(email) < 6:  # a@b.co минимум
+        return False, "Email слишком короткий"
     
-    is_correct = utils.normalize_answer(user_answer, question_type) == \
-                 utils.normalize_answer(correct_answer, question_type)
+    if len(email) > 100:
+        return False, "Email слишком длинный"
     
-    # Сохраняем результат
-    context.user_data['exam_answers'][current_question_id] = {
-        'user_answer': user_answer,
-        'correct_answer': correct_answer,
-        'is_correct': is_correct,
-        'question_num': question_data['exam_position']
+    # Проверка домена
+    domain = email.split('@')[1]
+    
+    # Список распространенных опечаток
+    common_typos = {
+        'gmail.con': 'gmail.com',
+        'gmail.co': 'gmail.com',
+        'gmail.ru': 'gmail.com',
+        'gmai.com': 'gmail.com',
+        'gmial.com': 'gmail.com',
+        'gnail.com': 'gmail.com',
+        'yamdex.ru': 'yandex.ru',
+        'yadex.ru': 'yandex.ru',
+        'yandex.com': 'yandex.ru',
+        'mail.ri': 'mail.ru',
+        'mail.tu': 'mail.ru',
+        'maio.ru': 'mail.ru',
+        'maol.ru': 'mail.ru',
+        'mali.ru': 'mail.ru',
+        'outlok.com': 'outlook.com',
+        'outlok.ru': 'outlook.com',
+        'hotmial.com': 'hotmail.com',
+        'hotmai.com': 'hotmail.com'
     }
     
-    # Краткое подтверждение
-    await update.message.reply_text(
-        f"✅ Ответ принят ({current_index + 1}/{len(context.user_data['exam_questions'])})",
-        parse_mode=ParseMode.HTML
-    )
+    if domain in common_typos:
+        return False, f"Возможна опечатка. Вы имели в виду @{common_typos[domain]}?"
     
-    # Переходим к следующему вопросу
-    await send_exam_question(update.message, context, current_index + 1)
-    return states.EXAM_MODE
+    # Проверка на невалидные домены
+    invalid_domains = ['gmail.con', 'gmail.co', 'test.com', 'example.com']
+    if domain in invalid_domains:
+        return False, f"Домен {domain} недействителен"
+    
+    # Проверка точек в домене
+    if '..' in domain:
+        return False, "Двойные точки в домене недопустимы"
+    
+    # Минимальная длина домена
+    if len(domain) < 4:  # x.co минимум
+        return False, "Домен слишком короткий"
+    
+    return True, ""
 
-@safe_handler()
-async def skip_exam_question(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Пропуск вопроса в режиме экзамена."""
-    query = update.callback_query
-    await query.answer("Вопрос пропущен")
-    
-    current_index = context.user_data.get('exam_current', 1) - 1
-    current_question_id = context.user_data.get('current_question_id')
-    
-    # Добавляем в список пропущенных
-    context.user_data['exam_skipped'].append(current_question_id)
-    
-    # Переходим к следующему вопросу
-    await send_exam_question(query.message, context, current_index + 1)
-    return states.EXAM_MODE
-
-async def show_exam_results(message, context: ContextTypes.DEFAULT_TYPE):
-    """Показ результатов экзамена."""
-    exam_questions = context.user_data.get('exam_questions', [])
-    exam_answers = context.user_data.get('exam_answers', {})
-    exam_skipped = context.user_data.get('exam_skipped', [])
-    user_id = context.user_data.get('user_id')
-    
-    # Подсчет результатов
-    total = len(exam_questions)
-    answered = len(exam_answers)
-    skipped = len(exam_skipped)
-    correct = sum(1 for a in exam_answers.values() if a['is_correct'])
-    incorrect = answered - correct
-    
-    # Расчет баллов (примерная шкала)
-    score = correct
-    max_score = 16
-    percentage = (score / max_score) * 100 if max_score > 0 else 0
-    
-    # Формируем текст результатов
-    result_text = "🎯 <b>РЕЗУЛЬТАТЫ ЭКЗАМЕНА</b>\n\n"
-    result_text += f"📊 <b>Общая статистика:</b>\n"
-    result_text += f"• Всего вопросов: {total}\n"
-    result_text += f"• Отвечено: {answered}\n"
-    result_text += f"• Пропущено: {skipped}\n\n"
-    
-    result_text += f"✅ Правильных ответов: {correct}\n"
-    result_text += f"❌ Неправильных ответов: {incorrect}\n\n"
-    
-    result_text += f"🎯 <b>Ваш результат: {score}/{max_score} ({percentage:.1f}%)</b>\n\n"
-    
-    # Оценка результата
-    if percentage >= 80:
-        result_text += "🏆 Отличный результат! Вы готовы к экзамену!"
-    elif percentage >= 60:
-        result_text += "👍 Хороший результат! Продолжайте практиковаться."
-    elif percentage >= 40:
-        result_text += "📚 Неплохо, но есть над чем работать."
-    else:
-        result_text += "💪 Требуется дополнительная подготовка."
-    
-    # Детализация по номерам заданий
-    result_text += "\n\n<b>Результаты по заданиям:</b>\n"
-    for i in range(1, 17):
-        # Находим вопрос с этим номером
-        question = next((q for q in exam_questions if q['exam_position'] == i), None)
-        if question:
-            q_id = question['id']
-            if q_id in exam_answers:
-                if exam_answers[q_id]['is_correct']:
-                    result_text += f"№{i}: ✅\n"
-                else:
-                    result_text += f"№{i}: ❌\n"
-            elif q_id in exam_skipped:
-                result_text += f"№{i}: ⏭️ пропущен\n"
-        else:
-            result_text += f"№{i}: — нет вопроса\n"
-    
-    # Сохраняем неправильные ответы в БД
-    for q_id, answer_data in exam_answers.items():
-        if not answer_data['is_correct']:
-            question = context.user_data.get(f'question_{q_id}')
-            if question:
-                await db.record_mistake(user_id, q_id)
-    
-    # Обновляем общую статистику
-    for question in exam_questions:
-        if question['id'] in exam_answers:
-            topic = question.get('topic')
-            is_correct = exam_answers[question['id']]['is_correct']
-            await db.update_progress(user_id, topic, is_correct)
-    
-    # Очищаем данные экзамена
-    context.user_data.pop('exam_mode', None)
-    context.user_data.pop('exam_questions', None)
-    context.user_data.pop('exam_answers', None)
-    context.user_data.pop('exam_results', None)
-    context.user_data.pop('exam_current', None)
-    context.user_data.pop('exam_skipped', None)
-    
-    # После вывода результатов добавляем промо
-    subscription_manager = context.bot_data.get('subscription_manager')
-    if subscription_manager:
-        user_id = context.user_data.get('user_id')
-        has_subscription = await subscription_manager.check_active_subscription(user_id)
-        
-        if not has_subscription:
-            if percentage >= 80:
-                promo_text = "\n\n🎉 <b>Отличный результат!</b>\n"
-                promo_text += "Готовы покорить вторую часть ЕГЭ?\n"
-                promo_text += "🤖 ИИ поможет с заданиями 19,20,25\n"
-                promo_text += "📝 Автопроверка планов в задании 24\n"
-                promo_text += "\n<b>Первые 7 дней — всего 1₽!</b>"
-            elif percentage >= 60:
-                promo_text = "\n\n💪 <b>Хороший результат!</b>\n"
-                promo_text += "С премиум-подпиской прогресс пойдёт быстрее:\n"
-                promo_text += "📊 Умная статистика найдёт все пробелы\n"
-                promo_text += "🎯 Персональный план подготовки\n"
-                promo_text += "\n<b>Попробуйте 7 дней за 1₽!</b>"
-            else:
-                promo_text = "\n\n📚 <b>Нужна помощь с подготовкой?</b>\n"
-                promo_text += "Премиум-функции помогут улучшить результат:\n"
-                promo_text += "🤖 ИИ-проверка с разбором ошибок\n"
-                promo_text += "📈 Отслеживание прогресса по всем темам\n"
-                promo_text += "\n<b>Начните с пробного периода за 1₽!</b>"
-            
-            result_text += promo_text
-            
-            # Обновляем клавиатуру
-            kb = keyboards.get_exam_results_keyboard()
-            new_kb = InlineKeyboardMarkup([
-                [InlineKeyboardButton("💎 Попробовать премиум", callback_data="pay_trial")],
-                *kb.inline_keyboard
-            ])
-    
-    # Отправляем результаты
-    await message.reply_text(
-        result_text,
-        parse_mode=ParseMode.HTML,
-        reply_markup=new_kb if not has_subscription else keyboards.get_exam_results_keyboard()
-    )
-
-@safe_handler()
-async def handle_unknown_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обработчик неизвестных callback_data в test_part."""
-    query = update.callback_query
-    
-    # Логируем неизвестный callback
-    logger.warning(f"Неизвестный callback в test_part: {query.data}")
-    
-    # Проверяем, не наши ли это кнопки
-    if query.data in ["test_export_csv", "test_work_mistakes"]:
-        logger.error(f"ВНИМАНИЕ: callback {query.data} попал в handle_unknown_callback!")
-    
-    await query.answer("Функция временно недоступна", show_alert=True)
-    
-    # Возвращаем текущее состояние
-    return states.CHOOSING_MODE
-
-
-
-async def cmd_export_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Команда /export - экспорт статистики в CSV файл."""
+async def show_unified_plans(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Показывает старые единые планы подписки."""
     user_id = update.effective_user.id
+    subscription_manager = context.bot_data.get('subscription_manager', SubscriptionManager())
     
-    try:
-        # Генерируем CSV
-        csv_content = await utils.export_user_stats_csv(user_id)
+    # Проверяем текущую подписку
+    subscription = await subscription_manager.check_active_subscription(user_id)
+    
+    if subscription:
+        expires = subscription['expires_at'].strftime('%d.%m.%Y')
+        text = f"""✅ <b>У вас есть активная подписка!</b>
+
+План: {SUBSCRIPTION_PLANS[subscription['plan_id']]['name']}
+Действует до: {expires}
+
+Используйте /status для просмотра детальной информации."""
         
-        # Отправляем как файл
-        from io import BytesIO
-        file_data = BytesIO(csv_content.encode('utf-8-sig'))  # utf-8-sig для корректного отображения в Excel
-        file_data.name = f"statistics_{user_id}.csv"
+        # Отправляем сообщение правильным способом
+        if update.message:
+            await update.message.reply_text(text, parse_mode=ParseMode.HTML)
+        elif update.callback_query:
+            await update.callback_query.answer()
+            await update.callback_query.message.reply_text(text, parse_mode=ParseMode.HTML)
         
-        await update.message.reply_document(
-            document=file_data,
-            filename=f"statistics_{user_id}_{datetime.now().strftime('%Y%m%d')}.csv",
-            caption="📊 Ваша статистика в формате CSV\n\nОткройте файл в Excel или Google Sheets для просмотра"
+        return ConversationHandler.END
+    
+    # Показываем доступные планы
+    text = "💎 <b>Выберите план подписки:</b>\n\n"
+    
+    keyboard = []
+    for plan_id, plan in SUBSCRIPTION_PLANS.items():
+        text += f"<b>{plan['name']}</b>\n"
+        text += f"💰 {plan['price_rub']} ₽\n"
+        text += f"📝 {plan['description']}\n"
+        for feature in plan.get('features', []):
+            text += f"  {feature}\n"
+        text += "\n"
+        
+        keyboard.append([
+            InlineKeyboardButton(
+                f"{plan['name']} - {plan['price_rub']} ₽",
+                callback_data=f"pay_plan_{plan_id}"
+            )
+        ])
+    
+    keyboard.append([
+        InlineKeyboardButton("❌ Отмена", callback_data="pay_cancel")
+    ])
+    
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    # Отправляем сообщение правильным способом
+    if update.message:
+        await update.message.reply_text(
+            text,
+            reply_markup=reply_markup,
+            parse_mode=ParseMode.HTML
         )
-        
-    except Exception as e:
-        logger.error(f"Ошибка экспорта статистики для user {user_id}: {e}")
-        await update.message.reply_text("Не удалось экспортировать статистику. Попробуйте позже.")
-
-async def cmd_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Команда /report - детальный отчет о прогрессе."""
-    user_id = update.effective_user.id
-    
-    try:
-        report = await utils.generate_detailed_report(user_id)
-        await update.message.reply_text(report, parse_mode=ParseMode.HTML)
-    except Exception as e:
-        logger.error(f"Ошибка генерации отчета для user {user_id}: {e}")
-        await update.message.reply_text("Не удалось сгенерировать отчет. Попробуйте позже.")
-
-@safe_handler()
-async def abort_exam(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Прерывание экзамена."""
-    query = update.callback_query
-    
-    # Подтверждение прерывания
-    kb = InlineKeyboardMarkup([
-        [
-            InlineKeyboardButton("✅ Да, завершить", callback_data="exam_abort_confirm"),
-            InlineKeyboardButton("❌ Продолжить экзамен", callback_data="exam_continue")
-        ]
-    ])
-    
-    await query.edit_message_text(
-        "⚠️ <b>Вы уверены, что хотите завершить экзамен?</b>\n\n"
-        "Результаты не будут сохранены.",
-        reply_markup=kb,
-        parse_mode=ParseMode.HTML
-    )
-    return states.EXAM_MODE
-
-@safe_handler()
-async def abort_exam_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Подтверждение прерывания экзамена."""
-    query = update.callback_query
-    
-    # Очищаем данные экзамена
-    context.user_data.pop('exam_mode', None)
-    context.user_data.pop('exam_questions', None)
-    context.user_data.pop('exam_answers', None)
-    context.user_data.pop('exam_results', None)
-    context.user_data.pop('exam_current', None)
-    context.user_data.pop('exam_skipped', None)
-    
-    kb = keyboards.get_initial_choice_keyboard()
-    await query.edit_message_text(
-        "❌ Экзамен прерван.\n\nВыберите режим:",
-        reply_markup=kb,
-        parse_mode=ParseMode.HTML
-    )
-    return states.CHOOSING_MODE
-
-@safe_handler()
-async def exam_continue(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Продолжение экзамена после попытки прерывания."""
-    query = update.callback_query
-    await query.answer("Продолжаем экзамен")
-    
-    # Возвращаем текущий вопрос
-    current_index = context.user_data.get('exam_current', 1) - 1
-    await send_exam_question(query.message, context, current_index)
-    return states.EXAM_MODE
-
-@safe_handler()
-async def start_partial_exam(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Начало неполного экзамена (менее 16 вопросов)."""
-    query = update.callback_query
-    
-    # Отправляем первый вопрос
-    await send_exam_question(query.message, context, 0)
-    return states.EXAM_MODE
-
-@safe_handler()
-async def exam_detailed_review(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Подробный разбор результатов экзамена."""
-    query = update.callback_query
-    user_id = query.from_user.id
-    
-    # Здесь можно добавить подробный разбор каждого вопроса
-    # с показом правильных ответов и объяснений
-    
-    text = "📊 <b>Подробный разбор экзамена</b>\n\n"
-    text += "Функция в разработке. Вы можете:\n"
-    text += "• Использовать режим работы над ошибками\n"
-    text += "• Пройти экзамен заново\n"
-    
-    kb = InlineKeyboardMarkup([
-        [InlineKeyboardButton("🔧 Работа над ошибками", callback_data="initial:select_mistakes")],
-        [InlineKeyboardButton("🔄 Новый экзамен", callback_data="initial:exam_mode")],
-        [InlineKeyboardButton("🔙 Назад", callback_data="to_test_part_menu")]
-    ])
-    
-    await query.edit_message_text(
-        text,
-        reply_markup=kb,
-        parse_mode=ParseMode.HTML
-    )
-    return states.CHOOSING_MODE
-
-# Вспомогательная функция для получения вопросов по номерам от 1 до 16
-def safe_cache_get_exam_questions():
-    """Безопасное получение вопросов для экзамена (номера 1-16)."""
-    exam_questions = []
-    
-    for exam_num in range(1, 17):
+    elif update.callback_query:
+        query = update.callback_query
+        await query.answer()
         try:
-            # Используем существующую функцию для получения вопросов по номеру
-            questions = safe_cache_get_by_exam_num(exam_num)
-            if questions:
-                exam_questions.append({
-                    'exam_num': exam_num,
-                    'questions': questions
-                })
-        except Exception as e:
-            logger.error(f"Error getting questions for exam_num {exam_num}: {e}")
-            continue
+            await query.edit_message_text(
+                text,
+                reply_markup=reply_markup,
+                parse_mode=ParseMode.HTML
+            )
+        except Exception:
+            await query.message.reply_text(
+                text,
+                reply_markup=reply_markup,
+                parse_mode=ParseMode.HTML
+            )
     
-    return exam_questions
+    return CHOOSING_PLAN
 
-async def send_mistake_question(message, context: ContextTypes.DEFAULT_TYPE):
-    """Отправка вопроса в режиме работы над ошибками БЕЗ дублирования."""
-    mistake_queue = context.user_data.get('mistake_queue', [])
-    current_index = context.user_data.get('current_mistake_index', 0)
-    
-    if current_index >= len(mistake_queue):
-        # Завершаем работу над ошибками
-        kb = keyboards.get_mistakes_finish_keyboard()
+
+async def show_modular_interface(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Показывает модульный интерфейс подписок."""
+    if update.callback_query:
+        query = update.callback_query
+        await query.answer()
         
-        # Используем edit_text если возможно, иначе reply_text
-        if hasattr(message, 'edit_text'):
-            await message.edit_text(
-                "✅ Работа над ошибками завершена!",
-                reply_markup=kb
-            )
-        else:
-            await message.reply_text(
-                "✅ Работа над ошибками завершена!",
-                reply_markup=kb
-            )
-        return states.CHOOSING_MODE
-    
-    # Получаем данные вопроса
-    mistake_id = mistake_queue[current_index]
-    question_data = utils.find_question_by_id(mistake_id)
-    
-    if not question_data:
-        # Пропускаем несуществующий вопрос
-        context.user_data['current_mistake_index'] = current_index + 1
-        return await send_mistake_question(message, context)
-    
-    # ВАЖНО: Увеличиваем индекс ПОСЛЕ успешной отправки вопроса
-    context.user_data['current_mistake_index'] = current_index + 1
-    
-    # Отправляем вопрос через единую функцию
-    await send_question(message, context, question_data, "mistakes")
-    return states.REVIEWING_MISTAKES
-
-@safe_handler()
-@validate_state_transition({states.REVIEWING_MISTAKES})
-async def handle_mistake_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обработка ответа в режиме ошибок с анимацией."""
-    
-    # ИСПОЛЬЗУЕМ АНИМИРОВАННОЕ СООБЩЕНИЕ
-    checking_msg = await show_thinking_animation(
-        update.message,
-        text="Проверяю ваш ответ"
-    )
-    
-    user_answer = update.message.text.strip()
-    current_question_id = context.user_data.get('current_question_id')
-    user_id = update.effective_user.id
-    context.user_data['user_answer_message_id'] = update.message.message_id
-    if not current_question_id:
-        await checking_msg.delete()
-        await update.message.reply_text("Ошибка: вопрос не найден.")
-        return states.CHOOSING_MODE
-    
-    # Получаем данные вопроса
-    question_data = context.user_data.get(f'question_{current_question_id}')
-    
-    if not question_data:
-        await checking_msg.delete()
-        await update.message.reply_text("Ошибка: данные вопроса не найдены.")
-        return states.CHOOSING_MODE
-    
-    # Проверяем ответ
-    correct_answer = str(question_data.get('answer', ''))
-    question_type = question_data.get('type', 'multiple_choice')
-    topic = question_data.get('topic')
-    
-    is_correct = utils.normalize_answer(user_answer, question_type) == \
-                 utils.normalize_answer(correct_answer, question_type)
-    
-    # Обновляем прогресс
-    await db.update_progress(user_id, topic, is_correct)
-    
-    # Если правильно - удаляем из ошибок
-    if is_correct:
-        await db.delete_mistake(user_id, current_question_id)
-        # Удаляем из списка в контексте
-        mistake_ids = context.user_data.get('mistake_ids', [])
-        current_index = context.user_data.get('current_mistake_index', 0)
-        if 0 <= current_index < len(mistake_ids):
-            mistake_ids.pop(current_index)
-            context.user_data['mistake_ids'] = mistake_ids
+        # Функция для безопасного редактирования
+        async def safe_edit_message(text, reply_markup, parse_mode=None):  # ✅ Добавлен параметр parse_mode
+            try:
+                await query.edit_message_text(
+                    text,
+                    parse_mode=parse_mode or ParseMode.HTML,  # Используем переданный или HTML по умолчанию
+                    reply_markup=reply_markup
+                )
+            except BadRequest as e:
+                if "Message is not modified" not in str(e):
+                    raise
+                
+        edit_func = safe_edit_message
     else:
-        # Если неправильно, переходим к следующей ошибке
-        context.user_data['current_mistake_index'] = context.user_data.get('current_mistake_index', 0) + 1
-    
-    # Формируем ответ
-    if is_correct:
-        feedback = f"✅ <b>Правильно!</b> Ошибка исправлена."
-    else:
-        feedback = f"❌ <b>Неправильно!</b>\n\n"
-        feedback += f"Ваш ответ: {user_answer}\n"
-        feedback += f"Правильный ответ: <b>{correct_answer}</b>"
-    
-    # Показываем кнопки навигации
-    mistake_ids = context.user_data.get('mistake_ids', [])
-    current_index = context.user_data.get('current_mistake_index', 0)
-    
-    kb_buttons = []
-    
-    # Кнопка пояснения если есть
-    if question_data.get('explanation'):
-        kb_buttons.append([
-            InlineKeyboardButton(
-                "💡 Пояснение",
-                callback_data="test_next_show_explanation",
-            )
-        ])
-    
-    # Кнопки навигации
-    if current_index < len(mistake_ids):
-        kb_buttons.append([
-            InlineKeyboardButton(
-                "➡️ Следующая ошибка",
-                callback_data="test_next_continue",
-            )
-        ])
-    else:
-        kb_buttons.append([
-            InlineKeyboardButton(
-                "✅ Завершить",
-                callback_data="test_mistake_finish",
-            )
-        ])
-    
-    kb_buttons.append([
-        InlineKeyboardButton(
-            "🔙 К выбору режима",
-            callback_data="test_next_change_topic",
+        # Вызов из команды /subscribe
+        edit_func = lambda text, reply_markup, parse_mode=ParseMode.HTML: update.message.reply_text(
+            text, 
+            parse_mode=parse_mode, 
+            reply_markup=reply_markup
         )
+    
+    user_id = update.effective_user.id
+    subscription_manager = context.bot_data.get('subscription_manager', SubscriptionManager())
+    
+    # ВАЖНО: Устанавливаем флаг, что пользователь в процессе оплаты
+    context.user_data['in_payment_process'] = True
+    
+    # Проверяем пробный период
+    has_trial = await subscription_manager.has_used_trial(user_id)
+    
+    # ИСПРАВЛЕНИЕ: Используем правильный метод get_user_modules
+    modules_data = await subscription_manager.get_user_modules(user_id)
+    # Извлекаем только коды модулей для обратной совместимости
+    active_modules = [module['module_code'] for module in modules_data] if modules_data else []
+    
+    text = "💎 <b>Модульная система подписок</b>\n\n"
+    
+    if modules_data:  # Используем modules_data для проверки наличия модулей
+        text += "✅ <b>Ваши активные модули:</b>\n"
+        module_names = {
+            'test_part': '📝 Тестовая часть',
+            'task19': '🎯 Задание 19',
+            'task20': '📖 Задание 20',
+            'task24': '💎 Задание 24',
+            'task25': '✍️ Задание 25'
+        }
+        for module in modules_data:
+            name = module_names.get(module['module_code'], module['module_code'])
+            expires = module['expires_at'].strftime('%d.%m.%Y')
+            text += f"• {name} (до {expires})\n"
+        text += "\n"
+    
+    text += "<b>Доступные тарифы:</b>\n\n"
+    
+    # Пробный период
+    if not has_trial:
+        text += "🎁 <b>Пробный период</b> — 1₽\n"
+        text += "   • Полный доступ на 7 дней\n"
+        text += "   • Все модули включены\n\n"
+    
+    # Пакет "Вторая часть"
+    text += "🎯 <b>Пакет «Вторая часть»</b> — 499₽/мес\n"
+    text += "   • Задание 19 (Примеры)\n"
+    text += "   • Задание 20 (Суждения)\n"
+    text += "   • Задание 25 (Развёрнутый ответ)\n"
+    text += "   <i>Экономия 98₽ по сравнению с покупкой по отдельности</i>\n\n"
+    
+    text += "👑 <b>Полный доступ</b> — 999₽/мес\n"
+    text += "   • Все задания второй части (19, 20, 24, 25)\n"
+    text += "   • Приоритетная поддержка\n"
+    text += "   <i>Экономия 346₽ по сравнению с покупкой по отдельности</i>\n\n"
+    
+    text += "📚 Или выберите отдельные модули\n"
+    
+    keyboard = []
+    
+    # Кнопки
+    if not has_trial:
+        keyboard.append([
+            InlineKeyboardButton(
+                "🎁 Пробный период - 1₽ (7 дней)",
+                callback_data="pay_trial"
+            )
+        ])
+    
+    keyboard.extend([
+        [InlineKeyboardButton(
+            "👑 Полный доступ - 999₽/мес",
+            callback_data="pay_package_full"
+        )],
+        [InlineKeyboardButton(
+            "🎯 Пакет «Вторая часть» - 499₽/мес",
+            callback_data="pay_package_second"
+        )],
+        [InlineKeyboardButton(
+            "📚 Выбрать отдельные модули",
+            callback_data="pay_individual_modules"
+        )]
     ])
     
-    kb = InlineKeyboardMarkup(kb_buttons)
+    if active_modules:  # Используем active_modules для проверки
+        keyboard.append([
+            InlineKeyboardButton("📋 Мои подписки", callback_data="my_subscriptions")
+        ])
     
-    # ВАЖНО: Удаляем сообщение "Проверяю..." перед отправкой фидбека
-    try:
-        await checking_msg.delete()
-    except Exception:
-        pass
+    keyboard.append([
+        InlineKeyboardButton("🏠 Главное меню", callback_data="to_main_menu")
+    ])
     
-    # Отправляем фидбек
-    sent_msg = await update.message.reply_text(
-        feedback,
-        reply_markup=kb,
-        parse_mode=ParseMode.HTML
+    await edit_func(
+        text,
+        reply_markup=InlineKeyboardMarkup(keyboard)
     )
     
-    context.user_data['feedback_message_id'] = sent_msg.message_id
-    context.user_data['last_mode'] = 'mistakes'
+    # ИСПРАВЛЕНО: Проверяем источник вызова
+    # Возвращаем CHOOSING_PLAN только если мы в ConversationHandler
+    if update.message:
+        # Вызов через команду /subscribe - мы в ConversationHandler
+        return CHOOSING_PLAN
+    elif update.callback_query:
+        # Проверяем callback_data
+        if update.callback_query.data in ["subscribe", "subscribe_start"]:
+            # Эти callbacks являются entry_points в ConversationHandler
+            return CHOOSING_PLAN
+        else:
+            # Для других callbacks (например, my_subscriptions) не возвращаем состояние
+            return
     
-    return states.CHOOSING_NEXT_ACTION
+    # По умолчанию не возвращаем состояние
+    return
+
 
 @safe_handler()
-@validate_state_transition({states.REVIEWING_MISTAKES, states.CHOOSING_MODE})
-async def mistake_nav(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Навигация по ошибкам."""
+async def handle_plan_selection(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработчик выбора плана подписки с исправлением для триала."""
     query = update.callback_query
+    await query.answer()
     
-    action = query.data
-
-    if action == "test_mistake_finish":
-        kb = keyboards.get_initial_choice_keyboard()
-        await query.edit_message_text(
-            "✅ Работа над ошибками завершена!\n\n"
-            "Выберите режим:",
-            reply_markup=kb,
-            parse_mode=ParseMode.HTML
-        )
-        return states.CHOOSING_MODE
+    plan_id = query.data.replace("pay_", "")
+    logger.info(f"Plan selected: {plan_id}")
     
-    return states.REVIEWING_MISTAKES
-    
-@safe_handler()
-@validate_state_transition({states.CHOOSING_MODE, states.CHOOSING_EXAM_NUMBER})
-async def select_exam_num(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Выбор конкретного номера задания."""
-    query = update.callback_query
-    context.user_data['user_id'] = query.from_user.id
-    
-    try:
-        exam_number = int(query.data.split(":", 2)[2])
-    except (ValueError, IndexError):
-        return states.CHOOSING_EXAM_NUMBER
-    
-    # Сохраняем выбранный номер
-    context.user_data['current_exam_number'] = exam_number
-    
-    # Собираем вопросы с этим номером
-    questions_with_num = safe_cache_get_by_exam_num(exam_number)
-    
-    if not questions_with_num:
-        return states.CHOOSING_EXAM_NUMBER
-    
-    await query.edit_message_text(f"⏳ Загружаю вопрос задания №{exam_number}...")
-    
-    # Выбираем вопрос
-    question_data = await utils.choose_question(query.from_user.id, questions_with_num)
-    if question_data:
-        await send_question(query.message, context, question_data, "exam_num")
-        # Добавить эти строки:
-        from core.state_validator import state_validator
-        state_validator.set_state(query.from_user.id, states.ANSWERING)
-        return states.ANSWERING
-    else:
-        kb = keyboards.get_initial_choice_keyboard()
-        await query.message.edit_text(
-            f"Вы ответили на все вопросы задания №{exam_number}! 🎉\n\nВыберите режим:",
-            reply_markup=kb
-        )
-        return states.CHOOSING_MODE
+    if plan_id == "trial":
+        # Для триала устанавливаем все параметры сразу
+        plan_id = "trial_7days"
+        context.user_data['is_trial'] = True
+        context.user_data['selected_plan'] = plan_id
+        context.user_data['duration_months'] = 1
+        context.user_data['total_price'] = 1  # Фиксированная цена
+        logger.info(f"TRIAL PRICE DEBUG: Set total_price = 1 for user {update.effective_user.id}")
+        context.user_data['base_price'] = 1
+        context.user_data['plan_name'] = "🎁 Пробный период 7 дней"
         
+        logger.info("Trial selected: price set to 1₽")
+        
+        # Сразу запрашиваем email для триала
+        return await request_email_for_trial(update, context)
+        
+    elif plan_id == "package_full":
+        plan_id = "package_full"
+        context.user_data['is_trial'] = False
+    elif plan_id == "package_second":
+        plan_id = "package_second"
+        context.user_data['is_trial'] = False
+    elif plan_id == "individual_modules":
+        return await show_individual_modules(update, context)
+    
+    # Сохраняем выбранный план
+    context.user_data['selected_plan'] = plan_id
+    
+    # Получаем информацию о плане
+    from payment.config import MODULE_PLANS, SUBSCRIPTION_PLANS
+    plan = MODULE_PLANS.get(plan_id) or SUBSCRIPTION_PLANS.get(plan_id)
+    
+    if not plan:
+        logger.error(f"Plan {plan_id} not found in configs!")
+        await query.edit_message_text("❌ Ошибка: выбранный план не найден")
+        return ConversationHandler.END
+    
+    # Сохраняем информацию о плане
+    context.user_data['plan_info'] = plan
+    context.user_data['plan_name'] = plan['name']
+    context.user_data['base_price'] = plan['price_rub']
+    
+    logger.info(f"Plan info loaded: {plan['name']}, base price: {plan['price_rub']}₽")
+    
+    # Показываем варианты длительности
+    return await show_duration_options(update, context)
+
+
+# Также исправим request_email_for_trial:
 @safe_handler()
-@validate_state_transition({states.CHOOSING_MODE})
-async def select_mode_random_in_block(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Случайный вопрос из выбранного блока."""
+async def request_email_for_trial(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Запрашивает email для пробной подписки."""
     query = update.callback_query
-    context.user_data['user_id'] = query.from_user.id
-    selected_block = context.user_data.get('selected_block')
-    if not selected_block or selected_block not in QUESTIONS_DATA:
-        await query.answer("❌ Блок не выбран", show_alert=True)
-        return states.CHOOSING_BLOCK
     
-    questions_in_block = safe_cache_get_by_block(selected_block)
+    # ВАЖНО: Убеждаемся, что цена установлена правильно
+    context.user_data['total_price'] = 1
+    logger.info(f"TRIAL PRICE DEBUG: Set total_price = 1 for user {update.effective_user.id}")
+    context.user_data['duration_months'] = 1
+    context.user_data['plan_name'] = "🎁 Пробный период 7 дней"
     
-    if not questions_in_block:
-        await query.answer("❌ В блоке нет вопросов", show_alert=True)
-        kb = keyboards.get_blocks_keyboard(AVAILABLE_BLOCKS)
+    text = """🎁 <b>Оформление пробного периода</b>
+
+Вы получите:
+✅ Полный доступ ко всем материалам
+✅ 7 дней бесплатного использования
+✅ Возможность оценить все функции
+
+💰 Стоимость: <b>1 ₽</b>
+
+📧 Введите ваш email для отправки чека:"""
+    
+    keyboard = [[InlineKeyboardButton("❌ Отмена", callback_data="cancel_payment")]]
+    
+    try:
         await query.edit_message_text(
-            f"❌ В блоке '{selected_block}' нет доступных вопросов.\n\nВыберите другой блок:",
-            reply_markup=kb,
-            parse_mode=ParseMode.HTML
+            text,
+            parse_mode=ParseMode.HTML,
+            reply_markup=InlineKeyboardMarkup(keyboard)
         )
-        return states.CHOOSING_BLOCK
+    except BadRequest as e:
+        if "Message is not modified" in str(e):
+            logger.debug("Message already showing trial email request")
+            await query.answer("Введите ваш email в чат", show_alert=False)
+        else:
+            logger.error(f"Error in request_email_for_trial: {e}")
+            await query.message.reply_text(
+                text,
+                parse_mode=ParseMode.HTML,
+                reply_markup=InlineKeyboardMarkup(keyboard)
+            )
     
-    await query.edit_message_text("⏳ Загружаю случайный вопрос из блока...")
-    
-    question_data = await utils.choose_question(query.from_user.id, questions_in_block)
-    if question_data:
-        await send_question(query.message, context, question_data, "block")
-        # Устанавливаем состояние
-        from core.state_validator import state_validator
-        state_validator.set_state(query.from_user.id, states.ANSWERING)
-        return states.ANSWERING
-    else:
-        kb = keyboards.get_blocks_keyboard(AVAILABLE_BLOCKS)
-        await query.message.edit_text(
-            f"Вы ответили на все вопросы в блоке '{selected_block}'! 🎉\n\nВыберите другой блок:",
-            reply_markup=kb
-        )
-        return states.CHOOSING_BLOCK
+    return ENTERING_EMAIL
 
 @safe_handler()
-@validate_state_transition({states.CHOOSING_MODE})
-async def select_mode_topic_in_block(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Выбор темы в блоке."""
+async def request_email_for_trial(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Запрашивает email для пробной подписки."""
     query = update.callback_query
-    context.user_data['user_id'] = query.from_user.id
-    selected_block = context.user_data.get('selected_block')
-    if not selected_block or selected_block not in QUESTIONS_DATA:
-        return states.CHOOSING_BLOCK
     
-    topics = list(QUESTIONS_DATA[selected_block].keys())
-    if not topics:
-        return states.CHOOSING_MODE
-    
-    kb = keyboards.get_topics_keyboard(selected_block, topics)
-    await query.edit_message_text(
-        "Выберите тему:",
-        reply_markup=kb
-    )
-    return states.CHOOSING_TOPIC
+    text = """🎁 <b>Оформление пробного периода</b>
 
-@safe_handler()
-@validate_state_transition({states.CHOOSING_TOPIC})
-async def select_topic(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Выбор конкретной темы."""
-    query = update.callback_query
-    context.user_data['user_id'] = query.from_user.id
-    selected_topic = query.data.replace("topic:", "")
-    selected_block = context.user_data.get('selected_block')
+Вы получите:
+✅ Полный доступ ко всем материалам
+✅ 7 дней бесплатного использования
+✅ Возможность оценить все функции
+
+💰 Стоимость: <b>1 ₽</b>
+
+📧 Введите ваш email для отправки чека:"""
     
-    if not selected_block or not selected_topic:
-        return states.CHOOSING_TOPIC
+    keyboard = [[InlineKeyboardButton("❌ Отмена", callback_data="cancel_payment")]]
     
-    questions_in_topic = safe_cache_get_by_topic(selected_topic)
-    if not questions_in_topic:
-        return states.CHOOSING_TOPIC
-    
-    context.user_data['selected_topic'] = selected_topic
-    
-    await query.edit_message_text("⏳ Загружаю вопрос по теме...")
-    
-    question_data = await utils.choose_question(query.from_user.id, questions_in_topic)
-    if question_data:
-        await send_question(query.message, context, question_data, "topic")
-        # Добавить эти строки:
-        from core.state_validator import state_validator
-        state_validator.set_state(query.from_user.id, states.ANSWERING)
-        return states.ANSWERING
-    else:
-        topics = list(QUESTIONS_DATA[selected_block].keys())
-        kb = keyboards.get_topics_keyboard(selected_block, topics)
-        await query.message.edit_text(
-            f"Вы ответили на все вопросы по теме! 🎉\n\nВыберите другую тему:",
-            reply_markup=kb
+    try:
+        await query.edit_message_text(
+            text,
+            parse_mode=ParseMode.HTML,
+            reply_markup=InlineKeyboardMarkup(keyboard)
         )
-        return states.CHOOSING_TOPIC
+    except BadRequest as e:
+        if "Message is not modified" in str(e):
+            logger.debug("Message already showing trial email request")
+            await query.answer("Введите ваш email в чат", show_alert=False)
+        else:
+            logger.error(f"Error in request_email_for_trial: {e}")
+            # Отправляем новое сообщение
+            await query.message.reply_text(
+                text,
+                parse_mode=ParseMode.HTML,
+                reply_markup=InlineKeyboardMarkup(keyboard)
+            )
+    
+    return ENTERING_EMAIL
 
 @safe_handler()
-@validate_state_transition({states.CHOOSING_MODE})
-async def select_mistakes(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Вход в режим работы над ошибками."""
-    query = update.callback_query
-    context.user_data['user_id'] = query.from_user.id
-    # Устанавливаем активный модуль
-    context.user_data['active_module'] = 'test_part'
-    
-    user_id = query.from_user.id
-    mistake_ids = await db.get_mistake_ids(user_id)
-    
-    if not mistake_ids:
-        return states.CHOOSING_MODE
-    
-    context.user_data['mistake_ids'] = list(mistake_ids)
-    context.user_data['current_mistake_index'] = 0
-    context.user_data['user_id'] = user_id  # Сохраняем user_id для send_mistake_question
-    
-    await query.edit_message_text(
-        f"🔧 <b>Работа над ошибками</b>\n\n"
-        f"Найдено ошибок: {len(mistake_ids)}\n"
-        f"Начинаем работу...",
-        parse_mode=ParseMode.HTML
-    )
-    
-    # Отправляем первый вопрос
-    await send_mistake_question(query.message, context)
-    return states.REVIEWING_MISTAKES
-    
-async def cmd_debug_streaks(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Команда /debug_streaks - показывает детальную информацию о стриках."""
+async def cmd_debug_subscription(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Команда для отладки подписки пользователя."""
     user_id = update.effective_user.id
+    subscription_manager = context.bot_data.get('subscription_manager', SubscriptionManager())
     
-    # Получаем стрики
-    streaks = await db.get_user_streaks(user_id)
+    text = f"🔍 <b>Отладочная информация для пользователя {user_id}</b>\n\n"
+    text += f"SUBSCRIPTION_MODE: {SUBSCRIPTION_MODE}\n\n"
     
-    # Получаем прямо из БД для проверки
+    # Проверяем общую подписку
+    subscription = await subscription_manager.check_active_subscription(user_id)
+    if subscription:
+        text += "✅ <b>Активная подписка найдена:</b>\n"
+        text += f"План: {subscription.get('plan_id')}\n"
+        text += f"Истекает: {subscription.get('expires_at')}\n"
+        text += f"Активные модули: {subscription.get('active_modules', [])}\n\n"
+    else:
+        text += "❌ <b>Активная подписка не найдена</b>\n\n"
+    
+    # Проверяем модули
+    if SUBSCRIPTION_MODE == 'modular':
+        modules = await subscription_manager.get_user_modules(user_id)
+        if modules:
+            text += "📦 <b>Активные модули:</b>\n"
+            for module in modules:
+                text += f"• {module['module_code']} до {module['expires_at']}\n"
+        else:
+            text += "📦 <b>Нет активных модулей</b>\n"
+        
+        text += "\n<b>Проверка доступа к модулям:</b>\n"
+        for module_code in ['test_part', 'task19', 'task20', 'task24', 'task25']:
+            has_access = await subscription_manager.check_module_access(user_id, module_code)
+            text += f"• {module_code}: {'✅' if has_access else '❌'}\n"
+    
+    # Проверяем последние платежи
     try:
         async with aiosqlite.connect(DATABASE_FILE) as conn:
             cursor = await conn.execute(
-                """SELECT current_daily_streak, max_daily_streak, 
-                          current_correct_streak, max_correct_streak,
-                          last_activity_date
-                   FROM users WHERE user_id = ?""",
-                (user_id,)
+                """
+                SELECT order_id, plan_id, status, created_at 
+                FROM payments 
+                WHERE user_id = ? 
+                ORDER BY created_at DESC 
+                LIMIT 5
+                """,
+                (user_id)
             )
-            row = await cursor.fetchone()
+            payments = await cursor.fetchall()
             
-            if row:
-                text = f"🔍 <b>Отладка стриков для user {user_id}:</b>\n\n"
-                text += f"<b>Из функции get_user_streaks:</b>\n"
-                text += f"  current_daily: {streaks.get('current_daily', 'None')}\n"
-                text += f"  max_daily: {streaks.get('max_daily', 'None')}\n"
-                text += f"  current_correct: {streaks.get('current_correct', 'None')}\n"
-                text += f"  max_correct: {streaks.get('max_correct', 'None')}\n\n"
-                
-                text += f"<b>Прямо из БД:</b>\n"
-                text += f"  current_daily_streak: {row[0]}\n"
-                text += f"  max_daily_streak: {row[1]}\n"
-                text += f"  current_correct_streak: {row[2]}\n"
-                text += f"  max_correct_streak: {row[3]}\n"
-                text += f"  last_activity_date: {row[4]}\n"
-            else:
-                text = f"❌ Пользователь {user_id} не найден в БД"
-                
+            if payments:
+                text += "\n💳 <b>Последние платежи:</b>\n"
+                for payment in payments:
+                    text += f"• {payment[1]} - {payment[2]} ({payment[3]})\n"
     except Exception as e:
-        text = f"❌ Ошибка при чтении БД: {e}"
+        logger.error(f"Error getting payments: {e}")
     
     await update.message.reply_text(text, parse_mode=ParseMode.HTML)
 
 @safe_handler()
-@validate_state_transition({states.CHOOSING_MODE})
-async def test_progress(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Показывает статистику и прогресс пользователя."""
+async def show_individual_modules(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Показывает список отдельных модулей для выбора."""
     query = update.callback_query
     
-    # Используем существующую функцию cmd_score
-    await cmd_score(query, context)
+    # Сразу отвечаем на callback чтобы убрать "часики"
+    if query:
+        await query.answer()
     
-    return states.CHOOSING_MODE
-
-@safe_handler()
-@validate_state_transition({states.CHOOSING_MODE})
-async def test_detailed_analysis(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Показывает расширенную детальную статистику."""
-    query = update.callback_query
-    user_id = query.from_user.id
+    # Инициализируем список выбранных модулей если его нет
+    if 'selected_modules' not in context.user_data:
+        context.user_data['selected_modules'] = []
     
-    # Получаем все данные
-    stats = await db.get_user_stats(user_id)
-    mistakes = await utils.get_user_mistakes(user_id)
+    selected = context.user_data['selected_modules']
     
-    if not stats:
-        await query.answer("У вас пока нет статистики", show_alert=True)
-        return states.CHOOSING_MODE
+    text = "📚 <b>Выберите модули для подписки</b>\n\n"
+    text += "Нажмите на модуль чтобы добавить/убрать его из корзины:\n\n"
     
-    # Создаем детальный анализ по каждой теме
-    text = "📊 <b>Детальный анализ по темам</b>\n\n"
+    keyboard = []
+    total_price = 0
     
-    # Сортируем темы по проценту успешности
-    topics_analysis = []
-    for topic, correct, total in stats:
-        if total > 0:
-            percentage = (correct / total * 100)
-            topic_name = TOPIC_NAMES.get(topic, topic)
-            topics_analysis.append((topic_name, correct, total, percentage))
+    # Группируем модули по типам
+    individual_modules = {
+        k: v for k, v in MODULE_PLANS.items() 
+        if v.get('type') == 'individual'
+    }
     
-    topics_analysis.sort(key=lambda x: x[3], reverse=True)
-    
-    # Группируем по уровню успешности
-    excellent = [t for t in topics_analysis if t[3] >= 90]
-    good = [t for t in topics_analysis if 70 <= t[3] < 90]
-    average = [t for t in topics_analysis if 50 <= t[3] < 70]
-    weak = [t for t in topics_analysis if t[3] < 50]
-    
-    # Отображаем по группам
-    if excellent:
-        text += "🌟 <b>Отличное владение:</b>\n"
-        for topic_name, correct, total, percentage in excellent:
-            text += f"• {topic_name}: {correct}/{total} ({percentage:.0f}%)\n"
-        text += "\n"
-    
-    if good:
-        text += "✅ <b>Хороший уровень:</b>\n"
-        for topic_name, correct, total, percentage in good:
-            text += f"• {topic_name}: {correct}/{total} ({percentage:.0f}%)\n"
-        text += "\n"
-    
-    if average:
-        text += "📝 <b>Средний уровень:</b>\n"
-        for topic_name, correct, total, percentage in average:
-            text += f"• {topic_name}: {correct}/{total} ({percentage:.0f}%)\n"
-        text += "\n"
-    
-    if weak:
-        text += "❗ <b>Требуют особого внимания:</b>\n"
-        for topic_name, correct, total, percentage in weak:
-            text += f"• {topic_name}: {correct}/{total} ({percentage:.0f}%)\n"
-        text += "\n"
-    
-    # Анализ ошибок
-    if mistakes:
-        mistakes_by_topic = {}
-        for mistake in mistakes:
-            topic = mistake.get('topic', 'Без темы')
-            if topic not in mistakes_by_topic:
-                mistakes_by_topic[topic] = []
-            mistakes_by_topic[topic].append(mistake)
+    # ИСПРАВЛЕНИЕ: Проверяем, что модули существуют
+    if not individual_modules:
+        logger.error("No individual modules found in MODULE_PLANS")
+        logger.error(f"MODULE_PLANS keys: {list(MODULE_PLANS.keys())}")
+        error_text = "❌ Модули временно недоступны. Обратитесь к администратору."
+        error_keyboard = [[
+            InlineKeyboardButton("⬅️ Назад", callback_data="back_to_modules")
+        ]]
         
-        text += "📌 <b>Анализ ошибок:</b>\n"
-        for topic, topic_mistakes in sorted(mistakes_by_topic.items(), 
-                                          key=lambda x: len(x[1]), reverse=True)[:5]:
-            text += f"• {topic}: {len(topic_mistakes)} ошибок\n"
+        if query:
+            try:
+                await query.edit_message_text(
+                    error_text,
+                    reply_markup=InlineKeyboardMarkup(error_keyboard)
+                )
+            except BadRequest as e:
+                if "Message is not modified" not in str(e):
+                    logger.error(f"Error editing message: {e}")
+                    raise
+        else:
+            await update.message.reply_text(
+                error_text,
+                reply_markup=InlineKeyboardMarkup(error_keyboard)
+            )
+        return CHOOSING_MODULES
     
-    # Итоговые рекомендации
-    text += "\n💡 <b>План действий:</b>\n"
-    if weak:
-        text += f"1. Изучите теорию по темам: {', '.join([t[0] for t in weak[:3]])}\n"
-    if len(mistakes) > 5:
-        text += "2. Пройдите «Работу над ошибками»\n"
-    text += "3. Практикуйтесь ежедневно для поддержания формы\n"
+    # Добавляем модули в клавиатуру
+    for module_id, module in individual_modules.items():
+        icon = "✅" if module_id in selected else "⬜"
+        button_text = f"{icon} {module['name']} - {module['price_rub']}₽"
+        
+        keyboard.append([
+            InlineKeyboardButton(button_text, callback_data=f"toggle_{module_id}")
+        ])
+        
+        # Добавляем кнопку информации рядом
+        keyboard[-1].append(
+            InlineKeyboardButton("ℹ️", callback_data=f"info_{module_id}")
+        )
+        
+        if module_id in selected:
+            total_price += module['price_rub']
+        if module.get('price_rub', 0) == 0:
+            continue
+    # Показываем итоговую цену если есть выбранные модули
+    if selected:
+        text += f"\n💰 <b>Итого: {total_price}₽/месяц</b>\n"
+        text += f"📋 Выбрано модулей: {len(selected)}\n"
+        
+        # Кнопка продолжить
+        keyboard.append([
+            InlineKeyboardButton(
+                f"✅ Продолжить с выбранными ({len(selected)})",
+                callback_data="proceed_with_modules"
+            )
+        ])
+    else:
+        text += "\n💡 <i>Выберите хотя бы один модуль для продолжения</i>"
     
-    kb = InlineKeyboardMarkup([
-        [InlineKeyboardButton("📥 Экспорт в CSV", callback_data="test_export_csv")],
-        [InlineKeyboardButton("🔧 Работа над ошибками", callback_data="test_work_mistakes")],
-        [InlineKeyboardButton("⬅️ Назад", callback_data="test_part_progress")]
+    # Кнопка назад
+    keyboard.append([
+        InlineKeyboardButton("⬅️ Назад к планам", callback_data="back_to_modules")
     ])
     
-    await query.edit_message_text(
-        text,
-        reply_markup=kb,
-        parse_mode=ParseMode.HTML
-    )
-    return states.CHOOSING_MODE
+    # Редактируем сообщение или отправляем новое
+    reply_markup = InlineKeyboardMarkup(keyboard)
     
-@safe_handler()
-@validate_state_transition({states.CHOOSING_MODE})
-async def detailed_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Показывает простую наглядную статистику пользователя."""
-    # Устанавливаем правильное состояние
-    context.user_data['conversation_state'] = states.CHOOSING_MODE
-    query = update.callback_query
-    user_id = query.from_user.id
-    
-    # Получаем статистику из БД
-    stats = await db.get_user_stats(user_id)
-    mistakes = await db.get_mistake_ids(user_id)
-    streaks = await db.get_user_streaks(user_id)
-    
-    if not stats:
-        # Для нового пользователя
-        text = MessageFormatter.format_welcome_message(
-            "тестовую часть ЕГЭ",
-            is_new_user=True
-        )
-        kb = keyboards.get_initial_choice_keyboard()
-    else:
-        # Подсчет общей статистики
-        total_correct = sum(correct for _, correct, _ in stats)
-        total_answered = sum(total for _, _, total in stats)
-        overall_percentage = (total_correct / total_answered * 100) if total_answered > 0 else 0
-        
-        # Находим проблемные темы (меньше 60% правильных)
-        weak_topics = []
-        for topic, correct, total in stats:
-            if total > 0 and (correct / total) < 0.6:
-                topic_name = TOPIC_NAMES.get(topic, topic)
-                percentage = (correct / total * 100)
-                weak_topics.append((topic_name, percentage))
-        
-        # Сортируем проблемные темы по проценту
-        weak_topics.sort(key=lambda x: x[1])
-        
-        # Формируем текст статистики
-        text = f"📊 <b>Ваш прогресс</b>\n\n"
-        
-        # Общий прогресс-бар
-        progress_bar = UniversalUIComponents.create_progress_bar(
-            total_correct, total_answered, width=15, show_percentage=True
-        )
-        text += f"<b>Общий прогресс:</b> {progress_bar}\n"
-        text += f"✅ Правильно: {total_correct} из {total_answered}\n\n"
-        
-        # Стрики
-        if streaks:
-            text += f"<b>🔥 Серии:</b>\n"
-            if streaks.get('current_daily', 0) > 0:
-                text += f"• Дней подряд: {streaks['current_daily']} (рекорд: {streaks.get('max_daily', 0)})\n"
-            if streaks.get('current_correct', 0) > 0:
-                text += f"• Правильных подряд: {streaks['current_correct']} (рекорд: {streaks.get('max_correct', 0)})\n"
-            text += "\n"
-        
-        # Проблемные темы (максимум 5)
-        if weak_topics:
-            text += "<b>📍 Требуют внимания:</b>\n"
-            for topic_name, percentage in weak_topics[:5]:
-                color = UniversalUIComponents.get_color_for_score(percentage, 100)
-                text += f"{color} {topic_name}: {percentage:.0f}%\n"
-            text += "\n"
-        
-        # Количество ошибок
-        if len(mistakes) > 0:
-            text += f"<b>❗ Ошибок для проработки:</b> {len(mistakes)}\n\n"
-        
-        # Рекомендации
-        text += "💡 <b>Рекомендации:</b>\n"
-        if len(mistakes) > 10:
-            text += "• Используйте режим «Работа над ошибками»\n"
-        if weak_topics:
-            text += "• Изучите теорию по проблемным темам\n"
-        if overall_percentage > 80:
-            text += "• Отличный результат! Попробуйте более сложные темы\n"
-        elif overall_percentage < 60:
-            text += "• Уделите больше времени теории перед практикой\n"
-        
-        subscription_manager = context.bot_data.get('subscription_manager')
-        if subscription_manager:
-            user_id = query.from_user.id
-            has_subscription = await subscription_manager.check_active_subscription(user_id)
-            
-            if not has_subscription and total_answered >= 20:
-                # Добавляем промо в текст статистики
-                text += "\n\n<b>💎 Откройте больше возможностей!</b>\n"
-                text += "🤖 ИИ-проверка заданий 19-20 за секунды\n"
-                text += "📊 Персональные рекомендации по слабым местам\n" 
-                text += "📚 Все задания второй части с разборами\n"
-                text += "\n<b>Попробуйте 7 дней всего за 1₽!</b>"
-                
-                # Добавляем кнопку в клавиатуру
-                kb = InlineKeyboardMarkup([
-                    [InlineKeyboardButton("💎 Активировать пробный период", callback_data="pay_trial")],
-                    *kb.inline_keyboard  # Существующие кнопки
-                ])
-    
-    await query.edit_message_text(
-        text,
-        reply_markup=kb,
-        parse_mode=ParseMode.HTML
-    )
-    return states.CHOOSING_MODE
-
-@safe_handler()
-@validate_state_transition({states.CHOOSING_MODE})
-async def work_mistakes(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Запускает режим работы над ошибками."""
-    query = update.callback_query
-    user_id = query.from_user.id
-    
-    # Устанавливаем активный модуль
-    context.user_data['active_module'] = 'test_part'
-    
-    # Получаем список ID вопросов с ошибками
-    mistake_ids = await db.get_mistake_ids(user_id)
-    
-    if not mistake_ids:
-        text = "🎉 <b>Отлично!</b>\n\nУ вас нет ошибок для проработки!"
-        kb = InlineKeyboardMarkup([[
-            InlineKeyboardButton("⬅️ В меню", callback_data="test_back_to_mode")
-        ]])
-        await query.edit_message_text(text, reply_markup=kb, parse_mode=ParseMode.HTML)
-        return states.CHOOSING_MODE
-    
-    # Сохраняем режим и список ошибок
-    context.user_data['mode'] = 'mistakes'
-    context.user_data['mistake_queue'] = mistake_ids.copy()
-    context.user_data['mistakes_total'] = len(mistake_ids)
-    context.user_data['mistakes_completed'] = 0
-    context.user_data['mistake_ids'] = list(mistake_ids)
-    context.user_data['current_mistake_index'] = 0
-    context.user_data['user_id'] = user_id
-    
-    text = f"""🔄 <b>Работа над ошибками</b>
-
-У вас {len(mistake_ids)} вопросов с ошибками.
-
-Сейчас вы будете проходить эти вопросы заново. 
-При правильном ответе вопрос будет удален из списка ошибок.
-
-Готовы начать?"""
-    
-    # ДОБАВИТЬ: Если много ошибок, предлагаем премиум
-    if len(mistake_ids) > 10:
-        subscription_manager = context.bot_data.get('subscription_manager')
-        if subscription_manager:
-            has_subscription = await subscription_manager.check_active_subscription(user_id)
-            
-            if not has_subscription:
-                text = f"📚 <b>Работа над ошибками</b>\n\n"
-                text += f"У вас {len(mistake_ids)} ошибок для проработки.\n\n"
-                text += "💡 <b>Знаете ли вы?</b>\n"
-                text += "С премиум-подпиской вы получите:\n"
-                text += "• 🤖 ИИ-анализ ваших типичных ошибок\n"
-                text += "• 📊 Персональный план устранения пробелов\n"
-                text += "• ✍️ Тренажёр заданий второй части\n\n"
-                text += "<b>Попробуйте 7 дней за 1₽!</b>\n\n"
-                text += "Или продолжите работу над ошибками:"
-                
-                kb = InlineKeyboardMarkup([
-                    [InlineKeyboardButton("💎 Активировать премиум", callback_data="pay_trial")],
-                    [InlineKeyboardButton("📝 Начать работу над ошибками", callback_data="start_mistakes_work")],
-                    [InlineKeyboardButton("⬅️ Назад", callback_data="to_test_part_menu")]
-                ])
-                
-                await query.edit_message_text(text, reply_markup=kb, parse_mode=ParseMode.HTML)
-                return states.CHOOSING_MODE
-
-@safe_handler()
-@validate_state_transition({states.CHOOSING_MODE})
-async def test_work_mistakes(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Запускает работу над ошибками из статистики."""
-    return await work_mistakes(update, context)
-
-@safe_handler()
-@validate_state_transition({states.CHOOSING_MODE})
-async def test_start_mistakes(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Начинает работу над ошибками."""
-    query = update.callback_query
-    
-    # Проверяем, что данные уже подготовлены в work_mistakes
-    if 'mistake_ids' not in context.user_data or not context.user_data['mistake_ids']:
-        # Если данных нет, возвращаемся в меню
-        kb = InlineKeyboardMarkup([[
-            InlineKeyboardButton("⬅️ В меню", callback_data="test_back_to_mode")
-        ]])
-        await query.edit_message_text(
-            "Ошибка: данные не найдены. Попробуйте еще раз.",
-            reply_markup=kb
-        )
-        return states.CHOOSING_MODE
-    
-    # Отправляем первый вопрос из очереди ошибок
-    await query.edit_message_text("⏳ Загружаю первый вопрос...")
-    await send_mistake_question(query.message, context)
-    
-    return states.REVIEWING_MISTAKES
-
-@safe_handler()
-@validate_state_transition({states.CHOOSING_MODE})
-async def test_export_csv(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Экспорт статистики в CSV."""
-    query = update.callback_query
-    user_id = query.from_user.id
-    
-    await query.answer("Подготавливаю файл...")
-    
-    try:
-        # Получаем данные
-        mistakes = await utils.get_user_mistakes(user_id)
-        stats = await db.get_user_stats(user_id)
-        
-        if not stats:
-            await query.answer("У вас пока нет статистики для экспорта", show_alert=True)
-            return states.CHOOSING_MODE
-        
-        # Создаем CSV в памяти с правильной кодировкой для Excel
-        output = io.StringIO()
-        writer = csv.writer(output, delimiter=';')  # Используем ; для лучшей совместимости с Excel
-        
-        # Заголовок документа
-        writer.writerow(['ОТЧЕТ ПО ТЕСТОВОЙ ЧАСТИ ЕГЭ ПО ОБЩЕСТВОЗНАНИЮ'])
-        writer.writerow([f'Дата формирования: {datetime.now().strftime("%d.%m.%Y %H:%M")}'])
-        writer.writerow([f'ID пользователя: {user_id}'])
-        writer.writerow([])  # Пустая строка
-        
-        # Общая статистика - заголовок раздела
-        writer.writerow(['=' * 20 + ' ОБЩАЯ СТАТИСТИКА ' + '=' * 20])
-        writer.writerow([])
-        
-        # Заголовки таблицы статистики
-        writer.writerow(['Тема', 'Правильных ответов', 'Всего вопросов', 'Процент правильных', 'Оценка'])
-        
-        total_correct = 0
-        total_answered = 0
-        
-        # Данные по темам с оценкой
-        for topic, correct, answered in stats:
-            percentage = (correct / answered * 100) if answered > 0 else 0
-            topic_name = TOPIC_NAMES.get(topic, topic)
-            
-            # Определяем оценку
-            if percentage >= 90:
-                grade = 'Отлично'
-            elif percentage >= 70:
-                grade = 'Хорошо'
-            elif percentage >= 50:
-                grade = 'Удовлетворительно'
+    if query:
+        try:
+            await query.edit_message_text(
+                text,
+                reply_markup=reply_markup,
+                parse_mode=ParseMode.HTML
+            )
+        except BadRequest as e:
+            # Если сообщение не изменилось, просто игнорируем ошибку
+            if "Message is not modified" in str(e):
+                logger.debug("Message content unchanged in show_individual_modules")
+                # Можно отправить alert пользователю
+                await query.answer("Список модулей уже отображается", show_alert=False)
             else:
-                grade = 'Требует внимания'
-            
-            writer.writerow([topic_name, correct, answered, f'{percentage:.1f}%', grade])
-            total_correct += correct
-            total_answered += answered
-        
-        # Итоговая строка
-        writer.writerow([])
-        total_percentage = (total_correct/total_answered*100 if total_answered > 0 else 0)
-        writer.writerow(['ИТОГО:', total_correct, total_answered, f'{total_percentage:.1f}%', ''])
-        writer.writerow([])
-        
-        # Детальный анализ ошибок
-        if mistakes:
-            writer.writerow(['=' * 20 + ' АНАЛИЗ ОШИБОК ' + '=' * 20])
-            writer.writerow([])
-            writer.writerow(['№', 'ID вопроса', 'Тема', 'Тип ошибки', 'Номер в ЕГЭ'])
-            
-            for idx, mistake in enumerate(mistakes, 1):
-                writer.writerow([
-                    idx,
-                    mistake.get('question_id', 'N/A'),
-                    mistake.get('topic', 'Без темы'),
-                    mistake.get('error_type', 'Неверный ответ'),
-                    mistake.get('exam_number', 'N/A')
-                ])
-        
-        # Рекомендации
-        writer.writerow([])
-        writer.writerow(['=' * 20 + ' РЕКОМЕНДАЦИИ ' + '=' * 20])
-        writer.writerow([])
-        
-        # Анализируем слабые темы
-        weak_topics = []
-        for topic, correct, answered in stats:
-            if answered > 0 and (correct / answered) < 0.6:
-                topic_name = TOPIC_NAMES.get(topic, topic)
-                percentage = (correct / answered * 100)
-                weak_topics.append((topic_name, percentage))
-        
-        if weak_topics:
-            writer.writerow(['Темы, требующие особого внимания:'])
-            for topic_name, percentage in sorted(weak_topics, key=lambda x: x[1]):
-                writer.writerow([f'- {topic_name} ({percentage:.0f}% правильных ответов)'])
-        
-        if len(mistakes) > 10:
-            writer.writerow(['- Рекомендуется использовать режим "Работа над ошибками"'])
-        
-        if total_percentage > 80:
-            writer.writerow(['- Отличный результат! Попробуйте более сложные задания'])
-        elif total_percentage < 60:
-            writer.writerow(['- Уделите больше времени изучению теории'])
-        
-        # Готовим файл для отправки
-        output.seek(0)
-        # Используем UTF-8 BOM для корректного отображения в Excel
-        bio = io.BytesIO()
-        bio.write('\ufeff'.encode('utf-8'))  # BOM для Excel
-        bio.write(output.getvalue().encode('utf-8'))
-        bio.seek(0)
-        bio.name = f'test_statistics_{user_id}_{datetime.now().strftime("%Y%m%d_%H%M%S")}.csv'
-        
-        # Отправляем файл
-        await query.message.reply_document(
-            document=bio,
-            caption="📊 <b>Ваша статистика экспортирована!</b>\n\n"
-                    "💡 Совет: Откройте файл в Excel, выделите все ячейки (Ctrl+A) "
-                    "и дважды кликните на границе между заголовками колонок для автоподбора ширины.",
-            filename=bio.name,
+                # Если другая ошибка - логируем и пробуем отправить новое сообщение
+                logger.error(f"Error editing message in show_individual_modules: {e}")
+                try:
+                    await query.message.reply_text(
+                        text,
+                        reply_markup=reply_markup,
+                        parse_mode=ParseMode.HTML
+                    )
+                except Exception as send_error:
+                    logger.error(f"Failed to send new message: {send_error}")
+                    raise
+    else:
+        # Если нет query (вызов через команду), отправляем новое сообщение
+        await update.message.reply_text(
+            text,
+            reply_markup=reply_markup,
             parse_mode=ParseMode.HTML
         )
-        
-        # Показываем сообщение об успехе
-        kb = InlineKeyboardMarkup([[
-            InlineKeyboardButton("⬅️ Назад", callback_data="test_part_progress")
-        ]])
-        
-        await query.message.reply_text(
-            "✅ Отчет успешно создан и отправлен!",
-            reply_markup=kb
-        )
-        
-    except Exception as e:
-        logger.error(f"Ошибка экспорта для пользователя {user_id}: {e}")
-        await query.answer("Произошла ошибка при экспорте", show_alert=True)
     
-    return states.CHOOSING_MODE
+    return CHOOSING_MODULES
 
 @safe_handler()
-@validate_state_transition({states.CHOOSING_MODE})
-async def work_mistakes(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Запускает режим работы над ошибками."""
+async def toggle_module_selection(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Переключает выбор модуля (добавляет/удаляет из корзины)."""
     query = update.callback_query
-    user_id = query.from_user.id
+    await query.answer()
     
-    # Получаем список ID вопросов с ошибками
-    mistake_ids = await db.get_mistake_ids(user_id)
+    module_id = query.data.replace("toggle_", "")
     
-    if not mistake_ids:
-        text = "🎉 <b>Отлично!</b>\n\nУ вас нет ошибок для проработки!"
-        kb = InlineKeyboardMarkup([[
-            InlineKeyboardButton("⬅️ В меню", callback_data="test_back_to_mode")
-        ]])
-        await query.edit_message_text(text, reply_markup=kb, parse_mode=ParseMode.HTML)
-        return states.CHOOSING_MODE
+    # Инициализируем список если его нет
+    if 'selected_modules' not in context.user_data:
+        context.user_data['selected_modules'] = []
     
-    # Сохраняем режим и список ошибок
-    context.user_data['mode'] = 'mistakes'
-    context.user_data['mistake_queue'] = mistake_ids.copy()
-    context.user_data['mistakes_total'] = len(mistake_ids)
-    context.user_data['mistakes_completed'] = 0
+    selected = context.user_data['selected_modules']
     
-    text = f"""🔄 <b>Работа над ошибками</b>
-
-У вас {len(mistake_ids)} вопросов с ошибками.
-
-Сейчас вы будете проходить эти вопросы заново. 
-При правильном ответе вопрос будет удален из списка ошибок.
-
-Готовы начать?"""
-    
-    kb = InlineKeyboardMarkup([
-        [InlineKeyboardButton("✅ Начать", callback_data="test_start_mistakes")],
-        [InlineKeyboardButton("⬅️ Назад", callback_data="test_back_to_mode")]
-    ])
-    
-    await query.edit_message_text(
-        text,
-        reply_markup=kb,
-        parse_mode=ParseMode.HTML
-    )
-    
-    return states.CHOOSING_MODE
-
-@safe_handler()
-@validate_state_transition({states.CHOOSING_MODE})
-async def test_mistakes(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Переход к работе над ошибками."""
-    return await work_mistakes(update, context)
-
-@safe_handler()
-@validate_state_transition({states.CHOOSING_MODE})
-async def test_practice(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Переход в режим практики."""
-    # Запускаем случайные вопросы
-    return await select_random_all(update, context)
-
-@safe_handler()
-@validate_state_transition({states.CHOOSING_MODE})
-async def test_start_mistakes(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Начинает работу над ошибками."""
-    query = update.callback_query
-    
-    # Проверяем наличие очереди ошибок
-    if 'mistake_queue' not in context.user_data:
-        await query.answer("Ошибка: список вопросов не найден", show_alert=True)
-        return states.CHOOSING_MODE
-    
-    # Отправляем первый вопрос из очереди ошибок
-    await query.edit_message_text("⏳ Загружаю первый вопрос...")
-    
-    # Устанавливаем индекс текущей ошибки
-    context.user_data['current_mistake_index'] = 0
-    
-    # Отправляем вопрос
-    await send_mistake_question(query.message, context)
-    
-    return states.REVIEWING_MISTAKES
-
-@safe_handler()
-@validate_state_transition({states.CHOOSING_MODE})
-async def check_subscription(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Проверяет подписку пользователя."""
-    query = update.callback_query
-    user_id = query.from_user.id
-    
-    # Получаем статус подписки
-    user_data = await db.get_user_status(user_id)
-    is_subscribed = user_data.get('is_subscribed', False)
-    
-    if is_subscribed:
-        text = """✅ <b>Подписка активна</b>
-
-У вас есть доступ ко всем функциям бота:
-• Неограниченное количество вопросов
-• Детальная статистика
-• Экспорт отчетов
-• Приоритетная поддержка"""
+    # Переключаем состояние модуля
+    if module_id in selected:
+        selected.remove(module_id)
+        await query.answer(f"❌ Модуль удален из корзины", show_alert=False)
     else:
-        text = """❌ <b>Подписка не активна</b>
-
-В бесплатной версии доступно:
-• До 50 вопросов в месяц
-• Базовая статистика
-• Основные режимы тренировки
-
-Для полного доступа оформите подписку."""
+        selected.append(module_id)
+        module_name = MODULE_PLANS.get(module_id, {}).get('name', 'Модуль')
+        await query.answer(f"✅ {module_name} добавлен в корзину", show_alert=False)
     
-    kb_buttons = []
-    if not is_subscribed:
-        kb_buttons.append([
-            InlineKeyboardButton("💎 Оформить подписку", url="https://example.com/subscribe")
+    # Обновляем список
+    return await show_individual_modules(update, context)
+
+@safe_handler()
+async def show_module_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Показывает подробную информацию о модуле."""
+    query = update.callback_query
+    
+    # Сразу отвечаем на callback чтобы убрать "часики"
+    await query.answer()
+    
+    # Получаем module_id из callback_data
+    module_id = query.data.replace("info_", "")
+    
+    # Ищем модуль в MODULE_PLANS
+    module = MODULE_PLANS.get(module_id)
+    
+    if not module:
+        await query.answer("❌ Модуль не найден", show_alert=True)
+        return CHOOSING_MODULES
+    
+    # Формируем подробное описание
+    info_lines = []
+    info_lines.append(f"📚 <b>{module['name']}</b>\n")
+    info_lines.append(f"<i>{module.get('description', '')}</i>\n")
+    
+    # Добавляем детальное описание если есть
+    if 'detailed_description' in module:
+        info_lines.append("\n<b>Что включено:</b>")
+        for item in module.get('detailed_description', []):
+            info_lines.append(f"  • {item}")
+    elif 'features' in module:
+        info_lines.append("\n<b>Что включено:</b>")
+        for feature in module.get('features', []):
+            info_lines.append(f"  • {feature}")
+    
+    info_lines.append(f"\n💰 <b>Стоимость:</b> {module['price_rub']}₽/месяц")
+    
+    # Добавляем информацию о скидках при длительной подписке
+    if DURATION_DISCOUNTS:
+        info_lines.append("\n<b>Скидки при оплате на несколько месяцев:</b>")
+        for months, discount_info in DURATION_DISCOUNTS.items():
+            if months > 1:
+                total = int(module['price_rub'] * discount_info['multiplier'])
+                saved = (module['price_rub'] * months) - total
+                info_lines.append(f"  • {discount_info['label']}: {total}₽ (экономия {saved}₽)")
+    
+    # Собираем текст
+    full_text = "\n".join(info_lines)
+    
+    # Создаем клавиатуру с кнопкой возврата
+    keyboard = [[
+        InlineKeyboardButton("⬅️ Назад к выбору", callback_data="back_to_modules")
+    ]]
+    
+    # Редактируем сообщение с обработкой ошибок
+    try:
+        await query.edit_message_text(
+            full_text,
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode=ParseMode.HTML
+        )
+    except BadRequest as e:
+        if "Message is not modified" in str(e):
+            # Если контент не изменился, показываем alert с информацией
+            alert_text = (
+                f"{module['name']}\n"
+                f"Стоимость: {module['price_rub']}₽/мес\n"
+                f"{module.get('description', '')[:100]}"
+            )
+            await query.answer(alert_text, show_alert=True)
+        else:
+            logger.error(f"Error editing message in show_module_info: {e}")
+            # Пробуем отправить новое сообщение
+            try:
+                await query.message.reply_text(
+                    full_text,
+                    reply_markup=InlineKeyboardMarkup(keyboard),
+                    parse_mode=ParseMode.HTML
+                )
+            except Exception as send_error:
+                logger.error(f"Failed to send new message: {send_error}")
+                # В крайнем случае показываем alert
+                await query.answer(
+                    "Не удалось показать информацию о модуле. Попробуйте еще раз.",
+                    show_alert=True
+                )
+    
+    return CHOOSING_MODULES
+
+@safe_handler()
+async def back_to_module_selection(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Возврат к выбору модулей из информации о модуле."""
+    query = update.callback_query
+    
+    # Отвечаем на callback
+    if query:
+        await query.answer()
+    
+    # Вызываем show_individual_modules для возврата к списку
+    return await show_individual_modules(update, context)
+    
+# Добавьте обработчик для продолжения с выбранными модулями:
+
+@safe_handler()
+async def proceed_with_selected_modules(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Продолжает оформление с выбранными модулями."""
+    query = update.callback_query
+    await query.answer()
+    
+    selected = context.user_data.get('selected_modules', [])
+    
+    if not selected:
+        await query.answer("Выберите хотя бы один модуль", show_alert=True)
+        return CHOOSING_MODULES
+    
+    # Проверяем что все выбранные модули существуют
+    valid_modules = []
+    for module_id in selected:
+        if module_id in MODULE_PLANS:
+            valid_modules.append(module_id)
+        else:
+            logger.warning(f"Invalid module_id in selection: {module_id}")
+    
+    if not valid_modules:
+        await query.answer("❌ Ошибка: выбранные модули не найдены", show_alert=True)
+        context.user_data['selected_modules'] = []
+        return await show_individual_modules(update, context)
+    
+    # Используем только валидные модули
+    selected = valid_modules
+    context.user_data['selected_modules'] = selected
+    
+    # Создаем комбинированный план из выбранных модулей
+    total_price = sum(MODULE_PLANS[m]['price_rub'] for m in selected)
+    module_names = [MODULE_PLANS[m]['name'] for m in selected]
+    
+    # Сохраняем как custom план
+    # Упрощаем ID для избежания слишком длинных имен
+    modules_short = [m.replace('module_', '').replace('_', '') for m in selected]
+    custom_plan_id = f"custom_{'_'.join(modules_short[:3])}"  # Берем только первые 3 для краткости
+    if len(modules_short) > 3:
+        custom_plan_id += f"_{len(modules_short)}m"  # Добавляем счетчик модулей
+    
+    context.user_data['selected_plan'] = custom_plan_id
+    context.user_data['custom_plan'] = {
+        'name': f"Комплект: {', '.join(module_names[:2])}" + (f" и еще {len(module_names)-2}" if len(module_names) > 2 else ""),
+        'price_rub': total_price,
+        'modules': [m.replace('module_', '') for m in selected],
+        'type': 'custom',
+        'duration_days': 30
+    }
+    
+    # Логируем для отладки
+    logger.info(f"Created custom plan: {custom_plan_id} with modules: {selected}")
+    
+    # Переходим к выбору длительности
+    return await show_duration_options(update, context)
+
+@safe_handler()
+async def show_duration_options(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Показывает варианты длительности подписки с обработкой ошибок редактирования."""
+    query = update.callback_query
+    await query.answer()
+    
+    context.user_data['in_payment_process'] = True
+    
+    plan_id = context.user_data['selected_plan']
+    
+    # Проверяем план
+    if plan_id.startswith('custom_'):
+        plan = context.user_data.get('custom_plan')
+        if not plan:
+            logger.error(f"Custom plan data not found for {plan_id}")
+            await query.edit_message_text("❌ Ошибка: данные плана не найдены")
+            return ConversationHandler.END
+    else:
+        # Для обычных планов ищем в обоих словарях
+        plan = MODULE_PLANS.get(plan_id)
+        if not plan:
+            plan = SUBSCRIPTION_PLANS.get(plan_id)
+        
+        if not plan:
+            logger.error(f"Plan not found in show_duration_options: {plan_id}")
+            logger.error(f"Available MODULE_PLANS: {list(MODULE_PLANS.keys())}")
+            logger.error(f"Available SUBSCRIPTION_PLANS: {list(SUBSCRIPTION_PLANS.keys())}")
+            await query.edit_message_text("❌ Ошибка: план не найден")
+            return ConversationHandler.END
+    
+    # Формируем текст и клавиатуру
+    text = f"<b>{plan['name']}</b>\n\n"
+    text += "⏱ <b>Выберите срок подписки:</b>\n\n"
+    
+    keyboard = []
+    base_price = plan['price_rub']
+    
+    for months, discount_info in DURATION_DISCOUNTS.items():
+        multiplier = discount_info['multiplier']
+        label = discount_info['label']
+        total_price = int(base_price * multiplier)
+        
+        if months > 1:
+            saved = (base_price * months) - total_price
+            button_text = f"{label} - {total_price}₽ (экономия {saved}₽)"
+        else:
+            button_text = f"{label} - {total_price}₽"
+        
+        keyboard.append([
+            InlineKeyboardButton(button_text, callback_data=f"duration_{months}")
         ])
     
-    kb_buttons.append([
-        InlineKeyboardButton("⬅️ Назад", callback_data="test_back_to_mode")
-    ])
+    # Кнопка назад в зависимости от типа плана
+    if plan_id.startswith('custom_'):
+        keyboard.append([
+            InlineKeyboardButton("⬅️ Назад к выбору модулей", callback_data="back_to_module_selection")
+        ])
+    else:
+        keyboard.append([
+            InlineKeyboardButton("⬅️ Назад", callback_data="back_to_plans")
+        ])
     
-    kb = InlineKeyboardMarkup(kb_buttons)
+    # Пытаемся отредактировать сообщение с обработкой ошибки
+    try:
+        await query.edit_message_text(
+            text,
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode=ParseMode.HTML
+        )
+    except BadRequest as e:
+        # Если сообщение не изменилось - просто игнорируем
+        if "Message is not modified" in str(e):
+            logger.debug(f"Message already showing duration options for plan {plan_id}")
+            # Можем показать небольшое уведомление пользователю
+            await query.answer("Выберите срок подписки", show_alert=False)
+        else:
+            # Если другая ошибка - логируем и пробуем отправить новое сообщение
+            logger.error(f"Error editing message in show_duration_options: {e}")
+            try:
+                await query.message.reply_text(
+                    text,
+                    reply_markup=InlineKeyboardMarkup(keyboard),
+                    parse_mode=ParseMode.HTML
+                )
+            except Exception as send_error:
+                logger.error(f"Failed to send new message: {send_error}")
+                raise
+    
+    return CHOOSING_DURATION
+
+@safe_handler()
+async def handle_duration_selection(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обрабатывает выбор длительности подписки и переходит к промокоду."""
+    query = update.callback_query
+    await query.answer()
+    
+    logger.info(f"handle_duration_selection called with data: {query.data}")
+    
+    try:
+        # Извлекаем длительность из callback_data
+        duration = int(query.data.split('_')[1])
+        context.user_data['duration_months'] = duration
+        
+        # Получаем план из контекста
+        plan_id = context.user_data.get('selected_plan')
+        
+        if not plan_id:
+            await query.edit_message_text(
+                "❌ Ошибка: не выбран план подписки.\n"
+                "Пожалуйста, начните заново с /subscribe"
+            )
+            return ConversationHandler.END
+        
+        # ИСПРАВЛЕНО: Убираем деление на 100, так как calculate_subscription_price 
+        # из payment/handlers.py уже возвращает цену в рублях
+        if plan_id.startswith('custom_'):
+            # Для кастомных планов берем данные из контекста
+            custom_plan = context.user_data.get('custom_plan')
+            if custom_plan:
+                # Используем локальную функцию, которая возвращает рубли
+                total_price = calculate_subscription_price(
+                    plan_id, 
+                    duration, 
+                    custom_plan_data=custom_plan
+                )  # БЕЗ деления на 100!
+            else:
+                # Если custom_plan не найден, рассчитываем на основе модулей
+                modules = context.user_data.get('selected_modules', [])
+                total_price = calculate_custom_price(modules, duration)
+        else:
+            # Для обычных планов - используем функцию из handlers.py
+            # которая уже возвращает цену в рублях
+            total_price = calculate_subscription_price(plan_id, duration)  # БЕЗ деления на 100!
+        
+        # ВАЖНО: Сохраняем правильную цену в контекст
+        context.user_data['total_price'] = total_price
+        context.user_data['original_price'] = total_price  # Сохраняем оригинальную цену для промокода
+        context.user_data['selected_duration'] = duration
+        
+        logger.info(f"Selected duration: {duration} months, calculated price: {total_price}₽")
+        
+        # Получаем информацию о плане
+        from payment.config import MODULE_PLANS, SUBSCRIPTION_PLANS, DURATION_DISCOUNTS
+        
+        if plan_id.startswith('custom_'):
+            plan_info = context.user_data.get('custom_plan', {})
+            plan_name = plan_info.get('name', 'Индивидуальная подборка')
+        elif plan_id in MODULE_PLANS:
+            plan_info = MODULE_PLANS[plan_id]
+            plan_name = plan_info['name']
+        elif plan_id in SUBSCRIPTION_PLANS:
+            plan_info = SUBSCRIPTION_PLANS[plan_id]
+            plan_name = plan_info['name']
+        else:
+            plan_name = plan_id
+            plan_info = {}
+        
+        # Сохраняем имя плана для использования в следующих шагах
+        context.user_data['plan_name'] = plan_name
+        
+        # ==== ИЗМЕНЕНО: Переходим к вводу промокода вместо автопродления ====
+        # Импортируем функцию показа промокода
+        from .promo_handler import show_promo_input
+        
+        # Переходим к экрану ввода промокода
+        return await show_promo_input(update, context)
+        
+    except ValueError:
+        logger.error(f"Invalid duration in callback_data: {query.data}")
+        await query.edit_message_text(
+            "❌ Ошибка при выборе длительности.\n"
+            "Пожалуйста, попробуйте снова."
+        )
+        return ConversationHandler.END
+    except Exception as e:
+        logger.error(f"Error in handle_duration_selection: {e}")
+        await query.edit_message_text(
+            "❌ Произошла ошибка.\n"
+            "Пожалуйста, попробуйте позже."
+        )
+        return ConversationHandler.END
+
+@safe_handler()
+async def handle_back_to_duration_selection(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Возвращает к выбору длительности подписки из экрана подтверждения."""
+    query = update.callback_query
+    await query.answer()
+    
+    # Возвращаемся к выбору длительности
+    return await show_duration_options(update, context)
+
+
+# 3. НОВАЯ ФУНКЦИЯ: Обработчик для кнопки "Продлить/Добавить"
+@safe_handler()
+async def handle_payment_back(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработчик для кнопки 'Продлить/Добавить' - возвращает к началу процесса оплаты."""
+    query = update.callback_query
+    await query.answer()
+    
+    # Очищаем старые данные платежа
+    payment_keys = ['selected_plan', 'selected_modules', 'custom_plan', 
+                   'duration_months', 'total_price', 'plan_name']
+    for key in payment_keys:
+        context.user_data.pop(key, None)
+    
+    # Устанавливаем флаг процесса оплаты
+    context.user_data['in_payment_process'] = True
+    
+    # Показываем интерфейс выбора подписки
+    return await show_modular_interface(update, context)
+
+
+@safe_handler()
+async def request_email(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Запрашивает email пользователя."""
+    
+    # Определяем источник вызова
+    if update.callback_query:
+        query = update.callback_query
+        await query.answer()
+        message = query.message
+        is_callback = True
+    else:
+        message = update.message
+        is_callback = False
+    
+    # Получаем данные о выбранном плане
+    plan_id = context.user_data.get('selected_plan')
+    duration = context.user_data.get('duration_months', 1)
+    total_price = context.user_data.get('total_price')
+    plan_name = context.user_data.get('plan_name', 'Подписка')
+    
+    # Если цена не сохранена, рассчитываем заново
+    if not total_price:
+        from payment.config import MODULE_PLANS, SUBSCRIPTION_PLANS
+        plan = MODULE_PLANS.get(plan_id) or SUBSCRIPTION_PLANS.get(plan_id)
+        if plan:
+            total_price = calculate_subscription_price(plan_id, duration, plan)
+            context.user_data['total_price'] = total_price
+        else:
+            total_price = 999 * duration  # Fallback
+    
+    text = f"""📧 <b>Введите email для отправки чека</b>
+
+📦 План: <b>{plan_name}</b>
+⏱ Срок: <b>{duration} мес.</b>
+💰 К оплате: <b>{total_price} ₽</b>
+
+✉️ На указанный email будет отправлен чек об оплате.
+
+Введите ваш email:"""
+    
+    keyboard = [[InlineKeyboardButton("❌ Отмена", callback_data="cancel_payment")]]
+    
+    # Используем try/except для обработки ошибки "Message is not modified"
+    try:
+        if is_callback:
+            await query.edit_message_text(
+                text,
+                parse_mode=ParseMode.HTML,
+                reply_markup=InlineKeyboardMarkup(keyboard)
+            )
+        else:
+            # Если вызов не из callback, отправляем новое сообщение
+            await message.reply_text(
+                text,
+                parse_mode=ParseMode.HTML,
+                reply_markup=InlineKeyboardMarkup(keyboard)
+            )
+    except BadRequest as e:
+        if "Message is not modified" in str(e):
+            # Если сообщение не изменилось, просто логируем и продолжаем
+            logger.debug("Message already showing email request")
+            # Можно показать небольшое уведомление
+            if is_callback:
+                await query.answer("Введите ваш email в чат", show_alert=False)
+        else:
+            # Если другая ошибка, пробуем отправить новое сообщение
+            logger.error(f"Error in request_email: {e}")
+            await message.reply_text(
+                text,
+                parse_mode=ParseMode.HTML,
+                reply_markup=InlineKeyboardMarkup(keyboard)
+            )
+    
+    return ENTERING_EMAIL
+
+@safe_handler()
+async def handle_email_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обрабатывает ввод email и переходит к выбору автопродления."""
+    email = update.message.text.strip()
+    
+    # Валидация email
+    email_pattern = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
+    if not re.match(email_pattern, email):
+        await update.message.reply_text(
+            "❌ Неверный формат email.\n\n"
+            "Пожалуйста, введите корректный email адрес:",
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("❌ Отмена", callback_data="cancel_payment")
+            ]])
+        )
+        return ENTERING_EMAIL
+    
+    # Сохраняем email
+    context.user_data['email'] = email
+    user_id = update.effective_user.id
+    
+    # Сохраняем email в БД
+    try:
+        from payment.subscription_manager import SubscriptionManager
+        subscription_manager = SubscriptionManager()
+        
+        import aiosqlite
+        async with aiosqlite.connect(subscription_manager.database_file) as conn:
+            await conn.execute(
+                """
+                INSERT OR REPLACE INTO user_emails (user_id, email, updated_at)
+                VALUES (?, ?, CURRENT_TIMESTAMP)
+                """,
+                (user_id, email)
+            )
+            await conn.commit()
+            
+    except Exception as e:
+        logger.error(f"Error saving email: {e}")
+    
+    # Проверяем, есть ли 100% скидка (или почти 100%)
+    promo_code = context.user_data.get('promo_code')
+    total_price = context.user_data.get('total_price', 999)
+    original_price = context.user_data.get('original_price', total_price)
+    
+    # Если цена 1 рубль и есть промокод с большой скидкой
+    if total_price == 1 and promo_code and original_price > 100:
+        # Спрашиваем, хочет ли пользователь активировать бесплатно или оплатить 1 рубль
+        text = f"""🎉 <b>Почти бесплатная подписка!</b>
+
+Благодаря промокоду <code>{promo_code}</code> ваша подписка стоит всего 1 ₽!
+
+Это символический платеж, требуемый платежной системой.
+
+Как вы хотите продолжить?"""
+        
+        keyboard = [
+            [InlineKeyboardButton("💳 Оплатить 1 ₽", callback_data="pay_one_ruble")],
+            [InlineKeyboardButton("🎁 Активировать бесплатно", callback_data="activate_free")],
+            [InlineKeyboardButton("❌ Отмена", callback_data="cancel_payment")]
+        ]
+        
+        await update.message.reply_text(
+            text,
+            parse_mode=ParseMode.HTML,
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+        
+        return CONFIRMING
+    
+    logger.info(f"User {user_id} entered email: {email}")
+    
+    # ИЗМЕНЕНИЕ: Показываем экран выбора автопродления вместо прямого перехода к оплате
+    await update.message.reply_text(
+        f"✅ Email сохранен: {email}\n\n"
+        "Настройка способа оплаты...",
+        parse_mode=ParseMode.HTML
+    )
+    
+    # Переходим к выбору автопродления
+    from .auto_renewal_consent import show_auto_renewal_choice
+    return await show_auto_renewal_choice(update, context)
+
+
+@safe_handler()
+async def handle_free_activation(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Активирует подписку бесплатно при 100% скидке."""
+    query = update.callback_query
+    await query.answer()
+    
+    user_id = update.effective_user.id
+    plan_id = context.user_data.get('selected_plan')
+    duration_months = context.user_data.get('duration_months', 1)
+    promo_code = context.user_data.get('promo_code')
+    
+    # Активируем подписку напрямую
+    subscription_manager = context.bot_data.get('subscription_manager')
+    
+    if subscription_manager:
+        # Создаем запись о "платеже" с нулевой суммой
+        order_id = f"free_{user_id}_{int(datetime.now().timestamp())}"
+        
+        # Сохраняем в БД как выполненный платеж
+        success = await subscription_manager.activate_subscription(
+            user_id=user_id,
+            plan_id=plan_id,
+            duration_months=duration_months,
+            order_id=order_id,
+            payment_method="promo_100"
+        )
+        
+        if success:
+            text = f"""🎉 <b>Подписка активирована!</b>
+
+✅ План успешно активирован благодаря промокоду <code>{promo_code}</code>
+📅 Срок действия: {duration_months} месяц(ев)
+
+Используйте /my_subscriptions для просмотра деталей."""
+        else:
+            text = "❌ Ошибка при активации подписки. Обратитесь в поддержку."
+    else:
+        text = "❌ Сервис временно недоступен."
     
     await query.edit_message_text(
         text,
-        reply_markup=kb,
-        parse_mode=ParseMode.HTML
+        parse_mode=ParseMode.HTML,
+        reply_markup=InlineKeyboardMarkup([[
+            InlineKeyboardButton("📋 Мои подписки", callback_data="my_subscriptions")
+        ]])
     )
     
-    return states.CHOOSING_MODE
+    return ConversationHandler.END
 
 @safe_handler()
-async def test_back_to_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Возврат к выбору режима из подменю."""
-    return await back_to_mode(update, context)
-
-@safe_handler()
-@validate_state_transition({states.CHOOSING_MODE})
-async def select_mistakes(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Вход в режим работы над ошибками - перенаправляет на work_mistakes."""
-    # Просто вызываем work_mistakes для унификации поведения
-    return await work_mistakes(update, context)
-
-@safe_handler()
-@validate_state_transition({states.CHOOSING_MODE})
-async def select_practice_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Режим практики - просто запускаем случайные вопросы."""
-    return await select_random_all(update, context)
-
-@safe_handler()
-@validate_state_transition({states.CHOOSING_MODE})
-async def reset_progress_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Подтверждение сброса прогресса."""
+async def handle_pay_one_ruble(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Продолжает с оплатой 1 рубля."""
     query = update.callback_query
+    await query.answer()
     
-    kb = InlineKeyboardMarkup([
-        [
-            InlineKeyboardButton("✅ Да, сбросить", callback_data="test_reset_do"),
-            InlineKeyboardButton("❌ Отмена", callback_data="to_test_part_menu")
-        ]
-    ])
+    # Убеждаемся, что цена установлена в 1 рубль
+    context.user_data['total_price'] = 1
+    
+    # Переходим к обычному процессу оплаты
+    return await handle_payment_confirmation_with_recurrent(update, context)
+
+@safe_handler()
+async def handle_email_confirmation(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обрабатывает подтверждение исправленного email."""
+    query = update.callback_query
+    await query.answer()
+    
+    if query.data.startswith("use_email_"):
+        # Извлекаем email из callback_data
+        email = query.data.replace("use_email_", "")
+        context.user_data['email'] = email
+        
+        # Сохраняем в БД
+        user_id = update.effective_user.id
+        try:
+            from payment.subscription_manager import SubscriptionManager
+            subscription_manager = SubscriptionManager()
+            
+            import aiosqlite
+            async with aiosqlite.connect(subscription_manager.database_file) as conn:
+                await conn.execute(
+                    """
+                    INSERT OR REPLACE INTO user_emails (user_id, email, updated_at)
+                    VALUES (?, ?, CURRENT_TIMESTAMP)
+                    """,
+                    (user_id, email)
+                )
+                await conn.commit()
+                
+        except Exception as e:
+            logger.error(f"Error saving email: {e}")
+        
+        await query.edit_message_text(
+            f"✅ Email сохранен: {email}\n\n"
+            "Настройка способа оплаты..."
+        )
+        
+        # Переход к выбору автопродления
+        from .auto_renewal_consent import show_auto_renewal_choice
+        return await show_auto_renewal_choice(update, context)
+    
+    elif query.data == "retry_email":
+        await query.edit_message_text(
+            "📧 Введите ваш email для отправки чека:"
+        )
+        return ENTERING_EMAIL
+
+def calculate_custom_price(modules, duration):
+    """Рассчитывает цену для кастомного набора модулей с учетом скидок."""
+    from payment.config import MODULE_PLANS, DURATION_DISCOUNTS
+    
+    # Рассчитываем базовую месячную цену
+    base_price = 0
+    for module_id in modules:
+        if module_id in MODULE_PLANS:
+            base_price += MODULE_PLANS[module_id]['price_rub']
+    
+    # Применяем скидку для многомесячных подписок
+    if duration in DURATION_DISCOUNTS:
+        multiplier = DURATION_DISCOUNTS[duration]['multiplier']
+        total_price = int(base_price * multiplier)
+    else:
+        total_price = base_price * duration
+    
+    return total_price
+
+@safe_handler()
+async def show_auto_renewal_options(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Показывает опции автопродления после ввода email."""
+    query = update.callback_query
+    if query:
+        await query.answer()
+    
+    # Получаем информацию о выбранном плане
+    plan_id = context.user_data.get('selected_plan')
+    duration = context.user_data.get('duration_months', 1)
+    
+    # Определяем цену для ежемесячного продления
+    if plan_id.startswith('custom_'):
+        modules = context.user_data.get('selected_modules', [])
+        monthly_price = calculate_custom_price(modules, 1)
+        plan_name = f"Пакет из {len(modules)} модулей"
+    else:
+        from .config import MODULE_PLANS, SUBSCRIPTION_PLANS
+        plan = MODULE_PLANS.get(plan_id) or SUBSCRIPTION_PLANS.get(plan_id)
+        monthly_price = plan['price_rub']
+        plan_name = plan['name']
+    
+    # Текст с полным описанием автопродления (по требованиям Т-Банка)
+    text = f"""🔄 <b>Настройка автоматического продления</b>
+
+<b>Ваша подписка:</b>
+📦 {plan_name}
+⏱ Первый период: {duration} мес.
+💰 Далее: {monthly_price} ₽/месяц
+
+<b>Выберите вариант оплаты:</b>
+
+✅ <b>С автопродлением (рекомендуется)</b>
+• Автоматическое списание {monthly_price} ₽ каждый месяц
+• Непрерывный доступ к материалам
+• Уведомление за 3 дня до списания
+• Отмена в любой момент через /my_subscriptions
+• Первое автосписание: {(datetime.now() + timedelta(days=30*duration)).strftime('%d.%m.%Y')}
+
+❌ <b>Без автопродления</b>
+• Разовая оплата на {duration} мес.
+• Нужно будет продлевать вручную
+• Риск потерять доступ при забывчивости
+
+⚠️ <b>Важно:</b> Выбирая автопродление, вы соглашаетесь на ежемесячные списания до момента отмены подписки."""
+    
+    keyboard = [
+        [InlineKeyboardButton(
+            "✅ Включить автопродление", 
+            callback_data="consent_auto_renewal"
+        )],
+        [InlineKeyboardButton(
+            "❌ Оплатить без автопродления", 
+            callback_data="no_auto_renewal"
+        )],
+        [InlineKeyboardButton(
+            "ℹ️ Подробнее об условиях", 
+            callback_data="auto_renewal_terms"
+        )]
+    ]
+    
+    if query:
+        await query.edit_message_text(
+            text,
+            parse_mode=ParseMode.HTML,
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+    else:
+        await update.message.reply_text(
+            text,
+            parse_mode=ParseMode.HTML,
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+    
+    return AUTO_RENEWAL_CHOICE  # Новое состояние
+
+@safe_handler()
+async def handle_auto_renewal_consent_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обрабатывает выбор пользователя по автопродлению."""
+    query = update.callback_query
+    await query.answer()
+    
+    if query.data == "consent_auto_renewal":
+        # Показываем финальное подтверждение с чек-боксом
+        await show_final_consent_screen(update, context)
+        return FINAL_CONSENT
+        
+    elif query.data == "no_auto_renewal":
+        context.user_data['enable_auto_renewal'] = False
+        # Переходим к оплате без автопродления
+        return await handle_payment_confirmation_with_recurrent(update, context)
+        
+    elif query.data == "auto_renewal_terms":
+        await show_auto_renewal_terms(update, context)
+        return AUTO_RENEWAL_CHOICE
+
+@safe_handler()
+async def show_final_consent_screen(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Показывает финальный экран согласия с имитацией чек-бокса."""
+    query = update.callback_query
+    await query.answer()
+    
+    plan_id = context.user_data.get('selected_plan')
+    duration = context.user_data.get('duration_months', 1)
+    
+    # Определяем цену
+    if plan_id.startswith('custom_'):
+        modules = context.user_data.get('selected_modules', [])
+        monthly_price = calculate_custom_price(modules, 1)
+        total_price = calculate_custom_price(modules, duration)
+    else:
+        plan_info = SUBSCRIPTION_PLANS.get(plan_id, {})
+        monthly_price = plan_info.get('price_rub', 999)
+        total_price = calculate_subscription_price(plan_id, duration, plan_info)
+    
+    # Проверяем состояние согласия
+    consent_given = context.user_data.get('auto_renewal_consent_confirmed', False)
+    checkbox = "☑️" if consent_given else "⬜"
+    
+    text = f"""📋 <b>Подтверждение автоматического продления</b>
+
+<b>Условия подписки:</b>
+💳 Первый платеж: {total_price} ₽ (за {duration} мес.)
+🔄 Далее: {monthly_price} ₽ ежемесячно
+📅 Дата первого автосписания: {(datetime.now() + timedelta(days=30*duration)).strftime('%d.%m.%Y')}
+
+<b>Согласие на автопродление:</b>
+{checkbox} Я соглашаюсь на автоматическое ежемесячное списание {monthly_price} ₽ с моей карты для продления подписки. Я понимаю, что:
+
+- Списание будет происходить автоматически каждый месяц
+- Я получу уведомление за 3 дня до списания
+- Я могу отменить автопродление в любой момент
+- При отмене возврат осуществляется согласно правилам сервиса
+- Мои платежные данные будут сохранены в защищенном виде
+
+<b>Нажмите на чек-бокс выше, чтобы дать согласие</b>"""
+    
+    keyboard = []
+    
+    # Кнопка-чекбокс
+    keyboard.append([InlineKeyboardButton(
+        f"{checkbox} Согласие на автопродление",
+        callback_data="toggle_consent"
+    )])
+    
+    # Кнопки действий
+    if consent_given:
+        keyboard.append([InlineKeyboardButton(
+            "✅ Подтвердить и перейти к оплате",
+            callback_data="confirm_with_auto_renewal"
+        )])
+    else:
+        keyboard.append([InlineKeyboardButton(
+            "⚠️ Отметьте согласие для продолжения",
+            callback_data="need_consent"
+        )])
+    
+    keyboard.append([InlineKeyboardButton(
+        "◀️ Назад",
+        callback_data="payment_back"
+    )])
     
     await query.edit_message_text(
-        "⚠️ <b>Вы уверены?</b>\n\n"
-        "Это действие удалит весь ваш прогресс, включая:\n"
-        "• Статистику по всем темам\n"
-        "• Список ошибок\n"
-        "• Все достижения и стрики\n\n"
-        "Это действие нельзя отменить!",
-        reply_markup=kb,
-        parse_mode=ParseMode.HTML
+        text,
+        parse_mode=ParseMode.HTML,
+        reply_markup=InlineKeyboardMarkup(keyboard)
     )
-    return states.CHOOSING_MODE
+    
+    return AUTO_RENEWAL_CHOICE
+
+def calculate_subscription_price(plan_id: str, duration_months: int, custom_plan_data: dict = None) -> int:
+    """
+    Рассчитывает стоимость подписки в РУБЛЯХ.
+    
+    Args:
+        plan_id: ID плана подписки
+        duration_months: Длительность в месяцах
+        custom_plan_data: Данные для custom плана (опционально)
+        
+    Returns:
+        Итоговая стоимость в РУБЛЯХ (не в копейках!)
+    """
+    from payment.config import MODULE_PLANS, SUBSCRIPTION_PLANS, DURATION_DISCOUNTS
+    import logging
+    
+    logger = logging.getLogger(__name__)
+    
+    # Определяем базовую цену
+    if plan_id.startswith('custom_') and custom_plan_data:
+        base_price = custom_plan_data.get('price_rub', 999)
+        logger.info(f"Using custom plan price: {base_price}₽")
+    elif plan_id in MODULE_PLANS:
+        base_price = MODULE_PLANS[plan_id].get('price_rub', 999)
+        logger.info(f"Using MODULE_PLANS price for {plan_id}: {base_price}₽")
+    elif plan_id in SUBSCRIPTION_PLANS:
+        base_price = SUBSCRIPTION_PLANS[plan_id].get('price_rub', 999)
+        logger.info(f"Using SUBSCRIPTION_PLANS price for {plan_id}: {base_price}₽")
+    else:
+        # Fallback для неизвестных планов
+        base_price = 999
+        logger.warning(f"Unknown plan {plan_id}, using default price: {base_price}₽")
+    
+    # Специальная обработка для пробного периода
+    if plan_id == 'trial_7days':
+        logger.info(f"Trial period detected, returning 1₽")
+        return 1
+    
+    # Применяем множитель для длительности
+    if duration_months in DURATION_DISCOUNTS:
+        multiplier = DURATION_DISCOUNTS[duration_months].get('multiplier', duration_months)
+        total_price = int(base_price * multiplier)
+        logger.info(f"Applied discount for {duration_months} months: {base_price}₽ × {multiplier} = {total_price}₽")
+    else:
+        # Если нет скидки для этой длительности - просто умножаем
+        total_price = base_price * duration_months
+        logger.info(f"No discount for {duration_months} months, total={total_price}₽")
+    
+    logger.info(f"Final calculation: plan={plan_id}, base={base_price}₽, duration={duration_months}m, total={total_price}₽")
+    
+    return total_price
+
+def get_price_in_kopecks(price_in_rubles: int) -> int:
+    """Конвертирует цену из рублей в копейки для API."""
+    return price_in_rubles * 100
 
 @safe_handler()
-@validate_state_transition({states.CHOOSING_MODE})
-async def reset_progress_do(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Выполнение сброса прогресса test_part."""
+async def toggle_consent(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Переключает состояние согласия."""
     query = update.callback_query
-    user_id = query.from_user.id
+    
+    # Переключаем состояние
+    current = context.user_data.get('auto_renewal_consent_confirmed', False)
+    context.user_data['auto_renewal_consent_confirmed'] = not current
+    
+    if not current:
+        # Сохраняем время и данные согласия
+        context.user_data['consent_timestamp'] = datetime.now().isoformat()
+        context.user_data['consent_user_id'] = update.effective_user.id
+        await query.answer("✅ Согласие получено", show_alert=False)
+    else:
+        await query.answer("Согласие отменено", show_alert=False)
+    
+    # Обновляем экран
+    return await show_final_consent_screen(update, context)
+
+@safe_handler()
+async def confirm_with_auto_renewal(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Подтверждает оплату с автопродлением после получения явного согласия."""
+    query = update.callback_query
+    
+    if not context.user_data.get('auto_renewal_consent_confirmed', False):
+        await query.answer(
+            "⚠️ Необходимо дать согласие на автопродление",
+            show_alert=True
+        )
+        return FINAL_CONSENT
+    
+    await query.answer("✅ Переход к оплате...")
+    
+    # Устанавливаем флаг автопродления
+    context.user_data['enable_auto_renewal'] = True
+    
+    # Переходим к оплате
+    return await handle_payment_confirmation_with_recurrent(update, context)
+
+@safe_handler()
+async def show_auto_renewal_terms(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Показывает подробные условия автопродления."""
+    query = update.callback_query
+    await query.answer()
+    
+    text = """📜 <b>Условия автоматического продления подписки</b>
+
+<b>1. Общие положения</b>
+• Автопродление активируется после первой успешной оплаты
+• Списания происходят ежемесячно в день окончания текущего периода
+• Услуга предоставляется ИП "Фролов Роман Антонович" (ИНН: 772459778593)
+
+<b>2. Стоимость и списания</b>
+• Стоимость указывается при оформлении подписки
+• Списание происходит с карты, использованной при первой оплате
+• При недостатке средств делается 3 попытки списания
+
+<b>3. Уведомления</b>
+• За 3 дня до списания - напоминание на email и в Telegram
+• После успешного списания - подтверждение продления
+• При проблемах - уведомление с инструкциями
+
+<b>4. Отмена и возврат</b>
+• Отмена доступна в любой момент через /my_subscriptions
+• Отмена вступает в силу немедленно
+• Доступ сохраняется до конца оплаченного периода
+• Возврат возможен в течение 14 дней согласно ЗоЗПП
+
+<b>5. Безопасность</b>
+• Платежи обрабатывает Т-Банк (лицензия ЦБ РФ №2673)
+• Данные карты хранятся в токенизированном виде
+• Соответствие стандарту PCI DSS
+• Защита 3D-Secure
+
+<b>6. Поддержка</b>
+📱 Telegram: @obshestvonapalcahsupport
+
+<b>Нажимая "Согласен", вы принимаете данные условия</b>"""
+    
+    keyboard = [
+        [InlineKeyboardButton("✅ Понятно", callback_data="payment_back")],
+        [InlineKeyboardButton("◀️ Назад", callback_data="back_to_auto_renewal_options")]
+    ]
+    
+    await query.edit_message_text(
+        text,
+        parse_mode=ParseMode.HTML,
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
+
+async def handle_payment_confirmation_with_recurrent(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """ИСПРАВЛЕННЫЙ обработчик подтверждения платежа с поддержкой рекуррентных платежей, duration_months и промокодов."""
+    
+    # Проверяем источник вызова и корректно обрабатываем
+    if update.callback_query:
+        query = update.callback_query
+        await query.answer()
+        message = query.message
+    else:
+        # Если функция вызвана после ввода email (текстовое сообщение)
+        query = None
+        message = update.message
+    
+    plan_id = context.user_data.get('selected_plan')
+    duration_months = context.user_data.get('duration_months', 1)
+    user_email = context.user_data.get('email')  # Изменено с 'user_email' на 'email'
+    user_id = update.effective_user.id
+    enable_auto_renewal = context.user_data.get('enable_auto_renewal', False)
+    
+    # ==== НОВОЕ: Получаем данные о промокоде ====
+    promo_code = context.user_data.get('promo_code')
+    promo_discount = context.user_data.get('promo_discount', 0)
+    original_price = context.user_data.get('original_price')
+    promo_data = context.user_data.get('promo_data')
+    
+    if not all([plan_id, user_email]):
+        error_text = (
+            "❌ Ошибка: недостаточно данных для создания платежа.\n"
+            "Попробуйте начать заново: /subscribe"
+        )
+        
+        if query:
+            await query.edit_message_text(error_text)
+        else:
+            await message.reply_text(error_text)
+        return ConversationHandler.END
+    
+    # ==== ИЗМЕНЕНО: Проверяем, есть ли уже цена со скидкой в контексте ====
+    if promo_code and 'total_price' in context.user_data:
+        # Если промокод применен, используем цену со скидкой
+        total_price_rub = context.user_data['total_price']
+    else:
+        # Иначе рассчитываем стандартную цену
+        if plan_id.startswith('custom_'):
+            modules = context.user_data.get('selected_modules', [])
+            custom_plan_data = {
+                'price_rub': calculate_custom_price(modules, 1),
+                'modules': modules
+            }
+            total_price_rub = calculate_subscription_price(plan_id, duration_months, custom_plan_data)
+        else:
+            from payment.config import MODULE_PLANS, SUBSCRIPTION_PLANS
+            plan_info = SUBSCRIPTION_PLANS.get(plan_id, MODULE_PLANS.get(plan_id))
+            total_price_rub = calculate_subscription_price(plan_id, duration_months, plan_info)
+    
+    # ==== НОВОЕ: Проверяем минимальную сумму для Tinkoff ====
+    if total_price_rub < 1:
+        logger.warning(f"Price too low for Tinkoff: {total_price_rub}₽, setting to minimum 1₽")
+        total_price_rub = 1
+        
+        # Обновляем в контексте
+        context.user_data['total_price'] = 1
+    
+    # Конвертируем в копейки
+    total_price_kopecks = total_price_rub * 100
+    
+    # ==== НОВОЕ: Дополнительная проверка для копеек ====
+    if total_price_kopecks < 100:
+        logger.error(f"Invalid amount in kopecks: {total_price_kopecks}")
+        total_price_kopecks = 100
+    
+    # ==== НОВОЕ: Сохраняем оригинальную цену для отображения скидки ====
+    if not original_price:
+        original_price = total_price_rub
     
     try:
-        # Сбрасываем данные в БД
-        await db.reset_user_progress(user_id)
+        # Создаем менеджер подписок
+        from payment.subscription_manager import SubscriptionManager
+        subscription_manager = context.bot_data.get('subscription_manager', SubscriptionManager())
         
-        # Очищаем ТОЛЬКО временные данные test_part
-        keys_to_remove = [
-            'mistake_ids',
-            'current_mistake_index',
-            'current_topic',
-            'current_question_id',
-            'user_id'
+        # Создаем уникальный order_id
+        order_id = f"order_{user_id}_{int(datetime.now().timestamp())}"
+        
+        # Получаем название плана
+        from payment.config import MODULE_PLANS, SUBSCRIPTION_PLANS
+        if plan_id.startswith('custom_'):
+            plan_name = "Индивидуальный набор модулей"
+        else:
+            plan_info = SUBSCRIPTION_PLANS.get(plan_id, MODULE_PLANS.get(plan_id, {}))
+            plan_name = plan_info.get('name', 'Подписка')
+        
+        # Описание платежа
+        if duration_months == 1:
+            description = f"{plan_name} (1 месяц)"
+        else:
+            description = f"{plan_name} ({duration_months} месяцев)"
+        
+        # ==== НОВОЕ: Добавляем информацию о промокоде в описание ====
+        if promo_code:
+            description += f" с промокодом {promo_code}"
+        
+        # Импортируем и создаем объект TinkoffPayment
+        from payment.tinkoff import TinkoffPayment
+        tinkoff = TinkoffPayment()
+        
+        # ВАЖНО: Проверяем, есть ли метод build_receipt_item
+        # Если нет, создаем чек вручную
+        receipt_items = [{
+            "Name": description[:64],
+            "Price": total_price_kopecks,
+            "Quantity": 1,
+            "Amount": total_price_kopecks,
+            "Tax": "none",
+            "PaymentMethod": "full_payment",
+            "PaymentObject": "service"
+        }]
+        
+        # Если есть метод build_receipt_item, используем его
+        if hasattr(tinkoff, 'build_receipt_item'):
+            receipt_items = [
+                tinkoff.build_receipt_item(
+                    name=description[:64],
+                    price_kopecks=total_price_kopecks
+                )
+            ]
+        
+        # Инициализируем платеж
+        payment_result = await tinkoff.init_payment(
+            order_id=order_id,
+            amount_kopecks=total_price_kopecks,
+            description=description,
+            user_email=user_email,
+            receipt_items=receipt_items,
+            user_data={
+                "user_id": str(user_id),
+                "email": user_email,
+                "plan_id": plan_id,
+                "duration_months": str(duration_months),
+                "enable_auto_renewal": str(enable_auto_renewal),
+                "modules": ','.join(context.user_data.get('selected_modules', [])) if plan_id.startswith('custom_') else '',
+                "promo_code": promo_code or "",  # ==== НОВОЕ ====
+                "promo_discount": str(promo_discount) if promo_discount else "0",  # ==== НОВОЕ ====
+                "original_price": str(original_price * 100) if promo_code else ""  # ==== НОВОЕ ====
+            },
+            enable_recurrent=enable_auto_renewal,
+            customer_key=str(user_id) if enable_auto_renewal else None
+        )
+        
+        if payment_result.get("success"):
+            payment_url = payment_result.get("payment_url")
+            payment_id = payment_result.get("payment_id")
+            
+            # Сохраняем в БД
+            try:
+                import aiosqlite
+                import json
+                async with aiosqlite.connect(subscription_manager.database_file) as conn:
+                    # Подготавливаем метаданные
+                    metadata = {
+                        'duration_months': duration_months,
+                        'enable_recurrent': enable_auto_renewal,
+                        'email': user_email,
+                        'plan_name': plan_name,
+                        'promo_code': promo_code,  # ==== НОВОЕ ====
+                        'promo_discount': promo_discount,  # ==== НОВОЕ ====
+                        'original_price': original_price * 100 if promo_code else None  # ==== НОВОЕ ====
+                    }
+                    
+                    # Если это кастомный план, добавляем модули
+                    if plan_id.startswith('custom_'):
+                        metadata['modules'] = ','.join(context.user_data.get('selected_modules', []))
+                    
+                    await conn.execute(
+                        """
+                        INSERT INTO payments (
+                            order_id, user_id, payment_id, amount_kopecks,
+                            status, created_at, plan_id, metadata,
+                            auto_renewal_enabled, promo_code, promo_discount
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            order_id, 
+                            user_id, 
+                            payment_id, 
+                            total_price_kopecks,
+                            'NEW', 
+                            datetime.now().isoformat(), 
+                            plan_id,
+                            json.dumps(metadata),
+                            1 if enable_auto_renewal else 0,
+                            promo_code,  # ==== НОВОЕ ====
+                            promo_discount  # ==== НОВОЕ ====
+                        )
+                    )
+                    await conn.commit()
+                    
+                    # Сохраняем email в отдельную таблицу если она существует
+                    cursor = await conn.execute(
+                        "SELECT name FROM sqlite_master WHERE type='table' AND name='user_emails'"
+                    )
+                    if await cursor.fetchone():
+                        await conn.execute(
+                            """
+                            INSERT OR REPLACE INTO user_emails (user_id, email, updated_at)
+                            VALUES (?, ?, CURRENT_TIMESTAMP)
+                            """,
+                            (user_id, user_email)
+                        )
+                        await conn.commit()
+                        
+                    logger.info(f"Payment info saved: order_id={order_id}, amount={total_price_kopecks} kopecks, promo={promo_code}")
+                    
+            except Exception as e:
+                logger.error(f"Failed to save payment info: {e}")
+            
+            # ==== ИЗМЕНЕНО: Формируем сообщение с учетом промокода ====
+            if promo_code:
+                success_text = f"""✅ <b>Платеж создан успешно!</b>
+
+📦 План: <b>{plan_name}</b>
+⏱ Срок: <b>{duration_months} мес.</b>
+🎁 Промокод: <code>{promo_code}</code>
+💰 Цена: <s>{original_price} ₽</s>
+🎯 К оплате со скидкой: <b>{total_price_rub} ₽</b>
+💸 Ваша выгода: <b>{promo_discount} ₽</b>
+{"🔄 Автопродление: включено" if enable_auto_renewal else "💳 Разовая оплата"}
+
+Нажмите кнопку ниже для перехода к оплате:"""
+            else:
+                success_text = f"""✅ <b>Платеж создан успешно!</b>
+
+📦 План: <b>{plan_name}</b>
+⏱ Срок: <b>{duration_months} мес.</b>
+💰 К оплате: <b>{total_price_rub} ₽</b>
+{"🔄 Автопродление: включено" if enable_auto_renewal else "💳 Разовая оплата"}
+
+Нажмите кнопку ниже для перехода к оплате:"""
+            
+            keyboard = [
+                [InlineKeyboardButton("💳 Оплатить", url=payment_url)],
+                [InlineKeyboardButton("✅ Проверить оплату", callback_data="check_payment")],
+                [InlineKeyboardButton("❌ Отменить", callback_data="cancel_payment")]
+            ]
+            
+            if query:
+                await query.edit_message_text(
+                    success_text,
+                    reply_markup=InlineKeyboardMarkup(keyboard),
+                    parse_mode=ParseMode.HTML
+                )
+            else:
+                await message.reply_text(
+                    success_text,
+                    reply_markup=InlineKeyboardMarkup(keyboard),
+                    parse_mode=ParseMode.HTML
+                )
+                
+        else:
+            # Обработка ошибки создания платежа
+            error_message = payment_result.get('error', 'Неизвестная ошибка')
+            error_code = payment_result.get('error_code', '')
+            
+            error_text = (
+                f"❌ <b>Ошибка создания платежа</b>\n\n"
+                f"Код ошибки: {error_code}\n"
+                f"Сообщение: {error_message}\n\n"
+                "Попробуйте позже или обратитесь в поддержку."
+            )
+            
+            error_keyboard = [
+                [InlineKeyboardButton("🔄 Попробовать снова", callback_data="subscribe")],
+                [InlineKeyboardButton("💬 Поддержка", callback_data="support")]
+            ]
+            
+            if query:
+                await query.edit_message_text(
+                    error_text,
+                    reply_markup=InlineKeyboardMarkup(error_keyboard),
+                    parse_mode=ParseMode.HTML
+                )
+            else:
+                await message.reply_text(
+                    error_text,
+                    reply_markup=InlineKeyboardMarkup(error_keyboard),
+                    parse_mode=ParseMode.HTML
+                )
+            
+    except Exception as e:
+        logger.exception(f"Critical error creating payment: {e}")
+        
+        critical_error_text = (
+            "❌ <b>Произошла критическая ошибка</b>\n\n"
+            f"Ошибка: {str(e)}\n\n"
+            "Пожалуйста, обратитесь в поддержку с этой информацией."
+        )
+        
+        critical_error_keyboard = [
+            [InlineKeyboardButton("🔄 Попробовать снова", callback_data="subscribe")],
+            [InlineKeyboardButton("💬 Поддержка", callback_data="support")]
         ]
         
-        for key in keys_to_remove:
-            context.user_data.pop(key, None)
-        
-        # НЕ ТРОГАЕМ данные других модулей!
-        
-        # Устанавливаем активный модуль обратно
-        context.user_data['active_module'] = 'test_part'
-        
-        kb = keyboards.get_initial_choice_keyboard()
-        await query.edit_message_text(
-            "✅ <b>Прогресс успешно сброшен!</b>\n\n"
-            "Теперь вы можете начать заново.\n\n"
-            "Выберите режим:",
-            reply_markup=kb,
-            parse_mode=ParseMode.HTML
-        )
-        
-    except Exception as e:
-        logger.error(f"Error resetting progress for user {user_id}: {e}")
-        await query.edit_message_text(
-            "❌ Произошла ошибка при сбросе прогресса.\n"
-            "Попробуйте позже.",
-            reply_markup=InlineKeyboardMarkup([[
-                InlineKeyboardButton("⬅️ Назад", callback_data="to_test_part_menu")
-            ]])
-        )
+        if query:
+            await query.edit_message_text(
+                critical_error_text,
+                reply_markup=InlineKeyboardMarkup(critical_error_keyboard),
+                parse_mode=ParseMode.HTML
+            )
+        else:
+            await message.reply_text(
+                critical_error_text,
+                reply_markup=InlineKeyboardMarkup(critical_error_keyboard),
+                parse_mode=ParseMode.HTML
+            )
     
-    return states.CHOOSING_MODE
+    return ConversationHandler.END
+
+async def handle_back_to_duration(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Возвращает к выбору длительности подписки."""
+    query = update.callback_query
+    await query.answer()
+    
+    # Возвращаемся к выбору длительности
+    return await show_duration_options(update, context)
+
+async def cancel_payment(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Отмена процесса оплаты."""
+    if update.callback_query:
+        await update.callback_query.answer()
+        await update.callback_query.edit_message_text("❌ Оформление подписки отменено.")
+    else:
+        await update.message.reply_text("❌ Оформление подписки отменено.")
+    
+    # Очищаем данные
+    context.user_data.clear()
+    
+    return ConversationHandler.END
 
 @safe_handler()
-async def back_to_test_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Возврат в меню тестовой части."""
+async def ask_auto_renewal(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Спрашивает о включении автопродления."""
     query = update.callback_query
+    await query.answer()
     
-    # Устанавливаем активный модуль
-    context.user_data['active_module'] = 'test_part'
+    plan_id = context.user_data.get('selected_plan')
+    plan_name = context.user_data.get('plan_name', 'Подписка')
+    duration = context.user_data.get('duration_months', 1)
     
-    kb = keyboards.get_initial_choice_keyboard()
+    # ВАЖНО: Правильно определяем цену
+    if plan_id == 'trial_7days':
+        total_price = 1
+    else:
+        total_price = context.user_data.get('total_price')
+        if not total_price:
+            from payment.config import MODULE_PLANS, SUBSCRIPTION_PLANS
+            plan_info = MODULE_PLANS.get(plan_id) or SUBSCRIPTION_PLANS.get(plan_id)
+            if plan_info:
+                total_price = calculate_subscription_price(plan_id, duration)
+            else:
+                total_price = 999 * duration
+    
+    context.user_data['total_price'] = total_price
+    
+    text = f"""💳 <b>Выберите тип оплаты</b>
+
+📋 <b>Ваш заказ:</b>
+• Тариф: {plan_name}
+• Срок: {duration if plan_id != 'trial_7days' else '7 дней'}
+• Стоимость: <b>{total_price} ₽</b>
+
+<b>Доступные варианты:</b>
+
+🔄 <b>С автопродлением</b>
+После окончания срока подписка продлевается автоматически.
+Вы можете отменить автопродление в любой момент.
+
+💳 <b>Разовая оплата</b>
+Подписка действует только выбранный срок.
+После окончания нужно продлить вручную."""
+    
+    keyboard = [
+        [InlineKeyboardButton("🔄 С автопродлением", callback_data="consent_auto_renewal")],
+        [InlineKeyboardButton("💳 Разовая оплата", callback_data="no_auto_renewal")],
+        [InlineKeyboardButton("❓ Подробнее", callback_data="auto_renewal_terms")],
+        [InlineKeyboardButton("◀️ Назад", callback_data="back_to_duration")]  # Добавлена кнопка Назад
+    ]
+    
     await query.edit_message_text(
-        "📚 <b>Тестовая часть ЕГЭ</b>\n\n"
-        "Выберите режим:",
-        reply_markup=kb,
-        parse_mode=ParseMode.HTML
+        text,
+        parse_mode=ParseMode.HTML,
+        reply_markup=InlineKeyboardMarkup(keyboard)
     )
-    return states.CHOOSING_MODE
+    
+    return AUTO_RENEWAL_CHOICE
+
+
+@safe_handler()
+async def handle_auto_renewal_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обрабатывает выбор автопродления и переходит к запросу email."""
+    query = update.callback_query
+    await query.answer()
+    
+    if query.data == "enable_auto_renewal_payment":
+        context.user_data['enable_auto_renewal'] = True
+        await query.answer("✅ Автопродление будет включено после оплаты")
+    else:
+        context.user_data['enable_auto_renewal'] = False
+        await query.answer("Автопродление не будет включено")
+    
+    # ИСПРАВЛЕНИЕ: Переходим к запросу email, а НЕ сразу к оплате!
+    return await request_email(update, context)
+
+@safe_handler()
+async def cmd_my_subscriptions(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Команда /my_subscriptions - показывает активные подписки."""
+    user_id = update.effective_user.id
+    subscription_manager = context.bot_data.get('subscription_manager', SubscriptionManager())
+    
+    if SUBSCRIPTION_MODE == 'modular':
+        modules = await subscription_manager.get_user_modules(user_id)
+        
+        if not modules:
+            text = "📋 <b>Мои подписки</b>\n\nУ вас нет активных подписок.\n\nИспользуйте /subscribe для оформления."
+        else:
+            text = "📋 <b>Ваши активные модули:</b>\n\n"
+            module_names = {
+                'test_part': '📝 Тестовая часть',
+                'task19': '🎯 Задание 19',
+                'task20': '📖 Задание 20',
+                'task24': '💎 Задание 24',
+                'task25': '✍️ Задание 25'
+            }
+            for module in modules:
+                name = module_names.get(module['module_code'], module['module_code'])
+                expires = module['expires_at'].strftime('%d.%m.%Y')
+                text += f"{name}\n└ Действует до: {expires}\n\n"
+            
+            text += "Используйте /subscribe для продления или добавления модулей."
+    else:
+        subscription = await subscription_manager.check_active_subscription(user_id)
+        if subscription:
+            plan = SUBSCRIPTION_PLANS.get(subscription['plan_id'], {})
+            expires = subscription['expires_at'].strftime('%d.%m.%Y')
+            text = f"""✅ <b>Активная подписка</b>
+
+План: {plan.get('name', 'Подписка')}
+Действует до: {expires}
+
+Используйте /subscribe для продления."""
+        else:
+            text = "У вас нет активной подписки.\n\nИспользуйте /subscribe для оформления."
+    
+    # ДОБАВЛЕНО: кнопка главного меню
+    keyboard = [
+        [InlineKeyboardButton("🔄 Оформить/Продлить", callback_data="payment_back")],
+        [InlineKeyboardButton("🏠 Главное меню", callback_data="to_main_menu")]
+    ]
+    
+    await update.message.reply_text(
+        text,
+        parse_mode=ParseMode.HTML,
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
+
+@safe_handler()
+async def handle_my_subscriptions(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработчик callback my_subscriptions - показывает активные подписки."""
+    query = update.callback_query
+    await query.answer()
+    
+    user_id = query.from_user.id
+    subscription_manager = context.bot_data.get('subscription_manager', SubscriptionManager())
+    
+    if SUBSCRIPTION_MODE == 'modular':
+        modules = await subscription_manager.get_user_modules(user_id)
+        
+        if not modules:
+            # Для пользователей без подписки показываем интерфейс подписки
+            text = "📋 <b>Мои подписки</b>\n\nУ вас нет активных подписок.\n\n"
+            text += "💡 С модульной системой вы платите только за те задания, которые вам нужны!"
+            
+            keyboard = [
+                [InlineKeyboardButton("💳 Оформить подписку", callback_data="subscribe")],
+                [InlineKeyboardButton("🏠 Главное меню", callback_data="to_main_menu")]
+            ]
+            
+            try:
+                await query.edit_message_text(
+                    text,
+                    parse_mode=ParseMode.HTML,
+                    reply_markup=InlineKeyboardMarkup(keyboard)
+                )
+            except BadRequest as e:
+                if "Message is not modified" not in str(e):
+                    logger.error(f"Error in handle_my_subscriptions: {e}")
+                    raise
+        else:
+            # Для пользователей с подпиской показываем их модули
+            text = "📋 <b>Ваши активные модули:</b>\n\n"
+            module_names = {
+                'test_part': '📝 Тестовая часть',
+                'task19': '🎯 Задание 19',
+                'task20': '📖 Задание 20',
+                'task24': '💎 Задание 24',
+                'task25': '✍️ Задание 25'
+            }
+            
+            for module in modules:
+                name = module_names.get(module['module_code'], module['module_code'])
+                expires = module['expires_at'].strftime('%d.%m.%Y')
+                text += f"✅ {name}\n   └ Действует до: {expires}\n\n"
+            
+            # Детали доступа
+            text += "📊 <b>Детали доступа:</b>\n"
+            all_modules = ['test_part', 'task19', 'task20', 'task24', 'task25']
+            inactive_modules = []
+            
+            for module_code in all_modules:
+                has_access = await subscription_manager.check_module_access(user_id, module_code)
+                if not has_access:
+                    inactive_modules.append(module_names.get(module_code, module_code))
+            
+            if inactive_modules:
+                text += f"❌ Неактивные: {', '.join(inactive_modules)}\n\n"
+            else:
+                text += "✅ У вас есть доступ ко всем модулям!\n\n"
+            
+            text += "Используйте /subscribe для продления или добавления модулей."
+            
+            keyboard = [
+                [InlineKeyboardButton("🔄 Продлить/Добавить", callback_data="payment_back")],
+                [InlineKeyboardButton("🏠 Главное меню", callback_data="to_main_menu")]
+            ]
+            
+            try:
+                await query.edit_message_text(
+                    text,
+                    parse_mode=ParseMode.HTML,
+                    reply_markup=InlineKeyboardMarkup(keyboard)
+                )
+            except BadRequest as e:
+                if "Message is not modified" not in str(e):
+                    logger.error(f"Error editing message: {e}")
+                    # Если не можем отредактировать, отправляем новое сообщение
+                    await query.message.reply_text(
+                        text,
+                        parse_mode=ParseMode.HTML,
+                        reply_markup=InlineKeyboardMarkup(keyboard)
+                    )
+    else:
+        # Режим обычных подписок
+        subscription = await subscription_manager.check_active_subscription(user_id)
+        if subscription:
+            plan = SUBSCRIPTION_PLANS.get(subscription['plan_id'], {})
+            expires = subscription['expires_at'].strftime('%d.%m.%Y')
+            text = f"""✅ <b>Активная подписка</b>
+
+План: {plan.get('name', 'Подписка')}
+Действует до: {expires}
+
+Используйте /subscribe для продления."""
+        else:
+            text = "📋 <b>Мои подписки</b>\n\nУ вас нет активной подписки.\n\nИспользуйте /subscribe для оформления."
+        
+        keyboard = [
+            [InlineKeyboardButton("🔄 Оформить/Продлить", callback_data="payment_back")],
+            [InlineKeyboardButton("🏠 Главное меню", callback_data="to_main_menu")]
+        ]
+        
+        try:
+            await query.edit_message_text(
+                text,
+                parse_mode=ParseMode.HTML,
+                reply_markup=InlineKeyboardMarkup(keyboard)
+            )
+        except BadRequest as e:
+            if "Message is not modified" not in str(e):
+                logger.error(f"Error editing message: {e}")
+                await query.message.reply_text(
+                    text,
+                    parse_mode=ParseMode.HTML,
+                    reply_markup=InlineKeyboardMarkup(keyboard)
+                )
+    
+    # ВАЖНО: НЕ возвращаем состояние ConversationHandler
+    # чтобы обработчик работал как standalone
+    return None
+    
+@safe_handler()
+async def handle_back_to_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Глобальный обработчик для возврата в главное меню."""
+    query = update.callback_query
+    await query.answer()
+    
+    # Очищаем флаг процесса оплаты если он был
+    context.user_data.pop('in_payment_process', None)
+    
+    # Используем глобальный обработчик из core
+    from core.menu_handlers import handle_to_main_menu
+    return await handle_to_main_menu(update, context)
+
+@safe_handler()
+async def handle_module_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Показывает информацию о модуле."""
+    query = update.callback_query
+    await query.answer()
+    
+    # Извлекаем код модуля из callback_data
+    module_code = query.data.replace("module_info_", "")
+    
+    module_info = {
+        'test_part': {
+            'name': '📝 Тестовая часть ЕГЭ',
+            'description': 'Полный доступ к банку заданий тестовой части',
+            'features': [
+                '✅ Все задания 1-16',
+                '✅ Подробные объяснения',
+                '✅ Статистика прогресса',
+                '✅ Работа над ошибками'
+            ],
+            'price': '149₽/мес'
+        },
+        'task19': {
+            'name': '🎯 Задание 19',
+            'description': 'Примеры социальных объектов и явлений',
+            'features': [
+                '✅ База примеров по всем темам',
+                '✅ Интерактивные тренажеры',
+                '✅ Проверка ответов'
+            ],
+            'price': '199₽/мес'
+        },
+        'task20': {
+            'name': '📖 Задание 20',
+            'description': 'Текст с пропущенными словами',
+            'features': [
+                '✅ Тексты по всем разделам',
+                '✅ Подробные пояснения',
+                '✅ Тренировка навыков'
+            ],
+            'price': '199₽/мес'
+        },
+        'task24': {
+            'name': '💎 Задание 24',
+            'description': 'Составление сложного плана',
+            'features': [
+                '✅ База готовых планов',
+                '✅ Экспертная проверка',
+                '✅ Персональные рекомендации',
+                '✅ VIP поддержка'
+            ],
+            'price': '399₽/мес'
+        },
+        'task25': {
+            'name': '✍️ Задание 25',
+            'description': 'Понятия и термины',
+            'features': [
+                '✅ Полная база понятий',
+                '✅ Интерактивная проверка',
+                '✅ Адаптивная сложность'
+            ],
+            'price': '199₽/мес'
+        }
+    }
+    
+    info = module_info.get(module_code)
+    if not info:
+        await query.edit_message_text(
+            "❌ Информация о модуле не найдена",
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("⬅️ Назад", callback_data="back_to_modules")
+            ]])
+        )
+        return
+    
+    text = f"<b>{info['name']}</b>\n\n"
+    text += f"{info['description']}\n\n"
+    text += "<b>Что входит:</b>\n"
+    for feature in info['features']:
+        text += f"{feature}\n"
+    text += f"\n💰 <b>Стоимость:</b> {info['price']}"
+    
+    keyboard = [
+        [InlineKeyboardButton("💳 Оформить подписку", callback_data="subscribe")],
+        [InlineKeyboardButton("⬅️ Назад", callback_data="back_to_modules")]
+    ]
+    
+    await query.edit_message_text(
+        text,
+        parse_mode=ParseMode.HTML,
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
+
+# Добавьте эту функцию ПЕРЕД функцией register_payment_handlers в файле payment/handlers.py
+
+async def standalone_pay_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Автономный обработчик для кнопок оплаты вне ConversationHandler."""
+    query = update.callback_query
+    await query.answer()
+    
+    # Устанавливаем флаг процесса оплаты
+    context.user_data['in_payment_process'] = True
+    
+    # Сохраняем callback_data для обработки внутри ConversationHandler
+    context.user_data['standalone_callback'] = query.data
+    
+    # Вместо прямого вызова handle_plan_selection,
+    # эмулируем вход в ConversationHandler через entry point
+    if query.data in ["pay_trial", "pay_package_full", "pay_package_second"]:
+        # Сохраняем выбранный план
+        plan_id = query.data.replace("pay_", "")
+        
+        if plan_id == "trial":
+            plan_id = "trial_7days"
+            context.user_data['is_trial'] = True
+            context.user_data['selected_plan'] = plan_id
+            context.user_data['duration_months'] = 1
+            context.user_data['total_price'] = 1
+            context.user_data['base_price'] = 1
+            context.user_data['plan_name'] = "🎁 Пробный период 7 дней"
+            
+            # Для триала сразу запрашиваем email
+            return await request_email_for_trial(update, context)
+            
+        elif plan_id == "package_full":
+            context.user_data['selected_plan'] = "package_full"
+            context.user_data['is_trial'] = False
+        elif plan_id == "package_second":
+            context.user_data['selected_plan'] = "package_second"
+            context.user_data['is_trial'] = False
+        
+        # Получаем информацию о плане
+        from payment.config import MODULE_PLANS, SUBSCRIPTION_PLANS
+        plan = MODULE_PLANS.get(context.user_data['selected_plan']) or \
+               SUBSCRIPTION_PLANS.get(context.user_data['selected_plan'])
+        
+        if plan:
+            context.user_data['plan_info'] = plan
+            context.user_data['plan_name'] = plan['name']
+            context.user_data['base_price'] = plan['price_rub']
+            
+            # Показываем варианты длительности
+            return await show_duration_options(update, context)
+        else:
+            await query.edit_message_text("❌ Ошибка: план не найден")
+            return
+            
+    elif query.data == "pay_individual_modules":
+        # Показываем выбор модулей
+        return await show_individual_modules(update, context)
+    else:
+        # Неизвестная кнопка
+        context.user_data.pop('in_payment_process', None)
+        await query.answer("Неизвестное действие", show_alert=True)
+        return
+
+def register_payment_handlers(app):
+    """Регистрирует обработчики платежей с правильным потоком."""
+    logger.info("Registering payment handlers...")
+    
+    # Инициализируем обработчик согласия
+    subscription_manager = app.bot_data.get('subscription_manager', SubscriptionManager())
+    consent_handler = AutoRenewalConsent(subscription_manager)
+    
+    # Создаем ConversationHandler с правильными состояниями
+    payment_conv = ConversationHandler(
+        entry_points=[
+            CommandHandler("subscribe", cmd_subscribe),
+            CallbackQueryHandler(show_modular_interface, pattern="^subscribe$"),
+            CallbackQueryHandler(show_modular_interface, pattern="^subscribe_start$"),
+            CallbackQueryHandler(standalone_pay_handler, pattern="^pay_trial$"),
+            CallbackQueryHandler(standalone_pay_handler, pattern="^pay_package_full$"),
+            CallbackQueryHandler(standalone_pay_handler, pattern="^pay_package_second$"),
+            CallbackQueryHandler(standalone_pay_handler, pattern="^pay_individual_modules$"),
+        ],
+        states={
+            CHOOSING_PLAN: [
+                CallbackQueryHandler(handle_plan_selection, pattern="^pay_"),
+                CallbackQueryHandler(show_individual_modules, pattern="^pay_individual_modules$"),
+                CallbackQueryHandler(show_modular_interface, pattern="^back_to_main$"),
+                CallbackQueryHandler(handle_my_subscriptions, pattern="^my_subscriptions$")
+            ],
+            PROMO_INPUT: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_promo_input),
+                CallbackQueryHandler(skip_promo, pattern="^skip_promo$"),
+                CallbackQueryHandler(retry_promo, pattern="^retry_promo$"),
+                CallbackQueryHandler(show_promo_input, pattern="^retry_promo$"),
+                CallbackQueryHandler(handle_back_to_duration_selection, pattern="^back_to_duration_selection$"),
+                CallbackQueryHandler(cancel_payment, pattern="^cancel_payment$")
+            ],
+            
+            CHOOSING_MODULES: [
+                CallbackQueryHandler(toggle_module_selection, pattern="^toggle_"),
+                CallbackQueryHandler(show_module_info, pattern="^info_"),
+                CallbackQueryHandler(back_to_module_selection, pattern="^back_to_module_selection$"),
+                CallbackQueryHandler(proceed_with_selected_modules, pattern="^proceed_with_modules$"),
+                CallbackQueryHandler(handle_plan_selection, pattern="^pay_package_"),
+                CallbackQueryHandler(show_modular_interface, pattern="^back_to_main$")
+            ],
+            
+            CHOOSING_DURATION: [
+                CallbackQueryHandler(handle_duration_selection, pattern="^duration_"),
+                CallbackQueryHandler(show_individual_modules, pattern="^back_to_modules$"),
+                CallbackQueryHandler(show_modular_interface, pattern="^back_to_plans$")
+            ],
+            
+            # ИСПРАВЛЕНО: Состояние для выбора автопродления
+            CONFIRMING: [
+                # Добавляем новые обработчики для 100% скидки
+                CallbackQueryHandler(handle_free_activation, pattern="^activate_free$"),
+                CallbackQueryHandler(handle_pay_one_ruble, pattern="^pay_one_ruble$"),
+                
+                # Существующие обработчики
+                CallbackQueryHandler(
+                    handle_auto_renewal_choice, 
+                    pattern="^(enable|disable)_auto_renewal_payment$"
+                ),
+                CallbackQueryHandler(
+                    handle_back_to_duration_selection,
+                    pattern="^back_to_duration_selection$"
+                ),
+                CallbackQueryHandler(cancel_payment, pattern="^cancel_payment$"),
+            ],
+            
+            ENTERING_EMAIL: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_email_input),
+                CallbackQueryHandler(cancel_payment, pattern="^cancel_payment$")
+            ],
+
+            AUTO_RENEWAL_CHOICE: [
+                # Обработчик для основного выбора (существующий)
+                CallbackQueryHandler(
+                    consent_handler.handle_choice_selection,
+                    pattern="^(consent_auto_renewal|choose_auto_renewal|choose_no_auto_renewal|show_auto_renewal_terms)$"
+                ),
+                CallbackQueryHandler(
+                    handle_auto_renewal_choice,
+                    pattern="^(no_auto_renewal|auto_renewal_terms)$"
+                ),
+                
+                # ИСПРАВЛЕННЫЕ обработчики для кнопок с экрана согласия
+                # Используем функции из handlers.py, НЕ методы класса!
+                CallbackQueryHandler(
+                    toggle_consent,  # БЕЗ consent_handler.
+                    pattern="^toggle_consent_checkbox$"
+                ),
+                CallbackQueryHandler(
+                    toggle_consent,  # Та же функция для альтернативного callback
+                    pattern="^toggle_consent$"
+                ),
+                CallbackQueryHandler(
+                    confirm_with_auto_renewal,  # БЕЗ consent_handler.
+                    pattern="^confirm_with_auto_renewal$"
+                ),
+                CallbackQueryHandler(
+                    lambda u, c: u.callback_query.answer("⚠️ Отметьте согласие", show_alert=True),
+                    pattern="^need_consent_reminder$"
+                ),
+                CallbackQueryHandler(
+                    lambda u, c: u.callback_query.answer("⚠️ Отметьте согласие", show_alert=True),
+                    pattern="^need_consent$"
+                ),
+                
+                # Навигация
+                CallbackQueryHandler(
+                    handle_back_to_duration,
+                    pattern="^back_to_duration$"
+                ),
+                CallbackQueryHandler(
+                    handle_payment_back,
+                    pattern="^(payment_back|back_to_payment_choice)$"
+                ),
+                CallbackQueryHandler(
+                    cancel_payment,
+                    pattern="^cancel_payment$"
+                )
+            ],
+            
+            SHOWING_TERMS: [
+                CallbackQueryHandler(
+                    consent_handler.handle_choice_selection,
+                    pattern="^(choose_auto_renewal|choose_no_auto_renewal|show_auto_renewal_terms)$"
+                ),
+                CallbackQueryHandler(
+                    consent_handler.handle_back_navigation,
+                    pattern="^back_to_duration$"
+                ),
+                CallbackQueryHandler(
+                    cancel_payment,
+                    pattern="^cancel_payment$"
+                )
+            ],
+        },
+        fallbacks=[
+            CommandHandler("cancel", cancel_payment),
+            CallbackQueryHandler(cancel_payment, pattern="^pay_cancel$"),
+            CallbackQueryHandler(handle_my_subscriptions, pattern="^my_subscriptions$")
+        ],
+        allow_reentry=True,
+        per_message=False
+    )
+    
+    # Регистрируем ConversationHandler
+    app.add_handler(payment_conv, group=-50)
+    
+    app.add_handler(
+        CallbackQueryHandler(
+            check_payment_status,
+            pattern="^check_payment$"
+        ),
+        group=-45
+    )
+    
+    app.add_handler(
+        CallbackQueryHandler(
+            handle_payment_back,
+            pattern="^payment_back$"
+        ),
+        group=-45
+    )
+    
+    app.add_handler(
+        CallbackQueryHandler(
+            handle_my_subscriptions, 
+            pattern="^my_subscriptions$"
+        ), 
+        group=-45
+    )
+    
+    app.add_handler(
+        CommandHandler("my_subscriptions", cmd_my_subscriptions), 
+        group=-45
+    )
+    
+    # Обработчик для возврата в главное меню
+    async def payment_to_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Переход в главное меню из payment."""
+        from core.menu_handlers import handle_to_main_menu
+        context.user_data.pop('in_payment_process', None)
+        await handle_to_main_menu(update, context)
+        return ConversationHandler.END
+    
+    app.add_handler(
+        CallbackQueryHandler(
+            payment_to_main_menu,
+            pattern="^(main_menu|to_main_menu)$"
+        ),
+        group=-45
+    )
+    
+    app.add_handler(
+        CallbackQueryHandler(
+            handle_back_to_main_menu, 
+            pattern="^back_to_main$"
+        ), 
+        group=-49
+    )
+    
+    app.add_handler(
+        CallbackQueryHandler(
+            handle_module_info, 
+            pattern="^module_info_"
+        ), 
+        group=-45
+    )
+    
+    # 8. Debug команда (если существует)
+    try:
+        app.add_handler(
+            CommandHandler("debug_subscription", cmd_debug_subscription), 
+            group=-50
+        )
+    except NameError:
+        logger.info("cmd_debug_subscription not defined, skipping")
+    
+    logger.info("Payment handlers registered successfully")
+    logger.info("ConversationHandler has entry points for all payment buttons")
+    logger.info("Priority groups: -50 (ConversationHandler), -45 (standalone)")

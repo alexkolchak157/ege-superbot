@@ -80,6 +80,8 @@ class SubscriptionMiddleware:
         # Кэш для ускорения проверок
         self._module_cache = {}  # {update_key: module_code}
         self._access_cache = {}  # {(user_id, module): has_access}
+        self._cache_ttl = 60
+        self._cache_timestamps = {}
     
     @lru_cache(maxsize=256)
     def _get_update_key(self, update: Update) -> Optional[str]:
