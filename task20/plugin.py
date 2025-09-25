@@ -13,7 +13,7 @@ from core.states import ANSWERING_T20, SEARCHING, VIEWING_EXAMPLE, CONFIRMING_RE
 logger = logging.getLogger(__name__)
 
 class Task20Plugin(BotPlugin):
-    code = "t20"  # Изменить с "task20" на "t20"
+    code = "task20"  # Изменить с "task20" на "t20"
     title = "🎯 Задание 20 (Суждения)"
     menu_priority = 16
     
