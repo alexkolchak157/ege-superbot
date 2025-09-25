@@ -913,20 +913,36 @@ async def show_module_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 @safe_handler()
 async def back_to_module_selection(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Возврат к выбору модулей из информации о модуле."""
+    """ИСПРАВЛЕННЫЙ обработчик возврата к выбору модулей."""
     query = update.callback_query
     
     # Отвечаем на callback
     if query:
         await query.answer()
     
-    # Если мы здесь из процесса выбора отдельных модулей
+    # Проверяем, откуда мы пришли
     if 'selected_modules' in context.user_data:
-        # Возвращаемся к выбору модулей
+        # Если у нас есть выбранные модули - возвращаемся к их списку
         return await show_individual_modules(update, context)
     else:
-        # Иначе возвращаемся к общему интерфейсу выбора подписки
-        return await show_modular_interface(update, context)
+        # Иначе показываем общий интерфейс выбора
+        # Но сначала инициализируем пустой список для корректной работы
+        context.user_data['selected_modules'] = []
+        return await show_individual_modules(update, context)
+
+# Также добавим альтернативный обработчик для перехода к выбору модулей
+@safe_handler() 
+async def back_to_modules(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Возврат к общему выбору планов подписки."""
+    query = update.callback_query
+    if query:
+        await query.answer()
+    
+    # Очищаем выбранные модули
+    context.user_data.pop('selected_modules', None)
+    
+    # Возвращаемся к выбору типа подписки
+    return await show_modular_interface(update, context)
     
 # Добавьте обработчик для продолжения с выбранными модулями:
 
@@ -2592,6 +2608,7 @@ def register_payment_handlers(app):
                 CallbackQueryHandler(toggle_module_selection, pattern="^toggle_"),
                 CallbackQueryHandler(show_module_info, pattern="^info_"),
                 CallbackQueryHandler(back_to_module_selection, pattern="^back_to_module_selection$"),
+                CallbackQueryHandler(back_to_modules, pattern="^back_to_modules$"),  # Добавить
                 CallbackQueryHandler(proceed_with_selected_modules, pattern="^proceed_with_modules$"),
                 CallbackQueryHandler(handle_plan_selection, pattern="^pay_package_"),
                 CallbackQueryHandler(show_modular_interface, pattern="^back_to_main$")

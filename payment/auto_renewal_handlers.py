@@ -149,7 +149,7 @@ async def handle_enable_auto_renewal(update: Update, context: ContextTypes.DEFAU
 
 @safe_handler()
 async def handle_disable_auto_renewal(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Отключает автопродление."""
+    """Отключает автопродление с улучшенной навигацией."""
     query = update.callback_query
     await query.answer()
     
@@ -183,37 +183,76 @@ async def handle_disable_auto_renewal(update: Update, context: ContextTypes.DEFA
         )
         
     elif query.data == "cancel_disable_auto_renewal":
-        # Возвращаемся к информации о подписке
+        # ИСПРАВЛЕНИЕ: Возвращаемся к полной информации о подписках
         try:
-            # Получаем статус автопродления
+            # Получаем полную информацию о подписке
+            subscription_info = await subscription_manager.get_subscription_info(user_id)
             auto_renewal = await subscription_manager.get_auto_renewal_status(user_id)
             
-            if auto_renewal and auto_renewal.get('enabled'):
-                text = f"""🔄 <b>Управление автопродлением</b>
-
-✅ Автопродление включено
-
-📅 Следующее списание: {auto_renewal['next_renewal_date'].strftime('%d.%m.%Y')}
-💰 Сумма: {auto_renewal.get('amount', 0)} ₽
-
-Подписка продлевается автоматически каждый месяц."""
+            if subscription_info:
+                # Формируем полный текст с информацией о подписке
+                text = "📋 <b>Ваши подписки</b>\n\n"
                 
-                keyboard = [
-                    [InlineKeyboardButton("❌ Отключить автопродление", 
-                                        callback_data="disable_auto_renewal")],
-                    [InlineKeyboardButton("📋 Мои подписки", 
-                                        callback_data="my_subscriptions")]
-                ]
+                # Информация о типе подписки
+                if subscription_info.get('type') == 'modular':
+                    text += "✅ <b>Активные модули:</b>\n"
+                    for module in subscription_info.get('modules', []):
+                        text += f"   • {module}\n"
+                else:
+                    plan_name = subscription_info.get('plan_name', 'Подписка')
+                    text += f"✅ <b>Активный план:</b> {plan_name}\n"
+                
+                # Дата истечения
+                expires_at = subscription_info.get('expires_at')
+                if expires_at:
+                    text += f"\n📅 <b>Действует до:</b> {expires_at.strftime('%d.%m.%Y')}\n"
+                
+                # Информация об автопродлении
+                if auto_renewal and auto_renewal.get('enabled'):
+                    text += f"\n🔄 <b>Автопродление:</b> Включено\n"
+                    text += f"📅 Следующее списание: {auto_renewal['next_renewal_date'].strftime('%d.%m.%Y')}\n"
+                    text += f"💰 Сумма: {auto_renewal.get('amount', 0)} ₽"
+                else:
+                    text += f"\n🔄 <b>Автопродление:</b> Отключено"
+                
+                # Формируем клавиатуру
+                keyboard = []
+                
+                # Кнопка управления автопродлением
+                if auto_renewal and auto_renewal.get('enabled'):
+                    keyboard.append([
+                        InlineKeyboardButton("❌ Отключить автопродление", 
+                                           callback_data="disable_auto_renewal")
+                    ])
+                else:
+                    keyboard.append([
+                        InlineKeyboardButton("✅ Включить автопродление", 
+                                           callback_data="enable_auto_renewal")
+                    ])
+                
+                # Дополнительные кнопки
+                keyboard.append([
+                    InlineKeyboardButton("➕ Добавить модули", 
+                                       callback_data="subscribe_start")
+                ])
+                keyboard.append([
+                    InlineKeyboardButton("🏠 Главное меню", 
+                                       callback_data="to_main_menu")
+                ])
+                
             else:
-                text = """🔄 <b>Управление автопродлением</b>
+                # Если подписки нет
+                text = """📋 <b>Ваши подписки</b>
 
-Автопродление отключено."""
+У вас нет активной подписки.
+
+Оформите подписку для доступа к материалам."""
                 
                 keyboard = [
-                    [InlineKeyboardButton("✅ Включить автопродление", 
-                                        callback_data="enable_auto_renewal")],
-                    [InlineKeyboardButton("📋 Мои подписки", 
-                                        callback_data="my_subscriptions")]
+                    [InlineKeyboardButton("💳 Оформить подписку", 
+                                        callback_data="subscribe_start")],
+                    [InlineKeyboardButton("🏠 Главное меню", 
+                                        callback_data="to_main_menu")]
                 ]
             
             await query.edit_message_text(
@@ -221,16 +260,27 @@ async def handle_disable_auto_renewal(update: Update, context: ContextTypes.DEFA
                 parse_mode=ParseMode.HTML,
                 reply_markup=InlineKeyboardMarkup(keyboard)
             )
+            
         except Exception as e:
-            logger.error(f"Error handling cancel: {e}")
-            # Если не удается показать статус, возвращаемся к подпискам
-            await query.edit_message_text(
-                "Возвращаемся к управлению подписками...",
-                reply_markup=InlineKeyboardMarkup([[
+            logger.error(f"Error showing subscriptions after cancel: {e}")
+            # При ошибке показываем упрощенное меню
+            try:
+                text = "📋 Возвращаемся к управлению подписками..."
+                keyboard = [[
                     InlineKeyboardButton("📋 Мои подписки", 
-                                       callback_data="my_subscriptions")
-                ]])
-            )
+                                       callback_data="my_subscriptions"),
+                    InlineKeyboardButton("🏠 Главное меню", 
+                                       callback_data="to_main_menu")
+                ]]
+                
+                await query.edit_message_text(
+                    text,
+                    reply_markup=InlineKeyboardMarkup(keyboard)
+                )
+            except:
+                # Если и это не работает, вызываем handle_my_subscriptions напрямую
+                from .handlers import handle_my_subscriptions
+                return await handle_my_subscriptions(update, context)
         
     elif query.data == "confirm_disable_auto_renewal":
         # Подтверждено - отключаем

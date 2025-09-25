@@ -506,6 +506,12 @@ class SubscriptionMiddleware:
         # Формируем сообщение
         text = f"🔒 <b>Модуль «{module_name}» требует подписку</b>\n\n"
         
+        # ИСПРАВЛЕНИЕ: Убрана проблемная вторая строка с номером задания
+        # Вместо неё добавляем описание модуля, если оно есть
+        module_info = MODULE_PLANS.get(normalized_code, {})
+        if module_info and 'description' in module_info:
+            text += f"<i>{module_info['description']}</i>\n\n"
+        
         # Сортируем пакеты по цене
         suitable_packages.sort(key=lambda x: x[1]['price_rub'])
         
@@ -521,25 +527,26 @@ class SubscriptionMiddleware:
         
         text += "\n\n💡 <i>Совет: Попробуйте пробный период за 1₽</i>"
         
-        # Кнопки (ИСПРАВЛЕНО)
+        # Кнопки
         buttons = []
         
         # Пробный период всегда первый
         buttons.append([InlineKeyboardButton("🎁 Попробовать за 1₽", callback_data="pay_trial")])
         
-        # ИСПРАВЛЕНИЕ: Добавляем кнопку для покупки конкретного модуля
+        # Добавляем кнопку для покупки конкретного модуля, если он продается отдельно
         if module_price > 0:
             button_text = f"💎 {module_name} — {module_price}₽"
             buttons.append([InlineKeyboardButton(button_text, callback_data=f"pay_module_{normalized_code}")])
         
-        # Добавляем подходящие пакеты (если модуль не продается отдельно)
-        else:
+        # Добавляем подходящие пакеты
+        if suitable_packages:
+            # Показываем максимум 2 наиболее выгодных пакета
             for plan_id, plan in suitable_packages[:2]:
-                if plan['type'] != 'trial':
+                if plan['type'] != 'trial':  # Пробный период уже добавлен отдельно
                     button_text = f"📦 {plan['name']} — {plan['price_rub']}₽"
                     buttons.append([InlineKeyboardButton(button_text, callback_data=f"pay_{plan_id}")])
         
-        # ИСПРАВЛЕНИЕ: Добавляем кнопку перехода к магазину подписок
+        # Кнопка перехода к магазину подписок для просмотра всех вариантов
         buttons.append([InlineKeyboardButton("🛒 Все подписки", callback_data="subscribe_start")])
         
         # Кнопка возврата в главное меню
@@ -558,14 +565,22 @@ class SubscriptionMiddleware:
                     reply_markup=reply_markup,
                     parse_mode=ParseMode.HTML
                 )
-            except Exception:
-                # Если не удалось отредактировать, отправляем новое
-                await update.callback_query.message.reply_text(
-                    text,
-                    reply_markup=reply_markup,
-                    parse_mode=ParseMode.HTML
-                )
+            except BadRequest as e:
+                if "Message is not modified" in str(e):
+                    # Если сообщение не изменилось, просто игнорируем
+                    pass
+                else:
+                    # Если другая ошибка, отправляем новое сообщение
+                    try:
+                        await update.callback_query.message.reply_text(
+                            text,
+                            reply_markup=reply_markup,
+                            parse_mode=ParseMode.HTML
+                        )
+                    except Exception as send_error:
+                        logger.error(f"Failed to send subscription required message: {send_error}")
         else:
+            # Для обычных сообщений (не callback)
             await update.message.reply_text(
                 text,
                 reply_markup=reply_markup,
