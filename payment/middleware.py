@@ -65,7 +65,7 @@ class SubscriptionMiddleware:
             },
             'task20': {
                 'commands': ['task20'],
-                'callbacks': ['choose_task20', 'to_task20_menu', 't20_', 'task20_'],
+                'callbacks': ['choose_task20', 'to_task20_menu', 't20_', 'task20_', 'choose_t20'],
             },
             'task24': {
                 'commands': ['task24'],
@@ -74,6 +74,11 @@ class SubscriptionMiddleware:
             'task25': {
                 'commands': ['task25'],
                 'callbacks': ['choose_task25', 'to_task25_menu', 't25_', 'task25_'],
+            },
+            # Алиасы для обратной совместимости
+            't20': {
+                'commands': ['task20'],
+                'callbacks': ['choose_t20', 'to_task20_menu', 't20_', 'task20_'],
             }
         }
         
@@ -207,6 +212,8 @@ class SubscriptionMiddleware:
         
         # ИСПРАВЛЕНИЕ: Сначала определяем модуль
         module_code = self._get_module_from_update(update)
+        if module_code:
+            module_code = self._normalize_module_code(module_code)
         
         # Если модуль не определен, берем из контекста
         if not module_code and context:
@@ -271,6 +278,18 @@ class SubscriptionMiddleware:
         logger.info(f"Access granted for user {user_id} to module {module_code}")
         return True
     
+    def _normalize_module_code(self, module_code: str) -> str:
+        """Нормализует код модуля для консистентности."""
+        # Маппинг алиасов к основным кодам
+        module_aliases = {
+            't20': 'task20',
+            't19': 'task19',
+            't24': 'task24',
+            't25': 'task25',
+            'test': 'test_part'
+        }
+        return module_aliases.get(module_code, module_code)
+
     def _is_free_action(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
         """
         Проверяет, является ли действие бесплатным.
@@ -451,7 +470,7 @@ class SubscriptionMiddleware:
     
     async def _send_module_subscription_required(self, update: Update, context: ContextTypes.DEFAULT_TYPE, module_code: str):
         """
-        Отправляет сообщение о необходимости подписки на конкретный модуль.
+        Отправляет сообщение о необходимости подписки для модуля.
         
         Args:
             update: Telegram update
@@ -463,11 +482,17 @@ class SubscriptionMiddleware:
             'test_part': '📝 Тестовая часть',
             'task19': '🎯 Задание 19',
             'task20': '📖 Задание 20',
-            'task24': '📋 Задание 24',
+            'task24': '💎 Задание 24',
             'task25': '✍️ Задание 25'
         }
         
-        module_name = module_names.get(module_code, module_code)
+        # Нормализуем код модуля для правильного отображения
+        if hasattr(self, '_normalize_module_code'):
+            normalized_code = self._normalize_module_code(module_code)
+        else:
+            normalized_code = module_code
+            
+        module_name = module_names.get(normalized_code, normalized_code)
         
         # Импортируем конфигурацию
         from .config import MODULE_PLANS, get_module_price
@@ -475,7 +500,7 @@ class SubscriptionMiddleware:
         # Находим подходящие пакеты
         suitable_packages = []
         for plan_id, plan in MODULE_PLANS.items():
-            if module_code in plan.get('modules', []):
+            if normalized_code in plan.get('modules', []):
                 suitable_packages.append((plan_id, plan))
         
         # Формируем сообщение
@@ -490,25 +515,34 @@ class SubscriptionMiddleware:
                 text += f"• {plan['name']} — {plan['price_rub']}₽\n"
         
         # Цена отдельного модуля
-        module_price = get_module_price(module_code)
+        module_price = get_module_price(normalized_code)
         if module_price > 0:
             text += f"\n<b>Или отдельно:</b> {module_price}₽/мес"
         
         text += "\n\n💡 <i>Совет: Попробуйте пробный период за 1₽</i>"
         
-        # Кнопки
+        # Кнопки (ИСПРАВЛЕНО)
         buttons = []
         
         # Пробный период всегда первый
         buttons.append([InlineKeyboardButton("🎁 Попробовать за 1₽", callback_data="pay_trial")])
         
-        # Добавляем подходящие пакеты
-        for plan_id, plan in suitable_packages[:2]:
-            if plan['type'] != 'trial':
-                button_text = f"{plan['name']}"
-                buttons.append([InlineKeyboardButton(button_text, callback_data=f"pay_{plan_id}")])
+        # ИСПРАВЛЕНИЕ: Добавляем кнопку для покупки конкретного модуля
+        if module_price > 0:
+            button_text = f"💎 {module_name} — {module_price}₽"
+            buttons.append([InlineKeyboardButton(button_text, callback_data=f"pay_module_{normalized_code}")])
         
-        # Кнопка возврата
+        # Добавляем подходящие пакеты (если модуль не продается отдельно)
+        else:
+            for plan_id, plan in suitable_packages[:2]:
+                if plan['type'] != 'trial':
+                    button_text = f"📦 {plan['name']} — {plan['price_rub']}₽"
+                    buttons.append([InlineKeyboardButton(button_text, callback_data=f"pay_{plan_id}")])
+        
+        # ИСПРАВЛЕНИЕ: Добавляем кнопку перехода к магазину подписок
+        buttons.append([InlineKeyboardButton("🛒 Все подписки", callback_data="subscribe_start")])
+        
+        # Кнопка возврата в главное меню
         buttons.append([InlineKeyboardButton("⬅️ Главное меню", callback_data="to_main_menu")])
         
         reply_markup = InlineKeyboardMarkup(buttons)
@@ -516,18 +550,27 @@ class SubscriptionMiddleware:
         # Отправляем сообщение
         if update.callback_query:
             await update.callback_query.answer(f"❌ {module_name} требует подписку", show_alert=True)
-            await update.callback_query.message.reply_text(
-                text,
-                reply_markup=reply_markup,
-                parse_mode=ParseMode.HTML
-            )
+            
+            # Пробуем отредактировать сообщение
+            try:
+                await update.callback_query.message.edit_text(
+                    text,
+                    reply_markup=reply_markup,
+                    parse_mode=ParseMode.HTML
+                )
+            except Exception:
+                # Если не удалось отредактировать, отправляем новое
+                await update.callback_query.message.reply_text(
+                    text,
+                    reply_markup=reply_markup,
+                    parse_mode=ParseMode.HTML
+                )
         else:
             await update.message.reply_text(
                 text,
                 reply_markup=reply_markup,
                 parse_mode=ParseMode.HTML
             )
-    
     async def _send_limit_exceeded(self, update: Update, context: ContextTypes.DEFAULT_TYPE, used: int, limit: int):
         """
         Отправляет сообщение о превышении лимита.

@@ -693,7 +693,7 @@ async def show_individual_modules(update: Update, context: ContextTypes.DEFAULT_
     # Группируем модули по типам
     individual_modules = {
         k: v for k, v in MODULE_PLANS.items() 
-        if v.get('type') == 'individual'
+        if v.get('type') == 'individual' and v.get('price_rub', 0) > 0
     }
     
     # ИСПРАВЛЕНИЕ: Проверяем, что модули существуют
@@ -873,7 +873,7 @@ async def show_module_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     # Создаем клавиатуру с кнопкой возврата
     keyboard = [[
-        InlineKeyboardButton("⬅️ Назад к выбору", callback_data="back_to_modules")
+        InlineKeyboardButton("⬅️ Назад к выбору", callback_data="back_to_module_selection")
     ]]
     
     # Редактируем сообщение с обработкой ошибок
@@ -920,8 +920,13 @@ async def back_to_module_selection(update: Update, context: ContextTypes.DEFAULT
     if query:
         await query.answer()
     
-    # Вызываем show_individual_modules для возврата к списку
-    return await show_individual_modules(update, context)
+    # Если мы здесь из процесса выбора отдельных модулей
+    if 'selected_modules' in context.user_data:
+        # Возвращаемся к выбору модулей
+        return await show_individual_modules(update, context)
+    else:
+        # Иначе возвращаемся к общему интерфейсу выбора подписки
+        return await show_modular_interface(update, context)
     
 # Добавьте обработчик для продолжения с выбранными модулями:
 
@@ -2764,9 +2769,38 @@ def register_payment_handlers(app):
             CommandHandler("debug_subscription", cmd_debug_subscription), 
             group=-50
         )
+
+        # Обработчик для кнопки "Отмена"
+        app.add_handler(
+            CallbackQueryHandler(
+                handle_close_message,
+                pattern="^close_message$"
+            ),
+            group=-45
+        )
     except NameError:
         logger.info("cmd_debug_subscription not defined, skipping")
     
     logger.info("Payment handlers registered successfully")
     logger.info("ConversationHandler has entry points for all payment buttons")
     logger.info("Priority groups: -50 (ConversationHandler), -45 (standalone)")
+
+
+# Обработчик для закрытия сообщений (кнопка "Отмена")
+@safe_handler()
+async def handle_close_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Закрывает сообщение при нажатии кнопки Отмена."""
+    query = update.callback_query
+    
+    try:
+        # Отвечаем на callback query
+        await query.answer("Отменено")
+        
+        # Удаляем сообщение
+        await query.message.delete()
+        
+    except Exception as e:
+        logger.debug(f"Error closing message: {e}")
+        # Если не получилось удалить, просто отвечаем
+        if query:
+            await query.answer()

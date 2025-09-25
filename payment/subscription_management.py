@@ -89,7 +89,87 @@ class SubscriptionManagementUI:
             parse_mode=ParseMode.HTML,
             reply_markup=InlineKeyboardMarkup(keyboard)
         )
-    
+
+    async def check_module_access(self, user_id: int, module_code: str) -> bool:
+        """
+        Проверяет доступ пользователя к модулю.
+        
+        Args:
+            user_id: ID пользователя
+            module_code: Код модуля
+            
+        Returns:
+            bool: True если есть доступ
+        """
+        try:
+            # ИСПРАВЛЕНИЕ: test_part всегда доступен
+            if module_code == 'test_part':
+                return True
+                
+            # Проверяем админов
+            admin_ids = self._get_admin_ids()
+            if user_id in admin_ids:
+                return True
+            
+            # Проверяем в кэше
+            cache_key = f"access_{user_id}_{module_code}"
+            if cache_key in self._cache:
+                cached_result, cache_time = self._cache[cache_key]
+                if (datetime.now() - cache_time).seconds < 300:  # 5 минут кэш
+                    return cached_result
+            
+            # Проверяем в базе данных
+            async with aiosqlite.connect(self.db_path) as db:
+                db.row_factory = aiosqlite.Row
+                
+                if self.modular_mode:
+                    # Модульная система - проверяем конкретный модуль
+                    cursor = await db.execute("""
+                        SELECT expires_at 
+                        FROM user_subscriptions 
+                        WHERE user_id = ? 
+                            AND module_id = ?
+                            AND expires_at > datetime('now')
+                        ORDER BY expires_at DESC
+                        LIMIT 1
+                    """, (user_id, module_code))
+                else:
+                    # Единая подписка - проверяем план
+                    cursor = await db.execute("""
+                        SELECT plan_id, expires_at
+                        FROM user_subscriptions 
+                        WHERE user_id = ? 
+                            AND is_active = 1
+                            AND expires_at > datetime('now')
+                        ORDER BY expires_at DESC
+                        LIMIT 1
+                    """, (user_id,))
+                    
+                    row = await cursor.fetchone()
+                    if row:
+                        plan = self.SUBSCRIPTION_PLANS.get(row['plan_id'], {})
+                        modules = plan.get('modules', [])
+                        has_access = module_code in modules
+                        
+                        # Кэшируем результат
+                        self._cache[cache_key] = (has_access, datetime.now())
+                        return has_access
+                        
+                    # Кэшируем отрицательный результат
+                    self._cache[cache_key] = (False, datetime.now())
+                    return False
+                
+                row = await cursor.fetchone()
+                has_access = row is not None
+                
+                # Кэшируем результат
+                self._cache[cache_key] = (has_access, datetime.now())
+                return has_access
+                
+        except Exception as e:
+            logger.error(f"Error checking module access: {e}")
+            return False
+
     @staticmethod
     @safe_handler()
     async def cancel_auto_renewal(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -147,6 +227,16 @@ class SubscriptionManagementUI:
             )
             
             text = """✅ <b>Автопродление отключено</b>
+
+    @staticmethod
+    @safe_handler()
+    async def keep_auto_renewal(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Отмена отключения автопродления - возврат к управлению."""
+        query = update.callback_query
+        await query.answer("Автопродление остается включенным")
+        
+        # Возвращаемся к управлению подпиской
+        return await SubscriptionManagementUI.cmd_manage_subscription(update, context)
 
 Автоматическое продление подписки отключено.
 
