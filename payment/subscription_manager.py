@@ -367,7 +367,11 @@ class SubscriptionManager:
             return False
 
     async def get_users_for_auto_renewal(self) -> List[Dict]:
-        """Получает список пользователей для автопродления."""
+        """
+        Получает список пользователей для автопродления.
+        
+        ИСПРАВЛЕНИЕ: Добавлена проверка plan_id в JOIN для корректного получения суммы платежа.
+        """
         try:
             from datetime import datetime, timezone
             
@@ -379,7 +383,7 @@ class SubscriptionManager:
                         ars.user_id,
                         ars.recurrent_token,
                         ms.plan_id,
-                        p.amount / 100 as amount
+                        COALESCE(p.amount / 100, 0) as amount  -- ИСПРАВЛЕНО: добавлен COALESCE для NULL
                     FROM auto_renewal_settings ars
                     INNER JOIN module_subscriptions ms ON ars.user_id = ms.user_id
                     LEFT JOIN (
@@ -387,7 +391,7 @@ class SubscriptionManager:
                         FROM payments
                         WHERE status = 'completed'
                         GROUP BY user_id, plan_id
-                    ) p ON ars.user_id = p.user_id
+                    ) p ON ars.user_id = p.user_id AND ms.plan_id = p.plan_id  -- ИСПРАВЛЕНО: добавлен AND ms.plan_id = p.plan_id
                     WHERE 
                         ars.enabled = 1 
                         AND ars.recurrent_token IS NOT NULL
@@ -397,7 +401,31 @@ class SubscriptionManager:
                 """)
                 
                 rows = await cursor.fetchall()
-                return [dict(row) for row in rows]
+                
+                # КРИТИЧНОЕ ДОПОЛНЕНИЕ: Валидация данных перед возвратом
+                validated_users = []
+                for row in rows:
+                    user_dict = dict(row)
+                    
+                    # Проверяем что у нас есть все необходимые данные
+                    if user_dict.get('amount', 0) <= 0:
+                        logger.warning(
+                            f"User {user_dict['user_id']} has invalid amount for auto-renewal. "
+                            f"Skipping renewal to prevent charging incorrect amount."
+                        )
+                        continue
+                    
+                    if not user_dict.get('recurrent_token'):
+                        logger.warning(
+                            f"User {user_dict['user_id']} missing recurrent_token. "
+                            f"Skipping renewal."
+                        )
+                        continue
+                    
+                    validated_users.append(user_dict)
+                
+                logger.info(f"Found {len(validated_users)} validated users for auto-renewal")
+                return validated_users
                 
         except Exception as e:
             logger.error(f"Error getting users for auto-renewal: {e}")
@@ -1297,45 +1325,51 @@ class SubscriptionManager:
     async def _activate_standard_plan(self, user_id: int, plan_id: str, duration_months: int) -> bool:
         """
         Активирует стандартный план подписки.
-        Обновленная версия с поддержкой модулей с префиксом module_.
+        Исправлена проблема с модулями для trial_7days и package_full.
         """
         try:
             from datetime import datetime, timedelta
+            from .config import SUBSCRIPTION_PLANS
             
-            # Определяем модули для плана
-            plan_modules = {
-                'trial_7days': ['test_part', 'task19'],
-                'package_full': ['test_part', 'task19', 'task20', 'task25'],
-                'package_second': ['task19', 'task20', 'task25'],
-                'package_second_part': ['task19', 'task20', 'task25'],  # Добавлен алиас
-                # Поддержка модулей с префиксом и без
-                'module_test_part': ['test_part'],
-                'test_part': ['test_part'],
-                'module_task19': ['task19'],
-                'task19': ['task19'],
-                'module_task20': ['task20'],
-                'task20': ['task20'],
-                'module_task24': ['task24'],
-                'task24': ['task24'],
-                'module_task25': ['task25'],
-                'task25': ['task25']
-            }
-            
-            modules = plan_modules.get(plan_id, [])
-            
-            if not modules:
-                logger.error(f"Unknown plan: {plan_id}")
-                return False
+            # ВАЖНО: Используем модули из конфигурации, а не захардкоженные значения!
+            plan = SUBSCRIPTION_PLANS.get(plan_id)
+            if not plan:
+                # Fallback для старых планов с префиксом module_
+                fallback_modules = {
+                    'module_test_part': ['test_part'],
+                    'test_part': ['test_part'],
+                    'module_task19': ['task19'],
+                    'task19': ['task19'],
+                    'module_task20': ['task20'],
+                    'task20': ['task20'],
+                    'module_task24': ['task24'],
+                    'task24': ['task24'],
+                    'module_task25': ['task25'],
+                    'task25': ['task25']
+                }
+                
+                modules = fallback_modules.get(plan_id, [])
+                if not modules:
+                    logger.error(f"Unknown plan: {plan_id}")
+                    return False
+            else:
+                # Используем модули из конфигурации
+                modules = plan.get('modules', [])
+                if not modules:
+                    logger.error(f"No modules defined for plan: {plan_id}")
+                    return False
             
             # Рассчитываем дату истечения
             if plan_id == 'trial_7days':
                 expires_at = datetime.now() + timedelta(days=7)
+                logger.info(f"Activating trial with modules: {modules}")
             else:
                 expires_at = datetime.now() + timedelta(days=30 * duration_months)
             
             async with aiosqlite.connect(self.database_file) as conn:
+                # Активируем каждый модуль
                 for module_code in modules:
-                    # Сначала проверяем, есть ли уже запись (активная или нет)
+                    # Проверяем существующую подписку
                     cursor = await conn.execute(
                         """
                         SELECT expires_at, is_active FROM module_subscriptions 
@@ -1349,9 +1383,9 @@ class SubscriptionManager:
                         existing_expires, is_active = existing
                         existing_expires_dt = datetime.fromisoformat(existing_expires)
                         
-                        # Если подписка активна и еще не истекла - продлеваем от нее
+                        # Если подписка активна и не истекла - продлеваем
                         if is_active and existing_expires_dt > datetime.now():
-                            new_expires = existing_expires_dt + timedelta(days=30 * duration_months)
+                            new_expires = existing_expires_dt + timedelta(days=30 * duration_months if plan_id != 'trial_7days' else 7)
                         else:
                             new_expires = expires_at
                         
@@ -1365,47 +1399,116 @@ class SubscriptionManager:
                                 created_at = CURRENT_TIMESTAMP 
                             WHERE user_id = ? AND module_code = ?
                             """,
-                            (new_expires.isoformat(), plan_id, user_id, module_code)
+                            (new_expires, plan_id, user_id, module_code)
                         )
                         logger.info(f"Updated subscription for user {user_id}, module {module_code}")
                     else:
-                        # Создаем новую запись только если ее нет
-                        try:
-                            await conn.execute(
-                                """
-                                INSERT INTO module_subscriptions (
-                                    user_id, module_code, plan_id, expires_at, 
-                                    is_active, created_at
-                                ) VALUES (?, ?, ?, ?, 1, CURRENT_TIMESTAMP)
-                                """,
-                                (user_id, module_code, plan_id, expires_at.isoformat())
-                            )
-                            logger.info(f"Created new subscription for user {user_id}, module {module_code}")
-                        except aiosqlite.IntegrityError:
-                            # На случай race condition
-                            logger.warning(f"Race condition for user {user_id}, module {module_code}. Using UPDATE.")
-                            await conn.execute(
-                                """
-                                UPDATE module_subscriptions 
-                                SET expires_at = ?, 
-                                    plan_id = ?, 
-                                    is_active = 1,
-                                    created_at = CURRENT_TIMESTAMP 
-                                WHERE user_id = ? AND module_code = ?
-                                """,
-                                (expires_at.isoformat(), plan_id, user_id, module_code)
-                            )
+                        # Создаем новую запись
+                        await conn.execute(
+                            """
+                            INSERT INTO module_subscriptions 
+                            (user_id, module_code, plan_id, expires_at, is_active, created_at)
+                            VALUES (?, ?, ?, ?, 1, CURRENT_TIMESTAMP)
+                            """,
+                            (user_id, module_code, plan_id, expires_at)
+                        )
+                        logger.info(f"Created new subscription for user {user_id}, module {module_code}")
+                
+                # Сохраняем историю пробного периода
+                if plan_id == 'trial_7days':
+                    await conn.execute(
+                        """
+                        INSERT OR REPLACE INTO trial_history (user_id, used_at)
+                        VALUES (?, CURRENT_TIMESTAMP)
+                        """,
+                        (user_id,)
+                    )
+                    logger.info(f"Marked trial as used for user {user_id}")
                 
                 await conn.commit()
-            
-            logger.info(f"Activated standard plan {plan_id} with {len(modules)} modules for user {user_id}")
-            return True
-            
+                logger.info(f"Plan {plan_id} activated successfully for user {user_id} with {len(modules)} modules")
+                return True
+                
         except Exception as e:
-            logger.error(f"Error activating standard plan: {e}")
+            logger.error(f"Error in _activate_standard_plan: {e}")
             import traceback
             traceback.print_exc()
             return False
+
+
+    # Дополнительная функция для исправления существующих неполных подписок
+    async def fix_incomplete_trial_subscriptions(self):
+        """
+        Исправляет существующие пробные подписки, у которых активированы не все модули.
+        """
+        try:
+            from datetime import datetime
+            from .config import SUBSCRIPTION_PLANS
+            
+            async with aiosqlite.connect(self.database_file) as conn:
+                # Находим всех пользователей с trial_7days
+                cursor = await conn.execute(
+                    """
+                    SELECT DISTINCT user_id, MAX(expires_at) as expires_at 
+                    FROM module_subscriptions 
+                    WHERE plan_id = 'trial_7days' AND is_active = 1
+                    GROUP BY user_id
+                    """
+                )
+                trial_users = await cursor.fetchall()
+                
+                if not trial_users:
+                    logger.info("No active trial subscriptions found")
+                    return
+                
+                # Получаем правильный список модулей для trial
+                trial_plan = SUBSCRIPTION_PLANS.get('trial_7days')
+                if not trial_plan:
+                    logger.error("trial_7days plan not found in config")
+                    return
+                
+                correct_modules = trial_plan.get('modules', [])
+                logger.info(f"Correct modules for trial: {correct_modules}")
+                
+                fixed_count = 0
+                for user_id, expires_at in trial_users:
+                    # Проверяем какие модули уже есть
+                    cursor = await conn.execute(
+                        """
+                        SELECT module_code FROM module_subscriptions 
+                        WHERE user_id = ? AND plan_id = 'trial_7days' AND is_active = 1
+                        """,
+                        (user_id,)
+                    )
+                    existing_modules = [row[0] for row in await cursor.fetchall()]
+                    
+                    # Находим недостающие модули
+                    missing_modules = set(correct_modules) - set(existing_modules)
+                    
+                    if missing_modules:
+                        logger.info(f"User {user_id} missing modules: {missing_modules}")
+                        
+                        # Добавляем недостающие модули
+                        for module_code in missing_modules:
+                            await conn.execute(
+                                """
+                                INSERT OR REPLACE INTO module_subscriptions 
+                                (user_id, module_code, plan_id, expires_at, is_active, created_at)
+                                VALUES (?, ?, 'trial_7days', ?, 1, CURRENT_TIMESTAMP)
+                                """,
+                                (user_id, module_code, expires_at)
+                            )
+                        
+                        fixed_count += 1
+                        logger.info(f"Fixed trial subscription for user {user_id}")
+                
+                await conn.commit()
+                logger.info(f"Fixed {fixed_count} incomplete trial subscriptions")
+                
+        except Exception as e:
+            logger.error(f"Error fixing trial subscriptions: {e}")
+            import traceback
+            traceback.print_exc()
 
     async def _activate_custom_modules(self, user_id: int, plan_id: str, 
                                       duration_months: int, metadata: dict) -> bool:

@@ -283,81 +283,210 @@ class AutoRenewalScheduler:
         except Exception as e:
             logger.exception(f"Error processing auto-renewals: {e}")
     
-    async def _process_single_renewal(self, user_id: int, rebill_id: str, 
-                                     plan_id: str, amount: int) -> bool:
-        """Обрабатывает одно автопродление."""
+    async def _process_single_renewal_with_validation(self, user_id: int, rebill_id: str, 
+                                                       plan_id: str, amount: int) -> bool:
+        """
+        НОВЫЙ МЕТОД с дополнительной валидацией перед списанием.
+        Обрабатывает одно автопродление с проверками безопасности.
+        """
         try:
+            # КРИТИЧНАЯ ПРОВЕРКА №1: Валидация суммы
+            if amount <= 0:
+                logger.error(
+                    f"❌ CRITICAL: Attempted auto-renewal for user {user_id} with invalid amount: {amount}. "
+                    f"BLOCKING renewal to prevent incorrect charge."
+                )
+                await self._notify_renewal_failed(
+                    user_id, 
+                    "Ошибка конфигурации: некорректная сумма платежа. Обратитесь в поддержку."
+                )
+                return False
+            
+            # КРИТИЧНАЯ ПРОВЕРКА №2: Валидация токена
+            if not rebill_id or len(rebill_id) < 10:
+                logger.error(
+                    f"❌ CRITICAL: Invalid rebill_id for user {user_id}. "
+                    f"BLOCKING renewal."
+                )
+                await self._notify_renewal_failed(
+                    user_id,
+                    "Ошибка токена оплаты. Пожалуйста, переоформите автопродление."
+                )
+                return False
+            
+            # КРИТИЧНАЯ ПРОВЕРКА №3: Проверяем что у пользователя действительно есть истекающая подписка
+            subscription = await self.subscription_manager.check_active_subscription(user_id)
+            if subscription and subscription.get('plan_id') != plan_id:
+                logger.warning(
+                    f"⚠️ Plan mismatch for user {user_id}: expected {plan_id}, "
+                    f"found {subscription.get('plan_id')}. Updating plan_id."
+                )
+                plan_id = subscription.get('plan_id')
+            
             order_id = f"AUTO_{user_id}_{int(datetime.now().timestamp())}"
             amount_kopecks = amount * 100
             
+            logger.info(
+                f"🔄 Processing auto-renewal for user {user_id}: "
+                f"amount={amount}₽, plan={plan_id}"
+            )
+            
             # Инициализируем платеж
-            init_result = await self.tinkoff_api.init_payment(
+            init_result = await self.tinkoff_api.init_recurrent_payment(
                 order_id=order_id,
                 amount_kopecks=amount_kopecks,
-                description=f"Автопродление подписки",
-                user_email=await self.subscription_manager.get_user_email(user_id),
-                receipt_items=[{
-                    "Name": f"Продление подписки {plan_id}",
-                    "Price": amount_kopecks,
-                    "Quantity": 1,
-                    "Amount": amount_kopecks,
-                    "Tax": "none"
-                }],
-                enable_recurrent=False  # У нас уже есть токен
+                description=f"Автопродление подписки {plan_id}",
             )
             
             if not init_result['success']:
-                logger.error(f"Failed to init renewal payment: {init_result}")
+                logger.error(f"❌ Failed to init renewal payment for user {user_id}: {init_result}")
+                await self._notify_renewal_failed(user_id, init_result.get('error'))
+                await self.subscription_manager.increment_renewal_failures(user_id)
                 return False
             
             payment_id = init_result['payment_id']
+            logger.info(f"✅ Payment initialized for user {user_id}: payment_id={payment_id}")
             
-            # Выполняем рекуррентное списание
+            # КРИТИЧНАЯ ТОЧКА: Выполняем рекуррентное списание
             charge_result = await self.tinkoff_api.charge_recurrent(
                 payment_id=payment_id,
                 rebill_id=rebill_id
             )
             
-            if charge_result['success']:
-                # Активируем продление
-                await self.subscription_manager.activate_subscription(
-                    order_id=order_id,
-                    user_id=user_id,
-                    plan_id=plan_id
+            # КРИТИЧНАЯ ПРОВЕРКА №4: Проверяем результат списания
+            if not charge_result.get('success'):
+                logger.error(
+                    f"❌ Charge FAILED for user {user_id}: {charge_result.get('error')}"
                 )
-                
-                # Обновляем дату следующего продления
-                await self.subscription_manager.update_next_renewal_date(user_id)
-                
-                # Уведомляем пользователя
-                await self.bot.send_message(
-                    chat_id=user_id,
-                    text=f"""✅ <b>Подписка продлена автоматически</b>
-
-План: {plan_id}
-Период: 1 месяц
-Списано: {amount} ₽
-
-Следующее продление: {(datetime.now() + timedelta(days=30)).strftime('%d.%m.%Y')}
-
-/my_subscriptions - детали подписки
-/auto_renewal - управление автопродлением""",
-                    parse_mode=ParseMode.HTML
-                )
-                
-                return True
-            else:
-                # Списание не удалось
                 await self._notify_renewal_failed(user_id, charge_result.get('error'))
-                
-                # Увеличиваем счетчик неудач
                 await self.subscription_manager.increment_renewal_failures(user_id)
-                
                 return False
+            
+            # КРИТИЧНАЯ ПРОВЕРКА №5: Проверяем статус платежа
+            charge_status = charge_result.get('status')
+            if charge_status != 'CONFIRMED':
+                logger.error(
+                    f"❌ Charge status is not CONFIRMED for user {user_id}: status={charge_status}"
+                )
+                await self._notify_renewal_failed(
+                    user_id,
+                    f"Платеж не подтвержден (статус: {charge_status})"
+                )
+                await self.subscription_manager.increment_renewal_failures(user_id)
+                return False
+            
+            # ✅ ВСЕ ПРОВЕРКИ ПРОЙДЕНЫ - теперь можно активировать подписку
+            logger.info(f"✅ Payment CONFIRMED for user {user_id}. Activating subscription...")
+            
+            activation_success = await self.subscription_manager.activate_subscription(
+                order_id=order_id,
+                user_id=user_id,
+                plan_id=plan_id
+            )
+            
+            if not activation_success:
+                logger.error(
+                    f"❌ CRITICAL: Payment succeeded but activation failed for user {user_id}! "
+                    f"Manual intervention required. order_id={order_id}"
+                )
+                # Здесь нужно уведомить администратора!
+                return False
+            
+            # Обновляем дату следующего продления
+            await self.subscription_manager.update_next_renewal_date(user_id)
+            
+            # Уведомляем пользователя об успешном продлении
+            await self.bot.send_message(
+                chat_id=user_id,
+                text=f"""✅ <b>Подписка продлена автоматически</b>
+
+    План: {plan_id}
+    Период: 1 месяц
+    Списано: {amount} ₽
+
+    Следующее продление: {(datetime.now() + timedelta(days=30)).strftime('%d.%m.%Y')}
+
+    /my_subscriptions - детали подписки
+    /auto_renewal - управление автопродлением""",
+                parse_mode=ParseMode.HTML
+            )
+            
+            logger.info(f"✅ ✅ ✅ Auto-renewal COMPLETE for user {user_id}")
+            return True
+            
+        except Exception as e:
+            logger.exception(f"❌ EXCEPTION during auto-renewal for user {user_id}: {e}")
+            await self._notify_renewal_failed(user_id, str(e))
+            await self.subscription_manager.increment_renewal_failures(user_id)
+            return False
+
+
+    # ДОПОЛНИТЕЛЬНЫЙ МЕТОД: Проверка корректности настроек автопродления
+    async def validate_auto_renewal_config(self, user_id: int) -> tuple[bool, str]:
+        """
+        Проверяет корректность настроек автопродления перед активацией.
+        
+        Returns:
+            (is_valid, error_message)
+        """
+        try:
+            async with aiosqlite.connect(self.database_file) as conn:
+                # Проверяем настройки автопродления
+                cursor = await conn.execute("""
+                    SELECT recurrent_token, next_renewal_date, failures_count
+                    FROM auto_renewal_settings
+                    WHERE user_id = ? AND enabled = 1
+                """, (user_id,))
+                
+                settings = await cursor.fetchone()
+                if not settings:
+                    return False, "Автопродление не включено"
+                
+                recurrent_token, next_renewal_date, failures_count = settings
+                
+                if not recurrent_token:
+                    return False, "Отсутствует токен для автопродления"
+                
+                if failures_count >= 3:
+                    return False, "Превышено количество неудачных попыток"
+                
+                # Проверяем наличие активной подписки
+                cursor = await conn.execute("""
+                    SELECT plan_id, expires_at
+                    FROM module_subscriptions
+                    WHERE user_id = ? AND is_active = 1
+                    ORDER BY expires_at DESC
+                    LIMIT 1
+                """, (user_id,))
+                
+                subscription = await cursor.fetchone()
+                if not subscription:
+                    return False, "Нет активной подписки для продления"
+                
+                plan_id, expires_at = subscription
+                
+                # Проверяем наличие последнего успешного платежа для определения суммы
+                cursor = await conn.execute("""
+                    SELECT amount
+                    FROM payments
+                    WHERE user_id = ? AND plan_id = ? AND status = 'completed'
+                    ORDER BY created_at DESC
+                    LIMIT 1
+                """, (user_id, plan_id))
+                
+                payment = await cursor.fetchone()
+                if not payment or not payment[0]:
+                    return False, "Не найдена информация о сумме платежа"
+                
+                amount = payment[0] / 100
+                if amount <= 0:
+                    return False, f"Некорректная сумма платежа: {amount}"
+                
+                return True, "OK"
                 
         except Exception as e:
-            logger.exception(f"Error processing single renewal for user {user_id}: {e}")
-            return False
+            logger.error(f"Error validating auto-renewal config: {e}")
+            return False, f"Ошибка проверки: {str(e)}"
     
     async def retry_failed_renewals(self):
         """
