@@ -37,6 +37,65 @@ except ImportError:
 
 logger = logging.getLogger(__name__)
 
+def ensure_user_id_in_context(context, update=None, function_name="unknown"):
+    """
+    Гарантирует наличие user_id в context.user_data.
+    
+    Args:
+        context: Контекст Telegram бота
+        update: Update объект (опционально, если не сохранен в context._update)
+        function_name: Имя функции для логирования
+        
+    Returns:
+        user_id если успешно, None если не удалось определить
+    """
+    # Если user_id уже есть - возвращаем его
+    if 'user_id' in context.user_data:
+        return context.user_data['user_id']
+    
+    # Используем переданный update или сохраненный в context
+    if update is None:
+        update = getattr(context, '_update', None)
+    
+    if update is None:
+        logger.error(f"{function_name}: No update object available to determine user_id")
+        return None
+    
+    # Пытаемся получить user_id из разных источников
+    user_id = None
+    
+    # 1. Из effective_user (самый надежный способ)
+    if update.effective_user:
+        user_id = update.effective_user.id
+        logger.debug(f"{function_name}: Got user_id from effective_user: {user_id}")
+    
+    # 2. Из callback_query
+    elif update.callback_query and update.callback_query.from_user:
+        user_id = update.callback_query.from_user.id
+        logger.debug(f"{function_name}: Got user_id from callback_query: {user_id}")
+    
+    # 3. Из message
+    elif update.message and update.message.from_user:
+        user_id = update.message.from_user.id
+        logger.debug(f"{function_name}: Got user_id from message: {user_id}")
+    
+    # 4. Из edited_message
+    elif update.edited_message and update.edited_message.from_user:
+        user_id = update.edited_message.from_user.id
+        logger.debug(f"{function_name}: Got user_id from edited_message: {user_id}")
+    
+    # 5. Из inline_query
+    elif update.inline_query and update.inline_query.from_user:
+        user_id = update.inline_query.from_user.id
+        logger.debug(f"{function_name}: Got user_id from inline_query: {user_id}")
+    
+    if user_id:
+        context.user_data['user_id'] = user_id
+        return user_id
+    
+    logger.error(f"{function_name}: Cannot determine user_id from any source")
+    return None
+
 # Добавить после строки с импортами (примерно строка 35-40)
 @safe_handler()
 async def dismiss_promo(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1544,7 +1603,14 @@ async def pay_trial_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def start_exam_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Начало режима экзамена."""
     query = update.callback_query
-    user_id = query.from_user.id
+    
+    # ВАЖНО: Сохраняем update и гарантируем user_id
+    context._update = update
+    user_id = ensure_user_id_in_context(context, update, "start_exam_mode")
+    
+    if not user_id:
+        await query.answer("Ошибка: не удалось определить пользователя", show_alert=True)
+        return states.CHOOSING_MODE
     
     # Инициализируем данные экзамена
     context.user_data['exam_mode'] = True
@@ -1595,13 +1661,42 @@ async def start_exam_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def send_exam_question(message, context: ContextTypes.DEFAULT_TYPE, index: int):
     """Отправка вопроса в режиме экзамена с поддержкой всех типов вопросов."""
     exam_questions = context.user_data.get('exam_questions', [])
-    # Гарантируем наличие user_id
+    
+    # ========== КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: Гарантируем наличие user_id ==========
+    # Проверяем наличие user_id в context.user_data
     if 'user_id' not in context.user_data:
-        if hasattr(context, '_update') and context._update and context._update.effective_user:
-            context.user_data['user_id'] = context._update.effective_user.id
+        # Пытаемся получить из сохраненного update
+        if hasattr(context, '_update') and context._update:
+            if context._update.effective_user:
+                context.user_data['user_id'] = context._update.effective_user.id
+                logger.info(f"send_exam_question: Retrieved user_id from _update: {context._update.effective_user.id}")
+            elif context._update.callback_query and context._update.callback_query.from_user:
+                context.user_data['user_id'] = context._update.callback_query.from_user.id
+                logger.info(f"send_exam_question: Retrieved user_id from callback_query: {context._update.callback_query.from_user.id}")
+            elif context._update.message and context._update.message.from_user:
+                context.user_data['user_id'] = context._update.message.from_user.id
+                logger.info(f"send_exam_question: Retrieved user_id from message: {context._update.message.from_user.id}")
+            else:
+                # Критическая ошибка - не можем определить user_id
+                logger.error("send_exam_question: Cannot determine user_id - no valid source in _update")
+                await message.reply_text(
+                    "⚠️ Произошла ошибка при загрузке вопроса. Пожалуйста, начните заново.",
+                    reply_markup=keyboards.get_initial_choice_keyboard()
+                )
+                return
         else:
-            logger.error("Cannot determine user_id in [function_name]")
+            # Нет сохраненного update - критическая ошибка
+            logger.error("send_exam_question: Cannot determine user_id - no _update in context")
+            await message.reply_text(
+                "⚠️ Произошла ошибка при загрузке вопроса. Пожалуйста, начните заново.",
+                reply_markup=keyboards.get_initial_choice_keyboard()
+            )
             return
+    
+    user_id = context.user_data['user_id']
+    logger.debug(f"send_exam_question: Processing for user {user_id}, question index {index}")
+    
+    # ========== Проверяем завершение экзамена ==========
     if index >= len(exam_questions):
         # Экзамен завершен
         await show_exam_results(message, context)
@@ -1703,142 +1798,56 @@ async def send_exam_question(message, context: ContextTypes.DEFAULT_TYPE, index:
         context.user_data[f'exam_answer_{index}'] = question.get('answer')
         context.user_data[f'exam_explanation_{index}'] = question.get('explanation')
         # Сохраняем позицию в экзамене
-        question['exam_position'] = question.get('exam_number', index + 1)
+        question['exam_position'] = index + 1
     
-    # Импортируем функцию из keyboards
-    from test_part.keyboards import get_exam_question_keyboard
-    keyboard = get_exam_question_keyboard()
+    # Создаем клавиатуру с кнопками управления
+    kb = InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("⏭️ Пропустить", callback_data="exam_skip"),
+            InlineKeyboardButton("❌ Завершить экзамен", callback_data="exam_abort")
+        ]
+    ])
     
-    # Проверяем наличие изображения
-    image_url = question.get('image_url') if isinstance(question, dict) else None
-    
+    # Отправляем вопрос
     try:
-        # Импортируем необходимые модули
-        import os
-        from pathlib import Path
+        # Проверяем наличие изображения
+        image_url = question.get('image_url') if isinstance(question, dict) else None
         
-        # Определяем базовую директорию для изображений
-        BASE_DIR = Path("/opt/ege-bot")
-        
-        # Если есть изображение
         if image_url:
-            # Если путь относительный, делаем его абсолютным
-            if not os.path.isabs(image_url):
-                image_path = BASE_DIR / image_url
-            else:
-                image_path = Path(image_url)
-            
-            # Проверяем существование файла
-            if image_path.exists():
-                # Проверяем длину текста для caption (максимум 1024 символа)
-                MAX_CAPTION_LENGTH = 1024
-                
-                # Получаем chat_id
-                if hasattr(message, 'chat'):
-                    chat_id = message.chat.id
-                elif hasattr(message, 'chat_id'):
-                    chat_id = message.chat_id
-                else:
-                    # Fallback - пробуем получить из контекста
-                    chat_id = context.user_data.get('user_id')
-                
-                if len(text) <= MAX_CAPTION_LENGTH:
-                    # Текст помещается в caption
-                    if hasattr(message, 'edit_text'):
-                        # Это редактирование - нужно удалить старое и отправить новое
-                        try:
-                            await message.delete()
-                        except:
-                            pass
-                        
-                        with open(image_path, 'rb') as photo:
-                            await context.bot.send_photo(
-                                chat_id=chat_id,
-                                photo=photo,
-                                caption=text,
-                                reply_markup=keyboard,
-                                parse_mode='HTML'
-                            )
-                    else:
-                        # Обычная отправка
-                        with open(image_path, 'rb') as photo:
-                            await message.reply_photo(
-                                photo=photo,
-                                caption=text,
-                                reply_markup=keyboard,
-                                parse_mode='HTML'
-                            )
-                else:
-                    # Текст слишком длинный - отправляем раздельно
-                    logger.info(f"Text too long for caption ({len(text)} chars), sending separately")
-                    
-                    if hasattr(message, 'edit_text'):
-                        try:
-                            await message.delete()
-                        except:
-                            pass
-                    
-                    # Сначала изображение с коротким описанием
-                    with open(image_path, 'rb') as photo:
-                        await context.bot.send_photo(
-                            chat_id=chat_id,
-                            photo=photo,
-                            caption=f"📊 График к вопросу {index + 1}"
-                        )
-                    
-                    # Затем текст с клавиатурой
-                    await context.bot.send_message(
-                        chat_id=chat_id,
-                        text=text,
-                        reply_markup=keyboard,
-                        parse_mode='HTML'
-                    )
-            else:
-                # Файл не найден
-                logger.error(f"Image file not found: {image_url}")
-                text = "⚠️ Изображение не найдено\n\n" + text
-                
-                # Отправляем без изображения
-                if hasattr(message, 'reply_text'):
-                    await message.reply_text(
-                        text,
-                        reply_markup=keyboard,
-                        parse_mode='HTML'
-                    )
-                elif hasattr(message, 'edit_text'):
-                    await message.edit_text(
-                        text,
-                        reply_markup=keyboard,
-                        parse_mode='HTML'
-                    )
+            # Отправляем с изображением
+            await message.reply_photo(
+                photo=image_url,
+                caption=text,
+                reply_markup=kb,
+                parse_mode=ParseMode.HTML
+            )
         else:
-            # Нет изображения - стандартная отправка
-            if hasattr(message, 'reply_text'):
-                await message.reply_text(
-                    text,
-                    reply_markup=keyboard,
-                    parse_mode='HTML'
-                )
-            elif hasattr(message, 'edit_text'):
+            # Отправляем только текст
+            # Используем edit_text если это callback_query, иначе reply_text
+            if hasattr(message, 'edit_text'):
                 await message.edit_text(
                     text,
-                    reply_markup=keyboard,
-                    parse_mode='HTML'
+                    reply_markup=kb,
+                    parse_mode=ParseMode.HTML
                 )
             else:
-                # Fallback
                 await message.reply_text(
                     text,
-                    reply_markup=keyboard,
-                    parse_mode='HTML'
+                    reply_markup=kb,
+                    parse_mode=ParseMode.HTML
                 )
+                
+        # Устанавливаем состояние для ожидания ответа
+        from core.state_validator import state_validator
+        state_validator.set_state(user_id, states.EXAM_MODE)
+        
+        logger.info(f"Exam question {index + 1} sent to user {user_id}")
+        
     except Exception as e:
-        logger.error(f"Error sending exam question {index + 1}: {e}")
-        # Отправляем без HTML разметки при ошибке
-        text_plain = text.replace('<b>', '').replace('</b>', '').replace('<i>', '').replace('</i>', '')
+        logger.error(f"Error sending exam question to user {user_id}: {e}")
         await message.reply_text(
-            text_plain,
-            reply_markup=keyboard
+            "⚠️ Произошла ошибка при отправке вопроса. Пожалуйста, попробуйте снова.",
+            reply_markup=keyboards.get_initial_choice_keyboard()
         )
 
 async def show_promo_message(context: ContextTypes.DEFAULT_TYPE, message: Message):
@@ -1911,6 +1920,16 @@ async def show_promo_message(context: ContextTypes.DEFAULT_TYPE, message: Messag
 @safe_handler()
 async def check_exam_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Проверка ответа в режиме экзамена."""
+    
+    # ВАЖНО: Сохраняем update и гарантируем user_id
+    context._update = update
+    user_id = ensure_user_id_in_context(context, update, "check_exam_answer")
+    
+    if not user_id:
+        await update.message.reply_text("⚠️ Ошибка: не удалось определить пользователя")
+        return states.EXAM_MODE
+    
+    # Проверяем режим экзамена
     if not context.user_data.get('exam_mode'):
         return await check_answer(update, context)
     
@@ -2254,13 +2273,42 @@ async def send_mistake_question(message, context: ContextTypes.DEFAULT_TYPE):
     """Отправка вопроса в режиме работы над ошибками БЕЗ дублирования."""
     mistake_queue = context.user_data.get('mistake_queue', [])
     current_index = context.user_data.get('current_mistake_index', 0)
-    # Гарантируем наличие user_id
+    
+    # ========== КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: Гарантируем наличие user_id ==========
+    # Проверяем наличие user_id в context.user_data
     if 'user_id' not in context.user_data:
-        if hasattr(context, '_update') and context._update and context._update.effective_user:
-            context.user_data['user_id'] = context._update.effective_user.id
+        # Пытаемся получить из сохраненного update
+        if hasattr(context, '_update') and context._update:
+            if context._update.effective_user:
+                context.user_data['user_id'] = context._update.effective_user.id
+                logger.info(f"send_mistake_question: Retrieved user_id from _update.effective_user: {context._update.effective_user.id}")
+            elif context._update.callback_query and context._update.callback_query.from_user:
+                context.user_data['user_id'] = context._update.callback_query.from_user.id
+                logger.info(f"send_mistake_question: Retrieved user_id from callback_query: {context._update.callback_query.from_user.id}")
+            elif context._update.message and context._update.message.from_user:
+                context.user_data['user_id'] = context._update.message.from_user.id
+                logger.info(f"send_mistake_question: Retrieved user_id from message: {context._update.message.from_user.id}")
+            else:
+                # Критическая ошибка - не можем определить user_id
+                logger.error("send_mistake_question: Cannot determine user_id - no valid source in _update")
+                await message.reply_text(
+                    "⚠️ Произошла ошибка при загрузке вопроса. Пожалуйста, начните заново.",
+                    reply_markup=keyboards.get_initial_choice_keyboard()
+                )
+                return
         else:
-            logger.error("Cannot determine user_id in [function_name]")
+            # Нет сохраненного update - критическая ошибка
+            logger.error("send_mistake_question: Cannot determine user_id - no _update in context")
+            await message.reply_text(
+                "⚠️ Произошла ошибка при загрузке вопроса. Пожалуйста, начните заново.",
+                reply_markup=keyboards.get_initial_choice_keyboard()
+            )
             return
+    
+    user_id = context.user_data['user_id']
+    logger.debug(f"send_mistake_question: Processing for user {user_id}, mistake index {current_index}")
+    
+    # ========== Проверяем завершение работы над ошибками ==========
     if current_index >= len(mistake_queue):
         # Завершаем работу над ошибками
         kb = keyboards.get_mistakes_finish_keyboard()
@@ -2276,23 +2324,24 @@ async def send_mistake_question(message, context: ContextTypes.DEFAULT_TYPE):
                 "✅ Работа над ошибками завершена!",
                 reply_markup=kb
             )
-        return states.CHOOSING_MODE
+        return
     
-    # Получаем данные вопроса
-    mistake_id = mistake_queue[current_index]
-    question_data = utils.find_question_by_id(mistake_id)
+    # Получаем данные текущей ошибки
+    question_id = mistake_queue[current_index]
+    question_data = find_question_by_id(question_id)
     
     if not question_data:
-        # Пропускаем несуществующий вопрос
+        logger.error(f"Question not found for mistake review: {question_id}")
+        # Переходим к следующей ошибке
         context.user_data['current_mistake_index'] = current_index + 1
-        return await send_mistake_question(message, context)
+        await send_mistake_question(message, context)
+        return
     
-    # ВАЖНО: Увеличиваем индекс ПОСЛЕ успешной отправки вопроса
+    # Увеличиваем счетчик и отправляем вопрос
     context.user_data['current_mistake_index'] = current_index + 1
     
-    # Отправляем вопрос через единую функцию
+    # Отправляем вопрос используя существующую функцию send_question
     await send_question(message, context, question_data, "mistakes")
-    return states.REVIEWING_MISTAKES
 
 @safe_handler()
 @validate_state_transition({states.REVIEWING_MISTAKES})
