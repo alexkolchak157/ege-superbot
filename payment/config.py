@@ -1,5 +1,5 @@
-# payment/config.py - ФИНАЛЬНАЯ версия с корректными формулировками ФИПИ
-"""Конфигурация модуля оплаты с точными описаниями заданий ЕГЭ."""
+# payment/config.py - Упрощенная конфигурация с двумя тарифами
+"""Конфигурация модуля оплаты с пробным периодом и полной подпиской."""
 import os
 import logging
 from decimal import Decimal
@@ -28,227 +28,94 @@ PAYMENT_ADMIN_CHAT_ID = int(os.getenv('PAYMENT_ADMIN_CHAT_ID', '0'))
 DATABASE_PATH = 'quiz_async.db'
 
 # ==================== SUBSCRIPTION MODE ====================
-SUBSCRIPTION_MODE = os.getenv('SUBSCRIPTION_MODE', 'modular')  # 'unified' или 'modular'
-FREE_MODULES = ['test_part']  # Тестовая часть БЕСПЛАТНА
+SUBSCRIPTION_MODE = 'modular'  # Режим работы
+FREE_MODULES = ['test_part']  # Тестовая часть ВСЕГДА бесплатна
 
 logger.info(f"Payment module loaded with SUBSCRIPTION_MODE = {SUBSCRIPTION_MODE}")
 
-# ==================== СТАРЫЕ ПЛАНЫ (для обратной совместимости) ====================
-LEGACY_SUBSCRIPTION_PLANS = {
-    'basic_month': {
-        'name': '🥉 Базовая (1 месяц)',
-        'description': 'Доступ к боту на 30 дней',
-        'price_rub': 299,
-        'duration_days': 30,
-        'modules': ['test_part'],
-        'features': [
-            '✅ Все тестовые задания',
-            '✅ Подробная статистика',
-            '✅ До 100 вопросов в день',
-            '❌ Приоритетная поддержка'
-        ]
-    },
-    'pro_month': {
-        'name': '🥇 Pro (1 месяц)',
-        'description': 'Полный доступ на 30 дней',
-        'price_rub': 599,
-        'duration_days': 30,
-        'modules': ['test_part', 'task19', 'task20', 'task25'],
-        'features': [
-            '✅ Все тестовые задания',
-            '✅ Задания второй части',
-            '✅ Неограниченное использование',
-            '✅ Приоритетная поддержка'
-        ]
-    },
-    'pro_ege': {
-        'name': '👑 Pro до ЕГЭ',
-        'description': 'Полный доступ до конца ЕГЭ',
-        'price_rub': 1999,
-        'duration_until': datetime(2025, 6, 30, tzinfo=timezone.utc),
-        'modules': ['test_part', 'task19', 'task20', 'task24', 'task25'],
-        'features': [
-            '✅ Все модули до ЕГЭ',
-            '✅ Неограниченное использование',
-            '✅ Приоритетная поддержка',
-            '✅ Гарантия работы до ЕГЭ'
-        ]
-    }
-}
-
-# ==================== НОВАЯ МОДУЛЬНАЯ СИСТЕМА С КОРРЕКТНЫМИ ФОРМУЛИРОВКАМИ ====================
+# ==================== УПРОЩЕННАЯ СИСТЕМА ПОДПИСОК ====================
 MODULE_PLANS = {
-    # Отдельные модули с точными описаниями по ФИПИ
-    'module_test': {
-        'name': '📝 Тестовая часть',
-        'description': 'Задания 1-16 с автопроверкой',
-        'detailed_description': [
-            '• Все задания первой части ЕГЭ',
-            '• Мгновенная проверка ответов',
-            '• Подробные объяснения решений',
-            '• Статистика по темам и прогресс'
-        ],
-        'price_rub': 0,  # БЕСПЛАТНО!
-        'duration_days': 30,
-        'modules': ['test_part'],
-        'type': 'individual'  # ИСПРАВЛЕНО!
-    },
-    
-    'module_task19': {
-        'name': '🎯 Задание 19',
-        'description': 'Иллюстрация теоретических положений примерами',
-        'detailed_description': [
-            '• Приведение примеров социальных объектов, процессов, явлений',
-            '• Иллюстрация теоретических положений фактами',
-            '• ИИ-проверка с развернутой обратной связью',
-            '• База эталонных ответов по всем темам'
-        ],
-        'price_rub': 199,
-        'duration_days': 30,
-        'modules': ['task19'],
-        'type': 'individual'  # ИСПРАВЛЕНО!
-    },
-    
-    'module_task20': {
-        'name': '📖 Задание 20',
-        'description': 'Формулирование и аргументация суждений',
-        'detailed_description': [
-            '• Формулирование оценочных суждений на основе текста',
-            '• Аргументация прогностических высказываний',
-            '• Объяснение связи примеров с проблематикой текста',
-            '• Банк типовых формулировок и клише'
-        ],
-        'price_rub': 199,
-        'duration_days': 30,
-        'modules': ['task20'],
-        'type': 'individual'  # ИСПРАВЛЕНО!
-    },
-    
-    'module_task24': {
-        'name': '💎 Задание 24',
-        'description': 'Составление сложного плана',
-        'detailed_description': [
-            '• Составление сложного плана развёрнутого ответа',
-            '• Минимум 3 пункта с детализацией в подпунктах',
-            '• Экспертная ИИ-проверка структуры и полноты',
-            '• База эталонных планов по всем темам курса'
-        ],
-        'price_rub': 299,  # Премиум задание
-        'duration_days': 30,
-        'modules': ['task24'],
-        'type': 'individual'  # ИСПРАВЛЕНО!
-    },
-    
-    'module_task25': {
-        'name': '✍️ Задание 25',
-        'description': 'Обоснование и конкретизация примерами',
-        'detailed_description': [
-            '• Обоснование теоретического положения',
-            '• Приведение трёх примеров из различных сфер',
-            '• Конкретизация теоретических положений фактами',
-            '• Проверка полноты и корректности примеров'
-        ],
-        'price_rub': 199,
-        'duration_days': 30,
-        'modules': ['task25'],
-        'type': 'individual'  # ИСПРАВЛЕНО!
-    },
-    
-    # Пакетные предложения
-    'package_second': {
-        'name': '📚 Пакет «Вторая часть»',
-        'description': 'Основные задания с развернутым ответом',
-        'price_rub': 499,  # Экономия 98₽
-        'duration_days': 30,
-        'modules': ['task19', 'task20', 'task25'],
-        'type': 'package',
-        'features': [
-            '✅ Задание 19 — Примеры и иллюстрации',
-            '✅ Задание 20 — Работа с текстом',
-            '✅ Задание 25 — Обоснование с примерами',
-            '💰 Экономия 98₽/мес'
-        ],
-        'detailed_description': [
-            '• Все основные задания второй части',
-            '• ИИ-проверка каждого ответа',
-            '• Персональные рекомендации',
-            '• Доступ к базе эталонных ответов'
-        ]
-    },
-    
-    'package_full': {
-        'name': '👑 Полный доступ',
-        'description': 'Все задания второй части ЕГЭ',
-        'price_rub': 799,  # НОВАЯ ЦЕНА! Было 999₽, экономия 97₽
-        'duration_days': 30,
-        'modules': ['task19', 'task20', 'task24', 'task25'],
-        'type': 'package',
-        'features': [
-            '✅ ВСЕ задания второй части (19-25)',
-            '✅ Премиум задание 24 (сложный план)',
-            '✅ Приоритетная поддержка эксперта',
-            '💰 Экономия 97₽/мес'
-        ],
-        'detailed_description': [
-            '• Полная подготовка к письменной части ЕГЭ',
-            '• ИИ-проверка + экспертная поддержка',
-            '• Неограниченное количество попыток',
-            '• Гарантия повышения баллов'
-        ]
-    },
-    
     # Пробный период
     'trial_7days': {
         'name': '🎁 Пробный период',
-        'description': 'Полный доступ на 7 дней',
+        'description': 'Полный доступ на 7 дней за 1 рубль',
+        'detailed_description': [
+            '• Доступ ко всем заданиям второй части',
+            '• ИИ-проверка каждого ответа',
+            '• Персональные рекомендации',
+            '• Без ограничений на 7 дней'
+        ],
         'price_rub': 1,
         'duration_days': 7,
-        'modules': ['task19', 'task20', 'task24', 'task25'],
+        'modules': ['test_part', 'task19', 'task20', 'task24', 'task25'],
         'type': 'trial',
         'features': [
             '✅ Все задания второй части',
             '✅ ИИ-проверка ответов',
-            '✅ Без автопродления',
-            '⚡ Активация мгновенно'
+            '✅ Полный доступ на неделю',
+            '💡 Идеально для знакомства'
+        ]
+    },
+    
+    # Полная подписка
+    'package_full': {
+        'name': '👑 Полная подписка',
+        'description': 'Полный доступ ко всем заданиям',
+        'price_rub': 249,
+        'duration_days': 30,
+        'modules': ['test_part', 'task19', 'task20', 'task24', 'task25'],
+        'type': 'package',
+        'features': [
+            '✅ Все задания второй части с проверкой ИИ',
+            '✅ Задание 19 — Примеры и иллюстрации',
+            '✅ Задание 20 — Работа с текстом',
+            '✅ Задание 24 — Сложный план',
+            '✅ Задание 25 — Обоснование с примерами',
+            '💡 Максимальные баллы на ЕГЭ!'
+        ],
+        'detailed_description': [
+            '• Задание 19: Иллюстрация теоретических положений примерами',
+            '• Задание 20: Формулирование и аргументация суждений',
+            '• Задание 24: Составление сложного плана развёрнутого ответа',
+            '• Задание 25: Обоснование теоретического положения с примерами',
+            '• ИИ-проверка с подробной обратной связью по каждому заданию',
+            '• База эталонных ответов по всем темам'
         ]
     }
 }
 
 # ==================== СКИДКИ ЗА ДЛИТЕЛЬНОСТЬ ====================
+# Расчет:
+# 1 месяц: 249₽ (без скидки)
+# 3 месяца: 672₽ (10% скидка = 224₽/мес, экономия 75₽)
+# 6 месяцев: 1270₽ (15% скидка = 212₽/мес, экономия 224₽)
+
 DURATION_DISCOUNTS = {
     1: {
-        'multiplier': 1.0, 
+        'multiplier': 1.0,  # Без скидки
         'label': '1 месяц',
-        'discount_percent': 0
+        'discount_percent': 0,
+        'badge': ''
     },
     3: {
-        'multiplier': 2.7,  # Скидка 10%
+        'multiplier': 2.7,  # 672₽ вместо 747₽ (скидка 10%)
         'label': '3 месяца',
         'discount_percent': 10,
-        'badge': '🔥 Выгодно'
+        'badge': '💰 Выгода',
+        'savings': 75  # Экономия в рублях
     },
     6: {
-        'multiplier': 5.1,  # Скидка 15%
-        'label': '6 месяцев', 
+        'multiplier': 5.1,  # 1270₽ вместо 1494₽ (скидка 15%)
+        'label': '6 месяцев',
         'discount_percent': 15,
-        'badge': '💎 Популярно'
-    },
-    12: {
-        'multiplier': 9.0,  # Скидка 25%
-        'label': '12 месяцев',
-        'discount_percent': 25,
-        'badge': '👑 Максимальная выгода'
+        'badge': '🔥 Лучшая цена',
+        'savings': 224  # Экономия в рублях
     }
 }
 
 # ==================== ВЫБОР АКТИВНОЙ СИСТЕМЫ ====================
-if SUBSCRIPTION_MODE == 'modular':
-    SUBSCRIPTION_PLANS = MODULE_PLANS
-    logger.info(f"Using MODULE_PLANS with {len(MODULE_PLANS)} plans")
-else:
-    SUBSCRIPTION_PLANS = LEGACY_SUBSCRIPTION_PLANS
-    logger.info(f"Using LEGACY_SUBSCRIPTION_PLANS with {len(LEGACY_SUBSCRIPTION_PLANS)} plans")
-
+SUBSCRIPTION_PLANS = MODULE_PLANS
+logger.info(f"Using simplified MODULE_PLANS with {len(MODULE_PLANS)} plans")
 logger.info(f"Available plans: {list(SUBSCRIPTION_PLANS.keys())}")
 
 # ==================== ОПИСАНИЯ МОДУЛЕЙ ДЛЯ UI ====================
@@ -322,32 +189,26 @@ MODULE_DESCRIPTIONS = {
 
 # ==================== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ====================
 
-def get_plan_price_kopecks(plan_id: str, months: int = 1, custom_plan_data: dict = None) -> int:
+def get_plan_price_kopecks(plan_id: str, months: int = 1) -> int:
     """
     Возвращает цену плана в копейках для Tinkoff API.
     
     Args:
-        plan_id: ID плана
+        plan_id: ID плана (trial_7days или package_full)
         months: Количество месяцев
-        custom_plan_data: Данные custom плана (если план custom)
     
     Returns:
         Цена в копейках
     """
-    # Обработка custom планов
-    if plan_id.startswith('custom_') and custom_plan_data:
-        base_price = custom_plan_data.get('price_rub', 0)
-    else:
-        plan = SUBSCRIPTION_PLANS.get(plan_id)
-        if not plan:
-            # Пробуем найти в MODULE_PLANS
-            if SUBSCRIPTION_MODE == 'modular':
-                plan = MODULE_PLANS.get(plan_id)
-            
-            if not plan:
-                raise ValueError(f"Unknown plan: {plan_id}")
-        
-        base_price = plan['price_rub']
+    plan = SUBSCRIPTION_PLANS.get(plan_id)
+    if not plan:
+        raise ValueError(f"Unknown plan: {plan_id}")
+    
+    base_price = plan['price_rub']
+    
+    # Для пробного периода всегда 1₽
+    if plan_id == 'trial_7days':
+        return 100  # 1₽ в копейках
     
     # Применяем множитель для длительности
     if months in DURATION_DISCOUNTS:
@@ -357,6 +218,7 @@ def get_plan_price_kopecks(plan_id: str, months: int = 1, custom_plan_data: dict
         total_price = base_price * months
     
     return total_price * 100  # Конвертируем в копейки
+
 
 def get_subscription_end_date(plan_id: str, months: int = 1) -> datetime:
     """
@@ -371,36 +233,35 @@ def get_subscription_end_date(plan_id: str, months: int = 1) -> datetime:
     """
     plan = SUBSCRIPTION_PLANS.get(plan_id)
     if not plan:
-        # Пробуем найти в альтернативных планах
-        plan = MODULE_PLANS.get(plan_id) or LEGACY_SUBSCRIPTION_PLANS.get(plan_id)
-        if not plan:
-            raise ValueError(f"Unknown plan: {plan_id}")
+        raise ValueError(f"Unknown plan: {plan_id}")
     
-    if 'duration_until' in plan:
-        return plan['duration_until']
+    if plan_id == 'trial_7days':
+        return datetime.now(timezone.utc) + timedelta(days=7)
     else:
-        days = plan.get('duration_days', 30) * months
+        days = 30 * months
         return datetime.now(timezone.utc) + timedelta(days=days)
 
-def calculate_subscription_price(plan_id: str, months: int = 1, custom_plan_data: dict = None) -> int:
+
+def calculate_subscription_price(plan_id: str, months: int = 1) -> int:
     """
     Рассчитывает цену подписки с учетом срока и скидок.
     
     Args:
         plan_id: ID плана
         months: Количество месяцев
-        custom_plan_data: Данные custom плана
         
     Returns:
-        Цена в копейках
+        Цена в РУБЛЯХ (не в копейках!)
     """
-    if plan_id.startswith('custom_') and custom_plan_data:
-        base_price = custom_plan_data.get('price_rub', 0)
-    else:
-        plan = SUBSCRIPTION_PLANS.get(plan_id) or MODULE_PLANS.get(plan_id)
-        if not plan:
-            raise ValueError(f"Unknown plan: {plan_id}")
-        base_price = plan['price_rub']
+    plan = SUBSCRIPTION_PLANS.get(plan_id)
+    if not plan:
+        raise ValueError(f"Unknown plan: {plan_id}")
+    
+    base_price = plan['price_rub']
+    
+    # Для пробного периода всегда 1₽
+    if plan_id == 'trial_7days':
+        return 1
     
     # Применяем скидки для многомесячных подписок
     if months in DURATION_DISCOUNTS:
@@ -409,7 +270,8 @@ def calculate_subscription_price(plan_id: str, months: int = 1, custom_plan_data
     else:
         total_price = base_price * months
     
-    return total_price * 100  # Возвращаем в копейках
+    return total_price
+
 
 def get_plan_modules(plan_id: str) -> List[str]:
     """
@@ -423,9 +285,6 @@ def get_plan_modules(plan_id: str) -> List[str]:
     """
     plan = SUBSCRIPTION_PLANS.get(plan_id)
     if not plan:
-        plan = MODULE_PLANS.get(plan_id) or LEGACY_SUBSCRIPTION_PLANS.get(plan_id)
-    
-    if not plan:
         return []
     
     modules = plan.get('modules', [])
@@ -437,90 +296,16 @@ def get_plan_modules(plan_id: str) -> List[str]:
     
     return modules
 
-def get_module_price(module_code: str) -> int:
-    """
-    Возвращает цену отдельного модуля.
-    
-    Args:
-        module_code: Код модуля
-        
-    Returns:
-        Цена в рублях
-    """
-    # Ищем модуль в планах
-    for plan_id, plan in MODULE_PLANS.items():
-        if plan.get('type') == 'module' and module_code in plan.get('modules', []):
-            return plan['price_rub']
-    
-    # Дефолтные цены
-    module_prices = {
-        'test_part': 0,  # БЕСПЛАТНО
-        'task19': 199,
-        'task20': 199,
-        'task24': 299,  # Премиум
-        'task25': 199
-    }
-    
-    return module_prices.get(module_code, 0)
-
-def get_custom_plan_price(modules: List[str], months: int = 1) -> Dict[str, Any]:
-    """
-    Рассчитывает цену для кастомного набора модулей.
-    
-    Args:
-        modules: Список модулей
-        months: Количество месяцев
-        
-    Returns:
-        Словарь с информацией о цене
-    """
-    # Фильтруем бесплатные модули
-    paid_modules = [m for m in modules if m not in FREE_MODULES]
-    
-    # Проверяем, не выгоднее ли взять пакет
-    if set(paid_modules) == {'task19', 'task20', 'task25'}:
-        # Это пакет "Вторая часть"
-        return {
-            'plan_id': 'package_second',
-            'price_rub': MODULE_PLANS['package_second']['price_rub'],
-            'is_package': True,
-            'savings': 98  # Экономия
-        }
-    elif set(paid_modules) == {'task19', 'task20', 'task24', 'task25'}:
-        # Это полный пакет
-        return {
-            'plan_id': 'package_full',
-            'price_rub': MODULE_PLANS['package_full']['price_rub'],
-            'is_package': True,
-            'savings': 97  # Экономия
-        }
-    
-    # Считаем индивидуальную цену
-    total = sum(get_module_price(m) for m in paid_modules)
-    
-    # Применяем скидки за длительность
-    if months in DURATION_DISCOUNTS:
-        multiplier = DURATION_DISCOUNTS[months]['multiplier']
-        total_with_discount = int(total * multiplier)
-    else:
-        total_with_discount = total * months
-    
-    return {
-        'plan_id': f'custom_{"_".join(sorted(paid_modules))}',
-        'price_rub': total,
-        'total_price': total_with_discount,
-        'modules': paid_modules,
-        'is_package': False,
-        'savings': 0
-    }
 
 def format_price(price_rub: int) -> str:
     """Форматирует цену для отображения."""
-    return f"{price_rub:,}₽".replace(',', ' ')
+    return f"{price_rub}₽"
+
 
 def is_module_free(module_code: str) -> bool:
     """Проверяет, является ли модуль бесплатным."""
     return module_code in FREE_MODULES
+
 
 def get_module_info(module_code: str) -> Dict[str, Any]:
     """
@@ -534,7 +319,7 @@ def get_module_info(module_code: str) -> Dict[str, Any]:
     """
     if module_code in MODULE_DESCRIPTIONS:
         info = MODULE_DESCRIPTIONS[module_code].copy()
-        info['price'] = get_module_price(module_code)
+        info['price'] = 0 if module_code in FREE_MODULES else None
         return info
     
     # Дефолтная информация
@@ -545,5 +330,47 @@ def get_module_info(module_code: str) -> Dict[str, Any]:
         'description': 'Модуль',
         'features': [],
         'is_free': module_code in FREE_MODULES,
-        'price': get_module_price(module_code)
+        'price': 0 if module_code in FREE_MODULES else None
     }
+
+
+def get_plan_info(plan_id: str) -> Optional[Dict[str, Any]]:
+    """
+    Возвращает информацию о плане подписки.
+    
+    Args:
+        plan_id: ID плана
+        
+    Returns:
+        Словарь с информацией о плане или None
+    """
+    return SUBSCRIPTION_PLANS.get(plan_id)
+
+
+# ==================== LEGACY SUPPORT ====================
+# Для обратной совместимости со старым кодом
+LEGACY_SUBSCRIPTION_PLANS = {}
+
+# Экспортируем для обратной совместимости
+__all__ = [
+    'TINKOFF_TERMINAL_KEY',
+    'TINKOFF_SECRET_KEY',
+    'TINKOFF_API_URL',
+    'WEBHOOK_URL',
+    'PAYMENT_ADMIN_CHAT_ID',
+    'DATABASE_PATH',
+    'SUBSCRIPTION_MODE',
+    'FREE_MODULES',
+    'MODULE_PLANS',
+    'SUBSCRIPTION_PLANS',
+    'DURATION_DISCOUNTS',
+    'MODULE_DESCRIPTIONS',
+    'get_plan_price_kopecks',
+    'get_subscription_end_date',
+    'calculate_subscription_price',
+    'get_plan_modules',
+    'format_price',
+    'is_module_free',
+    'get_module_info',
+    'get_plan_info'
+]

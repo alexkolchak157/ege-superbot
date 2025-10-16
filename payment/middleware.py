@@ -431,20 +431,22 @@ class SubscriptionMiddleware:
             logger.error(f"Error incrementing usage for user {user_id}: {e}")
     
     async def _send_subscription_required(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Отправляет общее сообщение о необходимости подписки."""
-        from .config import SUBSCRIPTION_MODE, MODULE_PLANS, LEGACY_SUBSCRIPTION_PLANS
+        """Отправляет упрощенное сообщение о необходимости подписки."""
+        from .config import SUBSCRIPTION_MODE
         
         text = "❌ <b>Для доступа к этой функции необходима подписка!</b>\n\n"
+        text += "💎 <b>Доступные тарифы:</b>\n\n"
         
-        if SUBSCRIPTION_MODE == 'modular':
-            text += "💎 <b>Доступные пакеты:</b>\n\n"
-            text += "🎁 Пробный период — 1₽ за 7 дней\n"
-            text += "📚 Пакет «Вторая часть» — 499₽/мес\n"
-            text += "👑 Полный доступ — 799₽/мес\n"
-        else:
-            plans = LEGACY_SUBSCRIPTION_PLANS
-            text += f"• {plans['basic_month']['name']} — {plans['basic_month']['price_rub']}₽/мес\n"
-            text += f"• {plans['pro_month']['name']} — {plans['pro_month']['price_rub']}₽/мес\n"
+        text += "🎁 <b>Пробный период</b> — 1₽\n"
+        text += "   • Полный доступ на 7 дней\n"
+        text += "   • Все задания с проверкой ИИ\n\n"
+        
+        text += "👑 <b>Полная подписка</b> — от 249₽/мес\n"
+        text += "   • Все задания второй части\n"
+        text += "   • Задания 19, 20, 24, 25\n"
+        text += "   • Безлимитные проверки\n\n"
+        
+        text += "💡 <i>Рекомендуем начать с пробного периода!</i>"
         
         keyboard = [
             [InlineKeyboardButton("💳 Оформить подписку", callback_data="subscribe_start")],
@@ -452,7 +454,7 @@ class SubscriptionMiddleware:
         ]
         
         if self.channel and self.check_channel:
-            text += f"\n📣 Или подпишитесь на канал {self.channel} для бесплатного доступа"
+            text += f"\n\n📣 Или подпишитесь на канал {self.channel} для бесплатного доступа"
             keyboard.insert(1, [
                 InlineKeyboardButton("📣 Подписаться на канал", url=f"https://t.me/{self.channel[1:]}")
             ])
@@ -462,15 +464,27 @@ class SubscriptionMiddleware:
         if update.callback_query:
             await update.callback_query.answer("Требуется подписка!", show_alert=True)
             try:
-                await update.callback_query.edit_message_text(text, reply_markup=reply_markup, parse_mode=ParseMode.HTML)
-            except:
-                await update.callback_query.message.reply_text(text, reply_markup=reply_markup, parse_mode=ParseMode.HTML)
+                await update.callback_query.edit_message_text(
+                    text,
+                    reply_markup=reply_markup,
+                    parse_mode=ParseMode.HTML
+                )
+            except Exception:
+                await update.callback_query.message.reply_text(
+                    text,
+                    reply_markup=reply_markup,
+                    parse_mode=ParseMode.HTML
+                )
         elif update.message:
-            await update.message.reply_text(text, reply_markup=reply_markup, parse_mode=ParseMode.HTML)
+            await update.message.reply_text(
+                text,
+                reply_markup=reply_markup,
+                parse_mode=ParseMode.HTML
+            )
     
     async def _send_module_subscription_required(self, update: Update, context: ContextTypes.DEFAULT_TYPE, module_code: str):
         """
-        Отправляет сообщение о необходимости подписки для модуля.
+        Отправляет упрощенное сообщение о необходимости подписки для модуля.
         
         Args:
             update: Telegram update
@@ -486,101 +500,56 @@ class SubscriptionMiddleware:
             'task25': '✍️ Задание 25'
         }
         
-        # Нормализуем код модуля для правильного отображения
+        # Нормализуем код модуля
         if hasattr(self, '_normalize_module_code'):
             normalized_code = self._normalize_module_code(module_code)
         else:
             normalized_code = module_code
-            
+        
         module_name = module_names.get(normalized_code, normalized_code)
         
-        # Импортируем конфигурацию
-        from .config import MODULE_PLANS, get_module_price
-        
-        # Находим подходящие пакеты
-        suitable_packages = []
-        for plan_id, plan in MODULE_PLANS.items():
-            if normalized_code in plan.get('modules', []):
-                suitable_packages.append((plan_id, plan))
-        
-        # Формируем сообщение
+        # Формируем упрощенное сообщение
         text = f"🔒 <b>Модуль «{module_name}» требует подписку</b>\n\n"
+        text += "Для доступа к этому модулю оформите подписку:\n\n"
         
-        # ИСПРАВЛЕНИЕ: Убрана проблемная вторая строка с номером задания
-        # Вместо неё добавляем описание модуля, если оно есть
-        module_info = MODULE_PLANS.get(normalized_code, {})
-        if module_info and 'description' in module_info:
-            text += f"<i>{module_info['description']}</i>\n\n"
+        # Показываем два варианта
+        text += "🎁 <b>Пробный период</b> — 1₽\n"
+        text += "   • Полный доступ на 7 дней\n"
+        text += "   • Все задания с проверкой ИИ\n\n"
         
-        # Сортируем пакеты по цене
-        suitable_packages.sort(key=lambda x: x[1]['price_rub'])
+        text += "👑 <b>Полная подписка</b> — от 249₽/мес\n"
+        text += "   • Все задания второй части\n"
+        text += "   • Безлимитные проверки\n\n"
         
-        if suitable_packages:
-            text += "<b>Доступен в пакетах:</b>\n\n"
-            for plan_id, plan in suitable_packages[:3]:  # Показываем топ-3 варианта
-                text += f"• {plan['name']} — {plan['price_rub']}₽\n"
+        text += "💡 <i>Попробуйте бесплатно 7 дней за 1₽!</i>"
         
-        # Цена отдельного модуля
-        module_price = get_module_price(normalized_code)
-        if module_price > 0:
-            text += f"\n<b>Или отдельно:</b> {module_price}₽/мес"
-        
-        text += "\n\n💡 <i>Совет: Попробуйте пробный период за 1₽</i>"
-        
-        # Кнопки
-        buttons = []
-        
-        # Пробный период всегда первый
-        buttons.append([InlineKeyboardButton("🎁 Попробовать за 1₽", callback_data="pay_trial")])
-        
-        # Добавляем кнопку для покупки конкретного модуля, если он продается отдельно
-        if module_price > 0:
-            button_text = f"💎 {module_name} — {module_price}₽"
-            buttons.append([InlineKeyboardButton(button_text, callback_data=f"pay_module_{normalized_code}")])
-        
-        # Добавляем подходящие пакеты
-        if suitable_packages:
-            # Показываем максимум 2 наиболее выгодных пакета
-            for plan_id, plan in suitable_packages[:2]:
-                if plan['type'] != 'trial':  # Пробный период уже добавлен отдельно
-                    button_text = f"📦 {plan['name']} — {plan['price_rub']}₽"
-                    buttons.append([InlineKeyboardButton(button_text, callback_data=f"pay_{plan_id}")])
-        
-        # Кнопка перехода к магазину подписок для просмотра всех вариантов
-        buttons.append([InlineKeyboardButton("🛒 Все подписки", callback_data="subscribe_start")])
-        
-        # Кнопка возврата в главное меню
-        buttons.append([InlineKeyboardButton("⬅️ Главное меню", callback_data="to_main_menu")])
+        # Кнопки - только 2 варианта
+        buttons = [
+            [InlineKeyboardButton("🎁 Попробовать за 1₽", callback_data="pay_trial")],
+            [InlineKeyboardButton("👑 Полная подписка - от 249₽", callback_data="pay_package_full")],
+            [InlineKeyboardButton("🛒 Все подписки", callback_data="subscribe_start")],
+            [InlineKeyboardButton("🏠 Главное меню", callback_data="to_main_menu")]
+        ]
         
         reply_markup = InlineKeyboardMarkup(buttons)
         
         # Отправляем сообщение
         if update.callback_query:
-            await update.callback_query.answer(f"❌ {module_name} требует подписку", show_alert=True)
-            
-            # Пробуем отредактировать сообщение
+            await update.callback_query.answer("Требуется подписка!", show_alert=True)
             try:
-                await update.callback_query.message.edit_text(
+                await update.callback_query.edit_message_text(
                     text,
                     reply_markup=reply_markup,
                     parse_mode=ParseMode.HTML
                 )
-            except BadRequest as e:
-                if "Message is not modified" in str(e):
-                    # Если сообщение не изменилось, просто игнорируем
-                    pass
-                else:
-                    # Если другая ошибка, отправляем новое сообщение
-                    try:
-                        await update.callback_query.message.reply_text(
-                            text,
-                            reply_markup=reply_markup,
-                            parse_mode=ParseMode.HTML
-                        )
-                    except Exception as send_error:
-                        logger.error(f"Failed to send subscription required message: {send_error}")
-        else:
-            # Для обычных сообщений (не callback)
+            except Exception as e:
+                logger.debug(f"Could not edit message: {e}")
+                await update.callback_query.message.reply_text(
+                    text,
+                    reply_markup=reply_markup,
+                    parse_mode=ParseMode.HTML
+                )
+        elif update.message:
             await update.message.reply_text(
                 text,
                 reply_markup=reply_markup,
@@ -666,7 +635,7 @@ def setup_subscription_middleware(
     check_channel: bool = False
 ) -> SubscriptionMiddleware:
     """
-    Настраивает middleware для проверки подписок.
+    Настраивает middleware для проверки подписок (упрощенная версия).
     
     Args:
         application: Приложение Telegram
@@ -677,7 +646,7 @@ def setup_subscription_middleware(
     Returns:
         Экземпляр middleware
     """
-    # Дефолтные бесплатные паттерны
+    # Дефолтные бесплатные паттерны (ОБНОВЛЕНО - убраны модульные паттерны)
     default_free_patterns = {
         # Базовые паттерны
         'main_menu', 'to_main_menu', 'start_', 'help_',
@@ -688,14 +657,15 @@ def setup_subscription_middleware(
         # Паттерны для подписки
         'my_subscription', 'subscribe_start', 'my_subscriptions',
         
-        # Паттерны для выбора модулей
-        'toggle_', 'info_', 'proceed_with_modules',
-        'pay_individual_modules', 'pay_package_',
-        'pay_trial', 'pay_full',
+        # УДАЛЕНЫ паттерны для выбора модулей:
+        # 'toggle_', 'info_', 'proceed_with_modules',
+        # 'pay_individual_modules', 'back_to_module_selection', 'back_to_modules'
         
-        # Паттерны для навигации
-        'back_to_module_selection', 'back_to_main',
-        'back_to_plans', 'back_to_modules',
+        # Паттерны для оплаты (только trial и full)
+        'pay_trial', 'pay_package_full',
+        
+        # Паттерны для навигации (общие)
+        'back_to_main', 'back_to_plans',
         
         # Админские паттерны
         'admin_', 'broadcast_', 'stats_', 'test_',
@@ -746,6 +716,7 @@ def setup_subscription_middleware(
         group=-100  # Выполняется первым
     )
     
-    logger.info("Subscription middleware установлен с полным функционалом")
+    logger.info("Subscription middleware установлен (упрощенная версия)")
+    logger.info("Поддержка только trial и full подписок")
     
     return middleware
