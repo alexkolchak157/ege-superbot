@@ -533,37 +533,33 @@ class Task19AIEvaluator(BaseAIEvaluator if AI_EVALUATOR_AVAILABLE else object):
                     snippet = ex.get('text_snippet', '')[:100]
                     why_valid = ex.get('why_valid', '')
                     feedback_parts.append(f"\n• Пример {ex['number']}: «{snippet}{'...' if len(ex.get('text_snippet', '')) > 100 else ''}»")
-                    feedback_parts.append(f"  ✓ {why_valid}")
-                    
-                    if structure_type and ex.get('has_structure'):
-                        element = ex.get('element', '')
-                        if element:
-                            feedback_parts.append(f"  ✓ Структура соблюдена: {element}")
+                    if why_valid:
+                        feedback_parts.append(f"  ✓ {why_valid}")
             
             # Детали по незасчитанным примерам
             invalid_examples = ai_result.get('invalid_examples', [])
             if invalid_examples:
-                feedback_parts.append("\n❌ Незасчитанные примеры:")
+                feedback_parts.append("\n❌ Не засчитанные примеры:")
                 for ex in invalid_examples[:3]:
                     snippet = ex.get('text_snippet', '')[:100]
-                    reason = ex.get('why_invalid', 'не соответствует критериям')
+                    why_invalid = ex.get('why_invalid', '')
                     improvement = ex.get('improvement', '')
-                    violations = ex.get('violations', {})
                     
                     feedback_parts.append(f"\n• Пример {ex['number']}: «{snippet}{'...' if len(ex.get('text_snippet', '')) > 100 else ''}»")
-                    feedback_parts.append(f"  ✗ Причина: {reason}")
+                    if why_invalid:
+                        feedback_parts.append(f"  ✗ {why_invalid}")
                     
-                    # Детальные нарушения
+                    # Показываем конкретные нарушения
                     violation_details = []
-                    if violations.get('not_about_russia'):
+                    if ex.get('not_about_russia'):
                         violation_details.append("не про Россию")
-                    if violations.get('wrong_structure'):
-                        violation_details.append("нарушена структура")
-                    if violations.get('lacks_concrete_person'):
-                        violation_details.append("нет конкретного лица")
-                    if violations.get('is_abstract'):
-                        violation_details.append("абстрактное рассуждение")
-                    if violations.get('is_trend_description'):
+                    if ex.get('wrong_structure'):
+                        violation_details.append("неправильная структура")
+                    if ex.get('too_abstract'):
+                        violation_details.append("слишком абстрактно")
+                    if ex.get('lacks_specificity'):
+                        violation_details.append("нет конкретики")
+                    if ex.get('is_trend_description'):
                         violation_details.append("описание тенденции")
                     
                     if violation_details:
@@ -592,13 +588,14 @@ class Task19AIEvaluator(BaseAIEvaluator if AI_EVALUATOR_AVAILABLE else object):
             
             feedback = "\n".join(feedback_parts)
             
+            # ✅ ИСПРАВЛЕНО: используем criteria_scores и factual_errors
             return EvaluationResult(
-                scores={"К1": score},
+                criteria_scores={"К1": score},
                 total_score=score,
                 max_score=3,
                 feedback=feedback,
                 suggestions=suggestions,
-                issues=factual_errors,
+                factual_errors=factual_errors,
                 detailed_feedback=ai_result
             )
             
@@ -618,8 +615,9 @@ class Task19AIEvaluator(BaseAIEvaluator if AI_EVALUATOR_AVAILABLE else object):
         
         score = min(len(sentences), 3)
         
+        # ✅ ИСПРАВЛЕНО: используем criteria_scores и factual_errors
         return EvaluationResult(
-            scores={"К1": score},
+            criteria_scores={"К1": score},
             total_score=score,
             max_score=3,
             feedback=f"Базовая оценка: обнаружено {len(sentences)} развёрнутых предложений. "
@@ -627,7 +625,7 @@ class Task19AIEvaluator(BaseAIEvaluator if AI_EVALUATOR_AVAILABLE else object):
             suggestions=["Используйте конкретные имена и названия", 
                         "Добавляйте детали: кто, что, где, когда",
                         "Соблюдайте структуру ответа, если требуется"],
-            issues=[]
+            factual_errors=[]
         )
 
 
