@@ -17,6 +17,8 @@ from core.states import TASK19_WAITING
 from core.ai_evaluator import Task19Evaluator, EvaluationResult
 from datetime import datetime
 import io
+from core.vision_service import get_vision_service
+from core.freemium_manager import get_freemium_manager
 from .evaluator import StrictnessLevel, Task19AIEvaluator, AI_EVALUATOR_AVAILABLE
 from core.universal_ui import UniversalUIComponents, AdaptiveKeyboards, MessageFormatter
 from core.ui_helpers import (
@@ -686,8 +688,9 @@ def _format_evaluation_result(result) -> str:
 @safe_handler()
 @validate_state_transition({TASK19_WAITING})
 async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Обработка ответа пользователя на задание 19."""
-    user_answer = update.message.text.strip()
+    """Обработка ответа пользователя на задание 19 (текст или фото)."""
+    
+    user_id = update.effective_user.id
     topic = context.user_data.get('current_topic')
     
     if not topic:
@@ -699,96 +702,209 @@ async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
         )
         return states.CHOOSING_MODE
     
-    # Проверяем минимальную длину
-    if len(user_answer) < 50:
-        await update.message.reply_text(
-            "❌ Ответ слишком короткий. Приведите три развернутых примера.",
-            reply_markup=InlineKeyboardMarkup([[
-                InlineKeyboardButton("❌ Отменить", callback_data="t19_menu")
-            ]])
-        )
-        return TASK19_WAITING
+    # Определяем тип ответа
+    user_answer = None
+    is_photo = False
     
-    # Показываем анимацию обработки
-    thinking_msg = await show_ai_evaluation_animation(
-        update.message,
-        duration=30  # 30 секунд для task19
-    )
-    
-    try:
-        # Оцениваем ответ (AI или базовая оценка)
-        if evaluator and AI_EVALUATOR_AVAILABLE:
-            try:
-                result = await evaluator.evaluate(
-                    answer=user_answer,
-                    topic=topic.get('title', ''),
-                    task_text=topic.get('task_text', ''),
-                    user_id=update.effective_user.id
-                )
-                score = result.total_score if hasattr(result, 'total_score') else result.get('score', 0)
-                feedback_text = _format_evaluation_result(result)
-                
-            except Exception as e:
-                logger.error(f"AI evaluation error: {e}")
-                # Fallback к базовой оценке
-                score, feedback = await _basic_evaluation(user_answer, topic)
-                feedback_text = feedback
-        else:
-            # Базовая оценка без AI
-            score, feedback_text = await _basic_evaluation(user_answer, topic)
-        
-        # Удаляем анимацию
-        await thinking_msg.delete()
-        
-        # Используем функцию save_result_task19
-        save_result_task19(context, topic, score)
-        
-        # Обновляем серию
-        if score >= 2:
-            context.user_data['correct_streak'] = context.user_data.get('correct_streak', 0) + 1
-            
-            # Показываем уведомление о серии
-            if context.user_data['correct_streak'] % 3 == 0:
-                await show_streak_notification(
-                    update.message,
-                    context.user_data['correct_streak']
-                )
-        else:
-            context.user_data['correct_streak'] = 0
-        
-        # Проверяем достижения
-        achievements_before = len(context.user_data.get('task19_achievements', set()))
-        new_achievements = await check_achievements(context, update.effective_user.id)
-        
-        # Если есть новые достижения, добавляем в текст
-        if new_achievements:
-            feedback_text += "\n\n🏅 <b>Новые достижения:</b>"
-            for ach in new_achievements:
-                feedback_text += f"\n• {ach['name']}"
-        
-        # Формируем клавиатуру
-        kb = AdaptiveKeyboards.create_result_keyboard(
-            score=score,
-            max_score=3,
-            module_code="t19"
-        )
-        
-        # Отправляем результат
-        await update.message.reply_text(
-            feedback_text,
-            reply_markup=kb,
+    # Обработка фото (новый функционал)
+    if update.message.photo:
+        is_photo = True
+        thinking_msg = await update.message.reply_text(
+            "📸 Распознаю рукописный текст...\n"
+            "<i>Это может занять несколько секунд</i>",
             parse_mode=ParseMode.HTML
         )
         
-        # ДОБАВИТЬ: Сохраняем контекст для возврата (ВНУТРИ TRY БЛОКА!)
+        try:
+            # Используем Vision API для распознавания
+            vision_service = get_vision_service()
+            photo = update.message.photo[-1]  # Берем самое большое фото
+            
+            result = await vision_service.process_telegram_photo(
+                photo, 
+                context.bot
+            )
+            
+            if result['success']:
+                user_answer = result['text']
+                confidence = result.get('confidence', 0)
+                
+                # Показываем распознанный текст для подтверждения
+                confirm_text = (
+                    "✅ <b>Текст распознан!</b>\n\n"
+                    f"<i>Уверенность: {confidence:.0%}</i>\n\n"
+                    "📝 <b>Распознанный текст:</b>\n"
+                    f"{user_answer[:500]}{'...' if len(user_answer) > 500 else ''}\n\n"
+                    "Проверить этот ответ?"
+                )
+                
+                # Сохраняем в контексте для последующего использования
+                context.user_data['pending_answer'] = user_answer
+                context.user_data['pending_topic'] = topic
+                
+                # Клавиатура подтверждения
+                keyboard = InlineKeyboardMarkup([
+                    [
+                        InlineKeyboardButton("✅ Проверить", callback_data="t19_confirm_ocr"),
+                        InlineKeyboardButton("✏️ Редактировать", callback_data="t19_edit_ocr")
+                    ],
+                    [
+                        InlineKeyboardButton("🔄 Другое фото", callback_data="t19_retry_photo"),
+                        InlineKeyboardButton("❌ Отмена", callback_data="t19_practice")
+                    ]
+                ])
+                
+                await thinking_msg.edit_text(
+                    confirm_text,
+                    reply_markup=keyboard,
+                    parse_mode=ParseMode.HTML
+                )
+                
+                return states.CHOOSING_MODE
+                
+            else:
+                # Ошибка распознавания
+                error_msg = result.get('error', 'Не удалось распознать текст')
+                warning = result.get('warning', '')
+                
+                await thinking_msg.edit_text(
+                    f"❌ <b>Ошибка распознавания</b>\n\n"
+                    f"{error_msg}\n"
+                    f"{warning}\n\n"
+                    "💡 <i>Советы для лучшего распознавания:</i>\n"
+                    "• Убедитесь, что текст четкий\n"
+                    "• Используйте хорошее освещение\n"
+                    "• Держите камеру ровно\n"
+                    "• Пишите разборчиво",
+                    reply_markup=InlineKeyboardMarkup([[
+                        InlineKeyboardButton("🔄 Попробовать снова", callback_data="t19_retry"),
+                        InlineKeyboardButton("✏️ Ввести текстом", callback_data="t19_retry")
+                    ]]),
+                    parse_mode=ParseMode.HTML
+                )
+                return states.CHOOSING_MODE
+                
+        except Exception as e:
+            logger.error(f"Error processing photo: {e}")
+            await thinking_msg.edit_text(
+                "❌ Ошибка обработки фото. Попробуйте ввести ответ текстом.",
+                reply_markup=InlineKeyboardMarkup([[
+                    InlineKeyboardButton("✏️ Ввести текстом", callback_data="t19_retry")
+                ]])
+            )
+            return states.CHOOSING_MODE
+    
+    # Обработка текстового ответа (существующий функционал)
+    else:
+        user_answer = update.message.text.strip()
+        
+        # Проверяем минимальную длину
+        if len(user_answer) < 50:
+            await update.message.reply_text(
+                "❌ Ответ слишком короткий. Приведите три развернутых примера.\n\n"
+                "💡 Можете также отправить фото рукописного ответа!",
+                reply_markup=InlineKeyboardMarkup([[
+                    InlineKeyboardButton("🔄 Попробовать снова", callback_data="t19_retry")
+                ]])
+            )
+            return TASK19_WAITING
+    
+    # === ПРОВЕРКА ЛИМИТОВ (новый функционал) ===
+    freemium_manager = get_freemium_manager(
+        context.bot_data.get('subscription_manager')
+    )
+    
+    # Определяем модуль для task19
+    module_code = 'task19'
+    
+    # Проверяем лимит для модуля task19
+    can_use, remaining, limit_msg = await freemium_manager.check_ai_limit(user_id, module_code)
+    
+    if not can_use:
+        # Лимит исчерпан - показываем "размытый" результат
+        await update.message.reply_text(
+            "🔒 <b>Лимит бесплатных проверок исчерпан</b>\n\n"
+            "Ваш ответ получен, но для детальной AI-проверки "
+            "необходима подписка на модуль.\n\n"
+            f"<i>Длина ответа: {len(user_answer)} символов</i>\n"
+            f"<i>Обнаружено примеров: ~{user_answer.count('.')} </i>\n\n"
+            "💎 <b>Оформите подписку на задание 19:</b>\n"
+            "• Безлимитные AI-проверки\n"
+            "• Детальный разбор каждого примера\n"
+            "• Персональные рекомендации\n"
+            "• Эталонные ответы\n\n",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("💎 Оформить подписку", callback_data="subscribe")],
+                [InlineKeyboardButton("📝 В меню", callback_data="t19_menu")]
+            ]),
+            parse_mode=ParseMode.HTML
+        )
+        return states.CHOOSING_MODE
+    
+    # Показываем оставшиеся проверки для модуля
+    limit_info = await freemium_manager.get_limit_info(user_id, module_code)
+    limit_display = freemium_manager.format_limit_message(limit_info)
+    
+    thinking_msg = await update.message.reply_text(
+        f"{limit_display}\n\n"
+        "🤔 Проверяю ваш ответ через AI...\n"
+        "<i>Это займет несколько секунд</i>",
+        parse_mode=ParseMode.HTML
+    )
+    
+    # Регистрируем использование проверки для модуля
+    await freemium_manager.use_ai_check(user_id, module_code)
+    
+    try:
+        # === AI ПРОВЕРКА (с разной детализацией) ===
+        evaluator = get_task19_evaluator()
+        
+        # Определяем уровень детализации
+        is_premium = limit_info['is_premium']
+        
+        # Для premium - полная проверка
+        # Для free - базовая проверка
+        evaluation_mode = 'full' if is_premium else 'basic'
+        
+        result = await evaluator.evaluate(
+            user_answer, 
+            topic,
+            task_text=topic.get('task_text', ''),
+            mode=evaluation_mode  # Передаем режим проверки
+        )
+        
+        # Сохраняем результат
+        score = result.total_score
+        save_result_task19(context, topic, score)
+        
+        # Формируем фидбек с учетом уровня подписки
+        if is_premium:
+            feedback_text = format_feedback_task19(result, topic)
+        else:
+            # Упрощенный фидбек для бесплатных пользователей
+            feedback_text = format_basic_feedback_task19(result, topic)
+            feedback_text += (
+                "\n\n💎 <i>Оформите Premium для детального разбора!</i>"
+            )
+        
+        # Обновляем лимиты в сообщении
+        new_limit_info = await freemium_manager.get_limit_info(user_id)
+        new_limit_display = freemium_manager.format_limit_message(new_limit_info)
+        
+        await thinking_msg.edit_text(
+            f"{new_limit_display}\n\n{feedback_text}",
+            reply_markup=create_after_check_keyboard_task19(score, topic),
+            parse_mode=ParseMode.HTML
+        )
+        
+        # Сохраняем для возврата
         context.user_data['t19_last_screen'] = 'feedback'
         context.user_data['t19_last_feedback'] = {
-            'text': feedback_text,
+            'text': f"{new_limit_display}\n\n{feedback_text}",
             'score': score,
             'topic': topic
         }
         
-        # Возвращаем состояние для продолжения
         return states.CHOOSING_MODE
         
     except Exception as e:
@@ -798,7 +914,7 @@ async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
         await update.message.reply_text(
             "❌ Произошла ошибка при проверке. Попробуйте еще раз.",
             reply_markup=InlineKeyboardMarkup([[
-                InlineKeyboardButton("🔄 Попробовать снова", callback_data="t19_practice"),
+                InlineKeyboardButton("🔄 Попробовать снова", callback_data="t19_retry"),
                 InlineKeyboardButton("📝 В меню", callback_data="t19_menu")
             ]])
         )
@@ -1785,6 +1901,158 @@ async def export_results(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     
     return states.CHOOSING_MODE
+
+@safe_handler()
+async def handle_confirm_ocr(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Подтверждение распознанного текста и отправка на проверку."""
+    query = update.callback_query
+    await query.answer()
+    
+    user_answer = context.user_data.get('pending_answer')
+    topic = context.user_data.get('pending_topic')
+    
+    if not user_answer or not topic:
+        await query.edit_message_text(
+            "❌ Ошибка: данные не найдены. Начните заново.",
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("🔄 Начать заново", callback_data="t19_practice")
+            ]])
+        )
+        return states.CHOOSING_MODE
+    
+    # Очищаем временные данные
+    context.user_data.pop('pending_answer', None)
+    context.user_data.pop('pending_topic', None)
+    
+    # Отправляем на проверку (используем существующую логику)
+    user_id = update.effective_user.id
+    
+    # Проверка лимитов
+    freemium_manager = get_freemium_manager(
+        context.bot_data.get('subscription_manager')
+    )
+    
+    can_use, remaining, limit_msg = await freemium_manager.check_ai_limit(user_id)
+    
+    if not can_use:
+        await query.edit_message_text(
+            "🔒 <b>Лимит бесплатных проверок исчерпан</b>\n\n"
+            "💎 Оформите Premium для безлимитных проверок!",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("💎 Оформить Premium", callback_data="subscribe")],
+                [InlineKeyboardButton("📝 В меню", callback_data="t19_menu")]
+            ]),
+            parse_mode=ParseMode.HTML
+        )
+        return states.CHOOSING_MODE
+
+    await query.edit_message_text(
+        "🤔 Проверяю ваш ответ через AI...",
+        parse_mode=ParseMode.HTML
+    )
+    # Регистрируем использование проверки для модуля
+    await freemium_manager.use_ai_check(user_id, module_code)
+    
+    try:
+        # === AI ПРОВЕРКА (с разной детализацией) ===
+        evaluator = get_task19_evaluator()
+        
+        # Определяем уровень детализации
+        is_premium = limit_info['is_premium']
+        
+        # Для premium - полная проверка
+        # Для free - базовая проверка
+        evaluation_mode = 'full' if is_premium else 'basic'
+        
+        result = await evaluator.evaluate(
+            user_answer, 
+            topic,
+            task_text=topic.get('task_text', ''),
+            mode=evaluation_mode  # Передаем режим проверки
+        )
+        
+        # Сохраняем результат
+        score = result.total_score
+        save_result_task19(context, topic, score)
+        
+        # Формируем фидбек с учетом уровня подписки
+        if is_premium:
+            feedback_text = format_feedback_task19(result, topic)
+        else:
+            # Упрощенный фидбек для бесплатных пользователей
+            feedback_text = format_basic_feedback_task19(result, topic)
+            feedback_text += (
+                "\n\n💎 <i>Оформите Premium для детального разбора!</i>"
+            )
+        
+        # Обновляем лимиты в сообщении
+        new_limit_info = await freemium_manager.get_limit_info(user_id)
+        new_limit_display = freemium_manager.format_limit_message(new_limit_info)
+        
+        await thinking_msg.edit_text(
+            f"{new_limit_display}\n\n{feedback_text}",
+            reply_markup=create_after_check_keyboard_task19(score, topic),
+            parse_mode=ParseMode.HTML
+        )
+        
+        # Сохраняем для возврата
+        context.user_data['t19_last_screen'] = 'feedback'
+        context.user_data['t19_last_feedback'] = {
+            'text': f"{new_limit_display}\n\n{feedback_text}",
+            'score': score,
+            'topic': topic
+        }
+        
+        return states.CHOOSING_MODE
+
+@safe_handler()
+async def handle_edit_ocr(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Редактирование распознанного текста."""
+    query = update.callback_query
+    await query.answer()
+    
+    user_answer = context.user_data.get('pending_answer', '')
+    
+    await query.edit_message_text(
+        "✏️ <b>Редактирование ответа</b>\n\n"
+        "Отправьте исправленный текст ответа.\n\n"
+        f"<b>Распознанный текст:</b>\n"
+        f"<i>{user_answer[:300]}...</i>",
+        reply_markup=InlineKeyboardMarkup([[
+            InlineKeyboardButton("❌ Отмена", callback_data="t19_practice")
+        ]]),
+        parse_mode=ParseMode.HTML
+    )
+    
+    # Устанавливаем состояние ожидания отредактированного текста
+    from core.state_validator import state_validator
+    state_validator.set_state(query.from_user.id, TASK19_WAITING)
+    
+    return TASK19_WAITING
+
+# ============== ВСПОМОГАТЕЛЬНАЯ ФУНКЦИЯ ==============
+def format_basic_feedback_task19(result: EvaluationResult, topic: Dict) -> str:
+    """Формирует упрощенный фидбек для бесплатных пользователей."""
+    score = result.total_score
+    max_score = result.max_score
+    
+    text = f"📊 <b>Результат: {score}/{max_score} баллов</b>\n\n"
+    
+    # Общая оценка
+    if score == max_score:
+        text += "✅ Хороший ответ!\n"
+    elif score > 0:
+        text += "⚠️ Есть недочеты\n"
+    else:
+        text += "❌ Требуется доработка\n"
+    
+    # Базовые рекомендации
+    text += "\n💡 <b>Общие рекомендации:</b>\n"
+    text += "• Приводите конкретные примеры\n"
+    text += "• Избегайте общих фраз\n"
+    text += "• Следите за фактической точностью\n"
+    
+    return text
 
 @safe_handler()
 async def detailed_progress(update: Update, context: ContextTypes.DEFAULT_TYPE):

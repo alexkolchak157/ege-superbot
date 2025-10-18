@@ -92,7 +92,9 @@ class Task19Plugin(BotPlugin):
                     CallbackQueryHandler(handlers.list_topics, pattern=r"^t19_list_topics($|:page:\d+)"),
                     CallbackQueryHandler(handlers.random_topic_all, pattern="^t19_random_all$"),
                     CallbackQueryHandler(handlers.random_topic_block, pattern="^t19_random_block$"),
-                    
+
+
+
                     # Банк примеров
                     CallbackQueryHandler(handlers.bank_navigation, pattern="^t19_bank_nav:"),
                     CallbackQueryHandler(handlers.bank_search, pattern="^t19_bank_search$"),
@@ -164,6 +166,15 @@ class Task19Plugin(BotPlugin):
         )
         # Регистрируем обработчики в приложении
         app.add_handler(conv_handler)
+        app.add_handler(CallbackQueryHandler(
+            handle_confirm_ocr, pattern="^t19_confirm_ocr$"
+        ))
+        app.add_handler(CallbackQueryHandler(
+            handle_edit_ocr, pattern="^t19_edit_ocr$"
+        ))
+        app.add_handler(CallbackQueryHandler(
+            handle_retry_photo, pattern="^t19_retry_photo$"
+        ))
         app.add_handler(CallbackQueryHandler(
             handlers.achievement_ok, 
             pattern="^achievement_ok$"
