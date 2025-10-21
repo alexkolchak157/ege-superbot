@@ -82,77 +82,7 @@ async def handle_to_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE
         except Exception as e:
             # Другие ошибки
             logger.error(f"Unexpected error in handle_to_main_menu: {e}")
-    
-    return ConversationHandler.END
-    
-    # === ГЛАВНОЕ ИСПРАВЛЕНИЕ: НЕ ОЧИЩАЕМ context.user_data.clear()! ===
-    
-    # Определяем, какие данные нужно сохранить (всё важное)
-    data_to_preserve = []
-    
-    # Данные всех модулей
-    modules = ['task19', 'task20', 'task24', 'task25', 'test_part']
-    for module in modules:
-        data_to_preserve.extend([
-            f'{module}_results',
-            f'{module}_practice_stats',
-            f'{module}_achievements',
-            f'{module}_stats'
-        ])
-    
-    # Специфичные данные
-    data_to_preserve.extend([
-        'practiced_topics',      # task24
-        'scores_history',        # task24
-        'correct_streak',        # общий счетчик
-        'practice_stats',        # старое хранилище
-        'user_preferences',      # настройки
-        'subscription_status',   # подписка
-        'subscription_expiry',   
-        'purchased_modules'      
-    ])
-    
-    # Сохраняем важные данные
-    preserved_data = {}
-    for key in data_to_preserve:
-        if key in context.user_data:
-            preserved_data[key] = context.user_data[key]
-    
-    # Очищаем ТОЛЬКО временные ключи текущей сессии
-    temp_keys = [
-        'current_topic',
-        'task19_current_topic',
-        'task20_current_topic',
-        'task24_current_topic',
-        'task25_current_topic',
-        'answer_processing',
-        'current_block',
-        'waiting_for_bank_search',
-        'active_module',
-        'current_module',
-        'bank_current_idx',
-        'current_question_idx',
-        'test_answers',
-        'viewing_mode',
-        'search_query',
-        'temp_message_id',
-        'thinking_message_id',
-        '_state',
-        'conversation_state'
-    ]
-    
-    # Удаляем только временные ключи
-    removed = 0
-    for key in temp_keys:
-        if key in context.user_data:
-            context.user_data.pop(key)
-            removed += 1
-    
-    # Восстанавливаем сохраненные данные (на случай если что-то случайно удалили)
-    context.user_data.update(preserved_data)
-    
-    logger.info(f"Menu navigation: preserved {len(preserved_data)} keys, removed {removed} temp keys")
-    
+
     return ConversationHandler.END
 
 
