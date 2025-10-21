@@ -6,17 +6,9 @@ import os
 import logging
 from dataclasses import dataclass
 from typing import Dict, Any, Optional
-from enum import Enum
+from core.types import TaskType
 
 logger = logging.getLogger(__name__)
-
-
-class TaskType(Enum):
-    """Типы заданий ЕГЭ"""
-    TASK_19 = "task19"  # Примеры
-    TASK_20 = "task20"  # Суждения
-    TASK_25 = "task25"  # Обоснование и примеры
-    TASK_24 = "task24"  # План (для проверки планов)
 
 
 @dataclass
@@ -31,22 +23,22 @@ class OptimalSettings:
         """Возвращает оптимальные настройки для типа задания"""
         
         settings_map = {
-            TaskType.TASK_19: cls(
+            TaskType.TASK19: cls(
                 temperature=0.2,  # Низкая для точности оценки примеров
                 max_tokens=2000,
                 model="yandexgpt"  # Pro версия для лучшего понимания контекста
             ),
-            TaskType.TASK_20: cls(
+            TaskType.TASK20: cls(
                 temperature=0.3,  # Чуть выше для оценки абстрактных суждений
                 max_tokens=2000,
                 model="yandexgpt"
             ),
-            TaskType.TASK_25: cls(
+            TaskType.TASK25: cls(
                 temperature=0.2,  # Низкая для комплексной оценки
                 max_tokens=3000,  # Больше токенов для развёрнутого анализа
                 model="yandexgpt"
             ),
-            TaskType.TASK_24: cls(
+            TaskType.TASK24: cls(
                 temperature=0.1,  # Минимальная для структурного анализа
                 max_tokens=2500,
                 model="yandexgpt"
@@ -263,9 +255,9 @@ def estimate_monthly_cost(
     if task_distribution is None:
         # Примерное распределение заданий
         task_distribution = {
-            TaskType.TASK_19: 0.4,
-            TaskType.TASK_20: 0.3,
-            TaskType.TASK_25: 0.3
+            TaskType.TASK19: 0.4,
+            TaskType.TASK20: 0.3,
+            TaskType.TASK25: 0.3
         }
     
     monthly_answers = daily_users * tasks_per_user * 30

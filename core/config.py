@@ -20,9 +20,9 @@ QUESTIONS_FILE = os.getenv("QUESTIONS_FILE", "data/questions.json")
 DATABASE_FILE = os.getenv("DATABASE_FILE", "quiz_async.db")
 STORAGE_DATABASE_FILE = os.getenv("STORAGE_DATABASE_FILE", "fsm_storage.db")
 REMINDER_INACTIVITY_DAYS = int(os.getenv("REMINDER_INACTIVITY_DAYS", 3))
-# Основные настройки бота
-BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
-DATABASE_PATH = os.getenv('DATABASE_PATH', 'quiz_async.db')
+
+# Дополнительные пути к БД (для совместимости)
+DATABASE_PATH = os.getenv('DATABASE_PATH', DATABASE_FILE)
 
 # Настройки платежей Tinkoff
 TINKOFF_TERMINAL_KEY = os.getenv('TINKOFF_TERMINAL_KEY')
@@ -45,10 +45,6 @@ DEBUG = os.getenv('DEBUG', 'False').lower() == 'true'
 # Настройки для WebApp
 WEBAPP_URL = os.getenv('WEBAPP_URL', 'https://yourdomain.com/webapp')
 
-# Проверка обязательных переменных
-if not BOT_TOKEN:
-    raise ValueError("BOT_TOKEN не установлен в переменных окружения!")
-
 # Предупреждение о настройках платежей
 if not all([TINKOFF_TERMINAL_KEY, TINKOFF_SECRET_KEY, WEBHOOK_BASE_URL]):
     print("⚠️  Внимание: Переменные для платежей не настроены. Модуль платежей будет работать в ограниченном режиме.")
@@ -56,7 +52,12 @@ if not all([TINKOFF_TERMINAL_KEY, TINKOFF_SECRET_KEY, WEBHOOK_BASE_URL]):
 # Экспорт всех настроек
 __all__ = [
     'BOT_TOKEN',
+    'REQUIRED_CHANNEL',
+    'QUESTIONS_FILE',
+    'DATABASE_FILE',
     'DATABASE_PATH',
+    'STORAGE_DATABASE_FILE',
+    'REMINDER_INACTIVITY_DAYS',
     'TINKOFF_TERMINAL_KEY',
     'TINKOFF_SECRET_KEY',
     'WEBHOOK_BASE_URL',
@@ -64,7 +65,6 @@ __all__ = [
     'WEBHOOK_URL',
     'PAYMENT_ADMIN_CHAT_ID',
     'ADMIN_IDS',
-    'REQUIRED_CHANNEL',
     'DEBUG',
     'WEBAPP_URL'
 ]
