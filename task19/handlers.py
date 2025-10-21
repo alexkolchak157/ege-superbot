@@ -4,7 +4,6 @@ import logging
 import os
 import json
 import random
-import time
 from typing import Optional, Dict, List, Any
 from core.document_processor import DocumentHandlerMixin
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, Message
@@ -14,7 +13,7 @@ from telegram.error import BadRequest
 from core.admin_tools import admin_manager
 from core import states
 from core.states import TASK19_WAITING
-from core.ai_evaluator import Task19Evaluator, EvaluationResult
+from core.ai_evaluator import EvaluationResult
 from datetime import datetime
 import io
 from core.vision_service import get_vision_service
@@ -32,10 +31,8 @@ from core.ui_helpers import (
     get_achievement_emoji,
 )
 from core.migration import ensure_module_migration
-from core.error_handler import safe_handler, auto_answer_callback
-from core.plugin_loader import build_main_menu
+from core.error_handler import safe_handler
 from core.state_validator import validate_state_transition, state_validator
-from payment.decorators import requires_module
 
 TASK19_STRICTNESS = os.getenv('TASK19_STRICTNESS', 'STRICT').upper()
 
@@ -107,54 +104,6 @@ async def strictness_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     
     return states.CHOOSING_MODE
-
-async def delete_previous_messages(context: ContextTypes.DEFAULT_TYPE, chat_id: int, keep_message_id: Optional[int] = None):
-    """Удаляет предыдущие сообщения диалога (включая сообщения пользователя)."""
-    if not hasattr(context, 'bot') or not context.bot:
-        logger.warning("Bot instance not available for message deletion")
-        return
-    
-    # Список ключей с ID сообщений для удаления
-    message_keys = [
-        'task19_question_msg_id',   # Сообщение с заданием
-        'task19_answer_msg_id',     # Сообщение пользователя с ответом
-        'task19_result_msg_id',     # Сообщение с результатом проверки
-        'task19_thinking_msg_id'    # Сообщение "Анализирую..."
-    ]
-    
-    messages_to_delete = []
-    deleted_count = 0
-    
-    # Собираем ID сообщений для удаления
-    for key in message_keys:
-        msg_id = context.user_data.get(key)
-        if msg_id and msg_id != keep_message_id:
-            messages_to_delete.append((key, msg_id))
-    
-    # Добавляем дополнительные сообщения (если есть)
-    extra_messages = context.user_data.get('task19_extra_messages', [])
-    for msg_id in extra_messages:
-        if msg_id and msg_id != keep_message_id:
-            messages_to_delete.append(('extra', msg_id))
-    
-    # Удаляем сообщения
-    for key, msg_id in messages_to_delete:
-        try:
-            await context.bot.delete_message(chat_id=chat_id, message_id=msg_id)
-            deleted_count += 1
-            logger.debug(f"Deleted {key}: {msg_id}")
-        except Exception as e:
-            logger.debug(f"Failed to delete {key} {msg_id}: {e}")
-    
-    # Очищаем контекст (кроме keep_message_id если оно есть в контексте)
-    for key in message_keys:
-        if context.user_data.get(key) != keep_message_id:
-            context.user_data.pop(key, None)
-    
-    # Очищаем список дополнительных сообщений
-    context.user_data['task19_extra_messages'] = []
-    
-    logger.info(f"Task19: Deleted {deleted_count}/{len(messages_to_delete)} messages")
 
 # Оптимизированная загрузка данных с кэшированием
 _topics_cache = None
@@ -262,21 +211,6 @@ async def entry_from_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     # Возвращаем состояние CHOOSING_MODE для работы с меню
     return states.CHOOSING_MODE
-
-
-def _build_topic_message(topic: Dict) -> str:
-    """Формирует текст сообщения с заданием по теме."""
-    return (
-        "📝 <b>Задание 19</b>\n\n"
-        f"<b>Тема:</b> {topic['title']}\n\n"
-        f"<b>Задание:</b> {topic['task_text']}\n\n"
-        "<b>Требования:</b>\n"
-        "• Приведите три примера\n"
-        "• Каждый пример должен быть конкретным\n"
-        "• Избегайте абстрактных формулировок\n"
-        "• Указывайте детали (имена, даты, места)\n\n"
-        "💡 <i>Отправьте ваш ответ одним сообщением</i>"
-    )
 
 @safe_handler()
 @validate_state_transition({states.CHOOSING_MODE})
@@ -408,7 +342,6 @@ async def random_topic_all(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.edit_message_text(text, reply_markup=kb, parse_mode=ParseMode.HTML)
     
     # ВАЖНО: Устанавливаем состояние явно
-    from core.state_validator import state_validator
     state_validator.set_state(query.from_user.id, TASK19_WAITING)
     
     return TASK19_WAITING
@@ -436,7 +369,6 @@ async def random_topic_block(update: Update, context: ContextTypes.DEFAULT_TYPE)
     await query.edit_message_text(text, reply_markup=kb, parse_mode=ParseMode.HTML)
 
     # ВАЖНО: Устанавливаем состояние явно
-    from core.state_validator import state_validator
     state_validator.set_state(query.from_user.id, TASK19_WAITING)
 
     return TASK19_WAITING
@@ -548,7 +480,6 @@ async def select_topic(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     
     # ВАЖНО: Устанавливаем состояние явно
-    from core.state_validator import state_validator
     state_validator.set_state(query.from_user.id, TASK19_WAITING)
     
     return TASK19_WAITING
@@ -626,64 +557,6 @@ async def show_progress_enhanced(update: Update, context: ContextTypes.DEFAULT_T
     await query.edit_message_text(text, reply_markup=kb, parse_mode=ParseMode.HTML)
     return states.CHOOSING_MODE
 
-
-def _format_evaluation_result(result) -> str:
-    """Форматирует результат оценки для отображения пользователю."""
-    text = f"📊 <b>Результаты проверки</b>\n\n"
-    
-    # Итоговый балл
-    total_score = getattr(result, 'total_score', 0)
-    max_score = getattr(result, 'max_score', 3)
-    text += f"<b>Итого: {total_score}/{max_score} баллов</b>\n\n"
-    
-    # Основная обратная связь
-    if hasattr(result, 'feedback') and result.feedback:
-        text += f"{result.feedback}\n"
-    
-    # Детальная информация из detailed_feedback
-    if hasattr(result, 'detailed_feedback') and result.detailed_feedback:
-        detail = result.detailed_feedback
-        
-        # Информация о засчитанных примерах
-        if detail.get('valid_examples'):
-            text += f"\n✅ <b>Засчитанные примеры:</b>\n"
-            for ex in detail['valid_examples']:
-                text += f"• Пример {ex.get('number', '?')}: {ex.get('comment', 'Пример корректный')}\n"
-        
-        # Информация о незасчитанных примерах
-        if detail.get('invalid_examples'):
-            text += f"\n❌ <b>Не засчитанные примеры:</b>\n"
-            for ex in detail['invalid_examples']:
-                text += f"• Пример {ex.get('number', '?')}: {ex.get('reason', 'Не соответствует критериям')}\n"
-                if ex.get('improvement'):
-                    text += f"  💡 <i>Совет: {ex['improvement']}</i>\n"
-        
-        # Информация о штрафах
-        if detail.get('penalty_applied'):
-            text += f"\n⚠️ <b>Применён штраф:</b> {detail.get('penalty_reason', 'Превышено количество примеров с ошибками')}\n"
-    
-    # Рекомендации
-    if hasattr(result, 'suggestions') and result.suggestions:
-        text += "\n💡 <b>Рекомендации:</b>\n"
-        for suggestion in result.suggestions:
-            text += f"• {suggestion}\n"
-    
-    # Фактические ошибки
-    if hasattr(result, 'factual_errors') and result.factual_errors:
-        text += "\n⚠️ <b>Обратите внимание на ошибки:</b>\n"
-        for error in result.factual_errors:
-            if isinstance(error, str):
-                text += f"• {error}\n"
-    
-    # Мотивационное сообщение
-    if total_score == max_score:
-        text += "\n🎉 Отличная работа! Все примеры засчитаны!"
-    elif total_score > 0:
-        text += "\n💪 Неплохо! Продолжайте практиковаться!"
-    else:
-        text += "\n📚 Изучите теорию и примеры, затем попробуйте снова!"
-    
-    return text
 
 @safe_handler()
 @validate_state_transition({TASK19_WAITING})
@@ -857,43 +730,50 @@ async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
     
     try:
         # === AI ПРОВЕРКА (с разной детализацией) ===
-        evaluator = get_task19_evaluator()
-        
+        # Используем глобальную переменную evaluator
+
         # Определяем уровень детализации
         is_premium = limit_info['is_premium']
-        
+
         # Для premium - полная проверка
         # Для free - базовая проверка
         evaluation_mode = 'full' if is_premium else 'basic'
-        
+
         result = await evaluator.evaluate(
-            user_answer, 
+            user_answer,
             topic,
             task_text=topic.get('task_text', ''),
             mode=evaluation_mode  # Передаем режим проверки
         )
-        
+
         # Сохраняем результат
         score = result.total_score
         save_result_task19(context, topic, score)
-        
+
         # Формируем фидбек с учетом уровня подписки
         if is_premium:
-            feedback_text = format_feedback_task19(result, topic)
+            feedback_text = _format_evaluation_result(result)
         else:
             # Упрощенный фидбек для бесплатных пользователей
             feedback_text = format_basic_feedback_task19(result, topic)
             feedback_text += (
                 "\n\n💎 <i>Оформите Premium для детального разбора!</i>"
             )
-        
+
         # Обновляем лимиты в сообщении
         new_limit_info = await freemium_manager.get_limit_info(user_id)
         new_limit_display = freemium_manager.format_limit_message(new_limit_info)
-        
+
+        # Клавиатура после проверки
+        after_check_keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton("🆕 Новое задание", callback_data="t19_new")],
+            [InlineKeyboardButton("🔄 Попробовать снова", callback_data="t19_retry")],
+            [InlineKeyboardButton("📝 В меню", callback_data="t19_menu")]
+        ])
+
         await thinking_msg.edit_text(
             f"{new_limit_display}\n\n{feedback_text}",
-            reply_markup=create_after_check_keyboard_task19(score, topic),
+            reply_markup=after_check_keyboard,
             parse_mode=ParseMode.HTML
         )
         
@@ -922,8 +802,7 @@ async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
 
 def save_result_task19(context: ContextTypes.DEFAULT_TYPE, topic: Dict, score: int):
     """Сохраняет результат проверки для task19 с изолированным хранилищем."""
-    from datetime import datetime
-    
+
     if 'task19_results' not in context.user_data:
         context.user_data['task19_results'] = []
     
@@ -1042,7 +921,6 @@ async def handle_retry(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         
         # Устанавливаем состояние
-        from core.state_validator import state_validator
         state_validator.set_state(query.from_user.id, TASK19_WAITING)
         
         return TASK19_WAITING
@@ -1457,16 +1335,6 @@ async def bank_navigation(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 
-
-@safe_handler()
-async def back_to_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Возврат в главное меню бота."""
-    # Просто вызываем глобальный обработчик
-    from core.menu_handlers import handle_to_main_menu
-    return await handle_to_main_menu(update, context)
-
-
-
 @safe_handler()
 async def return_to_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Возврат в меню task19."""
@@ -1542,7 +1410,6 @@ async def handle_result_action(update: Update, context: ContextTypes.DEFAULT_TYP
             )
             
             # Устанавливаем состояние
-            from core.state_validator import state_validator
             state_validator.set_state(query.from_user.id, TASK19_WAITING)
             
             return TASK19_WAITING
@@ -1955,43 +1822,50 @@ async def handle_confirm_ocr(update: Update, context: ContextTypes.DEFAULT_TYPE)
     
     try:
         # === AI ПРОВЕРКА (с разной детализацией) ===
-        evaluator = get_task19_evaluator()
-        
+        # Используем глобальную переменную evaluator
+
         # Определяем уровень детализации
         is_premium = limit_info['is_premium']
-        
+
         # Для premium - полная проверка
         # Для free - базовая проверка
         evaluation_mode = 'full' if is_premium else 'basic'
-        
+
         result = await evaluator.evaluate(
-            user_answer, 
+            user_answer,
             topic,
             task_text=topic.get('task_text', ''),
             mode=evaluation_mode  # Передаем режим проверки
         )
-        
+
         # Сохраняем результат
         score = result.total_score
         save_result_task19(context, topic, score)
-        
+
         # Формируем фидбек с учетом уровня подписки
         if is_premium:
-            feedback_text = format_feedback_task19(result, topic)
+            feedback_text = _format_evaluation_result(result)
         else:
             # Упрощенный фидбек для бесплатных пользователей
             feedback_text = format_basic_feedback_task19(result, topic)
             feedback_text += (
                 "\n\n💎 <i>Оформите Premium для детального разбора!</i>"
             )
-        
+
         # Обновляем лимиты в сообщении
         new_limit_info = await freemium_manager.get_limit_info(user_id)
         new_limit_display = freemium_manager.format_limit_message(new_limit_info)
-        
+
+        # Клавиатура после проверки
+        after_check_keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton("🆕 Новое задание", callback_data="t19_new")],
+            [InlineKeyboardButton("🔄 Попробовать снова", callback_data="t19_retry")],
+            [InlineKeyboardButton("📝 В меню", callback_data="t19_menu")]
+        ])
+
         await thinking_msg.edit_text(
             f"{new_limit_display}\n\n{feedback_text}",
-            reply_markup=create_after_check_keyboard_task19(score, topic),
+            reply_markup=after_check_keyboard,
             parse_mode=ParseMode.HTML
         )
         
@@ -2025,7 +1899,6 @@ async def handle_edit_ocr(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     
     # Устанавливаем состояние ожидания отредактированного текста
-    from core.state_validator import state_validator
     state_validator.set_state(query.from_user.id, TASK19_WAITING)
     
     return TASK19_WAITING
@@ -2183,28 +2056,6 @@ async def settings_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     return states.CHOOSING_MODE
 
-
-@safe_handler()
-@validate_state_transition({states.CHOOSING_MODE})
-async def apply_strictness(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Установка выбранного уровня строгости."""
-    global evaluator
-    
-    query = update.callback_query
-    
-    level_str = query.data.split(":")[1].upper()
-    
-    try:
-        new_level = StrictnessLevel[level_str]
-        evaluator = Task19AIEvaluator(strictness=new_level)
-        
-        
-        # Возвращаемся в настройки
-        return await settings_mode(update, context)
-        
-    except Exception as e:
-        logger.error(f"Error setting strictness: {e}")
-        return states.CHOOSING_MODE
 
 @safe_handler()
 async def cmd_task19_settings(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -2612,24 +2463,6 @@ async def reset_results(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     return states.CHOOSING_MODE
 
-@safe_handler()
-async def confirm_reset(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Подтверждение и выполнение сброса."""
-    query = update.callback_query
-    
-    # Полный сброс данных
-    context.user_data.pop('task19_results', None)
-    context.user_data.pop('task19_achievements', None)
-    context.user_data.pop('correct_streak', None)
-    context.user_data.pop('practice_stats', None)
-    context.user_data.pop('current_topic', None)
-    context.user_data.pop('task19_current_topic', None)
-    
-    await query.answer("✅ Прогресс успешно сброшен!", show_alert=True)
-    
-    # Возвращаемся в меню
-    return await return_to_menu(update, context)
-
 async def show_achievement_notification(
     message: Message, 
     achievements: List[Dict],
@@ -2819,59 +2652,3 @@ async def show_achievements(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode=ParseMode.HTML
     )
     return states.CHOOSING_MODE
-
-async def check_achievements(context: ContextTypes.DEFAULT_TYPE, user_id: int) -> List[Dict]:
-    """Проверка и выдача новых достижений."""
-    results = context.user_data.get('task19_results', [])
-    achievements = context.user_data.get('task19_achievements', set())
-    new_achievements = []
-    
-    # Условия для достижений
-    if len(results) >= 1 and 'first_example' not in achievements:
-        achievements.add('first_example')
-        new_achievements.append({
-            'id': 'first_example',
-            'name': '🌟 Первый пример',
-            'desc': 'Вы привели свой первый пример!'
-        })
-    
-    perfect_count = sum(1 for r in results if r.get('score', 0) >= 2.5)
-    if perfect_count >= 5 and 'perfect_5' not in achievements:
-        achievements.add('perfect_5')
-        new_achievements.append({
-            'id': 'perfect_5',
-            'name': '🎯 Пять идеалов',
-            'desc': 'Получено 5 отличных оценок!'
-        })
-    
-    unique_topics = len(set(r.get('topic_id', r.get('topic')) for r in results))
-    if unique_topics >= 10 and 'explorer_10' not in achievements:
-        achievements.add('explorer_10')
-        new_achievements.append({
-            'id': 'explorer_10',
-            'name': '🗺️ Исследователь',
-            'desc': 'Изучено 10 разных тем!'
-        })
-    
-    if len(results) >= 20 and 'persistent_20' not in achievements:
-        achievements.add('persistent_20')
-        new_achievements.append({
-            'id': 'persistent_20',
-            'name': '💪 Упорство',
-            'desc': 'Выполнено 20 заданий!'
-        })
-    
-    if len(results) >= 50:
-        avg = sum(r.get('score', 0) for r in results) / len(results)
-        if avg > 2 and 'master_50' not in achievements:
-            achievements.add('master_50')
-            new_achievements.append({
-                'id': 'master_50',
-                'name': '🏆 Мастер примеров',
-                'desc': 'Выполнено 50 заданий с высоким средним баллом!'
-            })
-    
-    # Сохраняем обновленные достижения
-    context.user_data['task19_achievements'] = achievements
-    
-    return new_achievements

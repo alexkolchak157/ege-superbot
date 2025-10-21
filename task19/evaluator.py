@@ -609,7 +609,6 @@ class Task19AIEvaluator(BaseAIEvaluator if AI_EVALUATOR_AVAILABLE else object):
         lines = [line.strip() for line in answer.split('\n') if line.strip()]
         
         # Подсчитываем предложения
-        import re
         sentences = re.split(r'[.!?]+', answer)
         sentences = [s.strip() for s in sentences if len(s.strip()) > 20]
         
