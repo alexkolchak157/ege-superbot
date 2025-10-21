@@ -167,16 +167,13 @@ class Task19Plugin(BotPlugin):
         # Регистрируем обработчики в приложении
         app.add_handler(conv_handler)
         app.add_handler(CallbackQueryHandler(
-            handle_confirm_ocr, pattern="^t19_confirm_ocr$"
+            handlers.handle_confirm_ocr, pattern="^t19_confirm_ocr$"
         ))
         app.add_handler(CallbackQueryHandler(
-            handle_edit_ocr, pattern="^t19_edit_ocr$"
+            handlers.handle_edit_ocr, pattern="^t19_edit_ocr$"
         ))
         app.add_handler(CallbackQueryHandler(
-            handle_retry_photo, pattern="^t19_retry_photo$"
-        ))
-        app.add_handler(CallbackQueryHandler(
-            handlers.achievement_ok, 
+            handlers.achievement_ok,
             pattern="^achievement_ok$"
         ))
         app.add_handler(CallbackQueryHandler(handle_streak_ok, pattern="^streak_ok$"))
