@@ -120,14 +120,7 @@ def safe_handler(
                     )
                 
                 return return_on_error
-                
-            
-                # Проверяем, не обработана ли уже эта ошибка
-                if hasattr(context, 'error_handled') and context.error_handled:
-                    return return_on_error
-                    
-                # Устанавливаем флаг
-                context.error_handled = True
+
             except Exception as e:
                 # Неизвестные ошибки
                 if log_errors:
@@ -362,34 +355,3 @@ def auto_answer_callback(func: Callable) -> Callable:
         async with CallbackAnswerer(update.callback_query):
             return await func(update, context, *args, **kwargs)
     return wrapper
-
-
-# Примеры использования:
-
-# 1. Простой обработчик с автоматической обработкой ошибок
-@safe_handler()
-async def some_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # Код обработчика
-    pass
-
-
-# 2. Обработчик с кастомными параметрами
-@safe_handler(
-    return_on_error=states.CHOOSING_MODE,
-    notify_user=True
-)
-async def another_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # Код обработчика
-    pass
-
-
-# 3. Использование CallbackAnswerer для сложной логики
-async def complex_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    async with CallbackAnswerer(update.callback_query) as answerer:
-        # Какая-то логика
-        result = await some_async_operation()
-        
-        if result.success:
-            await answerer.answer("✅ Успешно!", show_alert=True)
-        else:
-            await answerer.answer("❌ Ошибка", show_alert=True)
