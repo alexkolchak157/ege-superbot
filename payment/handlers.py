@@ -497,7 +497,6 @@ async def request_email_for_trial(update: Update, context: ContextTypes.DEFAULT_
     
     # ВАЖНО: Убеждаемся, что цена установлена правильно
     context.user_data['total_price'] = 1
-    logger.info(f"TRIAL PRICE DEBUG: Set total_price = 1 for user {update.effective_user.id}")
     context.user_data['duration_months'] = 1
     context.user_data['plan_name'] = "🎁 Пробный период 7 дней"
     

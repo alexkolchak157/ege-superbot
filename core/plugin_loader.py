@@ -84,22 +84,14 @@ def load_modules(application):
     # Создаем единую корутину для вызова всех post_init
     async def run_all_post_inits():
         """Выполняет все post_init задачи плагинов."""
-        for plugin_name, post_init_func in post_init_tasks:
-            try:
-                logger.info(f"Running post_init for plugin: {plugin_name}")
-                await post_init_func()
-                logger.info(f"Completed post_init for plugin: {plugin_name}")
-            except Exception as e:
-                logger.error(f"Error in post_init for plugin {plugin_name}: {e}")
-        
         for plugin in post_init_tasks:
             try:
                 logger.info(f"Initializing {plugin.title}...")
-                await plugin.post_init(app)
+                await plugin.post_init(application)
                 logger.info(f"✅ {plugin.title} initialized successfully")
             except Exception as e:
                 logger.error(f"❌ Failed post_init for {plugin.title}: {e}", exc_info=True)
-        
+
         logger.info("All plugin post_inits completed")
     
     # Регистрируем ОДНУ корутину для post_init

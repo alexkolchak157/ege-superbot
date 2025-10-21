@@ -21,7 +21,8 @@ WEBHOOK_BASE_URL = os.getenv('WEBHOOK_BASE_URL', 'https://your-domain.com')
 WEBHOOK_PATH = '/payment/webhook'
 WEBHOOK_HOST = '0.0.0.0'
 WEBHOOK_PORT = 8080
-WEBHOOK_URL = 'https://xn--80aaabfr9bnfdntn4cn1bzd.xn--p1ai/payment-notification'
+# Используем WEBHOOK_BASE_URL из окружения вместо хардкода
+WEBHOOK_URL = f"{WEBHOOK_BASE_URL}{WEBHOOK_PATH}"
 
 # ==================== ADMIN SETTINGS ====================
 PAYMENT_ADMIN_CHAT_ID = int(os.getenv('PAYMENT_ADMIN_CHAT_ID', '0'))
