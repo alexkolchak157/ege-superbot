@@ -1,4 +1,4 @@
-# payment/subscription_manager.py - ИСПРАВЛЕННАЯ версия под ваш API
+# payment/subscription_manager.py
 """Менеджер подписок с поддержкой модульной системы."""
 import logging
 from datetime import datetime, timedelta, timezone
@@ -6,17 +6,16 @@ from typing import Optional, Dict, Any, List
 from decimal import Decimal
 import json
 from functools import wraps
-from payment.config import SUBSCRIPTION_MODE, SUBSCRIPTION_PLANS
 import aiosqlite
 from enum import Enum
 
 # Используем ваши функции из core.db
 from core.db import DATABASE_FILE, execute_with_retry
 from .config import (
-    SUBSCRIPTION_PLANS, 
+    SUBSCRIPTION_MODE,
+    SUBSCRIPTION_PLANS,
     get_subscription_end_date,
-    get_plan_modules,
-    SUBSCRIPTION_MODE
+    get_plan_modules
 )
 
 logger = logging.getLogger(__name__)
@@ -328,15 +327,9 @@ class SubscriptionManager:
                 row = await cursor.fetchone()
                 if row:
                     plan_id = row['plan_id']
-                    
+
                     # Получаем информацию о плане
-                    from .config import SUBSCRIPTION_PLANS, MODULE_PLANS
-                    
-                    plan = None
-                    if self.subscription_mode == 'modular':
-                        plan = MODULE_PLANS.get(plan_id)
-                    if not plan:
-                        plan = SUBSCRIPTION_PLANS.get(plan_id)
+                    plan = SUBSCRIPTION_PLANS.get(plan_id)
                     
                     if plan:
                         return {
@@ -1328,9 +1321,6 @@ class SubscriptionManager:
         ИСПРАВЛЕНО: Корректная обработка UNIQUE constraint.
         """
         try:
-            from datetime import datetime, timedelta, timezone
-            from .config import SUBSCRIPTION_PLANS
-            
             # Получаем информацию о плане
             plan = SUBSCRIPTION_PLANS.get(plan_id)
             if not plan:
@@ -1462,9 +1452,6 @@ class SubscriptionManager:
         Исправляет существующие пробные подписки, у которых активированы не все модули.
         """
         try:
-            from datetime import datetime
-            from .config import SUBSCRIPTION_PLANS
-            
             async with aiosqlite.connect(self.database_file, timeout=30.0) as conn:
                 # Находим всех пользователей с trial_7days
                 cursor = await conn.execute(
@@ -2076,12 +2063,9 @@ class SubscriptionManager:
             logger.info(f"Unified subscription activated for {duration_months} months until {expires_at}")
 
     
-    async def _activate_modular_subscription(self, user_id: int, plan_id: str, 
+    async def _activate_modular_subscription(self, user_id: int, plan_id: str,
                                                 payment_id: str, duration_months: int = 1):
         """Расширенная активация модульной подписки с учетом срока."""
-        from datetime import datetime, timedelta, timezone
-        from .config import SUBSCRIPTION_PLANS
-        
         plan = SUBSCRIPTION_PLANS.get(plan_id)
         if not plan:
             raise ValueError(f"Unknown plan: {plan_id}")
