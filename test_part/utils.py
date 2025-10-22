@@ -20,7 +20,12 @@ except ImportError:
     logging.error("Не найден файл topic_data.py или словарь TOPIC_NAMES в нем.")
     TOPIC_NAMES = {}
 
-from .loader import QUESTIONS_DATA
+from .loader import QUESTIONS_DATA, QUESTIONS_DICT_FLAT
+
+try:
+    from .cache import questions_cache
+except ImportError:
+    questions_cache = None
 
 logger = logging.getLogger(__name__)
 
@@ -191,7 +196,6 @@ def normalize_answer(answer: str, question_type: str) -> str:
 
 def format_question_text(question_data: dict) -> str:
     """Форматирование текста вопроса."""
-    import re
     
     if not question_data:
         return "❌ Ошибка: данные вопроса отсутствуют"
@@ -345,7 +349,6 @@ def find_question_by_id(question_id: str) -> Optional[Dict[str, Any]]:
     
     # Пробуем использовать кеш
     try:
-        from .cache import questions_cache
         if questions_cache and questions_cache._is_built:
             question = questions_cache.get_by_id(question_id)
             if question:
@@ -363,7 +366,6 @@ def find_question_by_id(question_id: str) -> Optional[Dict[str, Any]]:
     
     # Последняя попытка через loader
     try:
-        from .loader import QUESTIONS_DICT_FLAT
         if QUESTIONS_DICT_FLAT:
             return QUESTIONS_DICT_FLAT.get(question_id)
     except ImportError:
@@ -604,7 +606,6 @@ def md_to_html(text: str) -> str:
     if not text:
         return ""
     
-    import re
     
     # Заменяем **текст** на <b>текст</b>
     text = re.sub(r'\*\*([^*]+)\*\*', r'<b>\1</b>', text)

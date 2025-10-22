@@ -1341,7 +1341,6 @@ async def return_to_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     
     # Автоматическая миграция при возврате
-    from core.migration import ensure_module_migration
     ensure_module_migration(context, 'task19', task19_data)  # Передаем context, НЕ context.user_data!
     
     # Устанавливаем активный модуль
