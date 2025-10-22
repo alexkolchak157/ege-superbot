@@ -57,6 +57,20 @@ INCORRECT_PHRASES = [
     "❌ К сожалению, неверно!",
 ]
 
+# Мотивационные фразы для неправильных ответов
+MOTIVATIONAL_PHRASES = [
+    "Не расстраивайся, у тебя обязательно получится!",
+    "Попробуй еще раз, ты на верном пути!",
+    "Ошибки - это часть обучения!",
+    "С каждой попыткой ты становишься лучше!",
+    "Не сдавайся, успех уже близко!",
+    "Практика делает мастера!",
+    "Каждая ошибка приближает тебя к правильному ответу!",
+    "Ты можешь лучше, продолжай!",
+    "Главное - не останавливаться!",
+    "Удача улыбается настойчивым!",
+]
+
 # Специальные фразы для длинных стриков
 STREAK_MILESTONE_PHRASES = {
     5: "🔥 Горячая серия!",
@@ -76,6 +90,10 @@ def get_random_correct_phrase() -> str:
 def get_random_incorrect_phrase() -> str:
     """Возвращает случайную фразу для неправильного ответа."""
     return random.choice(INCORRECT_PHRASES)
+
+def get_random_motivational_phrase() -> str:
+    """Возвращает случайную мотивационную фразу."""
+    return random.choice(MOTIVATIONAL_PHRASES)
 
 def get_streak_milestone_phrase(streak: int) -> str:
     """Возвращает специальную фразу для достижения определенного стрика."""
@@ -728,66 +746,3 @@ def format_mistake_stats(mistakes: List[Dict]) -> str:
         )
 
     return "\n".join(lines)
-
-async def export_user_stats_csv(user_id: int) -> str:
-    """
-    Генерирует CSV со статистикой пользователя.
-    
-    Args:
-        user_id: ID пользователя
-        
-    Returns:
-        Строка с CSV данными
-    """
-    import csv
-    import io
-    from datetime import datetime
-    
-    # Получаем статистику
-    stats = await db.get_user_stats(user_id)
-    mistakes = await db.get_mistake_ids(user_id)
-    streaks = await db.get_user_streaks(user_id)
-    
-    # Создаем CSV в памяти
-    output = io.StringIO()
-    writer = csv.writer(output)
-    
-    # Заголовок
-    writer.writerow(['Статистика пользователя', f'ID: {user_id}'])
-    writer.writerow(['Дата экспорта', datetime.now().strftime('%d.%m.%Y %H:%M')])
-    writer.writerow([])
-    
-    # Общая статистика
-    writer.writerow(['РЕЗУЛЬТАТЫ ПО ТЕМАМ'])
-    writer.writerow(['Тема', 'Правильных', 'Всего', 'Процент'])
-    
-    total_correct = 0
-    total_answered = 0
-    
-    for topic, correct, answered in stats:
-        if answered > 0:
-            percentage = (correct / answered) * 100
-            topic_name = TOPIC_NAMES.get(topic, topic)
-            writer.writerow([topic_name, correct, answered, f'{percentage:.1f}%'])
-            total_correct += correct
-            total_answered += answered
-    
-    writer.writerow([])
-    writer.writerow(['ИТОГО', total_correct, total_answered, 
-                    f'{(total_correct/total_answered*100 if total_answered > 0 else 0):.1f}%'])
-    
-    # Стрики
-    writer.writerow([])
-    writer.writerow(['ДОСТИЖЕНИЯ'])
-    writer.writerow(['Показатель', 'Значение'])
-    writer.writerow(['Дней подряд', streaks.get('current_daily', 0)])
-    writer.writerow(['Рекорд дней', streaks.get('max_daily', 0)])
-    writer.writerow(['Правильных подряд', streaks.get('current_correct', 0)])
-    writer.writerow(['Рекорд правильных', streaks.get('max_correct', 0)])
-    
-    # Ошибки
-    writer.writerow([])
-    writer.writerow(['ОШИБКИ'])
-    writer.writerow([f'Всего ошибок: {len(mistakes)}'])
-    
-    return output.getvalue()

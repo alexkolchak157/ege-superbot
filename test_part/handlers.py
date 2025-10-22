@@ -322,69 +322,6 @@ async def cmd_quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 @safe_handler()
 @validate_state_transition({states.CHOOSING_MODE})
-async def test_detailed_analysis(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Показывает детальный анализ ошибок."""
-    context.user_data['conversation_state'] = states.CHOOSING_MODE
-    query = update.callback_query
-    user_id = query.from_user.id
-    
-    # Получаем все ошибки пользователя
-    mistakes = await utils.get_user_mistakes(user_id)
-    
-    if not mistakes:
-        text = "📊 <b>Детальный анализ</b>\n\nУ вас пока нет ошибок для анализа!"
-        kb = InlineKeyboardMarkup([[
-            InlineKeyboardButton("⬅️ Назад", callback_data="test_part_progress")
-        ]])
-        await query.edit_message_text(text, reply_markup=kb, parse_mode=ParseMode.HTML)
-        return states.CHOOSING_MODE
-    
-    # Группируем ошибки по темам
-    mistakes_by_topic = {}
-    for mistake in mistakes:
-        topic = mistake.get('topic', 'Без темы')
-        if topic not in mistakes_by_topic:
-            mistakes_by_topic[topic] = []
-        mistakes_by_topic[topic].append(mistake)
-    
-    # Формируем отчет
-    text = "📊 <b>Детальный анализ ошибок</b>\n\n"
-    
-    for topic, topic_mistakes in mistakes_by_topic.items():
-        text += f"📌 <b>{topic}</b>\n"
-        text += f"   Ошибок: {len(topic_mistakes)}\n"
-        
-        # Показываем типы ошибок
-        error_types = {}
-        for m in topic_mistakes:
-            error_type = m.get('error_type', 'Неверный ответ')
-            error_types[error_type] = error_types.get(error_type, 0) + 1
-        
-        for error_type, count in error_types.items():
-            text += f"   • {error_type}: {count}\n"
-        text += "\n"
-    
-    # Рекомендации
-    text += "💡 <b>Рекомендации:</b>\n"
-    if len(mistakes_by_topic) > 3:
-        text += "• Сосредоточьтесь на 2-3 темах с наибольшим количеством ошибок\n"
-    text += "• Используйте режим 'Работа над ошибками' для тренировки\n"
-    text += "• Изучите теорию по проблемным темам\n"
-    
-    kb = InlineKeyboardMarkup([
-        [InlineKeyboardButton("📥 Экспорт в CSV", callback_data="test_export_csv")],
-        [InlineKeyboardButton("🔄 Работа над ошибками", callback_data="test_work_mistakes")],
-        [InlineKeyboardButton("⬅️ Назад", callback_data="test_part_progress")]
-    ])
-    
-    await query.edit_message_text(
-        text,
-        reply_markup=kb,
-        parse_mode=ParseMode.HTML
-    )
-    return states.CHOOSING_MODE
-@safe_handler()
-@validate_state_transition({states.CHOOSING_MODE})
 async def select_exam_num_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Выбор режима по номеру ЕГЭ."""
     query = update.callback_query
@@ -704,7 +641,7 @@ async def check_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
         motivational_phrase = None
         try:
             if not is_correct:
-                motivational_phrase = await utils.get_random_motivational_phrase()
+                motivational_phrase = utils.get_random_motivational_phrase()
         except Exception as e:
             logger.debug(f"Could not get motivational phrase: {e}")
         
@@ -3141,52 +3078,6 @@ async def test_export_csv(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 @safe_handler()
 @validate_state_transition({states.CHOOSING_MODE})
-async def work_mistakes(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Запускает режим работы над ошибками."""
-    query = update.callback_query
-    user_id = query.from_user.id
-    
-    # Получаем список ID вопросов с ошибками
-    mistake_ids = await db.get_mistake_ids(user_id)
-    
-    if not mistake_ids:
-        text = "🎉 <b>Отлично!</b>\n\nУ вас нет ошибок для проработки!"
-        kb = InlineKeyboardMarkup([[
-            InlineKeyboardButton("⬅️ В меню", callback_data="test_back_to_mode")
-        ]])
-        await query.edit_message_text(text, reply_markup=kb, parse_mode=ParseMode.HTML)
-        return states.CHOOSING_MODE
-    
-    # Сохраняем режим и список ошибок
-    context.user_data['mode'] = 'mistakes'
-    context.user_data['mistake_queue'] = mistake_ids.copy()
-    context.user_data['mistakes_total'] = len(mistake_ids)
-    context.user_data['mistakes_completed'] = 0
-    
-    text = f"""🔄 <b>Работа над ошибками</b>
-
-У вас {len(mistake_ids)} вопросов с ошибками.
-
-Сейчас вы будете проходить эти вопросы заново. 
-При правильном ответе вопрос будет удален из списка ошибок.
-
-Готовы начать?"""
-    
-    kb = InlineKeyboardMarkup([
-        [InlineKeyboardButton("✅ Начать", callback_data="test_start_mistakes")],
-        [InlineKeyboardButton("⬅️ Назад", callback_data="test_back_to_mode")]
-    ])
-    
-    await query.edit_message_text(
-        text,
-        reply_markup=kb,
-        parse_mode=ParseMode.HTML
-    )
-    
-    return states.CHOOSING_MODE
-
-@safe_handler()
-@validate_state_transition({states.CHOOSING_MODE})
 async def test_mistakes(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Переход к работе над ошибками."""
     return await work_mistakes(update, context)
@@ -3199,87 +3090,9 @@ async def test_practice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return await select_random_all(update, context)
 
 @safe_handler()
-@validate_state_transition({states.CHOOSING_MODE})
-async def test_start_mistakes(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Начинает работу над ошибками."""
-    query = update.callback_query
-    
-    # Проверяем наличие очереди ошибок
-    if 'mistake_queue' not in context.user_data:
-        await query.answer("Ошибка: список вопросов не найден", show_alert=True)
-        return states.CHOOSING_MODE
-    
-    # Отправляем первый вопрос из очереди ошибок
-    await query.edit_message_text("⏳ Загружаю первый вопрос...")
-    
-    # Устанавливаем индекс текущей ошибки
-    context.user_data['current_mistake_index'] = 0
-    
-    # Отправляем вопрос
-    await send_mistake_question(query.message, context)
-    
-    return states.REVIEWING_MISTAKES
-
-@safe_handler()
-@validate_state_transition({states.CHOOSING_MODE})
-async def check_subscription(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Проверяет подписку пользователя."""
-    query = update.callback_query
-    user_id = query.from_user.id
-    
-    # Получаем статус подписки
-    user_data = await db.get_user_status(user_id)
-    is_subscribed = user_data.get('is_subscribed', False)
-    
-    if is_subscribed:
-        text = """✅ <b>Подписка активна</b>
-
-У вас есть доступ ко всем функциям бота:
-• Неограниченное количество вопросов
-• Детальная статистика
-• Экспорт отчетов
-• Приоритетная поддержка"""
-    else:
-        text = """❌ <b>Подписка не активна</b>
-
-В бесплатной версии доступно:
-• До 50 вопросов в месяц
-• Базовая статистика
-• Основные режимы тренировки
-
-Для полного доступа оформите подписку."""
-    
-    kb_buttons = []
-    if not is_subscribed:
-        kb_buttons.append([
-            InlineKeyboardButton("💎 Оформить подписку", url="https://example.com/subscribe")
-        ])
-    
-    kb_buttons.append([
-        InlineKeyboardButton("⬅️ Назад", callback_data="test_back_to_mode")
-    ])
-    
-    kb = InlineKeyboardMarkup(kb_buttons)
-    
-    await query.edit_message_text(
-        text,
-        reply_markup=kb,
-        parse_mode=ParseMode.HTML
-    )
-    
-    return states.CHOOSING_MODE
-
-@safe_handler()
 async def test_back_to_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Возврат к выбору режима из подменю."""
     return await back_to_mode(update, context)
-
-@safe_handler()
-@validate_state_transition({states.CHOOSING_MODE})
-async def select_mistakes(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Вход в режим работы над ошибками - перенаправляет на work_mistakes."""
-    # Просто вызываем work_mistakes для унификации поведения
-    return await work_mistakes(update, context)
 
 @safe_handler()
 @validate_state_transition({states.CHOOSING_MODE})
