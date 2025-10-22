@@ -2,6 +2,7 @@ import logging
 import json
 import os
 import html
+import re
 import telegram
 from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton
 from telegram.ext import ContextTypes, ConversationHandler
@@ -130,35 +131,6 @@ def get_user_stats(context: ContextTypes.DEFAULT_TYPE) -> Dict[str, any]:
         'average_score': sum(s['total'] for s in scores_history) / len(scores_history) if scores_history else 0,
         'total_time_minutes': total_time
     }
-    
-def get_user_stats_from_data(user_data: dict, plan_bot_data) -> Dict[str, any]:
-    """Получение статистики из user_data напрямую (для админских функций)."""
-    practiced = user_data.get('practiced_topics', set())
-    total_topics = len(plan_bot_data.topic_list_for_pagination) if plan_bot_data else 0
-    
-    scores_history = user_data.get('scores_history', [])
-    
-    return {
-        'practiced_count': len(practiced),
-        'total_topics': total_topics,
-        'progress_percent': int(len(practiced) / total_topics * 100) if total_topics > 0 else 0,
-        'scores_history': scores_history,
-        'average_score': sum(s['total'] for s in scores_history) / len(scores_history) if scores_history else 0,
-        'total_time_minutes': user_data.get('total_time_minutes', 0)
-    }
-
-def save_score_to_history(context: ContextTypes.DEFAULT_TYPE, topic: str, k1: int, k2: int):
-    """Сохранение оценки в историю."""
-    if 'scores_history' not in context.user_data:
-        context.user_data['scores_history'] = []
-    
-    context.user_data['scores_history'].append({
-        'topic': topic,
-        'k1': k1,
-        'k2': k2,
-        'total': k1 + k2,
-        'timestamp': datetime.now().isoformat()
-    })
 
 def init_data():
     """Загрузка данных планов с улучшенной обработкой ошибок."""
@@ -295,9 +267,9 @@ async def cmd_start_plan(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data['current_topic_index'] = topic_idx
     context.user_data['current_topic'] = topic_name
     context.user_data['mode'] = 'train'
-    
+
     # Получаем данные плана
-    plan_data = plan_bot_data.get_plan_by_index(topic_idx)
+    plan_data = plan_bot_data.get_plan_data(topic_name)
     
     if not plan_data:
         await update.message.reply_text(
@@ -919,9 +891,8 @@ async def handle_plan_enhanced(update: Update, context: ContextTypes.DEFAULT_TYP
             )
         
         # Извлекаем баллы из фидбека для статистики
-        import re
         k1_match = re.search(r'К1.*?(\d+)/3', feedback)
-        k2_match = re.search(r'К2.*?(\d+)/3', feedback)
+        k2_match = re.search(r'К2.*?(\d+)/1', feedback)
         
         k1_score = int(k1_match.group(1)) if k1_match else 0
         k2_score = int(k2_match.group(1)) if k2_match else 0
@@ -1025,9 +996,9 @@ async def handle_plan_document(update: Update, context: ContextTypes.DEFAULT_TYP
     # Сохраняем текст и передаем в обычный обработчик
     # Создаем фиктивное обновление с текстом
     update.message.text = extracted_text
-    
+
     # Вызываем стандартный обработчик планов
-    return await handle_plan(update, context)
+    return await handle_plan_enhanced(update, context)
 
 @safe_handler()
 async def next_topic(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1453,80 +1424,6 @@ async def cancel_reset(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return states.CHOOSING_MODE
 
 @safe_handler()
-async def export_progress(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Экспорт прогресса пользователя."""
-    query = update.callback_query
-    migrate_practiced_topics(context, plan_bot_data)
-    user_id = query.from_user.id
-    username = query.from_user.username or "Unknown"
-    practiced = context.user_data.get('practiced_topics', set())
-    stats = get_user_stats(context)
-    
-    # Создаем подробный отчет
-    progress_data = {
-        'user_info': {
-            'user_id': user_id,
-            'username': username,
-            'export_date': datetime.now().isoformat()
-        },
-        'statistics': {
-            'practiced_topics': list(practiced),  # Преобразуем set в list
-            'total_topics': stats['total_topics'],
-            'progress_percent': stats['progress_percent'],
-            'average_score': stats['average_score'],
-            'total_time_minutes': stats['total_time_minutes']
-        },
-        'scores_history': stats['scores_history'],
-        'topics_by_block': {}
-    }
-    
-    # Добавляем детализацию по блокам
-    for block_name, topics in plan_bot_data.topics_by_block.items():
-        block_data = {
-            'total': len(topics),
-            'completed': sum(1 for idx, _ in topics if idx in practiced),
-            'topics': []
-        }
-        
-        for idx, topic in topics:
-            topic_data = {
-                'index': idx,
-                'name': topic,
-                'completed': idx in practiced,
-                'scores': [s for s in stats['scores_history'] if s['topic'] == topic]
-            }
-            block_data['topics'].append(topic_data)
-        
-        progress_data['topics_by_block'][block_name] = block_data
-    
-    # Отправляем файл
-    from io import BytesIO
-    file_data = BytesIO(json.dumps(progress_data, indent=2, ensure_ascii=False).encode('utf-8'))
-    file_data.name = f"my_progress_task24_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
-    
-    # Удаляем старое сообщение перед отправкой документа
-    try:
-        await query.message.delete()
-    except:
-        pass
-    
-    # Отправляем документ с кнопкой возврата
-    kb = keyboards.build_main_menu_keyboard()
-    
-    await query.message.reply_document(
-        document=file_data,
-        caption=(
-            f"📤 Ваш прогресс\n"
-            f"Пройдено: {stats['progress_percent']}%\n"
-            f"Средний балл: {stats['average_score']:.1f}\n\n"
-            f"Используйте кнопки ниже для навигации:"
-        ),
-        reply_markup=kb
-    )
-    
-    return states.CHOOSING_MODE
-
-@safe_handler()
 async def search_topics(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Поиск тем по ключевым словам."""
     query = update.callback_query
@@ -1612,29 +1509,6 @@ async def cmd_task24(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode=ParseMode.HTML
     )
     return states.CHOOSING_MODE
-
-def _format_evaluation_feedback(k1: int, k2: int, missing: list, topic_name: str) -> str:
-    """Форматирует отзыв о плане используя универсальные компоненты."""
-    total_score = k1 + k2
-    
-    # Используем универсальное форматирование
-    text = MessageFormatter.format_result_message(
-        score=total_score,
-        max_score=4,
-        topic=topic_name,
-        details={
-            "К1 (Раскрытие темы)": f"{k1}/3",
-            "К2 (Корректность)": f"{k2}/1"
-        }
-    )
-    
-    # Добавляем специфичные для task24 детали
-    if k1 < 3 and missing:
-        text += "\n\n📝 <b>Пропущенные пункты:</b>"
-        for item in missing:
-            text += f"\n• {item}"
-    
-    return text
 
 def save_result(context: ContextTypes.DEFAULT_TYPE, topic_name: str, score: int, max_score: int = 4):
     """Сохранение результата в историю."""
@@ -1792,13 +1666,6 @@ async def return_to_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
     
     return states.CHOOSING_MODE
-
-@safe_handler()
-async def back_to_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Возврат в главное меню бота."""
-    # Просто вызываем глобальный обработчик
-    from core.menu_handlers import handle_to_main_menu
-    return await handle_to_main_menu(update, context)
 
 async def t24_retry(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Повторить попытку составления плана для той же темы."""
