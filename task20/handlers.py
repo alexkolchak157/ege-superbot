@@ -1,15 +1,17 @@
 # Начало файла task20/handlers.py
+import asyncio
 import logging
 import os
 import csv
 import io
 import json
+import random
+import re
 from typing import Optional, Dict, List, Any
 from datetime import datetime
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.constants import ParseMode
 from telegram.ext import ContextTypes, ConversationHandler
-from core.admin_tools import admin_manager
 from core import states
 from core.states import ANSWERING_T20, SEARCHING, VIEWING_EXAMPLE, CONFIRMING_RESET
 from core.universal_ui import UniversalUIComponents, AdaptiveKeyboards, MessageFormatter
@@ -188,9 +190,6 @@ async def init_task20_data(force_reload=False):
         topic_selector = None
     
     # Инициализируем AI evaluator
-    # Важно: импортируем здесь, чтобы избежать циклических импортов
-    from .evaluator import Task20AIEvaluator, StrictnessLevel, AI_EVALUATOR_AVAILABLE
-    
     logger.info(f"AI_EVALUATOR_AVAILABLE = {AI_EVALUATOR_AVAILABLE}")
     
     if AI_EVALUATOR_AVAILABLE:
@@ -270,7 +269,6 @@ async def entry_from_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def cmd_task20(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Команда /task20."""
     # Автоматическая миграция при входе
-    from core.migration import ensure_module_migration
     ensure_module_migration(context, 'task20', task20_data)
     
     # Очищаем контекст
@@ -1313,7 +1311,6 @@ async def my_progress(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     
     # Убеждаемся, что данные мигрированы
-    from core.migration import ensure_module_migration
     ensure_module_migration(context, 'task20', task20_data)
     
     # Используем изолированное хранилище task20_practice_stats
@@ -1709,9 +1706,6 @@ reset_progress = reset_progress_task20
 
 async def show_streak_notification(message, streak: int):
     """Показать уведомление о серии идеальных ответов."""
-    from telegram import InlineKeyboardMarkup, InlineKeyboardButton
-    from telegram.constants import ParseMode
-    
     if streak == 5:
         emoji = "🔥"
         text = "Отличный старт!"
@@ -1773,7 +1767,6 @@ async def return_to_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     
     # Автоматическая миграция при возврате
-    from core.migration import ensure_module_migration
     ensure_module_migration(context, 'task20', task20_data)  # Передаем context!
     
     # Очищаем контекст от данных других модулей
@@ -2070,7 +2063,6 @@ async def select_topic(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     
     # ДОБАВИТЬ: Явная установка состояния
-    from core.state_validator import state_validator
     state_validator.set_state(query.from_user.id, ANSWERING_T20)
     
     return ANSWERING_T20
@@ -2209,7 +2201,6 @@ async def random_topic_all(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ])
     
     await query.edit_message_text(text, reply_markup=kb, parse_mode=ParseMode.HTML)
-    from core.state_validator import state_validator
     state_validator.set_state(query.from_user.id, ANSWERING_T20)
     
     return ANSWERING_T20
@@ -2392,8 +2383,6 @@ async def set_strictness(update: Update, context: ContextTypes.DEFAULT_TYPE):
         new_level = StrictnessLevel[level_str]
         
         # Пересоздаем evaluator с новым уровнем
-        from .evaluator import Task20AIEvaluator, AI_EVALUATOR_AVAILABLE
-        
         if AI_EVALUATOR_AVAILABLE:
             evaluator = Task20AIEvaluator(strictness=new_level)
             logger.info(f"Task20 strictness changed to {new_level.value}")
@@ -2835,7 +2824,6 @@ async def choose_topic(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode=ParseMode.HTML
     )
     
-    from core.state_validator import state_validator
     state_validator.set_state(query.from_user.id, ANSWERING_T20)
     
     return ANSWERING_T20
