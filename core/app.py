@@ -18,10 +18,63 @@ from payment import init_payment_module
 
 logger = logging.getLogger(__name__)
 
+
+async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Глобальный обработчик ошибок для бота."""
+    from telegram.error import BadRequest, Forbidden, NetworkError, TimedOut
+
+    # Логируем всю информацию об ошибке
+    logger.error(f"Exception while handling an update:", exc_info=context.error)
+
+    # Получаем информацию об ошибке
+    error = context.error
+
+    # Обрабатываем специфичные типы ошибок
+    if isinstance(error, BadRequest):
+        if "Message is not modified" in str(error):
+            # Это не критичная ошибка - сообщение просто не изменилось
+            logger.debug(f"Ignored 'Message is not modified' error")
+            return
+        logger.warning(f"BadRequest error: {error}")
+
+    elif isinstance(error, Forbidden):
+        # Пользователь заблокировал бота
+        logger.warning(f"Bot was blocked by user")
+        # Можно добавить логику деактивации пользователя
+
+    elif isinstance(error, (NetworkError, TimedOut)):
+        # Сетевые ошибки - можно игнорировать или залогировать
+        logger.warning(f"Network error: {error}")
+
+    else:
+        # Все остальные ошибки
+        logger.error(f"Unhandled error: {type(error).__name__}: {error}")
+
+    # Пытаемся уведомить пользователя об ошибке (если возможно)
+    try:
+        if update and hasattr(update, 'effective_message') and update.effective_message:
+            await update.effective_message.reply_text(
+                "😔 Произошла ошибка при обработке вашего запроса.\n"
+                "Пожалуйста, попробуйте позже или обратитесь в поддержку."
+            )
+        elif update and hasattr(update, 'callback_query') and update.callback_query:
+            await update.callback_query.answer(
+                "❌ Произошла ошибка. Попробуйте позже.",
+                show_alert=True
+            )
+    except Exception as e:
+        # Не удалось отправить сообщение пользователю
+        logger.error(f"Failed to send error message to user: {e}")
+
+
 async def post_init(application: Application) -> None:
     """Инициализация после запуска бота"""
     logger.info("Выполняется post-init...")
-    
+
+    # Регистрация глобального обработчика ошибок
+    application.add_error_handler(error_handler)
+    logger.info("Global error handler registered")
+
     # Инициализация БД
     await db.init_db()
     try:
