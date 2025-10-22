@@ -81,20 +81,7 @@ def load_modules(application):
         except Exception as e:
             logger.error(f"Failed to register plugin {plugin.code}: {e}")
     
-    # Создаем единую корутину для вызова всех post_init
-    async def run_all_post_inits():
-        """Выполняет все post_init задачи плагинов."""
-        for plugin in post_init_tasks:
-            try:
-                logger.info(f"Initializing {plugin.title}...")
-                await plugin.post_init(application)
-                logger.info(f"✅ {plugin.title} initialized successfully")
-            except Exception as e:
-                logger.error(f"❌ Failed post_init for {plugin.title}: {e}", exc_info=True)
-
-        logger.info("All plugin post_inits completed")
-    
-    # Регистрируем ОДНУ корутину для post_init
+    # Сохраняем post_init задачи в bot_data для вызова из app.py
     if post_init_tasks:
         # Добавляем в bot_data для вызова при инициализации
         if 'plugin_post_init_tasks' not in application.bot_data:
