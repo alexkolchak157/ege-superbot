@@ -473,6 +473,9 @@ class AdminKeyboards:
                 InlineKeyboardButton("🔒 Безопасность", callback_data="admin:security"),
                 InlineKeyboardButton("📤 Экспорт", callback_data="admin:export")
             ],
+            [
+                InlineKeyboardButton("🖥️ Мониторинг", callback_data="admin:system_monitor")
+            ],
             [InlineKeyboardButton("❌ Закрыть", callback_data="admin:close")]
         ])
     
@@ -487,6 +490,10 @@ class AdminKeyboards:
             [
                 InlineKeyboardButton("📚 По модулям", callback_data="admin:module_stats"),
                 InlineKeyboardButton("🏆 Топ юзеров", callback_data="admin:top_users")
+            ],
+            [
+                InlineKeyboardButton("🔄 Retention", callback_data="admin:retention_stats"),
+                InlineKeyboardButton("🎯 Конверсия", callback_data="admin:conversion_stats")
             ],
             [InlineKeyboardButton("⬅️ Назад", callback_data="admin:main")]
         ])
@@ -507,10 +514,10 @@ class AdminKeyboards:
         ])
     
     @staticmethod
-    def user_actions(user_id: int, has_subscription: bool) -> InlineKeyboardMarkup:
+    def user_actions(user_id: int, has_subscription: bool, is_banned: bool = False) -> InlineKeyboardMarkup:
         """Клавиатура действий с пользователем."""
         buttons = []
-        
+
         if has_subscription:
             buttons.append([
                 InlineKeyboardButton("❌ Отозвать подписку", callback_data=f"admin:revoke_sub:{user_id}"),
@@ -520,15 +527,20 @@ class AdminKeyboards:
             buttons.append([
                 InlineKeyboardButton("🎁 Подарить подписку", callback_data=f"admin:grant_sub:{user_id}")
             ])
-        
+
         buttons.extend([
             [
                 InlineKeyboardButton("📊 Статистика", callback_data=f"admin:user_stats:{user_id}"),
                 InlineKeyboardButton("📨 Написать", callback_data=f"admin:message_user:{user_id}")
             ],
+            [
+                InlineKeyboardButton("🔄 Сбросить прогресс", callback_data=f"admin:reset_progress:{user_id}"),
+                InlineKeyboardButton("🔓 Разбан" if is_banned else "⛔ Забанить",
+                                   callback_data=f"admin:unban_user:{user_id}" if is_banned else f"admin:ban_user:{user_id}")
+            ],
             [InlineKeyboardButton("⬅️ Назад", callback_data="admin:users")]
         ])
-        
+
         return InlineKeyboardMarkup(buttons)
     
     @staticmethod
@@ -1267,6 +1279,12 @@ async def user_details_callback(update: Update, context: ContextTypes.DEFAULT_TY
     subscription_manager = SubscriptionManager()
     subscription = await subscription_manager.check_active_subscription(user_id)
 
+    # Проверяем статус бана
+    cursor = await conn.execute("""
+        SELECT 1 FROM banned_users WHERE user_id = ?
+    """, (user_id,))
+    is_banned = (await cursor.fetchone()) is not None
+
     # Получаем статистику
     cursor = await conn.execute("""
         SELECT module_type, COUNT(*), AVG(score)
@@ -1286,6 +1304,9 @@ async def user_details_callback(update: Update, context: ContextTypes.DEFAULT_TY
 
     if username:
         text += f"📱 Username: @{username}\n"
+
+    if is_banned:
+        text += f"⛔ <b>Статус: ЗАБЛОКИРОВАН</b>\n"
 
     if created_at:
         text += f"📅 Регистрация: {created_at}\n"
@@ -1314,7 +1335,7 @@ async def user_details_callback(update: Update, context: ContextTypes.DEFAULT_TY
             text += f"• {name}: {attempts} попыток, средний балл: {avg_score:.2f}\n"
 
     # Клавиатура действий
-    kb = AdminKeyboards.user_actions(user_id, bool(subscription))
+    kb = AdminKeyboards.user_actions(user_id, bool(subscription), is_banned)
 
     await query.edit_message_text(text, reply_markup=kb, parse_mode=ParseMode.HTML)
 
@@ -1385,6 +1406,178 @@ async def revoke_subscription(update: Update, context: ContextTypes.DEFAULT_TYPE
             [InlineKeyboardButton("⬅️ Назад", callback_data="admin:users")]
         ])
     )
+
+
+@admin_only
+async def message_user_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Начало процесса отправки сообщения пользователю."""
+    query = update.callback_query
+    await query.answer()
+
+    user_id = int(query.data.split(':')[-1])
+    context.user_data['message_target_user'] = user_id
+
+    text = (
+        f"📨 <b>Отправка сообщения пользователю {user_id}</b>\n\n"
+        "Отправьте мне сообщение, которое нужно переслать этому пользователю.\n"
+        "Поддерживаются:\n"
+        "• Текст\n"
+        "• Фото с подписью\n"
+        "• Файлы\n\n"
+        "Для отмены используйте /cancel"
+    )
+
+    await query.edit_message_text(
+        text,
+        reply_markup=InlineKeyboardMarkup([[
+            InlineKeyboardButton("❌ Отмена", callback_data="admin:users")
+        ]]),
+        parse_mode=ParseMode.HTML
+    )
+
+    return 'AWAITING_MESSAGE'
+
+
+@admin_only
+async def ban_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Банит пользователя."""
+    query = update.callback_query
+    user_id = int(query.data.split(':')[-1])
+
+    await query.answer("Баню пользователя...")
+
+    from core import db
+
+    try:
+        conn = await db.get_db()
+
+        # Создаем таблицу banned_users если не существует
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS banned_users (
+                user_id INTEGER PRIMARY KEY,
+                banned_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                banned_by INTEGER,
+                reason TEXT
+            )
+        """)
+
+        # Добавляем пользователя в бан
+        await conn.execute("""
+            INSERT OR REPLACE INTO banned_users (user_id, banned_by)
+            VALUES (?, ?)
+        """, (user_id, update.effective_user.id))
+
+        await conn.commit()
+
+        # Уведомляем пользователя
+        try:
+            await context.bot.send_message(
+                chat_id=user_id,
+                text="⛔ Ваш доступ к боту был ограничен администратором."
+            )
+        except:
+            pass
+
+        await query.edit_message_text(
+            f"✅ Пользователь {user_id} заблокирован.",
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("🔓 Разблокировать", callback_data=f"admin:unban_user:{user_id}"),
+                InlineKeyboardButton("⬅️ Назад", callback_data="admin:users")
+            ]])
+        )
+
+    except Exception as e:
+        logger.error(f"Error banning user {user_id}: {e}")
+        await query.edit_message_text(
+            f"❌ Ошибка при блокировке пользователя: {e}",
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("⬅️ Назад", callback_data="admin:users")
+            ]])
+        )
+
+
+@admin_only
+async def unban_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Разбанивает пользователя."""
+    query = update.callback_query
+    user_id = int(query.data.split(':')[-1])
+
+    await query.answer("Разблокирую пользователя...")
+
+    from core import db
+
+    try:
+        conn = await db.get_db()
+
+        await conn.execute("""
+            DELETE FROM banned_users WHERE user_id = ?
+        """, (user_id,))
+
+        await conn.commit()
+
+        # Уведомляем пользователя
+        try:
+            await context.bot.send_message(
+                chat_id=user_id,
+                text="✅ Ваш доступ к боту восстановлен!"
+            )
+        except:
+            pass
+
+        await query.edit_message_text(
+            f"✅ Пользователь {user_id} разблокирован.",
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("⬅️ Назад", callback_data="admin:users")
+            ]])
+        )
+
+    except Exception as e:
+        logger.error(f"Error unbanning user {user_id}: {e}")
+        await query.edit_message_text(
+            f"❌ Ошибка при разблокировке: {e}",
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("⬅️ Назад", callback_data="admin:users")
+            ]])
+        )
+
+
+@admin_only
+async def reset_user_progress_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Сбрасывает прогресс пользователя."""
+    query = update.callback_query
+    user_id = int(query.data.split(':')[-1])
+
+    await query.answer("Сбрасываю прогресс...")
+
+    from core import db
+
+    try:
+        await db.reset_user_progress(user_id)
+
+        # Уведомляем пользователя
+        try:
+            await context.bot.send_message(
+                chat_id=user_id,
+                text="🔄 Администратор сбросил ваш прогресс.\nВы можете начать заново!"
+            )
+        except:
+            pass
+
+        await query.edit_message_text(
+            f"✅ Прогресс пользователя {user_id} сброшен.",
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("⬅️ Назад", callback_data=f"admin:user_details:{user_id}")
+            ]])
+        )
+
+    except Exception as e:
+        logger.error(f"Error resetting progress for {user_id}: {e}")
+        await query.edit_message_text(
+            f"❌ Ошибка при сбросе прогресса: {e}",
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("⬅️ Назад", callback_data="admin:users")
+            ]])
+        )
 
 
 # === НАСТРОЙКИ ===
@@ -1667,6 +1860,267 @@ async def top_users(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("⬅️ Назад", callback_data="admin:stats_menu")]
     ])
     
+    await query.edit_message_text(text, reply_markup=kb, parse_mode=ParseMode.HTML)
+
+
+@admin_only
+async def retention_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Статистика удержания пользователей (Retention)."""
+    query = update.callback_query
+    await query.answer("Загрузка retention...")
+
+    from core import db
+    from datetime import datetime, timedelta
+
+    text = "📊 <b>Retention - Удержание пользователей</b>\n\n"
+
+    try:
+        conn = await db.get_db()
+
+        # Retention по дням (1, 7, 14, 30 дней)
+        periods = [1, 7, 14, 30]
+        today = datetime.now()
+
+        for days in periods:
+            # Пользователи, зарегистрированные N дней назад
+            target_date = (today - timedelta(days=days)).date()
+
+            cursor = await conn.execute("""
+                SELECT COUNT(*) FROM users
+                WHERE DATE(created_at) = ?
+            """, (target_date,))
+            registered = (await cursor.fetchone())[0]
+
+            if registered == 0:
+                continue
+
+            # Сколько из них были активны сегодня
+            cursor = await conn.execute("""
+                SELECT COUNT(*) FROM users
+                WHERE DATE(created_at) = ?
+                AND last_activity_date = date('now')
+            """, (target_date,))
+            active_today = (await cursor.fetchone())[0]
+
+            retention_rate = (active_today * 100 / registered) if registered > 0 else 0
+
+            text += f"<b>День {days}:</b>\n"
+            text += f"• Зарегистрировано: {registered}\n"
+            text += f"• Активны сегодня: {active_today}\n"
+            text += f"• Retention: {retention_rate:.1f}%\n\n"
+
+        # Общий retention за последнюю неделю
+        cursor = await conn.execute("""
+            SELECT
+                COUNT(DISTINCT CASE WHEN created_at > datetime('now', '-7 days') THEN user_id END) as new_users,
+                COUNT(DISTINCT CASE
+                    WHEN created_at > datetime('now', '-7 days')
+                    AND last_activity_date > date('now', '-3 days')
+                    THEN user_id END) as active_new
+            FROM users
+        """)
+
+        stats = await cursor.fetchone()
+        if stats and stats[0] > 0:
+            week_retention = (stats[1] * 100 / stats[0])
+            text += f"<b>📈 Retention за неделю:</b>\n"
+            text += f"• Новых пользователей: {stats[0]}\n"
+            text += f"• Остались активны: {stats[1]}\n"
+            text += f"• Retention: {week_retention:.1f}%\n"
+
+    except Exception as e:
+        logger.error(f"Error getting retention stats: {e}")
+        text += "❌ Ошибка при загрузке данных"
+
+    kb = InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("🔄 Обновить", callback_data="admin:retention_stats"),
+            InlineKeyboardButton("📊 Конверсия", callback_data="admin:conversion_stats")
+        ],
+        [InlineKeyboardButton("⬅️ Назад", callback_data="admin:stats_menu")]
+    ])
+
+    await query.edit_message_text(text, reply_markup=kb, parse_mode=ParseMode.HTML)
+
+
+@admin_only
+async def conversion_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Воронка конверсии (регистрация → подписка)."""
+    query = update.callback_query
+    await query.answer("Загрузка воронки конверсии...")
+
+    from core import db
+    from payment.config import SUBSCRIPTION_MODE
+
+    text = "🎯 <b>Воронка конверсии</b>\n\n"
+
+    try:
+        conn = await db.get_db()
+
+        # Всего пользователей
+        cursor = await conn.execute("SELECT COUNT(*) FROM users")
+        total_users = (await cursor.fetchone())[0]
+
+        # Пользователи с хотя бы одной попыткой
+        cursor = await conn.execute("SELECT COUNT(DISTINCT user_id) FROM attempts")
+        users_with_attempts = (await cursor.fetchone())[0]
+
+        # Пользователи с подпиской
+        if SUBSCRIPTION_MODE == 'modular':
+            cursor = await conn.execute("""
+                SELECT COUNT(DISTINCT user_id)
+                FROM module_subscriptions
+                WHERE is_active = 1 AND expires_at > datetime('now')
+            """)
+        else:
+            cursor = await conn.execute("""
+                SELECT COUNT(DISTINCT user_id)
+                FROM user_subscriptions
+                WHERE status = 'active' AND expires_at > datetime('now')
+            """)
+        subscribers = (await cursor.fetchone())[0]
+
+        # Пользователи с платежами
+        cursor = await conn.execute("""
+            SELECT COUNT(DISTINCT user_id) FROM payments
+            WHERE status = 'completed'
+        """)
+        paid_users = (await cursor.fetchone())[0]
+
+        # Рассчитываем конверсии
+        activation_rate = (users_with_attempts * 100 / total_users) if total_users > 0 else 0
+        subscription_rate = (subscribers * 100 / total_users) if total_users > 0 else 0
+        payment_rate = (paid_users * 100 / total_users) if total_users > 0 else 0
+
+        text += "📊 <b>Этапы воронки:</b>\n\n"
+        text += f"1️⃣ Регистрация: {total_users} (100%)\n"
+        text += f"    ↓\n"
+        text += f"2️⃣ Активация (сделали попытку): {users_with_attempts} ({activation_rate:.1f}%)\n"
+        text += f"    ↓\n"
+        text += f"3️⃣ Подписка: {subscribers} ({subscription_rate:.1f}%)\n"
+        text += f"    ↓\n"
+        text += f"4️⃣ Оплата: {paid_users} ({payment_rate:.1f}%)\n\n"
+
+        # Конверсия активных → подписчики
+        if users_with_attempts > 0:
+            active_to_sub = (subscribers * 100 / users_with_attempts)
+            text += f"<b>💡 Ключевые метрики:</b>\n"
+            text += f"• Активация: {activation_rate:.1f}%\n"
+            text += f"• Конверсия в подписку: {subscription_rate:.1f}%\n"
+            text += f"• Конверсия активных в подписку: {active_to_sub:.1f}%\n"
+            text += f"• Платящие пользователи: {payment_rate:.1f}%\n"
+
+    except Exception as e:
+        logger.error(f"Error getting conversion stats: {e}")
+        text += "❌ Ошибка при загрузке данных"
+
+    kb = InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("🔄 Обновить", callback_data="admin:conversion_stats"),
+            InlineKeyboardButton("📈 Retention", callback_data="admin:retention_stats")
+        ],
+        [InlineKeyboardButton("⬅️ Назад", callback_data="admin:stats_menu")]
+    ])
+
+    await query.edit_message_text(text, reply_markup=kb, parse_mode=ParseMode.HTML)
+
+
+@admin_only
+async def system_monitor(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Мониторинг системы."""
+    query = update.callback_query
+    await query.answer("Загрузка мониторинга...")
+
+    import psutil
+    import sys
+    from datetime import datetime
+
+    text = "🖥️ <b>Системный мониторинг</b>\n\n"
+
+    try:
+        # CPU
+        cpu_percent = psutil.cpu_percent(interval=1)
+        cpu_count = psutil.cpu_count()
+        text += f"<b>💻 CPU:</b>\n"
+        text += f"• Использование: {cpu_percent}%\n"
+        text += f"• Ядер: {cpu_count}\n\n"
+
+        # Memory
+        memory = psutil.virtual_memory()
+        text += f"<b>🧠 Память:</b>\n"
+        text += f"• Использовано: {memory.percent}%\n"
+        text += f"• Всего: {memory.total / (1024**3):.1f} GB\n"
+        text += f"• Доступно: {memory.available / (1024**3):.1f} GB\n\n"
+
+        # Disk
+        disk = psutil.disk_usage('/')
+        text += f"<b>💾 Диск:</b>\n"
+        text += f"• Использовано: {disk.percent}%\n"
+        text += f"• Всего: {disk.total / (1024**3):.1f} GB\n"
+        text += f"• Свободно: {disk.free / (1024**3):.1f} GB\n\n"
+
+        # Bot info
+        process = psutil.Process()
+        bot_memory = process.memory_info().rss / (1024**2)
+        uptime = datetime.now() - datetime.fromtimestamp(process.create_time())
+
+        text += f"<b>🤖 Бот:</b>\n"
+        text += f"• Память: {bot_memory:.1f} MB\n"
+        text += f"• Uptime: {uptime.days}д {uptime.seconds//3600}ч\n"
+        text += f"• Python: {sys.version.split()[0]}\n"
+
+    except Exception as e:
+        logger.error(f"Error getting system monitor: {e}")
+        text += f"❌ Ошибка мониторинга: {e}"
+
+    kb = InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("🔄 Обновить", callback_data="admin:system_monitor"),
+            InlineKeyboardButton("📋 Логи", callback_data="admin:view_logs")
+        ],
+        [InlineKeyboardButton("⬅️ Назад", callback_data="admin:main")]
+    ])
+
+    await query.edit_message_text(text, reply_markup=kb, parse_mode=ParseMode.HTML)
+
+
+@admin_only
+async def view_logs(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Просмотр последних логов."""
+    query = update.callback_query
+    await query.answer("Загрузка логов...")
+
+    text = "📋 <b>Последние логи</b>\n\n"
+
+    try:
+        import os
+
+        log_file = "bot.log"
+        if os.path.exists(log_file):
+            with open(log_file, 'r', encoding='utf-8') as f:
+                lines = f.readlines()
+                last_lines = lines[-20:]  # Последние 20 строк
+
+                for line in last_lines:
+                    # Обрезаем длинные строки
+                    if len(line) > 100:
+                        line = line[:97] + "...\n"
+                    text += f"<code>{line.strip()}</code>\n"
+        else:
+            text += "Файл логов не найден"
+
+    except Exception as e:
+        logger.error(f"Error viewing logs: {e}")
+        text += f"❌ Ошибка чтения логов: {e}"
+
+    kb = InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("🔄 Обновить", callback_data="admin:view_logs"),
+            InlineKeyboardButton("🗑️ Очистить", callback_data="admin:clear_logs")
+        ],
+        [InlineKeyboardButton("⬅️ Назад", callback_data="admin:system_monitor")]
+    ])
+
     await query.edit_message_text(text, reply_markup=kb, parse_mode=ParseMode.HTML)
 
 
@@ -3880,6 +4334,18 @@ def register_admin_handlers(app):
     app.add_handler(CallbackQueryHandler(top_users, pattern="^admin:top_users$"))
     app.add_handler(CallbackQueryHandler(users_stats, pattern="^admin:users_stats$"))
     app.add_handler(CallbackQueryHandler(user_stats, pattern="^admin:user_stats:"))
+    app.add_handler(CallbackQueryHandler(retention_stats, pattern="^admin:retention_stats$"))
+    app.add_handler(CallbackQueryHandler(conversion_stats, pattern="^admin:conversion_stats$"))
+
+    # Управление пользователями (новые функции)
+    app.add_handler(CallbackQueryHandler(message_user_start, pattern="^admin:message_user:"))
+    app.add_handler(CallbackQueryHandler(ban_user, pattern="^admin:ban_user:"))
+    app.add_handler(CallbackQueryHandler(unban_user, pattern="^admin:unban_user:"))
+    app.add_handler(CallbackQueryHandler(reset_user_progress_admin, pattern="^admin:reset_progress:"))
+
+    # Мониторинг и логи
+    app.add_handler(CallbackQueryHandler(system_monitor, pattern="^admin:system_monitor$"))
+    app.add_handler(CallbackQueryHandler(view_logs, pattern="^admin:view_logs$"))
 
     # Пустой обработчик
     app.add_handler(CallbackQueryHandler(noop, pattern="^admin:noop$"))
