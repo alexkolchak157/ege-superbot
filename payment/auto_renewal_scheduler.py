@@ -283,11 +283,11 @@ class AutoRenewalScheduler:
         except Exception as e:
             logger.exception(f"Error processing auto-renewals: {e}")
     
-    async def _process_single_renewal_with_validation(self, user_id: int, rebill_id: str, 
-                                                       plan_id: str, amount: int) -> bool:
+    async def _process_single_renewal(self, user_id: int, rebill_id: str,
+                                       plan_id: str, amount: int) -> bool:
         """
-        НОВЫЙ МЕТОД с дополнительной валидацией перед списанием.
         Обрабатывает одно автопродление с проверками безопасности.
+        Включает валидацию данных перед списанием средств.
         """
         try:
             # КРИТИЧНАЯ ПРОВЕРКА №1: Валидация суммы
@@ -420,74 +420,6 @@ class AutoRenewalScheduler:
             await self.subscription_manager.increment_renewal_failures(user_id)
             return False
 
-
-    # ДОПОЛНИТЕЛЬНЫЙ МЕТОД: Проверка корректности настроек автопродления
-    async def validate_auto_renewal_config(self, user_id: int) -> tuple[bool, str]:
-        """
-        Проверяет корректность настроек автопродления перед активацией.
-        
-        Returns:
-            (is_valid, error_message)
-        """
-        try:
-            async with aiosqlite.connect(self.database_file) as conn:
-                # Проверяем настройки автопродления
-                cursor = await conn.execute("""
-                    SELECT recurrent_token, next_renewal_date, failures_count
-                    FROM auto_renewal_settings
-                    WHERE user_id = ? AND enabled = 1
-                """, (user_id,))
-                
-                settings = await cursor.fetchone()
-                if not settings:
-                    return False, "Автопродление не включено"
-                
-                recurrent_token, next_renewal_date, failures_count = settings
-                
-                if not recurrent_token:
-                    return False, "Отсутствует токен для автопродления"
-                
-                if failures_count >= 3:
-                    return False, "Превышено количество неудачных попыток"
-                
-                # Проверяем наличие активной подписки
-                cursor = await conn.execute("""
-                    SELECT plan_id, expires_at
-                    FROM module_subscriptions
-                    WHERE user_id = ? AND is_active = 1
-                    ORDER BY expires_at DESC
-                    LIMIT 1
-                """, (user_id,))
-                
-                subscription = await cursor.fetchone()
-                if not subscription:
-                    return False, "Нет активной подписки для продления"
-                
-                plan_id, expires_at = subscription
-                
-                # Проверяем наличие последнего успешного платежа для определения суммы
-                cursor = await conn.execute("""
-                    SELECT amount
-                    FROM payments
-                    WHERE user_id = ? AND plan_id = ? AND status = 'completed'
-                    ORDER BY created_at DESC
-                    LIMIT 1
-                """, (user_id, plan_id))
-                
-                payment = await cursor.fetchone()
-                if not payment or not payment[0]:
-                    return False, "Не найдена информация о сумме платежа"
-                
-                amount = payment[0] / 100
-                if amount <= 0:
-                    return False, f"Некорректная сумма платежа: {amount}"
-                
-                return True, "OK"
-                
-        except Exception as e:
-            logger.error(f"Error validating auto-renewal config: {e}")
-            return False, f"Ошибка проверки: {str(e)}"
-    
     async def retry_failed_renewals(self):
         """
         Повторяет неудачные попытки автопродления.

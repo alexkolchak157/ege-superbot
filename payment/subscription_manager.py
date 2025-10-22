@@ -1985,8 +1985,39 @@ class SubscriptionManager:
         except Exception as e:
             logger.error(f"Error getting expiring subscriptions: {e}")
             return []
-    
-    async def has_notification_sent(self, user_id: int, notification_type: str, 
+
+    async def deactivate_expired_subscription(self, user_id: int) -> bool:
+        """Деактивирует истекшую подписку пользователя."""
+        try:
+            async with aiosqlite.connect(self.database_file, timeout=30.0) as conn:
+                if self.subscription_mode == 'modular':
+                    # Деактивируем все истекшие модули
+                    await conn.execute("""
+                        UPDATE module_subscriptions
+                        SET is_active = 0
+                        WHERE user_id = ?
+                        AND is_active = 1
+                        AND expires_at <= datetime('now')
+                    """, (user_id,))
+                else:
+                    # Деактивируем подписку в единой системе
+                    await conn.execute("""
+                        UPDATE user_subscriptions
+                        SET status = 'expired'
+                        WHERE user_id = ?
+                        AND status = 'active'
+                        AND expires_at <= datetime('now')
+                    """, (user_id,))
+
+                await conn.commit()
+                logger.info(f"Deactivated expired subscription for user {user_id}")
+                return True
+
+        except Exception as e:
+            logger.error(f"Error deactivating expired subscription for user {user_id}: {e}")
+            return False
+
+    async def has_notification_sent(self, user_id: int, notification_type: str,
                                    subscription_end: datetime) -> bool:
         """Проверяет, было ли уже отправлено уведомление."""
         try:
