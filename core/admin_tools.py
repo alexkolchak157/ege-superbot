@@ -1232,6 +1232,94 @@ async def show_user_details(update: Update, context: ContextTypes.DEFAULT_TYPE, 
 
 
 @admin_only
+async def user_details_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработчик callback для просмотра деталей пользователя."""
+    query = update.callback_query
+    await query.answer()
+
+    # Извлекаем user_id из callback_data
+    user_id = int(query.data.split(':')[-1])
+
+    from core import db
+    from payment.subscription_manager import SubscriptionManager
+
+    conn = await db.get_db()
+
+    # Получаем данные пользователя
+    cursor = await conn.execute(
+        "SELECT user_id, username, first_name, last_name, created_at, last_activity_date FROM users WHERE user_id = ?",
+        (user_id,)
+    )
+    user = await cursor.fetchone()
+
+    if not user:
+        text = "❌ Пользователь не найден"
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("⬅️ Назад", callback_data="admin:users")]
+        ])
+        await query.edit_message_text(text, reply_markup=kb)
+        return
+
+    # Распаковываем данные
+    user_id, username, first_name, last_name, created_at, last_activity = user
+
+    # Проверяем подписку
+    subscription_manager = SubscriptionManager()
+    subscription = await subscription_manager.check_active_subscription(user_id)
+
+    # Получаем статистику
+    cursor = await conn.execute("""
+        SELECT module_type, COUNT(*), AVG(score)
+        FROM attempts
+        WHERE user_id = ?
+        GROUP BY module_type
+    """, (user_id,))
+    stats = await cursor.fetchall()
+
+    # Формируем текст
+    text = f"👤 <b>Информация о пользователе</b>\n\n"
+    text += f"🆔 ID: <code>{user_id}</code>\n"
+    text += f"👤 Имя: {first_name or 'Не указано'}\n"
+
+    if last_name:
+        text += f"👤 Фамилия: {last_name}\n"
+
+    if username:
+        text += f"📱 Username: @{username}\n"
+
+    if created_at:
+        text += f"📅 Регистрация: {created_at}\n"
+    if last_activity:
+        text += f"🕐 Последняя активность: {last_activity}\n\n"
+
+    if subscription:
+        text += f"💎 <b>Подписка активна</b>\n"
+        text += f"План: {subscription.get('plan_id', 'Неизвестно')}\n"
+        if subscription.get('expires_at'):
+            text += f"До: {subscription['expires_at']}\n\n"
+    else:
+        text += "❌ <b>Подписка не активна</b>\n\n"
+
+    if stats:
+        text += "📊 <b>Статистика по модулям:</b>\n"
+        module_names = {
+            'task24': '📝 Задание 24',
+            'test_part': '📚 Тестовая часть',
+            'task19': '🎯 Задание 19',
+            'task20': '💭 Задание 20',
+            'task25': '📋 Задание 25'
+        }
+        for module, attempts, avg_score in stats:
+            name = module_names.get(module, module)
+            text += f"• {name}: {attempts} попыток, средний балл: {avg_score:.2f}\n"
+
+    # Клавиатура действий
+    kb = AdminKeyboards.user_actions(user_id, bool(subscription))
+
+    await query.edit_message_text(text, reply_markup=kb, parse_mode=ParseMode.HTML)
+
+
+@admin_only
 async def grant_subscription(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Выдача подписки пользователю."""
     query = update.callback_query
@@ -1579,6 +1667,216 @@ async def top_users(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("⬅️ Назад", callback_data="admin:stats_menu")]
     ])
     
+    await query.edit_message_text(text, reply_markup=kb, parse_mode=ParseMode.HTML)
+
+
+@admin_only
+async def users_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Общая статистика по пользователям."""
+    query = update.callback_query
+    await query.answer("Загрузка статистики пользователей...")
+
+    from core import db
+    from payment.config import SUBSCRIPTION_MODE
+
+    text = "👥 <b>Статистика пользователей</b>\n\n"
+
+    try:
+        conn = await db.get_db()
+
+        # Общая статистика пользователей
+        cursor = await conn.execute("""
+            SELECT
+                COUNT(*) as total,
+                COUNT(CASE WHEN last_activity_date > datetime('now', '-1 day') THEN 1 END) as active_1d,
+                COUNT(CASE WHEN last_activity_date > datetime('now', '-7 days') THEN 1 END) as active_7d,
+                COUNT(CASE WHEN last_activity_date > datetime('now', '-30 days') THEN 1 END) as active_30d
+            FROM users
+        """)
+        stats = await cursor.fetchone()
+
+        if stats:
+            total, active_1d, active_7d, active_30d = stats
+
+            text += "<b>📊 Активность:</b>\n"
+            text += f"• Всего пользователей: {total}\n"
+            text += f"• Активны за день: {active_1d} ({active_1d*100//max(total,1)}%)\n"
+            text += f"• Активны за неделю: {active_7d} ({active_7d*100//max(total,1)}%)\n"
+            text += f"• Активны за месяц: {active_30d} ({active_30d*100//max(total,1)}%)\n\n"
+
+        # Статистика подписок
+        if SUBSCRIPTION_MODE == 'modular':
+            cursor = await conn.execute("""
+                SELECT COUNT(DISTINCT user_id)
+                FROM module_subscriptions
+                WHERE is_active = 1 AND expires_at > datetime('now')
+            """)
+        else:
+            cursor = await conn.execute("""
+                SELECT COUNT(DISTINCT user_id)
+                FROM user_subscriptions
+                WHERE status = 'active' AND expires_at > datetime('now')
+            """)
+
+        premium_count = (await cursor.fetchone())[0]
+
+        text += "<b>💎 Подписки:</b>\n"
+        text += f"• С активной подпиской: {premium_count}\n"
+        text += f"• Без подписки: {total - premium_count}\n"
+        text += f"• Конверсия: {premium_count*100//max(total,1)}%\n\n"
+
+        # Популярные модули
+        cursor = await conn.execute("""
+            SELECT
+                module_type,
+                COUNT(DISTINCT user_id) as users,
+                COUNT(*) as attempts
+            FROM attempts
+            WHERE created_at > datetime('now', '-30 days')
+            GROUP BY module_type
+            ORDER BY users DESC
+            LIMIT 5
+        """)
+
+        modules_data = await cursor.fetchall()
+
+        if modules_data:
+            text += "<b>📚 Популярные модули (30 дней):</b>\n"
+            module_names = {
+                'task24': '📝 Задание 24',
+                'test_part': '📚 Тестовая часть',
+                'task19': '🎯 Задание 19',
+                'task20': '💭 Задание 20',
+                'task25': '📋 Задание 25'
+            }
+
+            for module_type, users, attempts in modules_data:
+                name = module_names.get(module_type, module_type)
+                text += f"• {name}\n"
+                text += f"  👥 {users} польз. | 📝 {attempts} попыток\n"
+
+    except Exception as e:
+        logger.error(f"Error getting users stats: {e}")
+        text += "❌ Ошибка при загрузке данных"
+
+    kb = InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("🔄 Обновить", callback_data="admin:users_stats"),
+            InlineKeyboardButton("📋 Список", callback_data="admin:users_list")
+        ],
+        [InlineKeyboardButton("⬅️ Назад", callback_data="admin:users")]
+    ])
+
+    await query.edit_message_text(text, reply_markup=kb, parse_mode=ParseMode.HTML)
+
+
+@admin_only
+async def user_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Детальная статистика конкретного пользователя."""
+    query = update.callback_query
+    await query.answer("Загрузка статистики пользователя...")
+
+    # Извлекаем user_id из callback_data
+    callback_data = query.data
+    user_id = int(callback_data.split(':')[-1])
+
+    from core import db
+
+    text = f"📊 <b>Статистика пользователя {user_id}</b>\n\n"
+
+    try:
+        conn = await db.get_db()
+
+        # Основная информация о пользователе
+        cursor = await conn.execute("""
+            SELECT first_name, username, last_activity_date, created_at
+            FROM users
+            WHERE user_id = ?
+        """, (user_id,))
+
+        user_info = await cursor.fetchone()
+
+        if not user_info:
+            text = f"❌ Пользователь {user_id} не найден"
+        else:
+            first_name, username, last_activity, created_at = user_info
+
+            text += f"<b>👤 Информация:</b>\n"
+            text += f"• Имя: {first_name or 'Не указано'}\n"
+            if username:
+                text += f"• Username: @{username}\n"
+            text += f"• Последняя активность: {last_activity or 'Никогда'}\n"
+            text += f"• Регистрация: {created_at or 'Неизвестно'}\n\n"
+
+            # Статистика попыток
+            cursor = await conn.execute("""
+                SELECT
+                    COUNT(*) as total_attempts,
+                    AVG(score) as avg_score,
+                    MAX(score) as max_score,
+                    COUNT(DISTINCT module_type) as modules_used
+                FROM attempts
+                WHERE user_id = ?
+            """, (user_id,))
+
+            attempts_stats = await cursor.fetchone()
+
+            if attempts_stats and attempts_stats[0] > 0:
+                total_attempts, avg_score, max_score, modules_used = attempts_stats
+
+                text += f"<b>📝 Активность:</b>\n"
+                text += f"• Всего попыток: {total_attempts}\n"
+                text += f"• Средний балл: {avg_score:.1f}\n"
+                text += f"• Лучший балл: {max_score:.0f}\n"
+                text += f"• Использовано модулей: {modules_used}/5\n\n"
+
+                # Статистика по модулям
+                cursor = await conn.execute("""
+                    SELECT
+                        module_type,
+                        COUNT(*) as attempts,
+                        AVG(score) as avg_score,
+                        MAX(score) as max_score
+                    FROM attempts
+                    WHERE user_id = ?
+                    GROUP BY module_type
+                    ORDER BY attempts DESC
+                """, (user_id,))
+
+                modules_data = await cursor.fetchall()
+
+                if modules_data:
+                    text += "<b>📚 По модулям:</b>\n"
+                    module_names = {
+                        'task24': '📝 Задание 24',
+                        'test_part': '📚 Тестовая часть',
+                        'task19': '🎯 Задание 19',
+                        'task20': '💭 Задание 20',
+                        'task25': '📋 Задание 25'
+                    }
+
+                    for module_type, attempts, avg, max_s in modules_data:
+                        name = module_names.get(module_type, module_type)
+                        text += f"\n{name}:\n"
+                        text += f"  • Попыток: {attempts}\n"
+                        text += f"  • Средний балл: {avg:.1f}\n"
+                        text += f"  • Лучший балл: {max_s:.0f}\n"
+            else:
+                text += "<b>📝 Активность:</b>\n"
+                text += "• Пользователь еще не проходил тесты\n"
+
+    except Exception as e:
+        logger.error(f"Error getting user stats for {user_id}: {e}")
+        text += "\n❌ Ошибка при загрузке данных"
+
+    kb = InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("🔄 Обновить", callback_data=f"admin:user_stats:{user_id}"),
+            InlineKeyboardButton("👤 Инфо", callback_data=f"admin:user_details:{user_id}")
+        ],
+        [InlineKeyboardButton("⬅️ Назад", callback_data="admin:users")]
+    ])
+
     await query.edit_message_text(text, reply_markup=kb, parse_mode=ParseMode.HTML)
 
 
@@ -3561,6 +3859,7 @@ def register_admin_handlers(app):
     # Управление пользователями
     app.add_handler(CallbackQueryHandler(users_list, pattern="^admin:users_list$"))
     app.add_handler(CallbackQueryHandler(users_premium, pattern="^admin:users_premium$"))
+    app.add_handler(CallbackQueryHandler(user_details_callback, pattern="^admin:user_details:"))
     app.add_handler(CallbackQueryHandler(grant_subscription, pattern="^admin:grant_sub:"))
     app.add_handler(CallbackQueryHandler(revoke_subscription, pattern="^admin:revoke_sub:"))
     app.add_handler(CallbackQueryHandler(
@@ -3579,7 +3878,9 @@ def register_admin_handlers(app):
     app.add_handler(CallbackQueryHandler(activity_stats, pattern="^admin:activity_stats$"))
     app.add_handler(CallbackQueryHandler(module_stats, pattern="^admin:module_stats$"))
     app.add_handler(CallbackQueryHandler(top_users, pattern="^admin:top_users$"))
-    
+    app.add_handler(CallbackQueryHandler(users_stats, pattern="^admin:users_stats$"))
+    app.add_handler(CallbackQueryHandler(user_stats, pattern="^admin:user_stats:"))
+
     # Пустой обработчик
     app.add_handler(CallbackQueryHandler(noop, pattern="^admin:noop$"))
     register_price_promo_handlers(app)
