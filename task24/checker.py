@@ -845,7 +845,6 @@ def _is_junk_subpoint(subpoint: str, topic_context: str) -> bool:
         r'\b(фыва|йцук|ячсм)\b',  # клавиатурные последовательности
     ]
     
-    import re
     for pattern in junk_patterns:
         if re.search(pattern, normalized, re.IGNORECASE):
             return True
@@ -1071,14 +1070,12 @@ async def evaluate_plan_with_ai(
         ai_checker = get_ai_checker()
         
         # Извлекаем баллы из basic_feedback
-        import re
-        k1_match = re.search(r'К1.*?(\d+)/3', basic_feedback)
+            k1_match = re.search(r'К1.*?(\d+)/3', basic_feedback)
         k2_match = re.search(r'К2.*?(\d+)/1', basic_feedback)
         k1 = int(k1_match.group(1)) if k1_match else 0
         k2 = int(k2_match.group(1)) if k2_match else 0
         
         # Параллельно выполняем все AI-проверки
-        import asyncio
         
         relevance_task = ai_checker.check_plan_relevance(
             user_plan_text,
