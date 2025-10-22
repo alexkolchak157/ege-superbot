@@ -1070,7 +1070,7 @@ async def evaluate_plan_with_ai(
         ai_checker = get_ai_checker()
         
         # Извлекаем баллы из basic_feedback
-            k1_match = re.search(r'К1.*?(\d+)/3', basic_feedback)
+        k1_match = re.search(r'К1.*?(\d+)/3', basic_feedback)
         k2_match = re.search(r'К2.*?(\d+)/1', basic_feedback)
         k1 = int(k1_match.group(1)) if k1_match else 0
         k2 = int(k2_match.group(1)) if k2_match else 0

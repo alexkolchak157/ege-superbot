@@ -1797,9 +1797,12 @@ async def handle_confirm_ocr(update: Update, context: ContextTypes.DEFAULT_TYPE)
     freemium_manager = get_freemium_manager(
         context.bot_data.get('subscription_manager')
     )
-    
-    can_use, remaining, limit_msg = await freemium_manager.check_ai_limit(user_id)
-    
+
+    # Определяем модуль для task19
+    module_code = 'task19'
+
+    can_use, remaining, limit_msg = await freemium_manager.check_ai_limit(user_id, module_code)
+
     if not can_use:
         await query.edit_message_text(
             "🔒 <b>Лимит бесплатных проверок исчерпан</b>\n\n"
@@ -1812,13 +1815,20 @@ async def handle_confirm_ocr(update: Update, context: ContextTypes.DEFAULT_TYPE)
         )
         return states.CHOOSING_MODE
 
-    await query.edit_message_text(
-        "🤔 Проверяю ваш ответ через AI...",
+    # Показываем оставшиеся проверки для модуля
+    limit_info = await freemium_manager.get_limit_info(user_id, module_code)
+    limit_display = freemium_manager.format_limit_message(limit_info)
+
+    thinking_msg = await query.edit_message_text(
+        f"{limit_display}\n\n"
+        "🤔 Проверяю ваш ответ через AI...\n"
+        "<i>Это займет несколько секунд</i>",
         parse_mode=ParseMode.HTML
     )
+
     # Регистрируем использование проверки для модуля
     await freemium_manager.use_ai_check(user_id, module_code)
-    
+
     try:
         # === AI ПРОВЕРКА (с разной детализацией) ===
         # Используем глобальную переменную evaluator
@@ -1867,7 +1877,7 @@ async def handle_confirm_ocr(update: Update, context: ContextTypes.DEFAULT_TYPE)
             reply_markup=after_check_keyboard,
             parse_mode=ParseMode.HTML
         )
-        
+
         # Сохраняем для возврата
         context.user_data['t19_last_screen'] = 'feedback'
         context.user_data['t19_last_feedback'] = {
@@ -1875,7 +1885,20 @@ async def handle_confirm_ocr(update: Update, context: ContextTypes.DEFAULT_TYPE)
             'score': score,
             'topic': topic
         }
-        
+
+        return states.CHOOSING_MODE
+
+    except Exception as e:
+        logger.error(f"Error in handle_confirm_ocr: {e}")
+        await thinking_msg.delete()
+
+        await query.message.reply_text(
+            "❌ Произошла ошибка при проверке. Попробуйте еще раз.",
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("🔄 Попробовать снова", callback_data="t19_retry"),
+                InlineKeyboardButton("📝 В меню", callback_data="t19_menu")
+            ]])
+        )
         return states.CHOOSING_MODE
 
 @safe_handler()
