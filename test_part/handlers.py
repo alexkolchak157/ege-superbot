@@ -3108,7 +3108,7 @@ async def reset_progress_confirm(update: Update, context: ContextTypes.DEFAULT_T
     
     kb = InlineKeyboardMarkup([
         [
-            InlineKeyboardButton("✅ Да, сбросить", callback_data="test_reset_do"),
+            InlineKeyboardButton("✅ Да, сбросить", callback_data="test_part_reset_do"),
             InlineKeyboardButton("❌ Отмена", callback_data="to_test_part_menu")
         ]
     ])

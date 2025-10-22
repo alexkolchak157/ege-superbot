@@ -354,8 +354,6 @@ def find_question_by_id(question_id: str) -> Optional[Dict[str, Any]]:
         pass
     
     # Fallback: поиск в QUESTIONS_DATA
-    from .handlers import QUESTIONS_DATA
-    
     if QUESTIONS_DATA:
         for block_data in QUESTIONS_DATA.values():
             for topic_questions in block_data.values():
