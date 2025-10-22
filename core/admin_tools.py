@@ -474,7 +474,8 @@ class AdminKeyboards:
                 InlineKeyboardButton("📤 Экспорт", callback_data="admin:export")
             ],
             [
-                InlineKeyboardButton("🖥️ Мониторинг", callback_data="admin:system_monitor")
+                InlineKeyboardButton("🖥️ Мониторинг", callback_data="admin:system_monitor"),
+                InlineKeyboardButton("📚 Контент", callback_data="admin:content_analysis")
             ],
             [InlineKeyboardButton("❌ Закрыть", callback_data="admin:close")]
         ])
@@ -494,6 +495,9 @@ class AdminKeyboards:
             [
                 InlineKeyboardButton("🔄 Retention", callback_data="admin:retention_stats"),
                 InlineKeyboardButton("🎯 Конверсия", callback_data="admin:conversion_stats")
+            ],
+            [
+                InlineKeyboardButton("💰 Финансы", callback_data="admin:financial_analytics")
             ],
             [InlineKeyboardButton("⬅️ Назад", callback_data="admin:main")]
         ])
@@ -2026,6 +2030,130 @@ async def conversion_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 @admin_only
+async def financial_analytics(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Финансовая аналитика: LTV, MRR, Churn, ARPU."""
+    query = update.callback_query
+    await query.answer("Загрузка финансовой аналитики...")
+
+    from core import db
+    from datetime import datetime, timedelta
+
+    text = "💰 <b>Финансовая аналитика</b>\n\n"
+
+    try:
+        conn = await db.get_db()
+
+        # 1. LTV (Lifetime Value) - средний доход с платящего пользователя
+        cursor = await conn.execute("""
+            SELECT
+                COUNT(DISTINCT user_id) as paying_users,
+                SUM(amount_kopecks) as total_revenue
+            FROM payments
+            WHERE status IN ('completed', 'confirmed')
+        """)
+        ltv_data = await cursor.fetchone()
+
+        if ltv_data and ltv_data[0] > 0:
+            paying_users = ltv_data[0]
+            total_revenue_rub = (ltv_data[1] or 0) / 100
+            ltv = total_revenue_rub / paying_users
+
+            text += f"<b>💎 LTV (Lifetime Value):</b>\n"
+            text += f"• Средний доход с пользователя: {ltv:.0f}₽\n"
+            text += f"• Платящих пользователей: {paying_users}\n"
+            text += f"• Общий доход: {total_revenue_rub:.0f}₽\n\n"
+
+        # 2. MRR (Monthly Recurring Revenue)
+        # Подписки, которые активны сейчас
+        cursor = await conn.execute("""
+            SELECT
+                COUNT(DISTINCT user_id) as active_subs,
+                AVG(amount_kopecks) as avg_payment
+            FROM payments
+            WHERE status IN ('completed', 'confirmed')
+            AND created_at > datetime('now', '-30 days')
+        """)
+        mrr_data = await cursor.fetchone()
+
+        if mrr_data and mrr_data[0] > 0:
+            active_subs = mrr_data[0]
+            avg_payment = (mrr_data[1] or 0) / 100
+            mrr = active_subs * avg_payment
+
+            text += f"<b>📊 MRR (Monthly Recurring Revenue):</b>\n"
+            text += f"• MRR: {mrr:.0f}₽/месяц\n"
+            text += f"• Активных подписок: {active_subs}\n"
+            text += f"• Средний чек: {avg_payment:.0f}₽\n\n"
+
+        # 3. Churn Rate - процент отказов
+        # Пользователи, чья подписка истекла за последние 30 дней
+        cursor = await conn.execute("""
+            SELECT
+                COUNT(DISTINCT CASE
+                    WHEN expires_at > datetime('now', '-30 days')
+                    AND expires_at < datetime('now')
+                    THEN user_id
+                END) as churned,
+                COUNT(DISTINCT CASE
+                    WHEN expires_at > datetime('now', '-30 days')
+                    THEN user_id
+                END) as total_had_subscription
+            FROM user_subscriptions
+        """)
+        churn_data = await cursor.fetchone()
+
+        if churn_data and churn_data[1] > 0:
+            churned = churn_data[0] or 0
+            total_subs = churn_data[1]
+            churn_rate = (churned * 100 / total_subs) if total_subs > 0 else 0
+
+            text += f"<b>📉 Churn Rate (отток):</b>\n"
+            text += f"• Churn Rate: {churn_rate:.1f}%\n"
+            text += f"• Отказались: {churned} из {total_subs}\n"
+            text += f"• Retention: {100 - churn_rate:.1f}%\n\n"
+
+        # 4. ARPU (Average Revenue Per User)
+        cursor = await conn.execute("SELECT COUNT(*) FROM users")
+        total_users = (await cursor.fetchone())[0]
+
+        if total_users > 0 and ltv_data:
+            arpu = total_revenue_rub / total_users
+
+            text += f"<b>💵 ARPU (Average Revenue Per User):</b>\n"
+            text += f"• ARPU: {arpu:.0f}₽\n"
+            text += f"• На {total_users} пользователей\n\n"
+
+        # 5. Прогноз дохода
+        cursor = await conn.execute("""
+            SELECT SUM(amount_kopecks) / 100.0
+            FROM payments
+            WHERE status IN ('completed', 'confirmed')
+            AND created_at > datetime('now', '-30 days')
+        """)
+        last_month_revenue = (await cursor.fetchone())[0] or 0
+
+        if mrr_data and mrr_data[0] > 0:
+            projected_revenue = last_month_revenue * 1.0  # Консервативный прогноз
+            text += f"<b>📈 Прогноз на следующий месяц:</b>\n"
+            text += f"• Прогноз: ~{projected_revenue:.0f}₽\n"
+            text += f"• На основе: {last_month_revenue:.0f}₽ за последний месяц\n"
+
+    except Exception as e:
+        logger.error(f"Error getting financial analytics: {e}")
+        text += "❌ Ошибка при загрузке данных"
+
+    kb = InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("🔄 Обновить", callback_data="admin:financial_analytics"),
+            InlineKeyboardButton("📊 Подробнее", callback_data="admin:payment_stats")
+        ],
+        [InlineKeyboardButton("⬅️ Назад", callback_data="admin:stats_menu")]
+    ])
+
+    await query.edit_message_text(text, reply_markup=kb, parse_mode=ParseMode.HTML)
+
+
+@admin_only
 async def system_monitor(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Мониторинг системы."""
     query = update.callback_query
@@ -2079,6 +2207,213 @@ async def system_monitor(update: Update, context: ContextTypes.DEFAULT_TYPE):
             InlineKeyboardButton("📋 Логи", callback_data="admin:view_logs")
         ],
         [InlineKeyboardButton("⬅️ Назад", callback_data="admin:main")]
+    ])
+
+    await query.edit_message_text(text, reply_markup=kb, parse_mode=ParseMode.HTML)
+
+
+@admin_only
+async def content_analysis(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Анализ контента - статистика по вопросам."""
+    query = update.callback_query
+    await query.answer("Анализирую контент...")
+
+    from core import db
+
+    text = "📚 <b>Анализ контента</b>\n\n"
+
+    try:
+        conn = await db.get_db()
+
+        # Общая статистика по попыткам
+        cursor = await conn.execute("""
+            SELECT
+                COUNT(*) as total_attempts,
+                AVG(score) as avg_score,
+                COUNT(DISTINCT user_id) as users_attempted
+            FROM attempts
+        """)
+        general = await cursor.fetchone()
+
+        if general and general[0] > 0:
+            total_attempts, avg_score, users = general
+            text += f"<b>📊 Общая статистика:</b>\n"
+            text += f"• Всего попыток: {total_attempts}\n"
+            text += f"• Средний балл: {avg_score:.1f}\n"
+            text += f"• Пользователей: {users}\n\n"
+
+        # Статистика по модулям
+        cursor = await conn.execute("""
+            SELECT
+                module_type,
+                COUNT(*) as attempts,
+                AVG(score) as avg_score,
+                MIN(score) as min_score,
+                MAX(score) as max_score
+            FROM attempts
+            GROUP BY module_type
+            ORDER BY attempts DESC
+        """)
+        modules = await cursor.fetchall()
+
+        if modules:
+            text += "<b>📚 По модулям:</b>\n"
+            module_names = {
+                'task24': '📝 Задание 24',
+                'test_part': '📚 Тестовая часть',
+                'task19': '🎯 Задание 19',
+                'task20': '💭 Задание 20',
+                'task25': '📋 Задание 25'
+            }
+
+            for module, attempts, avg, min_s, max_s in modules:
+                name = module_names.get(module, module)
+                text += f"\n{name}:\n"
+                text += f"  • Попыток: {attempts}\n"
+                text += f"  • Ср. балл: {avg:.1f}\n"
+                text += f"  • Мин/Макс: {min_s:.0f}/{max_s:.0f}\n"
+
+        text += "\n\n💡 <i>Для детального анализа используйте кнопки ниже</i>"
+
+    except Exception as e:
+        logger.error(f"Error in content analysis: {e}")
+        text += "❌ Ошибка при анализе"
+
+    kb = InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("🔴 Сложные", callback_data="admin:content_difficult"),
+            InlineKeyboardButton("🟢 Легкие", callback_data="admin:content_easy")
+        ],
+        [
+            InlineKeyboardButton("📊 Подробнее", callback_data="admin:content_detailed")
+        ],
+        [InlineKeyboardButton("⬅️ Назад", callback_data="admin:main")]
+    ])
+
+    await query.edit_message_text(text, reply_markup=kb, parse_mode=ParseMode.HTML)
+
+
+@admin_only
+async def content_difficult(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Анализ сложных вопросов."""
+    query = update.callback_query
+    await query.answer("Ищу сложные вопросы...")
+
+    from core import db
+
+    text = "🔴 <b>Сложные вопросы</b>\n\n"
+    text += "Вопросы с самым низким средним баллом:\n\n"
+
+    try:
+        conn = await db.get_db()
+
+        # Ищем вопросы с низким средним баллом
+        # Примечание: это работает если question_id записывается в таблицу attempts
+        cursor = await conn.execute("""
+            SELECT
+                module_type,
+                COUNT(*) as attempts,
+                AVG(score) as avg_score
+            FROM attempts
+            GROUP BY module_type
+            HAVING COUNT(*) >= 5
+            ORDER BY avg_score ASC
+            LIMIT 10
+        """)
+
+        difficult = await cursor.fetchall()
+
+        if difficult:
+            module_names = {
+                'task24': '📝 Задание 24',
+                'test_part': '📚 Тестовая часть',
+                'task19': '🎯 Задание 19',
+                'task20': '💭 Задание 20',
+                'task25': '📋 Задание 25'
+            }
+
+            for module, attempts, avg_score in difficult:
+                name = module_names.get(module, module)
+                difficulty_icon = "🔴" if avg_score < 50 else "🟡"
+                text += f"{difficulty_icon} {name}\n"
+                text += f"   Попыток: {attempts} | Балл: {avg_score:.1f}\n\n"
+
+            text += "\n💡 Рекомендация: Рассмотрите возможность упрощения этих заданий"
+        else:
+            text += "Данных недостаточно для анализа"
+
+    except Exception as e:
+        logger.error(f"Error analyzing difficult content: {e}")
+        text += "❌ Ошибка анализа"
+
+    kb = InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("🟢 Легкие", callback_data="admin:content_easy"),
+            InlineKeyboardButton("🔄 Обновить", callback_data="admin:content_difficult")
+        ],
+        [InlineKeyboardButton("⬅️ Назад", callback_data="admin:content_analysis")]
+    ])
+
+    await query.edit_message_text(text, reply_markup=kb, parse_mode=ParseMode.HTML)
+
+
+@admin_only
+async def content_easy(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Анализ легких вопросов."""
+    query = update.callback_query
+    await query.answer("Ищу легкие вопросы...")
+
+    from core import db
+
+    text = "🟢 <b>Легкие вопросы</b>\n\n"
+    text += "Вопросы с самым высоким средним баллом:\n\n"
+
+    try:
+        conn = await db.get_db()
+
+        cursor = await conn.execute("""
+            SELECT
+                module_type,
+                COUNT(*) as attempts,
+                AVG(score) as avg_score
+            FROM attempts
+            GROUP BY module_type
+            HAVING COUNT(*) >= 5
+            ORDER BY avg_score DESC
+            LIMIT 10
+        """)
+
+        easy = await cursor.fetchall()
+
+        if easy:
+            module_names = {
+                'task24': '📝 Задание 24',
+                'test_part': '📚 Тестовая часть',
+                'task19': '🎯 Задание 19',
+                'task20': '💭 Задание 20',
+                'task25': '📋 Задание 25'
+            }
+
+            for module, attempts, avg_score in easy:
+                name = module_names.get(module, module)
+                difficulty_icon = "🟢" if avg_score > 80 else "🟡"
+                text += f"{difficulty_icon} {name}\n"
+                text += f"   Попыток: {attempts} | Балл: {avg_score:.1f}\n\n"
+
+            text += "\n💡 Эти задания хорошо усваиваются пользователями"
+        else:
+            text += "Данных недостаточно для анализа"
+
+    except Exception as e:
+        logger.error(f"Error analyzing easy content: {e}")
+        text += "❌ Ошибка анализа"
+
+    kb = InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("🔴 Сложные", callback_data="admin:content_difficult"),
+            InlineKeyboardButton("🔄 Обновить", callback_data="admin:content_easy")
+        ],
+        [InlineKeyboardButton("⬅️ Назад", callback_data="admin:content_analysis")]
     ])
 
     await query.edit_message_text(text, reply_markup=kb, parse_mode=ParseMode.HTML)
@@ -3713,11 +4048,15 @@ async def promo_codes_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     kb = InlineKeyboardMarkup([
         [
             InlineKeyboardButton("➕ Создать", callback_data="admin:promo_create"),
-            InlineKeyboardButton("📋 Все промокоды", callback_data="admin:promo_list")
+            InlineKeyboardButton("📦 Массово", callback_data="admin:promo_bulk_create")
         ],
         [
-            InlineKeyboardButton("📊 Статистика", callback_data="admin:promo_stats"),
-            InlineKeyboardButton("🗑️ Удалить", callback_data="admin:promo_delete")
+            InlineKeyboardButton("📋 Все промокоды", callback_data="admin:promo_list"),
+            InlineKeyboardButton("📊 Статистика", callback_data="admin:promo_stats")
+        ],
+        [
+            InlineKeyboardButton("🔒 Деактивировать", callback_data="admin:promo_deactivate"),
+            InlineKeyboardButton("📤 Экспорт CSV", callback_data="admin:promo_export")
         ],
         [InlineKeyboardButton("⬅️ Назад", callback_data="admin:settings_prices")]
     ])
@@ -3994,6 +4333,270 @@ async def promo_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     await query.edit_message_text(text, reply_markup=kb, parse_mode=ParseMode.HTML)
 
+
+@admin_only
+async def promo_bulk_create_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Начало массового создания промокодов."""
+    query = update.callback_query
+    await query.answer()
+
+    text = (
+        "📦 <b>Массовое создание промокодов</b>\n\n"
+        "Отправьте данные в формате:\n"
+        "<code>количество скидка тип [лимит]</code>\n\n"
+        "Примеры:\n"
+        "• <code>10 20 percent</code> - 10 кодов со скидкой 20%\n"
+        "• <code>5 500 fixed 1</code> - 5 кодов по 500₽, лимит 1 использование\n"
+        "• <code>100 15 percent 5</code> - 100 кодов 15%, лимит 5 использований\n\n"
+        "Коды будут сгенерированы автоматически."
+    )
+
+    await query.edit_message_text(
+        text,
+        reply_markup=InlineKeyboardMarkup([[
+            InlineKeyboardButton("❌ Отмена", callback_data="admin:promo_codes")
+        ]]),
+        parse_mode=ParseMode.HTML
+    )
+
+    return 'PROMO_BULK_INPUT'
+
+
+@admin_only
+async def promo_bulk_create_process(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработка массового создания промокодов."""
+    from core import db
+    import random
+    import string
+
+    message = update.message
+    parts = message.text.split()
+
+    if len(parts) < 3:
+        await message.reply_text(
+            "❌ Неверный формат. Используйте:\n"
+            "<code>количество скидка тип [лимит]</code>",
+            parse_mode=ParseMode.HTML
+        )
+        return 'PROMO_BULK_INPUT'
+
+    try:
+        count = int(parts[0])
+        discount = int(parts[1])
+        promo_type = parts[2]
+        limit = int(parts[3]) if len(parts) > 3 else None
+
+        if count > 100:
+            await message.reply_text("❌ Максимум 100 промокодов за раз")
+            return 'PROMO_BULK_INPUT'
+
+        if promo_type not in ['percent', 'fixed']:
+            await message.reply_text("❌ Тип должен быть percent или fixed")
+            return 'PROMO_BULK_INPUT'
+
+        # Генерация промокодов
+        conn = await db.get_db()
+        created_codes = []
+
+        for _ in range(count):
+            # Генерация уникального кода
+            while True:
+                code = ''.join(random.choices(string.ascii_uppercase + string.digits, k=8))
+                cursor = await conn.execute(
+                    "SELECT 1 FROM promo_codes WHERE code = ?", (code,)
+                )
+                if not await cursor.fetchone():
+                    break
+
+            # Создание промокода
+            await conn.execute("""
+                INSERT INTO promo_codes
+                (code, discount_type, discount_value, usage_limit, is_active)
+                VALUES (?, ?, ?, ?, 1)
+            """, (code, promo_type, discount, limit))
+
+            created_codes.append(code)
+
+        await conn.commit()
+
+        # Отправка результата
+        text = f"✅ Создано {count} промокодов!\n\n"
+        text += f"Тип: {promo_type}\n"
+        text += f"Скидка: {discount}{'%' if promo_type == 'percent' else '₽'}\n"
+        if limit:
+            text += f"Лимит: {limit} исп.\n\n"
+
+        text += "<b>Коды:</b>\n"
+        for code in created_codes[:10]:
+            text += f"<code>{code}</code>\n"
+
+        if len(created_codes) > 10:
+            text += f"\n...и еще {len(created_codes) - 10} кодов"
+
+        await message.reply_text(
+            text,
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("📋 Экспорт", callback_data="admin:promo_export_recent"),
+                InlineKeyboardButton("◀️ Назад", callback_data="admin:promo_codes")
+            ]]),
+            parse_mode=ParseMode.HTML
+        )
+
+        return ConversationHandler.END
+
+    except ValueError:
+        await message.reply_text("❌ Ошибка в формате. Проверьте числа.")
+        return 'PROMO_BULK_INPUT'
+    except Exception as e:
+        logger.error(f"Error bulk creating promos: {e}")
+        await message.reply_text(f"❌ Ошибка: {e}")
+        return ConversationHandler.END
+
+
+@admin_only
+async def promo_deactivate(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Деактивация промокода."""
+    query = update.callback_query
+    await query.answer()
+
+    text = (
+        "🔒 <b>Деактивация промокода</b>\n\n"
+        "Отправьте код промокода для деактивации:"
+    )
+
+    await query.edit_message_text(
+        text,
+        reply_markup=InlineKeyboardMarkup([[
+            InlineKeyboardButton("❌ Отмена", callback_data="admin:promo_codes")
+        ]]),
+        parse_mode=ParseMode.HTML
+    )
+
+    return 'PROMO_DEACTIVATE_INPUT'
+
+
+@admin_only
+async def promo_deactivate_process(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработка деактивации промокода."""
+    from core import db
+
+    message = update.message
+    code = message.text.strip().upper()
+
+    try:
+        conn = await db.get_db()
+
+        # Проверяем существование
+        cursor = await conn.execute(
+            "SELECT is_active FROM promo_codes WHERE code = ?", (code,)
+        )
+        promo = await cursor.fetchone()
+
+        if not promo:
+            await message.reply_text(
+                f"❌ Промокод <code>{code}</code> не найден",
+                parse_mode=ParseMode.HTML
+            )
+            return ConversationHandler.END
+
+        if not promo[0]:
+            await message.reply_text(
+                f"ℹ️ Промокод <code>{code}</code> уже деактивирован",
+                parse_mode=ParseMode.HTML
+            )
+            return ConversationHandler.END
+
+        # Деактивация
+        await conn.execute(
+            "UPDATE promo_codes SET is_active = 0 WHERE code = ?", (code,)
+        )
+        await conn.commit()
+
+        await message.reply_text(
+            f"✅ Промокод <code>{code}</code> деактивирован",
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("◀️ Назад", callback_data="admin:promo_codes")
+            ]]),
+            parse_mode=ParseMode.HTML
+        )
+
+        return ConversationHandler.END
+
+    except Exception as e:
+        logger.error(f"Error deactivating promo: {e}")
+        await message.reply_text(f"❌ Ошибка: {e}")
+        return ConversationHandler.END
+
+
+@admin_only
+async def promo_export_csv(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Экспорт промокодов в CSV."""
+    query = update.callback_query
+    await query.answer("Экспортирую промокоды...")
+
+    from core import db
+    import io
+    import csv
+
+    try:
+        conn = await db.get_db()
+
+        cursor = await conn.execute("""
+            SELECT code, discount_type, discount_value, usage_limit,
+                   used_count, is_active, created_at
+            FROM promo_codes
+            ORDER BY created_at DESC
+        """)
+
+        promos = await cursor.fetchall()
+
+        if not promos:
+            await query.edit_message_text(
+                "❌ Нет промокодов для экспорта",
+                reply_markup=InlineKeyboardMarkup([[
+                    InlineKeyboardButton("◀️ Назад", callback_data="admin:promo_codes")
+                ]])
+            )
+            return
+
+        # Создание CSV
+        output = io.StringIO()
+        writer = csv.writer(output)
+
+        # Заголовки
+        writer.writerow(['Код', 'Тип', 'Скидка', 'Лимит', 'Использовано', 'Активен', 'Создан'])
+
+        # Данные
+        for promo in promos:
+            writer.writerow(promo)
+
+        output.seek(0)
+
+        # Отправка файла
+        await context.bot.send_document(
+            chat_id=query.message.chat_id,
+            document=output.getvalue().encode('utf-8'),
+            filename=f"promo_codes_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+            caption="📋 Экспорт промокодов"
+        )
+
+        await query.edit_message_text(
+            "✅ Промокоды экспортированы!",
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("◀️ Назад", callback_data="admin:promo_codes")
+            ]])
+        )
+
+    except Exception as e:
+        logger.error(f"Error exporting promos: {e}")
+        await query.edit_message_text(
+            f"❌ Ошибка экспорта: {e}",
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("◀️ Назад", callback_data="admin:promo_codes")
+            ]])
+        )
+
+
 @admin_only
 async def sales_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Статистика продаж."""
@@ -4182,12 +4785,38 @@ def register_price_promo_handlers(app):
     )
     app.add_handler(promo_conv)
     
+    # ConversationHandler для массового создания промокодов
+    promo_bulk_conv = ConversationHandler(
+        entry_points=[CallbackQueryHandler(promo_bulk_create_start, pattern="^admin:promo_bulk_create$")],
+        states={
+            'PROMO_BULK_INPUT': [MessageHandler(filters.TEXT & ~filters.COMMAND, promo_bulk_create_process)]
+        },
+        fallbacks=[
+            CommandHandler("cancel", lambda u, c: ConversationHandler.END),
+            CallbackQueryHandler(promo_codes_menu, pattern="^admin:promo_codes$")
+        ]
+    )
+    app.add_handler(promo_bulk_conv)
+
+    # ConversationHandler для деактивации промокодов
+    promo_deact_conv = ConversationHandler(
+        entry_points=[CallbackQueryHandler(promo_deactivate, pattern="^admin:promo_deactivate$")],
+        states={
+            'PROMO_DEACTIVATE_INPUT': [MessageHandler(filters.TEXT & ~filters.COMMAND, promo_deactivate_process)]
+        },
+        fallbacks=[
+            CommandHandler("cancel", lambda u, c: ConversationHandler.END),
+            CallbackQueryHandler(promo_codes_menu, pattern="^admin:promo_codes$")
+        ]
+    )
+    app.add_handler(promo_deact_conv)
+
     # Обычные обработчики
     app.add_handler(CallbackQueryHandler(edit_prices, pattern="^admin:edit_prices$"))
     app.add_handler(CallbackQueryHandler(promo_codes_menu, pattern="^admin:promo_codes$"))
     app.add_handler(CallbackQueryHandler(promo_list, pattern="^admin:promo_list$"))
     app.add_handler(CallbackQueryHandler(promo_stats, pattern="^admin:promo_stats$"))
-    
+
     logger.info("Price and promo handlers registered")
 
 def register_admin_handlers(app):
@@ -4336,6 +4965,7 @@ def register_admin_handlers(app):
     app.add_handler(CallbackQueryHandler(user_stats, pattern="^admin:user_stats:"))
     app.add_handler(CallbackQueryHandler(retention_stats, pattern="^admin:retention_stats$"))
     app.add_handler(CallbackQueryHandler(conversion_stats, pattern="^admin:conversion_stats$"))
+    app.add_handler(CallbackQueryHandler(financial_analytics, pattern="^admin:financial_analytics$"))
 
     # Управление пользователями (новые функции)
     app.add_handler(CallbackQueryHandler(message_user_start, pattern="^admin:message_user:"))
@@ -4346,6 +4976,16 @@ def register_admin_handlers(app):
     # Мониторинг и логи
     app.add_handler(CallbackQueryHandler(system_monitor, pattern="^admin:system_monitor$"))
     app.add_handler(CallbackQueryHandler(view_logs, pattern="^admin:view_logs$"))
+
+    # Анализ контента
+    app.add_handler(CallbackQueryHandler(content_analysis, pattern="^admin:content_analysis$"))
+    app.add_handler(CallbackQueryHandler(content_difficult, pattern="^admin:content_difficult$"))
+    app.add_handler(CallbackQueryHandler(content_easy, pattern="^admin:content_easy$"))
+
+    # Промокоды расширенные
+    app.add_handler(CallbackQueryHandler(promo_bulk_create_start, pattern="^admin:promo_bulk_create$"))
+    app.add_handler(CallbackQueryHandler(promo_deactivate, pattern="^admin:promo_deactivate$"))
+    app.add_handler(CallbackQueryHandler(promo_export_csv, pattern="^admin:promo_export$"))
 
     # Пустой обработчик
     app.add_handler(CallbackQueryHandler(noop, pattern="^admin:noop$"))
