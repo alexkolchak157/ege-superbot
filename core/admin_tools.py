@@ -837,8 +837,11 @@ async def cmd_debug_data(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def broadcast_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Запуск рассылки."""
     query = update.callback_query
-    await query.answer("Начинаю рассылку...")
-    
+    try:
+        await query.answer("Начинаю рассылку...")
+    except Exception as e:
+        logger.warning(f"Failed to answer callback query: {e}")
+
     # Получаем всех пользователей
     from core import db
     conn = await db.get_db()
@@ -997,8 +1000,11 @@ async def handle_users(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def users_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Показ списка всех пользователей."""
     query = update.callback_query
-    await query.answer("Загрузка...")
-    
+    try:
+        await query.answer("Загрузка...")
+    except Exception as e:
+        logger.warning(f"Failed to answer callback query: {e}")
+
     # Получаем страницу
     page = context.user_data.get('users_page', 0)
     per_page = 10
@@ -1056,8 +1062,11 @@ async def users_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def users_premium(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Показ пользователей с подпиской."""
     query = update.callback_query
-    await query.answer("Загрузка...")
-    
+    try:
+        await query.answer("Загрузка...")
+    except Exception as e:
+        logger.warning(f"Failed to answer callback query: {e}")
+
     from core import db
     from payment.config import SUBSCRIPTION_MODE
     
@@ -1383,9 +1392,12 @@ async def grant_subscription(update: Update, context: ContextTypes.DEFAULT_TYPE)
     """Выдача подписки пользователю."""
     query = update.callback_query
     user_id = int(query.data.split(':')[-1])
-    
-    await query.answer("Выдаю подписку...")
-    
+
+    try:
+        await query.answer("Выдаю подписку...")
+    except Exception as e:
+        logger.warning(f"Failed to answer callback query: {e}")
+
     from payment.subscription_manager import SubscriptionManager
     subscription_manager = SubscriptionManager()
     
@@ -1424,9 +1436,12 @@ async def revoke_subscription(update: Update, context: ContextTypes.DEFAULT_TYPE
     """Отзыв подписки у пользователя."""
     query = update.callback_query
     user_id = int(query.data.split(':')[-1])
-    
-    await query.answer("Отзываю подписку...")
-    
+
+    try:
+        await query.answer("Отзываю подписку...")
+    except Exception as e:
+        logger.warning(f"Failed to answer callback query: {e}")
+
     from core import db
     conn = await db.get_db()
     
@@ -1482,7 +1497,10 @@ async def ban_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     user_id = int(query.data.split(':')[-1])
 
-    await query.answer("Баню пользователя...")
+    try:
+        await query.answer("Баню пользователя...")
+    except Exception as e:
+        logger.warning(f"Failed to answer callback query: {e}")
 
     from core import db
 
@@ -1540,7 +1558,10 @@ async def unban_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     user_id = int(query.data.split(':')[-1])
 
-    await query.answer("Разблокирую пользователя...")
+    try:
+        await query.answer("Разблокирую пользователя...")
+    except Exception as e:
+        logger.warning(f"Failed to answer callback query: {e}")
 
     from core import db
 
@@ -1585,7 +1606,10 @@ async def reset_user_progress_admin(update: Update, context: ContextTypes.DEFAUL
     query = update.callback_query
     user_id = int(query.data.split(':')[-1])
 
-    await query.answer("Сбрасываю прогресс...")
+    try:
+        await query.answer("Сбрасываю прогресс...")
+    except Exception as e:
+        logger.warning(f"Failed to answer callback query: {e}")
 
     from core import db
 
@@ -1698,8 +1722,11 @@ async def set_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def global_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Показ глобальной статистики."""
     query = update.callback_query
-    await query.answer("Загрузка статистики...")
-    
+    try:
+        await query.answer("Загрузка статистики...")
+    except Exception as e:
+        logger.warning(f"Failed to answer callback query: {e}")
+
     stats = await AdminStats.get_global_stats(context.application)
     
     text = (
@@ -1740,8 +1767,11 @@ async def global_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def activity_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Показ статистики активности."""
     query = update.callback_query
-    await query.answer("Загрузка активности...")
-    
+    try:
+        await query.answer("Загрузка активности...")
+    except Exception as e:
+        logger.warning(f"Failed to answer callback query: {e}")
+
     from core import db
     
     text = "📈 <b>Статистика активности</b>\n\n"
@@ -1787,8 +1817,11 @@ async def activity_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def module_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Статистика по модулям."""
     query = update.callback_query
-    await query.answer("Загрузка статистики модулей...")
-    
+    try:
+        await query.answer("Загрузка статистики модулей...")
+    except Exception as e:
+        logger.warning(f"Failed to answer callback query: {e}")
+
     from core import db
     
     text = "📚 <b>Статистика по модулям</b>\n\n"
@@ -1844,8 +1877,11 @@ async def module_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def top_users(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Показ топа пользователей."""
     query = update.callback_query
-    await query.answer("Загрузка топа пользователей...")
-    
+    try:
+        await query.answer("Загрузка топа пользователей...")
+    except Exception as e:
+        logger.warning(f"Failed to answer callback query: {e}")
+
     from core import db
     
     text = "🏆 <b>Топ активных пользователей</b>\n\n"
@@ -1905,7 +1941,10 @@ async def top_users(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def retention_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Статистика удержания пользователей (Retention)."""
     query = update.callback_query
-    await query.answer("Загрузка retention...")
+    try:
+        await query.answer("Загрузка retention...")
+    except Exception as e:
+        logger.warning(f"Failed to answer callback query: {e}")
 
     from core import db
     from datetime import datetime, timedelta
@@ -1985,7 +2024,10 @@ async def retention_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def conversion_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Воронка конверсии (регистрация → подписка)."""
     query = update.callback_query
-    await query.answer("Загрузка воронки конверсии...")
+    try:
+        await query.answer("Загрузка воронки конверсии...")
+    except Exception as e:
+        logger.warning(f"Failed to answer callback query: {e}")
 
     from core import db
     from payment.config import SUBSCRIPTION_MODE
@@ -2067,7 +2109,10 @@ async def conversion_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def financial_analytics(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Финансовая аналитика: LTV, MRR, Churn, ARPU."""
     query = update.callback_query
-    await query.answer("Загрузка финансовой аналитики...")
+    try:
+        await query.answer("Загрузка финансовой аналитики...")
+    except Exception as e:
+        logger.warning(f"Failed to answer callback query: {e}")
 
     from core import db
     from datetime import datetime, timedelta
@@ -2191,7 +2236,10 @@ async def financial_analytics(update: Update, context: ContextTypes.DEFAULT_TYPE
 async def system_monitor(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Мониторинг системы."""
     query = update.callback_query
-    await query.answer("Загрузка мониторинга...")
+    try:
+        await query.answer("Загрузка мониторинга...")
+    except Exception as e:
+        logger.warning(f"Failed to answer callback query: {e}")
 
     import sys
     from datetime import datetime
@@ -2266,7 +2314,10 @@ async def system_monitor(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def content_analysis(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Анализ контента - статистика по вопросам."""
     query = update.callback_query
-    await query.answer("Анализирую контент...")
+    try:
+        await query.answer("Анализирую контент...")
+    except Exception as e:
+        logger.warning(f"Failed to answer callback query: {e}")
 
     from core import db
 
@@ -2347,7 +2398,10 @@ async def content_analysis(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def content_difficult(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Анализ сложных вопросов."""
     query = update.callback_query
-    await query.answer("Ищу сложные вопросы...")
+    try:
+        await query.answer("Ищу сложные вопросы...")
+    except Exception as e:
+        logger.warning(f"Failed to answer callback query: {e}")
 
     from core import db
 
@@ -2411,7 +2465,10 @@ async def content_difficult(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def content_easy(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Анализ легких вопросов."""
     query = update.callback_query
-    await query.answer("Ищу легкие вопросы...")
+    try:
+        await query.answer("Ищу легкие вопросы...")
+    except Exception as e:
+        logger.warning(f"Failed to answer callback query: {e}")
 
     from core import db
 
@@ -2473,7 +2530,10 @@ async def content_easy(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def view_logs(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Просмотр последних логов."""
     query = update.callback_query
-    await query.answer("Загрузка логов...")
+    try:
+        await query.answer("Загрузка логов...")
+    except Exception as e:
+        logger.warning(f"Failed to answer callback query: {e}")
 
     text = "📋 <b>Последние логи</b>\n\n"
 
@@ -2513,7 +2573,10 @@ async def view_logs(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def users_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Общая статистика по пользователям."""
     query = update.callback_query
-    await query.answer("Загрузка статистики пользователей...")
+    try:
+        await query.answer("Загрузка статистики пользователей...")
+    except Exception as e:
+        logger.warning(f"Failed to answer callback query: {e}")
 
     from core import db
     from payment.config import SUBSCRIPTION_MODE
@@ -2613,7 +2676,10 @@ async def users_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def user_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Детальная статистика конкретного пользователя."""
     query = update.callback_query
-    await query.answer("Загрузка статистики пользователя...")
+    try:
+        await query.answer("Загрузка статистики пользователя...")
+    except Exception as e:
+        logger.warning(f"Failed to answer callback query: {e}")
 
     # Извлекаем user_id из callback_data
     callback_data = query.data
@@ -2774,8 +2840,11 @@ async def handle_export(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def export_stats_csv(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Экспорт статистики в CSV."""
     query = update.callback_query
-    await query.answer("Генерирую CSV файл...")
-    
+    try:
+        await query.answer("Генерирую CSV файл...")
+    except Exception as e:
+        logger.warning(f"Failed to answer callback query: {e}")
+
     from core import db
     
     try:
@@ -2838,8 +2907,11 @@ async def export_stats_csv(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def export_stats_excel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Экспорт статистики в Excel с несколькими листами."""
     query = update.callback_query
-    await query.answer("Генерирую Excel файл...")
-    
+    try:
+        await query.answer("Генерирую Excel файл...")
+    except Exception as e:
+        logger.warning(f"Failed to answer callback query: {e}")
+
     from core import db
     
     try:
@@ -2934,8 +3006,11 @@ async def export_stats_excel(update: Update, context: ContextTypes.DEFAULT_TYPE)
 async def backup_full(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Создание полного бэкапа БД."""
     query = update.callback_query
-    await query.answer("Создаю бэкап...")
-    
+    try:
+        await query.answer("Создаю бэкап...")
+    except Exception as e:
+        logger.warning(f"Failed to answer callback query: {e}")
+
     try:
         # Путь к БД
         db_path = 'bot_database.db'
@@ -2973,8 +3048,11 @@ async def backup_full(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def generate_charts(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Генерация графиков статистики."""
     query = update.callback_query
-    await query.answer("Генерирую графики...")
-    
+    try:
+        await query.answer("Генерирую графики...")
+    except Exception as e:
+        logger.warning(f"Failed to answer callback query: {e}")
+
     from core import db
     
     try:
@@ -3313,8 +3391,11 @@ async def toggle_notification(update: Update, context: ContextTypes.DEFAULT_TYPE
 async def test_notification(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Отправка тестового уведомления."""
     query = update.callback_query
-    await query.answer("Отправляю тестовое уведомление...")
-    
+    try:
+        await query.answer("Отправляю тестовое уведомление...")
+    except Exception as e:
+        logger.warning(f"Failed to answer callback query: {e}")
+
     test_message = """
 🔔 <b>Тестовое уведомление</b>
 
@@ -3355,8 +3436,11 @@ async def test_notification(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def export_payments_csv(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Экспорт платежей в CSV."""
     query = update.callback_query
-    await query.answer("Генерирую файл...")
-    
+    try:
+        await query.answer("Генерирую файл...")
+    except Exception as e:
+        logger.warning(f"Failed to answer callback query: {e}")
+
     from core import db
     import csv
     import io
@@ -3424,9 +3508,12 @@ async def apply_filter(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Применение фильтра."""
     query = update.callback_query
     filter_type = query.data.split(':')[-1]
-    
-    await query.answer("Применяю фильтр...")
-    
+
+    try:
+        await query.answer("Применяю фильтр...")
+    except Exception as e:
+        logger.warning(f"Failed to answer callback query: {e}")
+
     from core import db
     conn = await db.get_db()
     
@@ -3611,8 +3698,11 @@ async def noop(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def export_users_csv(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Экспорт списка пользователей в CSV."""
     query = update.callback_query
-    await query.answer("Генерирую CSV файл...")
-    
+    try:
+        await query.answer("Генерирую CSV файл...")
+    except Exception as e:
+        logger.warning(f"Failed to answer callback query: {e}")
+
     from core import db
     
     try:
@@ -3667,8 +3757,11 @@ async def export_users_csv(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def export_users_excel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Экспорт пользователей в Excel."""
     query = update.callback_query
-    await query.answer("Генерирую Excel файл...")
-    
+    try:
+        await query.answer("Генерирую Excel файл...")
+    except Exception as e:
+        logger.warning(f"Failed to answer callback query: {e}")
+
     from core import db
     
     try:
@@ -4582,7 +4675,10 @@ async def promo_deactivate_process(update: Update, context: ContextTypes.DEFAULT
 async def promo_export_csv(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Экспорт промокодов в CSV."""
     query = update.callback_query
-    await query.answer("Экспортирую промокоды...")
+    try:
+        await query.answer("Экспортирую промокоды...")
+    except Exception as e:
+        logger.warning(f"Failed to answer callback query: {e}")
 
     from core import db
     import io
@@ -4651,8 +4747,11 @@ async def promo_export_csv(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def sales_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Статистика продаж."""
     query = update.callback_query
-    await query.answer("Загрузка статистики...")
-    
+    try:
+        await query.answer("Загрузка статистики...")
+    except Exception as e:
+        logger.warning(f"Failed to answer callback query: {e}")
+
     from core import db
     
     try:
