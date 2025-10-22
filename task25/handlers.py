@@ -35,7 +35,6 @@ from core.ui_helpers import (
 )
 from core.error_handler import safe_handler, auto_answer_callback
 from core.state_validator import validate_state_transition, state_validator
-from telegram.ext import ConversationHandler
 from core.migration import ensure_module_migration
 from core.utils import safe_menu_transition
 
@@ -200,10 +199,10 @@ async def cmd_t25status(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def cmd_debug_data(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Команда для проверки загрузки данных (только для админов)."""
     global task25_data
-    
+
     user_id = update.effective_user.id
-    # Проверка на админа (замените на ваш ID)
-    if user_id not in [YOUR_ADMIN_ID]:
+    # Проверка на админа
+    if not admin_manager.is_admin(user_id):
         await update.message.reply_text("❌ Недостаточно прав")
         return
     
@@ -275,7 +274,6 @@ async def cmd_task25(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Команда /task25 - вход в задание 25."""
     
     # Автоматическая миграция данных при необходимости
-    from core.migration import ensure_module_migration
     ensure_module_migration(context, 'task25', task25_data)
     
     text = (
@@ -1840,7 +1838,6 @@ async def return_to_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.answer()
     
     # Автоматическая миграция при возврате
-    from core.migration import ensure_module_migration
     ensure_module_migration(context, 'task25', task25_data)
     
     results = context.user_data.get('task25_results', [])
@@ -1874,42 +1871,7 @@ async def cmd_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
             InlineKeyboardButton("📝 К заданиям", callback_data="t25_menu")
         ]])
     )
-    
-    return states.CHOOSING_MODE
 
-
-@safe_handler()
-async def return_to_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Возврат в меню task25."""
-    query = update.callback_query
-    
-    # Автоматическая миграция при возврате
-    from core.migration import ensure_module_migration
-    ensure_module_migration(context, 'task25', task25_data)
-    
-    results = context.user_data.get('task25_results', [])
-    user_stats = {
-        'total_attempts': len(results),
-        'average_score': sum(r['score'] for r in results) / len(results) if results else 0,
-        'streak': context.user_data.get('correct_streak', 0),
-        'weak_topics_count': 0,
-        'progress_percent': int(len(set(r.get('topic_id') for r in results)) / 100 * 100) if results else 0
-    }
-
-    greeting = get_personalized_greeting(user_stats)
-    text = greeting + MessageFormatter.format_welcome_message(
-        "задание 25",
-        is_new_user=user_stats['total_attempts'] == 0
-    )
-    
-    kb = AdaptiveKeyboards.create_menu_keyboard(user_stats, module_code="t25")
-    
-    await query.edit_message_text(
-        text,
-        reply_markup=kb,
-        parse_mode=ParseMode.HTML
-    )
-    
     return states.CHOOSING_MODE
 
 
@@ -2756,71 +2718,6 @@ async def _save_user_stats(context: ContextTypes.DEFAULT_TYPE, topic: Dict, scor
         context.user_data['correct_streak'] = 0
     
     return result
-
-def _format_evaluation_result(result: EvaluationResult, topic: Dict) -> str:
-    """Форматирует результат проверки для отображения пользователю."""
-    
-    # Заголовок с темой
-    formatted = f"📊 <b>Результаты проверки</b>\n\n"
-    formatted += f"<b>Тема:</b> {topic.get('title', 'Не указана')}\n"
-    formatted += f"{'─' * 30}\n\n"
-    
-    # Если есть основная обратная связь от AI, используем её
-    if hasattr(result, 'feedback') and result.feedback:
-        formatted += result.feedback
-    else:
-        # Иначе форматируем вручную
-        scores = result.scores if hasattr(result, 'scores') else {}
-        
-        # К1 - Обоснование
-        k1_score = scores.get('k1', 0)
-        formatted += f"<b>К1 (Обоснование):</b> {k1_score}/2\n"
-        if k1_score == 2:
-            formatted += "✅ Развёрнутое обоснование с опорой на теорию\n"
-        elif k1_score == 1:
-            formatted += "⚠️ Обоснование есть, но недостаточно развёрнутое\n"
-        else:
-            formatted += "❌ Обоснование отсутствует или неверное\n"
-        
-        # К2 - Ответ на вопрос
-        k2_score = scores.get('k2', 0)
-        formatted += f"\n<b>К2 (Ответ на вопрос):</b> {k2_score}/1\n"
-        if k2_score == 1:
-            formatted += "✅ Дан правильный и полный ответ\n"
-        else:
-            formatted += "❌ Ответ неверный или отсутствует\n"
-        
-        # К3 - Примеры
-        k3_score = scores.get('k3', 0)
-        formatted += f"\n<b>К3 (Примеры):</b> {k3_score}/3\n"
-        if k3_score == 3:
-            formatted += "✅ Приведены три корректных развёрнутых примера\n"
-        elif k3_score > 0:
-            formatted += f"⚠️ Засчитано примеров: {k3_score}\n"
-        else:
-            formatted += "❌ Корректные примеры отсутствуют\n"
-        
-        # Итоговый балл
-        total = result.total_score if hasattr(result, 'total_score') else sum(scores.values())
-        formatted += f"\n{'─' * 30}\n"
-        formatted += f"<b>Итого:</b> {total}/6 баллов\n"
-    
-    # Добавляем эмодзи в зависимости от результата
-    total = result.total_score if hasattr(result, 'total_score') else 0
-    if total >= 5:
-        formatted += "\n🎉 Отличный результат!"
-    elif total >= 3:
-        formatted += "\n👍 Хороший результат!"
-    elif total >= 1:
-        formatted += "\n💪 Есть над чем поработать!"
-    else:
-        formatted += "\n📚 Рекомендуем изучить теорию и примеры!"
-    
-    # Показываем эталонный ответ, если результат низкий
-    if total < 4 and 'example_answers' in topic:
-        formatted += "\n\n" + _format_example_answer(topic)
-    
-    return formatted
 
 
 def _format_example_answer(topic: Dict) -> str:
