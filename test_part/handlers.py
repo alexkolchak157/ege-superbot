@@ -1,6 +1,8 @@
 import logging
 import random
-from datetime import datetime
+import json
+from datetime import datetime, date
+from io import BytesIO
 from core.state_validator import validate_state_transition, state_validator
 import aiosqlite
 import os
@@ -11,17 +13,20 @@ from telegram.constants import ParseMode
 from telegram.ext import ContextTypes, ConversationHandler
 from core.plugin_loader import build_main_menu
 from core import db, states
-from core.admin_tools import admin_manager
-from core.config import DATABASE_FILE, REQUIRED_CHANNEL
+from core.config import DATABASE_FILE
 from core.ui_helpers import (create_visual_progress, get_motivational_message,
                              get_personalized_greeting,
                              show_streak_notification, show_thinking_animation)
 from core.universal_ui import (AdaptiveKeyboards, MessageFormatter,
                                UniversalUIComponents)
-from core.error_handler import safe_handler, auto_answer_callback
-from core.utils import check_subscription, send_subscription_required
+from core.error_handler import safe_handler
+from core.menu_handlers import handle_to_main_menu
 from . import keyboards, utils
-from .loader import AVAILABLE_BLOCKS, QUESTIONS_DATA, QUESTIONS_DICT_FLAT
+from .loader import AVAILABLE_BLOCKS, QUESTIONS_DATA, get_questions_data, get_questions_list_flat, get_available_blocks
+
+try:
+except ImportError:
+    process_payment = None
 
 try:
     from .topic_data import TOPIC_NAMES
@@ -168,7 +173,6 @@ def init_data():
     """Инициализирует данные вопросов."""
     global QUESTIONS_DATA, AVAILABLE_BLOCKS, QUESTIONS_LIST
     try:
-        from .loader import get_questions_data, get_questions_list_flat, get_available_blocks
         
         QUESTIONS_DATA = get_questions_data()
         if QUESTIONS_DATA:
@@ -235,27 +239,6 @@ def check_data_loaded():
 
 # Вызовите проверку
 check_data_loaded()
-
-async def cleanup_previous_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Удаляет предыдущие сообщения бота."""
-    messages_to_delete = [
-        'thinking_message_id',      # "Ищу вопрос..."
-        'checking_message_id',      # "Проверяю ваш ответ..."
-        'question_message_id',      # Сообщение с вопросом
-        'feedback_message_id'       # Сообщение с результатом
-    ]
-    
-    for msg_key in messages_to_delete:
-        msg_id = context.user_data.pop(msg_key, None)
-        if msg_id:
-            try:
-                await update.effective_message.bot.delete_message(
-                    chat_id=update.effective_chat.id,
-                    message_id=msg_id
-                )
-            except Exception as e:
-                logger.debug(f"Failed to delete {msg_key}: {e}")
-
 
 @safe_handler()
 @validate_state_transition({states.CHOOSING_MODE, states.ANSWERING, None})
@@ -393,7 +376,6 @@ async def select_random_all(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if question_data:
         await send_question(query.message, context, question_data, "random_all")
         # Устанавливаем состояние пользователя
-        from core.state_validator import state_validator
         state_validator.set_state(query.from_user.id, states.ANSWERING)
         return states.ANSWERING
     else:
@@ -425,72 +407,6 @@ async def select_block(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return states.CHOOSING_MODE
 
 @safe_handler()
-async def show_progress_enhanced(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Показ прогресса с улучшенным UI."""
-    user_id = update.effective_user.id
-    
-    # Получаем статистику из БД
-    stats = await db.get_user_stats(user_id)
-    streaks = await db.get_user_streaks(user_id)
-    
-    if not stats:
-        greeting = get_personalized_greeting({'total_attempts': 0, 'streak': streaks.get('current_daily', 0)})
-        text = greeting + MessageFormatter.format_welcome_message(
-            "тестовую часть ЕГЭ",
-            is_new_user=True
-        )
-    else:
-        # Подсчет общей статистики
-        total_correct = sum(correct for _, correct, _ in stats)
-        total_answered = sum(total for _, _, total in stats)
-        overall_percentage = (total_correct / total_answered * 100) if total_answered > 0 else 0
-        
-        # Топ темы
-        top_results = []
-        for topic, correct, total in sorted(stats, key=lambda x: x[1]/x[2] if x[2] > 0 else 0, reverse=True)[:3]:
-            percentage = (correct / total * 100) if total > 0 else 0
-            topic_name = TOPIC_NAMES.get(topic, topic)
-            top_results.append({
-                'topic': topic_name,
-                'score': correct,
-                'max_score': total
-            })
-        
-        greeting = get_personalized_greeting({'total_attempts': total_answered, 'streak': streaks.get('current_daily', 0)})
-        text = greeting + MessageFormatter.format_progress_message({
-            'total_attempts': total_answered,
-            'average_score': overall_percentage / 100 * 3,  # Преобразуем в шкалу 0-3
-            'completed': len(stats),
-            'total': len(TOPIC_NAMES),
-            'total_time': 0,  # Можно добавить подсчет времени
-            'top_results': top_results,
-            'current_average': overall_percentage,
-            'previous_average': overall_percentage - 5  # Для демонстрации тренда
-        }, "тестовой части")
-        
-        # Добавляем стрики
-        if streaks:
-            text += f"\n\n<b>🔥 Серии:</b>\n"
-            text += UniversalUIComponents.format_statistics_tree({
-                'Дней подряд': streaks.get('current_daily', 0),
-                'Рекорд дней': streaks.get('max_daily', 0),
-                'Правильных подряд': streaks.get('current_correct', 0),
-                'Рекорд правильных': streaks.get('max_correct', 0)
-            })
-    
-    # Адаптивная клавиатура
-    kb = AdaptiveKeyboards.create_progress_keyboard(
-        has_detailed_stats=bool(stats),
-        can_export=bool(stats),
-        module_code="test"
-    )
-    
-    await update.message.reply_text(
-        text,
-        reply_markup=kb,
-        parse_mode=ParseMode.HTML
-    )
-
 @safe_handler()
 @validate_state_transition({states.ANSWERING, states.CHOOSING_NEXT_ACTION})  # Разрешаем оба состояния
 async def check_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -511,7 +427,6 @@ async def check_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
     logger.info(f"check_answer processing for user {user_id}")
     
     # ========== ПРОВЕРКА И КОРРЕКТИРОВКА СОСТОЯНИЯ ==========
-    from core.state_validator import state_validator
     current_state = state_validator.get_current_state(user_id)
     
     # Логирование состояния для отладки
@@ -596,7 +511,6 @@ async def check_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         # ========== ОБНОВЛЕНИЕ СТРИКОВ ==========
         # Обновляем дневной стрик (если еще не обновлен сегодня)
-        from datetime import date
         current_date = date.today().isoformat()
         last_activity_date = context.user_data.get('last_activity_date')
         
@@ -1199,7 +1113,6 @@ async def back_to_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
 @safe_handler()
 async def back_to_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Возврат в главное меню бота."""
-    from core.menu_handlers import handle_to_main_menu
     return await handle_to_main_menu(update, context)
     
 @safe_handler()
@@ -1494,7 +1407,6 @@ async def send_question(message, context: ContextTypes.DEFAULT_TYPE,
                     logger.error(f"Error checking subscription for promo: {e}")
     
     # ========== 6. УСТАНОВКА ПРАВИЛЬНОГО СОСТОЯНИЯ ==========
-    from core.state_validator import state_validator
     try:
         state_validator.set_state(user_id, states.ANSWERING)
         logger.debug(f"State set to ANSWERING for user {user_id}")
@@ -1527,7 +1439,6 @@ async def pay_trial_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data['return_to_test'] = True
     
     # Вызываем обработчик оплаты из payment модуля
-    from payment.handlers import process_payment
     
     # Устанавливаем параметры для пробного периода
     context.user_data['selected_plan'] = 'trial_7days'
@@ -1694,7 +1605,6 @@ async def send_exam_question(message, context: ContextTypes.DEFAULT_TYPE, index:
     
     # Если текст не найден, используем заглушку
     if not question_text:
-        import json
         logger.error(f"Empty question text for exam question {index + 1}. Question type: {question_type}. Question data: {json.dumps(question, ensure_ascii=False)[:500]}")
         question_text = f"[Ошибка загрузки вопроса {index + 1}]"
     
@@ -1775,7 +1685,6 @@ async def send_exam_question(message, context: ContextTypes.DEFAULT_TYPE, index:
                 )
                 
         # Устанавливаем состояние для ожидания ответа
-        from core.state_validator import state_validator
         state_validator.set_state(user_id, states.EXAM_MODE)
         
         logger.info(f"Exam question {index + 1} sent to user {user_id}")
@@ -2063,40 +1972,6 @@ async def handle_unknown_callback(update: Update, context: ContextTypes.DEFAULT_
 
 
 
-async def cmd_export_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Команда /export - экспорт статистики в CSV файл."""
-    user_id = update.effective_user.id
-    
-    try:
-        # Генерируем CSV
-        csv_content = await utils.export_user_stats_csv(user_id)
-        
-        # Отправляем как файл
-        from io import BytesIO
-        file_data = BytesIO(csv_content.encode('utf-8-sig'))  # utf-8-sig для корректного отображения в Excel
-        file_data.name = f"statistics_{user_id}.csv"
-        
-        await update.message.reply_document(
-            document=file_data,
-            filename=f"statistics_{user_id}_{datetime.now().strftime('%Y%m%d')}.csv",
-            caption="📊 Ваша статистика в формате CSV\n\nОткройте файл в Excel или Google Sheets для просмотра"
-        )
-        
-    except Exception as e:
-        logger.error(f"Ошибка экспорта статистики для user {user_id}: {e}")
-        await update.message.reply_text("Не удалось экспортировать статистику. Попробуйте позже.")
-
-async def cmd_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Команда /report - детальный отчет о прогрессе."""
-    user_id = update.effective_user.id
-    
-    try:
-        report = await utils.generate_detailed_report(user_id)
-        await update.message.reply_text(report, parse_mode=ParseMode.HTML)
-    except Exception as e:
-        logger.error(f"Ошибка генерации отчета для user {user_id}: {e}")
-        await update.message.reply_text("Не удалось сгенерировать отчет. Попробуйте позже.")
-
 @safe_handler()
 async def abort_exam(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Прерывание экзамена."""
@@ -2187,25 +2062,6 @@ async def exam_detailed_review(update: Update, context: ContextTypes.DEFAULT_TYP
     return states.CHOOSING_MODE
 
 # Вспомогательная функция для получения вопросов по номерам от 1 до 16
-def safe_cache_get_exam_questions():
-    """Безопасное получение вопросов для экзамена (номера 1-16)."""
-    exam_questions = []
-    
-    for exam_num in range(1, 17):
-        try:
-            # Используем существующую функцию для получения вопросов по номеру
-            questions = safe_cache_get_by_exam_num(exam_num)
-            if questions:
-                exam_questions.append({
-                    'exam_num': exam_num,
-                    'questions': questions
-                })
-        except Exception as e:
-            logger.error(f"Error getting questions for exam_num {exam_num}: {e}")
-            continue
-    
-    return exam_questions
-
 async def send_mistake_question(message, context: ContextTypes.DEFAULT_TYPE):
     """Отправка вопроса в режиме работы над ошибками БЕЗ дублирования."""
     mistake_queue = context.user_data.get('mistake_queue', [])
@@ -2448,7 +2304,6 @@ async def select_exam_num(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if question_data:
         await send_question(query.message, context, question_data, "exam_num")
         # Добавить эти строки:
-        from core.state_validator import state_validator
         state_validator.set_state(query.from_user.id, states.ANSWERING)
         return states.ANSWERING
     else:
@@ -2489,7 +2344,6 @@ async def select_mode_random_in_block(update: Update, context: ContextTypes.DEFA
     if question_data:
         await send_question(query.message, context, question_data, "block")
         # Устанавливаем состояние
-        from core.state_validator import state_validator
         state_validator.set_state(query.from_user.id, states.ANSWERING)
         return states.ANSWERING
     else:
@@ -2547,7 +2401,6 @@ async def select_topic(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if question_data:
         await send_question(query.message, context, question_data, "topic")
         # Добавить эти строки:
-        from core.state_validator import state_validator
         state_validator.set_state(query.from_user.id, states.ANSWERING)
         return states.ANSWERING
     else:
@@ -2590,47 +2443,6 @@ async def select_mistakes(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await send_mistake_question(query.message, context)
     return states.REVIEWING_MISTAKES
     
-async def cmd_debug_streaks(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Команда /debug_streaks - показывает детальную информацию о стриках."""
-    user_id = update.effective_user.id
-    
-    # Получаем стрики
-    streaks = await db.get_user_streaks(user_id)
-    
-    # Получаем прямо из БД для проверки
-    try:
-        async with aiosqlite.connect(DATABASE_FILE) as conn:
-            cursor = await conn.execute(
-                """SELECT current_daily_streak, max_daily_streak, 
-                          current_correct_streak, max_correct_streak,
-                          last_activity_date
-                   FROM users WHERE user_id = ?""",
-                (user_id,)
-            )
-            row = await cursor.fetchone()
-            
-            if row:
-                text = f"🔍 <b>Отладка стриков для user {user_id}:</b>\n\n"
-                text += f"<b>Из функции get_user_streaks:</b>\n"
-                text += f"  current_daily: {streaks.get('current_daily', 'None')}\n"
-                text += f"  max_daily: {streaks.get('max_daily', 'None')}\n"
-                text += f"  current_correct: {streaks.get('current_correct', 'None')}\n"
-                text += f"  max_correct: {streaks.get('max_correct', 'None')}\n\n"
-                
-                text += f"<b>Прямо из БД:</b>\n"
-                text += f"  current_daily_streak: {row[0]}\n"
-                text += f"  max_daily_streak: {row[1]}\n"
-                text += f"  current_correct_streak: {row[2]}\n"
-                text += f"  max_correct_streak: {row[3]}\n"
-                text += f"  last_activity_date: {row[4]}\n"
-            else:
-                text = f"❌ Пользователь {user_id} не найден в БД"
-                
-    except Exception as e:
-        text = f"❌ Ошибка при чтении БД: {e}"
-    
-    await update.message.reply_text(text, parse_mode=ParseMode.HTML)
-
 @safe_handler()
 @validate_state_transition({states.CHOOSING_MODE})
 async def test_progress(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -3081,13 +2893,6 @@ async def test_export_csv(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def test_mistakes(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Переход к работе над ошибками."""
     return await work_mistakes(update, context)
-
-@safe_handler()
-@validate_state_transition({states.CHOOSING_MODE})
-async def test_practice(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Переход в режим практики."""
-    # Запускаем случайные вопросы
-    return await select_random_all(update, context)
 
 @safe_handler()
 async def test_back_to_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):

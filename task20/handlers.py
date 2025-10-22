@@ -28,6 +28,7 @@ from core.error_handler import safe_handler, auto_answer_callback
 from core.plugin_loader import build_main_menu
 from core.state_validator import validate_state_transition, state_validator
 from core.utils import safe_edit_message
+from core.menu_handlers import handle_to_main_menu
 from telegram.error import BadRequest
 from core.document_processor import DocumentHandlerMixin
 from core.migration import ensure_module_migration
@@ -77,7 +78,6 @@ async def clear_task20_cache():
 @safe_handler()
 async def back_to_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработчик кнопки Главное меню - вызывает глобальный обработчик."""
-    from core.menu_handlers import handle_to_main_menu
     return await handle_to_main_menu(update, context)
 
 async def init_task20_data(force_reload=False):
@@ -2237,7 +2237,6 @@ async def random_topic_block(update: Update, context: ContextTypes.DEFAULT_TYPE)
         parse_mode=ParseMode.HTML
     )
     
-    from core.state_validator import state_validator
     state_validator.set_state(query.from_user.id, states.ANSWERING_T20)
     
     return states.ANSWERING_T20
