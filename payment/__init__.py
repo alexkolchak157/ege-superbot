@@ -105,9 +105,11 @@ async def init_payment_module(app: Application):
                     if hasattr(scheduler, 'stop'):
                         scheduler.stop()
                         logger.info("Auto-renewal scheduler stopped")
-            
-            # Добавляем обработчик через post_shutdown
-            app.post_shutdown(shutdown_scheduler)
+
+            # Добавляем обработчик в bot_data для вызова при shutdown
+            if 'custom_shutdown_handlers' not in app.bot_data:
+                app.bot_data['custom_shutdown_handlers'] = []
+            app.bot_data['custom_shutdown_handlers'].append(shutdown_scheduler)
             
         except ImportError:
             logger.warning("Auto-renewal scheduler not available (missing apscheduler)")

@@ -126,10 +126,19 @@ async def post_init(application: Application) -> None:
 async def post_shutdown(application: Application) -> None:
     """Очистка ресурсов при остановке бота"""
     logger.info("Выполняется shutdown...")
-    
+
+    # Вызываем дополнительные shutdown handlers из модулей
+    if 'custom_shutdown_handlers' in application.bot_data:
+        for handler in application.bot_data['custom_shutdown_handlers']:
+            try:
+                await handler(application)
+                logger.info(f"Custom shutdown handler executed successfully")
+            except Exception as e:
+                logger.error(f"Error in custom shutdown handler: {e}")
+
     # Закрываем соединение с БД
     await db.close_db()
-    
+
     logger.info("Shutdown завершен")
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):

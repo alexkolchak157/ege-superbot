@@ -96,8 +96,10 @@ def load_modules(application):
     
     # Регистрируем ОДНУ корутину для post_init
     if post_init_tasks:
-        # Регистрируем корутину правильно
-        application.post_init(run_all_post_inits)
+        # Добавляем в bot_data для вызова при инициализации
+        if 'plugin_post_init_tasks' not in application.bot_data:
+            application.bot_data['plugin_post_init_tasks'] = []
+        application.bot_data['plugin_post_init_tasks'].extend(post_init_tasks)
         logger.info(f"Registered post_init handler for {len(post_init_tasks)} plugins")
     
     logger.info(f"Successfully registered {len(PLUGINS)} plugins")
