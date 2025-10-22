@@ -7,6 +7,7 @@
 import logging
 import os
 import json
+import re
 from enum import Enum
 from typing import Dict, List, Any, Optional
 from core.types import (
@@ -535,7 +536,6 @@ class Task25AIEvaluator:
         """Парсит ответ AI."""
         try:
             # Пытаемся найти JSON в ответе
-            import re
             json_match = re.search(r'\{.*\}', response, re.DOTALL)
             if json_match:
                 return json.loads(json_match.group())
@@ -646,8 +646,6 @@ class Task25AIEvaluator:
         
         try:
             # Пытаемся найти баллы по паттернам
-            import re
-            
             # К1 (0-2 балла)
             k1_match = re.search(r'К1.*?(\d+)\s*балл', response, re.IGNORECASE)
             if k1_match:
