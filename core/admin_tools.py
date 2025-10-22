@@ -381,6 +381,40 @@ def admin_only(func: Callable) -> Callable:
     return wrapper
 
 
+async def safe_edit_message(query, text: str, reply_markup=None, parse_mode=None):
+    """
+    Безопасное редактирование сообщения с обработкой ошибки "Message is not modified".
+
+    Args:
+        query: CallbackQuery объект
+        text: Новый текст сообщения
+        reply_markup: Клавиатура (опционально)
+        parse_mode: Режим парсинга (опционально)
+
+    Returns:
+        True если сообщение успешно отредактировано, False в случае ошибки
+    """
+    try:
+        await query.edit_message_text(
+            text,
+            reply_markup=reply_markup,
+            parse_mode=parse_mode
+        )
+        return True
+    except BadRequest as e:
+        if "Message is not modified" in str(e):
+            # Сообщение не изменилось - это не ошибка, просто игнорируем
+            logger.debug(f"Message not modified in {query.message.chat_id}")
+            return False
+        else:
+            # Другая ошибка BadRequest - пробрасываем дальше
+            logger.error(f"BadRequest error editing message: {e}")
+            raise
+    except Exception as e:
+        logger.error(f"Unexpected error editing message: {e}")
+        raise
+
+
 def get_admin_keyboard_extension(user_id: int) -> List[List[InlineKeyboardButton]]:
     """Возвращает дополнительные кнопки для админов."""
     if not admin_manager.is_admin(user_id):
@@ -666,11 +700,11 @@ async def stats_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Меню статистики."""
     query = update.callback_query
     await query.answer()
-    
+
     text = "📊 <b>Статистика</b>\n\nВыберите тип статистики:"
     kb = AdminKeyboards.stats_menu()
-    
-    await query.edit_message_text(text, reply_markup=kb, parse_mode=ParseMode.HTML)
+
+    await safe_edit_message(query, text, reply_markup=kb, parse_mode=ParseMode.HTML)
 
 
 # === РАССЫЛКА ===
@@ -1802,8 +1836,8 @@ async def module_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("🔄 Обновить", callback_data="admin:module_stats")],
         [InlineKeyboardButton("⬅️ Назад", callback_data="admin:stats_menu")]
     ])
-    
-    await query.edit_message_text(text, reply_markup=kb, parse_mode=ParseMode.HTML)
+
+    await safe_edit_message(query, text, reply_markup=kb, parse_mode=ParseMode.HTML)
 
 
 @admin_only
@@ -2159,47 +2193,63 @@ async def system_monitor(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer("Загрузка мониторинга...")
 
-    import psutil
     import sys
     from datetime import datetime
 
     text = "🖥️ <b>Системный мониторинг</b>\n\n"
 
+    # Попытка импортировать psutil
     try:
-        # CPU
-        cpu_percent = psutil.cpu_percent(interval=1)
-        cpu_count = psutil.cpu_count()
-        text += f"<b>💻 CPU:</b>\n"
-        text += f"• Использование: {cpu_percent}%\n"
-        text += f"• Ядер: {cpu_count}\n\n"
+        import psutil
+        PSUTIL_AVAILABLE = True
+    except ImportError:
+        PSUTIL_AVAILABLE = False
+        logger.warning("psutil module not available - system monitoring will be limited")
 
-        # Memory
-        memory = psutil.virtual_memory()
-        text += f"<b>🧠 Память:</b>\n"
-        text += f"• Использовано: {memory.percent}%\n"
-        text += f"• Всего: {memory.total / (1024**3):.1f} GB\n"
-        text += f"• Доступно: {memory.available / (1024**3):.1f} GB\n\n"
+    if PSUTIL_AVAILABLE:
+        try:
+            # CPU
+            cpu_percent = psutil.cpu_percent(interval=1)
+            cpu_count = psutil.cpu_count()
+            text += f"<b>💻 CPU:</b>\n"
+            text += f"• Использование: {cpu_percent}%\n"
+            text += f"• Ядер: {cpu_count}\n\n"
 
-        # Disk
-        disk = psutil.disk_usage('/')
-        text += f"<b>💾 Диск:</b>\n"
-        text += f"• Использовано: {disk.percent}%\n"
-        text += f"• Всего: {disk.total / (1024**3):.1f} GB\n"
-        text += f"• Свободно: {disk.free / (1024**3):.1f} GB\n\n"
+            # Memory
+            memory = psutil.virtual_memory()
+            text += f"<b>🧠 Память:</b>\n"
+            text += f"• Использовано: {memory.percent}%\n"
+            text += f"• Всего: {memory.total / (1024**3):.1f} GB\n"
+            text += f"• Доступно: {memory.available / (1024**3):.1f} GB\n\n"
 
-        # Bot info
-        process = psutil.Process()
-        bot_memory = process.memory_info().rss / (1024**2)
-        uptime = datetime.now() - datetime.fromtimestamp(process.create_time())
+            # Disk
+            disk = psutil.disk_usage('/')
+            text += f"<b>💾 Диск:</b>\n"
+            text += f"• Использовано: {disk.percent}%\n"
+            text += f"• Всего: {disk.total / (1024**3):.1f} GB\n"
+            text += f"• Свободно: {disk.free / (1024**3):.1f} GB\n\n"
 
-        text += f"<b>🤖 Бот:</b>\n"
-        text += f"• Память: {bot_memory:.1f} MB\n"
-        text += f"• Uptime: {uptime.days}д {uptime.seconds//3600}ч\n"
+            # Bot info
+            process = psutil.Process()
+            bot_memory = process.memory_info().rss / (1024**2)
+            uptime = datetime.now() - datetime.fromtimestamp(process.create_time())
+
+            text += f"<b>🤖 Бот:</b>\n"
+            text += f"• Память: {bot_memory:.1f} MB\n"
+            text += f"• Uptime: {uptime.days}д {uptime.seconds//3600}ч\n"
+            text += f"• Python: {sys.version.split()[0]}\n"
+
+        except Exception as e:
+            logger.error(f"Error getting system monitor: {e}")
+            text += f"❌ Ошибка мониторинга: {e}"
+    else:
+        # psutil не установлен - показываем базовую информацию
+        text += "⚠️ <b>Модуль psutil не установлен</b>\n\n"
+        text += "Для полного мониторинга системы установите:\n"
+        text += "<code>pip install psutil</code>\n\n"
+        text += f"<b>🤖 Базовая информация:</b>\n"
         text += f"• Python: {sys.version.split()[0]}\n"
-
-    except Exception as e:
-        logger.error(f"Error getting system monitor: {e}")
-        text += f"❌ Ошибка мониторинга: {e}"
+        text += f"• Платформа: {sys.platform}\n"
 
     kb = InlineKeyboardMarkup([
         [
@@ -2209,7 +2259,7 @@ async def system_monitor(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("⬅️ Назад", callback_data="admin:main")]
     ])
 
-    await query.edit_message_text(text, reply_markup=kb, parse_mode=ParseMode.HTML)
+    await safe_edit_message(query, text, reply_markup=kb, parse_mode=ParseMode.HTML)
 
 
 @admin_only
