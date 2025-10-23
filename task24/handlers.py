@@ -1833,13 +1833,24 @@ async def export_progress(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def safe_edit_or_reply(query, text: str, reply_markup=None, parse_mode=ParseMode.HTML):
     """
     Безопасно редактирует сообщение или отправляет новое, если редактирование невозможно.
-    
+
+    УЛУЧШЕНИЯ:
+    - Обрезает слишком длинные сообщения (>4096 символов)
+    - Обрабатывает ошибку "message is not modified"
+    - Обрабатывает ошибки HTML-разметки
+
     Args:
         query: CallbackQuery объект
         text: Текст сообщения
         reply_markup: Клавиатура (опционально)
         parse_mode: Режим парсинга (по умолчанию HTML)
     """
+    # НОВОЕ: Обрезаем слишком длинные сообщения
+    MAX_MESSAGE_LENGTH = 4096
+    if len(text) > MAX_MESSAGE_LENGTH:
+        logger.warning(f"Сообщение слишком длинное ({len(text)} символов), обрезаем до {MAX_MESSAGE_LENGTH}")
+        text = text[:MAX_MESSAGE_LENGTH-50] + "\n\n... (текст обрезан)"
+
     try:
         # Пытаемся отредактировать сообщение
         await query.edit_message_text(
@@ -1848,21 +1859,51 @@ async def safe_edit_or_reply(query, text: str, reply_markup=None, parse_mode=Par
             parse_mode=parse_mode
         )
     except telegram.error.BadRequest as e:
-        # Если не удалось отредактировать
-        if "There is no text in the message to edit" in str(e) or "Message can't be edited" in str(e):
-            # Удаляем старое сообщение и отправляем новое
+        error_message = str(e).lower()
+
+        # УЛУЧШЕНО: Расширенная обработка различных ошибок
+        if any(phrase in error_message for phrase in [
+            "there is no text in the message",
+            "message can't be edited",
+            "message to edit not found"
+        ]):
+            # Сообщение не может быть отредактировано - отправляем новое
             try:
                 await query.message.delete()
             except:
                 pass  # Игнорируем ошибки удаления
-            
+
             await query.message.reply_text(
                 text,
                 reply_markup=reply_markup,
                 parse_mode=parse_mode
             )
+
+        elif "message is not modified" in error_message:
+            # НОВОЕ: Текст идентичен - просто игнорируем
+            logger.debug("Текст сообщения не изменился, пропускаем редактирование")
+            pass
+
+        elif "can't parse entities" in error_message or "bad request" in error_message:
+            # НОВОЕ: Ошибка разметки - пробуем без HTML
+            logger.warning(f"Ошибка HTML-разметки: {e}, пробуем без parse_mode")
+            try:
+                await query.edit_message_text(
+                    text,
+                    reply_markup=reply_markup,
+                    parse_mode=None
+                )
+            except:
+                # Если и это не помогло - отправляем новое сообщение
+                await query.message.reply_text(
+                    text,
+                    reply_markup=reply_markup,
+                    parse_mode=None
+                )
+
         else:
-            # Если другая ошибка - пробрасываем её дальше
+            # Другая ошибка - логируем и пробрасываем
+            logger.error(f"Неожиданная ошибка при редактировании сообщения: {e}")
             raise
 
 @safe_handler()

@@ -190,30 +190,77 @@ class PlanBotData:
 def parse_user_plan(text: str) -> List[Tuple[str, List[str]]]:
     """
     ИСПРАВЛЕННЫЙ парсер планов пользователя.
-    
+
     Исправления:
     1. Игнорирует номера тем (> 50)
     2. Корректно извлекает подпункты из строк
     3. Поддерживает различные форматы
+    4. НОВОЕ: Поддержка планов БЕЗ номеров пунктов
     """
     parsed_plan = []
     current_point_text = None
     current_subpoints = []
-    
-    # Паттерн для основных пунктов
+
+    # Паттерн для основных пунктов С НОМЕРАМИ
     point_pattern = re.compile(r"^\s*(\d+)\s*[\.\)\-]\s*(.*)")
     # Паттерн для классических подпунктов
     subpoint_pattern = re.compile(r"^\s*(?:([а-яёa-z])\s*[\.\)]|([*\-•]))\s*(.*)", re.IGNORECASE)
-    
+
     lines = text.strip().split('\n')
-    
+
+    # НОВОЕ: Проверяем, есть ли вообще номера пунктов в тексте
+    has_numbered_points = any(point_pattern.match(line.strip()) for line in lines)
+
     for i, line in enumerate(lines):
         stripped_line = line.strip()
-        if not stripped_line: 
+        if not stripped_line:
             continue
-            
+
         point_match = point_pattern.match(stripped_line)
         subpoint_match = subpoint_pattern.match(stripped_line)
+
+        # НОВОЕ: Если план БЕЗ номеров, используем альтернативную логику
+        if not has_numbered_points:
+            # Строка - это пункт, если:
+            # 1. Она НЕ начинается с маркера подпункта
+            # 2. Она либо заканчивается двоеточием, либо следующая строка - подпункт
+            is_potential_point = not subpoint_match
+
+            if is_potential_point and not subpoint_match:
+                # Проверяем, есть ли подпункты в следующих строках
+                next_line_is_subpoint = False
+                if i + 1 < len(lines):
+                    next_line = lines[i + 1].strip()
+                    if next_line and subpoint_pattern.match(next_line):
+                        next_line_is_subpoint = True
+
+                # Если текущая строка заканчивается двоеточием или следующая строка - подпункт
+                if stripped_line.endswith(':') or next_line_is_subpoint:
+                    # Сохраняем предыдущий пункт
+                    if current_point_text is not None:
+                        parsed_plan.append((current_point_text, current_subpoints))
+
+                    # Начинаем новый пункт
+                    current_point_text = stripped_line.rstrip(':').strip()
+                    current_subpoints = []
+                    logger.debug(f"Пункт без номера: '{current_point_text}'")
+                    continue
+
+            # Если это подпункт
+            if subpoint_match and current_point_text is not None:
+                subpoint_text = subpoint_match.group(3).strip()
+                if subpoint_text:
+                    current_subpoints.append(subpoint_text)
+                    marker = subpoint_match.group(1) or subpoint_match.group(2)
+                    logger.debug(f"Подпункт ({marker}): '{subpoint_text}'")
+                continue
+
+            # Если это строка без маркера, но мы уже внутри пункта - это тоже может быть пункт
+            if current_point_text is None and not subpoint_match:
+                current_point_text = stripped_line
+                current_subpoints = []
+                logger.debug(f"Первый пункт без номера: '{current_point_text}'")
+            continue
         
         if point_match:
             # Сохраняем предыдущий пункт
