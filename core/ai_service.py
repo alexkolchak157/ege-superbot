@@ -186,42 +186,135 @@ class YandexGPTService:
                 await asyncio.sleep(self.config.retry_delay)
     
     async def get_json_completion(
-        self, 
-        prompt: str, 
+        self,
+        prompt: str,
         system_prompt: Optional[str] = None,
-        temperature: Optional[float] = None
+        temperature: Optional[float] = None,
+        retry_on_error: bool = True
     ) -> Optional[Dict[str, Any]]:
         """
         Получение ответа в формате JSON
-        
+
         Автоматически добавляет инструкции для возврата JSON
+        С улучшенной обработкой ошибок парсинга
         """
-        json_instruction = "\n\nОтветь ТОЛЬКО валидным JSON без дополнительного текста."
-        
+        json_instruction = "\n\nОтветь ТОЛЬКО валидным JSON без дополнительного текста, комментариев и пояснений."
+
         result = await self.get_completion(
             prompt + json_instruction,
             system_prompt=system_prompt,
             temperature=temperature or 0.1  # Низкая температура для JSON
         )
-        
+
         if not result["success"]:
             return None
-        
+
         try:
-            # Пытаемся распарсить JSON
             text = result["text"].strip()
-            # Убираем возможные markdown-теги
+
+            # Улучшенная очистка текста
+            # 1. Убираем markdown-теги
             if text.startswith("```json"):
                 text = text[7:]
             if text.startswith("```"):
                 text = text[3:]
             if text.endswith("```"):
                 text = text[:-3]
-            
-            return json.loads(text.strip())
+
+            text = text.strip()
+
+            # 2. Ищем JSON в тексте (если AI добавил текст до/после)
+            # Находим первую { или [ и последнюю } или ]
+            start_brace = text.find('{')
+            start_bracket = text.find('[')
+
+            # Определяем начало JSON
+            if start_brace == -1 and start_bracket == -1:
+                raise json.JSONDecodeError("No JSON object found", text, 0)
+
+            if start_brace != -1 and (start_bracket == -1 or start_brace < start_bracket):
+                start_pos = start_brace
+                end_char = '}'
+            else:
+                start_pos = start_bracket
+                end_char = ']'
+
+            # Находим конец JSON
+            end_pos = text.rfind(end_char)
+
+            if end_pos != -1 and start_pos != -1:
+                text = text[start_pos:end_pos + 1]
+
+            # 3. Пытаемся распарсить
+            parsed = json.loads(text)
+            return parsed
+
         except json.JSONDecodeError as e:
             logger.error(f"Не удалось распарсить JSON: {e}")
-            logger.debug(f"Полученный текст: {result['text']}")
+            logger.warning(f"Проблемный текст (первые 500 символов): {result['text'][:500]}")
+
+            # НОВОЕ: Повторная попытка с более строгим промптом
+            if retry_on_error:
+                logger.info("Попытка повторного запроса с усиленным промптом...")
+                strict_instruction = (
+                    "\n\nВНИМАНИЕ! Ответ ДОЛЖЕН быть ТОЛЬКО валидным JSON."
+                    "\nНЕ добавляй НИКАКОГО текста до или после JSON."
+                    "\nПРОВЕРЬ синтаксис: все запятые, скобки, кавычки должны быть на месте."
+                )
+
+                retry_result = await self.get_completion(
+                    prompt + strict_instruction,
+                    system_prompt=system_prompt,
+                    temperature=0.05  # Ещё ниже температура
+                )
+
+                if retry_result["success"]:
+                    # Пробуем снова распарсить
+                    return await self.get_json_completion(
+                        prompt="",  # Не добавляем промпт, используем уже полученный текст
+                        system_prompt=None,
+                        temperature=None,
+                        retry_on_error=False  # Предотвращаем бесконечную рекурсию
+                    ) if False else self._parse_json_response(retry_result["text"])
+
+            return None
+
+    def _parse_json_response(self, text: str) -> Optional[Dict[str, Any]]:
+        """Вспомогательная функция для парсинга JSON из текста"""
+        try:
+            text = text.strip()
+
+            # Убираем markdown
+            if text.startswith("```json"):
+                text = text[7:]
+            if text.startswith("```"):
+                text = text[3:]
+            if text.endswith("```"):
+                text = text[:-3]
+
+            text = text.strip()
+
+            # Извлекаем JSON
+            start_brace = text.find('{')
+            start_bracket = text.find('[')
+
+            if start_brace == -1 and start_bracket == -1:
+                return None
+
+            if start_brace != -1 and (start_bracket == -1 or start_brace < start_bracket):
+                start_pos = start_brace
+                end_char = '}'
+            else:
+                start_pos = start_bracket
+                end_char = ']'
+
+            end_pos = text.rfind(end_char)
+
+            if end_pos != -1 and start_pos != -1:
+                text = text[start_pos:end_pos + 1]
+
+            return json.loads(text)
+        except:
             return None
 
 
