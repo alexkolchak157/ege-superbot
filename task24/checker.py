@@ -1156,7 +1156,15 @@ async def evaluate_plan_with_ai(
             user_plan_text, parsed, ideal_plan_data, bot_data
         )
         missed_points = [m.get('text', '') for m in content_check.get('missed_obligatory', [])]
-        
+
+        # НОВОЕ: Корректируем К2 если AI нашла критические ошибки
+        if factual_errors and isinstance(factual_errors, list) and k2 == 1:
+            # Если есть хотя бы одна ошибка high/medium severity - К2 = 0
+            critical_errors = [e for e in factual_errors if e.get('severity') in ['high', 'medium']]
+            if critical_errors:
+                logger.warning(f"Найдено {len(critical_errors)} критических ошибок, К2 снижен с 1 до 0")
+                k2 = 0
+
         # Генерация персонализированной обратной связи
         personalized_feedback = await ai_checker.generate_personalized_feedback(
             user_plan_text,
