@@ -1098,10 +1098,19 @@ async def evaluate_plan_with_ai(
     ideal_plan_data: dict,
     bot_data: PlanBotData,
     topic_name: str,
-    use_ai: bool = True
+    use_ai: bool = True,
+    user_id: int = None
 ) -> str:
     """
     Расширенная версия evaluate_plan с углубленной AI-проверкой
+
+    Args:
+        user_plan_text: Текст плана ученика
+        ideal_plan_data: Эталонные данные плана
+        bot_data: Данные бота с темами
+        topic_name: Название темы
+        use_ai: Использовать ли AI-проверку
+        user_id: ID пользователя (для логирования применения подсказок)
     """
     # Сначала выполняем обычную проверку для получения баллов
     basic_feedback = evaluate_plan(user_plan_text, ideal_plan_data, bot_data, topic_name)
@@ -1122,20 +1131,22 @@ async def evaluate_plan_with_ai(
         k1 = int(k1_match.group(1)) if k1_match else 0
         k2 = int(k2_match.group(1)) if k2_match else 0
         
-        # Параллельно выполняем все AI-проверки
-        
+        # Параллельно выполняем все AI-проверки (с передачей user_id для логирования подсказок)
+
         relevance_task = ai_checker.check_plan_relevance(
             user_plan_text,
             topic_name,
-            ideal_plan_data.get('points_data', [])
+            ideal_plan_data.get('points_data', []),
+            user_id=user_id
         )
-        
+
         errors_task = ai_checker.check_factual_errors(
             user_plan_text,
             topic_name,
-            ideal_plan_data
+            ideal_plan_data,
+            user_id=user_id
         )
-        
+
         comparison_task = ai_checker.compare_with_etalon(
             user_plan_text,
             parsed,
@@ -1275,7 +1286,7 @@ def _format_ai_feedback(
     return "\n".join(feedback_parts)
 
 
-# Inline-клавиатура для фидбека
+# Inline-клавиатура для фидбека (статичная, для обратной совместимости)
 FEEDBACK_KB = InlineKeyboardMarkup([
     [
         InlineKeyboardButton("🔄 Ещё тема", callback_data="next_topic"),
@@ -1285,3 +1296,37 @@ FEEDBACK_KB = InlineKeyboardMarkup([
         InlineKeyboardButton("🏠 Главное меню", callback_data="to_main_menu")
     ]
 ])
+
+
+def build_feedback_keyboard(score: int, max_score: int = 4) -> InlineKeyboardMarkup:
+    """
+    Создаёт клавиатуру для обратной связи после проверки плана.
+
+    Добавляет кнопку "Оспорить оценку", если оценка ниже 60% от максимума.
+
+    Args:
+        score: Полученная оценка (K1 + K2)
+        max_score: Максимальная оценка (по умолчанию 4 для Task24)
+
+    Returns:
+        InlineKeyboardMarkup с кнопками действий
+    """
+    buttons = [
+        [
+            InlineKeyboardButton("🔄 Ещё тема", callback_data="next_topic"),
+            InlineKeyboardButton("📝 Меню планов", callback_data="t24_menu")
+        ]
+    ]
+
+    # Добавляем кнопку жалобы, если оценка низкая (менее 60%)
+    threshold = max_score * 0.6
+    if score < threshold:
+        buttons.insert(1, [
+            InlineKeyboardButton("⚠️ Оспорить оценку", callback_data="t24_complaint")
+        ])
+
+    buttons.append([
+        InlineKeyboardButton("🏠 Главное меню", callback_data="to_main_menu")
+    ])
+
+    return InlineKeyboardMarkup(buttons)
