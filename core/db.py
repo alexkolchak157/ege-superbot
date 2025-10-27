@@ -43,7 +43,7 @@ async def close_db():
 
 async def execute_with_retry(query: str, params: tuple = (), max_retries: int = 3):
     """Выполняет запрос с повторными попытками при блокировке БД."""
-    
+
     for attempt in range(max_retries):
         try:
             db = await get_db()
@@ -56,6 +56,219 @@ async def execute_with_retry(query: str, params: tuple = (), max_retries: int = 
                 await asyncio.sleep(0.1 * (attempt + 1))  # Экспоненциальная задержка
             else:
                 raise
+
+
+async def check_column_exists(db: aiosqlite.Connection, table_name: str, column_name: str) -> bool:
+    """
+    Проверяет существование колонки в таблице.
+
+    Args:
+        db: Соединение с БД
+        table_name: Название таблицы
+        column_name: Название колонки
+
+    Returns:
+        bool: True если колонка существует
+    """
+    try:
+        cursor = await db.execute(f"PRAGMA table_info({table_name})")
+        columns = [row[1] for row in await cursor.fetchall()]
+        return column_name in columns
+    except Exception:
+        return False
+
+
+async def apply_complaint_hints_migration(db: aiosqlite.Connection):
+    """
+    Применяет миграцию для системы жалоб и подсказок AI.
+
+    Создаёт/обновляет:
+    - Таблицу user_feedback (если не существует)
+    - Дополнительные поля в user_feedback для контекста проверки
+    - Таблицу task_specific_hints
+    - Таблицу hint_application_log
+    - Представления для аналитики
+    - Триггеры
+
+    Args:
+        db: Соединение с БД
+    """
+    try:
+        logger.info("Применение миграции системы жалоб и подсказок...")
+
+        # 1. Создаём таблицу user_feedback если не существует
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS user_feedback (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                feedback_type TEXT CHECK(feedback_type IN ('cancellation', 'support', 'general', 'complaint')),
+                category TEXT,
+                message TEXT,
+                status TEXT DEFAULT 'new' CHECK(status IN ('new', 'in_progress', 'resolved', 'closed')),
+                admin_response TEXT,
+                admin_id INTEGER,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (user_id) REFERENCES users(user_id)
+            )
+        """)
+        logger.info("✓ Таблица user_feedback готова")
+
+        # 2. Добавляем новые колонки в user_feedback для жалоб на AI
+        new_columns = {
+            'task_type': 'TEXT',
+            'topic_name': 'TEXT',
+            'user_answer': 'TEXT',
+            'ai_feedback': 'TEXT',
+            'k1_score': 'INTEGER',
+            'k2_score': 'INTEGER',
+            'complaint_reason': 'TEXT',
+            'resolution_type': "TEXT CHECK(resolution_type IN ('approved', 'rejected', 'partial'))"
+        }
+
+        for col_name, col_def in new_columns.items():
+            if not await check_column_exists(db, 'user_feedback', col_name):
+                try:
+                    await db.execute(f"ALTER TABLE user_feedback ADD COLUMN {col_name} {col_def}")
+                    logger.info(f"✓ Добавлена колонка user_feedback.{col_name}")
+                except aiosqlite.OperationalError as e:
+                    if "duplicate column" not in str(e).lower():
+                        logger.warning(f"Предупреждение при добавлении {col_name}: {e}")
+
+        # 3. Создаём таблицу task_specific_hints
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS task_specific_hints (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                task_type TEXT NOT NULL,
+                topic_name TEXT,
+                hint_text TEXT NOT NULL,
+                hint_category TEXT CHECK(hint_category IN ('factual', 'structural', 'terminology', 'criteria', 'general')),
+                priority INTEGER DEFAULT 1 CHECK(priority >= 1 AND priority <= 5),
+                is_active BOOLEAN DEFAULT 1,
+                created_from_complaint_id INTEGER,
+                created_by_admin_id INTEGER,
+                usage_count INTEGER DEFAULT 0,
+                success_rate FLOAT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                expires_at TIMESTAMP,
+                FOREIGN KEY (created_from_complaint_id) REFERENCES user_feedback(id)
+            )
+        """)
+        logger.info("✓ Таблица task_specific_hints создана")
+
+        # 4. Создаём таблицу hint_application_log
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS hint_application_log (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                hint_id INTEGER NOT NULL,
+                user_id INTEGER NOT NULL,
+                topic_name TEXT,
+                task_type TEXT,
+                was_helpful BOOLEAN,
+                applied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (hint_id) REFERENCES task_specific_hints(id),
+                FOREIGN KEY (user_id) REFERENCES users(user_id)
+            )
+        """)
+        logger.info("✓ Таблица hint_application_log создана")
+
+        # 5. Создаём индексы
+        indices = [
+            ('idx_hints_task_topic', 'task_specific_hints', 'task_type, topic_name, is_active'),
+            ('idx_hints_priority', 'task_specific_hints', 'priority DESC, created_at DESC'),
+            ('idx_hints_active', 'task_specific_hints', 'is_active, expires_at'),
+            ('idx_hint_log_hint', 'hint_application_log', 'hint_id, applied_at'),
+            ('idx_hint_log_user', 'hint_application_log', 'user_id, applied_at'),
+            ('idx_feedback_status', 'user_feedback', 'status, created_at'),
+            ('idx_feedback_type', 'user_feedback', 'feedback_type, status'),
+            ('idx_feedback_user', 'user_feedback', 'user_id, created_at'),
+            ('idx_feedback_task_topic', 'user_feedback', 'task_type, topic_name, status'),
+        ]
+
+        for idx_name, table_name, columns in indices:
+            try:
+                await db.execute(f'CREATE INDEX IF NOT EXISTS {idx_name} ON {table_name} ({columns})')
+            except Exception as e:
+                logger.debug(f"Индекс {idx_name} уже существует или ошибка: {e}")
+
+        logger.info("✓ Индексы созданы")
+
+        # 6. Создаём триггеры
+        # Триггер для обновления updated_at
+        await db.execute("""
+            CREATE TRIGGER IF NOT EXISTS update_feedback_timestamp
+            AFTER UPDATE ON user_feedback
+            BEGIN
+                UPDATE user_feedback
+                SET updated_at = CURRENT_TIMESTAMP
+                WHERE id = NEW.id;
+            END
+        """)
+
+        # Триггер для автоматического увеличения usage_count
+        await db.execute("""
+            CREATE TRIGGER IF NOT EXISTS increment_hint_usage
+            AFTER INSERT ON hint_application_log
+            BEGIN
+                UPDATE task_specific_hints
+                SET usage_count = usage_count + 1
+                WHERE id = NEW.hint_id;
+            END
+        """)
+
+        logger.info("✓ Триггеры созданы")
+
+        # 7. Создаём представления для аналитики
+        # Представление: Активные подсказки с статистикой
+        await db.execute("""
+            CREATE VIEW IF NOT EXISTS active_hints_with_stats AS
+            SELECT
+                tsh.id,
+                tsh.task_type,
+                tsh.topic_name,
+                tsh.hint_text,
+                tsh.hint_category,
+                tsh.priority,
+                tsh.usage_count,
+                tsh.created_at,
+                tsh.expires_at,
+                COUNT(DISTINCT hal.user_id) as unique_users_count
+            FROM task_specific_hints tsh
+            LEFT JOIN hint_application_log hal ON tsh.id = hal.hint_id
+            WHERE tsh.is_active = 1
+              AND (tsh.expires_at IS NULL OR tsh.expires_at > datetime('now'))
+            GROUP BY tsh.id
+            ORDER BY tsh.priority DESC, tsh.usage_count DESC
+        """)
+
+        # Представление: Жалобы, ожидающие обработки
+        await db.execute("""
+            CREATE VIEW IF NOT EXISTS pending_complaints AS
+            SELECT
+                uf.id,
+                uf.user_id,
+                uf.task_type,
+                uf.topic_name,
+                uf.complaint_reason,
+                uf.message,
+                uf.k1_score,
+                uf.k2_score,
+                uf.created_at
+            FROM user_feedback uf
+            WHERE uf.feedback_type = 'complaint'
+              AND uf.status = 'new'
+            ORDER BY uf.created_at ASC
+        """)
+
+        logger.info("✓ Представления созданы")
+
+        await db.commit()
+        logger.info("✅ Миграция системы жалоб и подсказок успешно применена!")
+
+    except Exception as e:
+        logger.error(f"Ошибка при применении миграции системы жалоб: {e}", exc_info=True)
+        # Не прерываем работу бота, если миграция не удалась
+        # raise
 
 
 async def init_db():
@@ -163,6 +376,9 @@ async def init_db():
 
             await db.commit()
             logger.info(f"База данных успешно инициализирована.")
+
+            # --- 4. Применение миграций для системы жалоб и подсказок ---
+            await apply_complaint_hints_migration(db)
 
     except Exception as e:
         logger.exception(f"Ошибка при инициализации БД: {e}")
