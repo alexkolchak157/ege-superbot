@@ -1510,9 +1510,10 @@ async def handle_payment_confirmation_with_recurrent(update: Update, context: Co
         # Создаем менеджер подписок
         from payment.subscription_manager import SubscriptionManager
         subscription_manager = context.bot_data.get('subscription_manager', SubscriptionManager())
-        
-        # Создаем уникальный order_id
-        order_id = f"order_{user_id}_{int(datetime.now().timestamp())}"
+
+        # Создаем уникальный order_id с UUID для предотвращения дублирования
+        import uuid
+        order_id = f"order_{user_id}_{int(datetime.now().timestamp())}_{uuid.uuid4().hex[:8]}"
         
         # Получаем название плана
         from payment.config import MODULE_PLANS, SUBSCRIPTION_PLANS

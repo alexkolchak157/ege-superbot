@@ -73,30 +73,55 @@ async def handle_webhook(request: web.Request) -> web.Response:
         # Получаем данные
         data = await request.json()
         logger.info(f"Webhook received: {json.dumps(data, ensure_ascii=False)}")
-        
+
         # Проверяем подпись
         if not verify_tinkoff_signature(
-            data, 
+            data,
             data.get('Token', ''),
             config.TINKOFF_TERMINAL_KEY,
             config.TINKOFF_SECRET_KEY
         ):
             logger.error("Invalid webhook signature")
             return web.Response(text='INVALID_SIGNATURE', status=400)
-        
+
         # Извлекаем данные
         order_id = data.get('OrderId')
         status = data.get('Status')
         payment_id = data.get('PaymentId')
-        
+
         if not all([order_id, status]):
             logger.error(f"Missing required fields: OrderId={order_id}, Status={status}")
             return web.Response(text='MISSING_FIELDS', status=400)
-        
+
         logger.info(f"Processing payment: order={order_id}, status={status}, payment_id={payment_id}")
-        
+
         # Проверяем, не обработали ли мы уже этот webhook
         async with aiosqlite.connect(config.DATABASE_PATH) as db:
+            # ИСПРАВЛЕНИЕ: Создаём таблицы если их нет
+            await db.execute("""
+                CREATE TABLE IF NOT EXISTS webhook_logs (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    order_id TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    payment_id TEXT,
+                    raw_data TEXT,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE(order_id, status, payment_id)
+                )
+            """)
+
+            await db.execute("""
+                CREATE TABLE IF NOT EXISTS notification_history (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER NOT NULL,
+                    order_id TEXT NOT NULL,
+                    notification_type TEXT NOT NULL,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE(user_id, order_id, notification_type)
+                )
+            """)
+            await db.commit()
+
             # Пытаемся вставить запись о webhook
             try:
                 await db.execute(
@@ -141,14 +166,14 @@ async def handle_webhook(request: web.Request) -> web.Response:
         elif status in ['REJECTED', 'CANCELED']:
             logger.warning(f"Payment {order_id} rejected/canceled")
             await subscription_manager.update_payment_status(order_id, 'failed')
-            
+
             bot = request.app.get('bot')
             if bot:
                 if status == 'REJECTED':
-                    await notify_user_rejected_safe(bot, order_id)
+                    await notify_user_rejected(bot, order_id)
                 else:
-                    await notify_user_canceled_safe(bot, order_id)
-            
+                    await notify_user_canceled(bot, order_id)
+
             return web.Response(text='OK')
         
         else:
