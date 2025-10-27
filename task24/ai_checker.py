@@ -2,15 +2,18 @@ import logging
 import json
 from typing import Dict, Any, List, Optional, Tuple
 from core.ai_service import get_ai_service
+from core.hint_manager import HintManager
+from core.config import DATABASE_FILE
 
 logger = logging.getLogger(__name__)
 
 
 class PlanAIChecker:
     """AI-ассистент для проверки планов по обществознанию (Задание 24 ЕГЭ)"""
-    
+
     def __init__(self):
         self.ai_service = get_ai_service()
+        self.hint_manager = HintManager(DATABASE_FILE)
         
         # ========== НОВОЕ: Якорные примеры из методички ==========
         self.ANCHOR_EXAMPLES = """
@@ -50,19 +53,27 @@ class PlanAIChecker:
 """
     
     async def check_plan_relevance(
-        self, 
-        user_plan: str, 
+        self,
+        user_plan: str,
         topic: str,
-        etalon_points: List[Dict[str, Any]]
+        etalon_points: List[Dict[str, Any]],
+        user_id: Optional[int] = None
     ) -> Dict[str, Any]:
         """
         УЛУЧШЕННАЯ проверка релевантности плана теме
-        
+
         ИЗМЕНЕНИЯ:
         - Добавлены якорные примеры
         - Чёткие критерии для обязательных пунктов
         - Проверка на абстрактно-формальные пункты
-        
+        - Автоматическое применение подсказок из системы жалоб
+
+        Args:
+            user_plan: План ученика
+            topic: Название темы
+            etalon_points: Эталонные пункты
+            user_id: ID пользователя для логирования подсказок
+
         Returns:
             {
                 "is_relevant": bool,
@@ -73,13 +84,36 @@ class PlanAIChecker:
                 "coverage_score": float (0-1)
             }
         """
+        # ========== НОВОЕ: Загрузка задаче-специфичных подсказок ==========
+        hints = await self.hint_manager.get_active_hints(
+            task_type='task24',
+            topic_name=topic,
+            max_hints=7
+        )
+
+        hints_text = self.hint_manager.format_hints_for_prompt(hints)
+
+        # Логируем применение подсказок
+        if user_id and hints:
+            for hint in hints:
+                try:
+                    await self.hint_manager.log_hint_usage(
+                        hint_id=hint['hint_id'],
+                        user_id=user_id,
+                        topic_name=topic,
+                        task_type='task24'
+                    )
+                except Exception as e:
+                    logger.error(f"Ошибка логирования подсказки: {e}")
+
         etalon_text = self._format_etalon_points(etalon_points)
-        
-        # ИЗМЕНЕНО: Более строгий system_prompt с примерами
+
+        # ИЗМЕНЕНО: Более строгий system_prompt с примерами + подсказки
         system_prompt = f"""Ты - строгий эксперт ЕГЭ по обществознанию, проверяющий задание 24.
 Твоя задача - оценить соответствие плана ученика теме и требованиям ЕГЭ 2025.
 
 {self.ANCHOR_EXAMPLES}
+{hints_text}
 
 КРИТИЧЕСКИ ВАЖНО:
 1. Для К1=3 требуется ВСЕ ТРИ обязательных пункта + детализация минимум 3 пунктов
@@ -145,19 +179,27 @@ class PlanAIChecker:
         self,
         user_plan: str,
         topic: str,
-        etalon_data: Optional[Dict[str, Any]] = None
+        etalon_data: Optional[Dict[str, Any]] = None,
+        user_id: Optional[int] = None
     ) -> List[Dict[str, str]]:
         """
         КРИТИЧЕСКИ УЛУЧШЕННАЯ проверка фактических ошибок
-        
+
         ИЗМЕНЕНИЯ:
         - ✅ Строгое определение, что считается "ошибкой" для К2=0
         - ✅ Добавлены примеры из методички
         - ✅ Температура снижена до 0.1 для максимальной точности
         - ✅ Чёткая классификация severity
-        
+        - ✅ Автоматическое применение подсказок из системы жалоб
+
         ВАЖНО: По критериям ЕГЭ ОДНА ошибка = К2=0!
-        
+
+        Args:
+            user_plan: План ученика
+            topic: Название темы
+            etalon_data: Эталонные данные
+            user_id: ID пользователя для логирования подсказок
+
         Returns:
             List[{
                 "error": str,  # Точная цитата ошибки
@@ -167,19 +209,42 @@ class PlanAIChecker:
                 "location": str  # Место в плане
             }]
         """
-        
-        # ИЗМЕНЕНО: Строгий system_prompt с чёткими критериями ошибок
-        system_prompt = f"""Ты - строгий эксперт ЕГЭ по обществознанию. 
+
+        # ========== НОВОЕ: Загрузка задаче-специфичных подсказок ==========
+        hints = await self.hint_manager.get_active_hints(
+            task_type='task24',
+            topic_name=topic,
+            max_hints=7  # Ограничиваем, чтобы не перегружать промпт
+        )
+
+        hints_text = self.hint_manager.format_hints_for_prompt(hints)
+
+        # Логируем применение подсказок (если есть user_id)
+        if user_id and hints:
+            for hint in hints:
+                try:
+                    await self.hint_manager.log_hint_usage(
+                        hint_id=hint['hint_id'],
+                        user_id=user_id,
+                        topic_name=topic,
+                        task_type='task24'
+                    )
+                except Exception as e:
+                    logger.error(f"Ошибка логирования подсказки: {e}")
+
+        # ИЗМЕНЕНО: Строгий system_prompt с чёткими критериями ошибок + подсказки
+        system_prompt = f"""Ты - строгий эксперт ЕГЭ по обществознанию.
 Твоя задача - найти ТОЛЬКО фактические ошибки и некорректные формулировки.
 
 {self.ANCHOR_EXAMPLES}
+{hints_text}
 
 КРИТЕРИИ ДЛЯ К2=0 (что считается ОШИБКОЙ):
 1. Фактические ошибки:
    - Неправильные определения понятий
    - Искажение научных концепций
    - Неверные исторические факты
-   
+
 2. Некорректные формулировки:
    - Логические противоречия
    - Смешивание разных понятий
@@ -259,15 +324,24 @@ class PlanAIChecker:
         point_text: str,
         subpoints: List[str],
         topic_context: str,
-        etalon_subpoints: Optional[List[str]] = None
+        etalon_subpoints: Optional[List[str]] = None,
+        user_id: Optional[int] = None
     ) -> Dict[str, Any]:
         """
         УЛУЧШЕННАЯ проверка качества подпунктов
-        
+
         ИЗМЕНЕНИЯ:
         - Учтено правило "2 подпункта иногда допустимы"
         - Проверка конкретности vs абстрактности
-        
+        - Автоматическое применение подсказок из системы жалоб
+
+        Args:
+            point_text: Текст основного пункта
+            subpoints: Список подпунктов
+            topic_context: Контекст темы
+            etalon_subpoints: Эталонные подпункты
+            user_id: ID пользователя для логирования подсказок
+
         Returns:
             {
                 "relevant_count": int,
@@ -278,17 +352,40 @@ class PlanAIChecker:
                 "etalon_coverage": float (0-1)
             }
         """
-        
-        # ИЗМЕНЕНО: Добавлено правило про 2 подпункта
-        system_prompt = f"""Ты - эксперт ЕГЭ по обществознанию. 
+
+        # ========== НОВОЕ: Загрузка задаче-специфичных подсказок ==========
+        hints = await self.hint_manager.get_active_hints(
+            task_type='task24',
+            topic_name=topic_context,
+            max_hints=7
+        )
+
+        hints_text = self.hint_manager.format_hints_for_prompt(hints)
+
+        # Логируем применение подсказок
+        if user_id and hints:
+            for hint in hints:
+                try:
+                    await self.hint_manager.log_hint_usage(
+                        hint_id=hint['hint_id'],
+                        user_id=user_id,
+                        topic_name=topic_context,
+                        task_type='task24'
+                    )
+                except Exception as e:
+                    logger.error(f"Ошибка логирования подсказки: {e}")
+
+        # ИЗМЕНЕНО: Добавлено правило про 2 подпункта + подсказки
+        system_prompt = f"""Ты - эксперт ЕГЭ по обществознанию.
 Оцени качество подпунктов в контексте основного пункта плана.
 
 {self.ANCHOR_EXAMPLES}
+{hints_text}
 
 ПРАВИЛО ПРО КОЛИЧЕСТВО ПОДПУНКТОВ:
 - Обычно требуется минимум 3 подпункта
 - НО: 2 подпункта допустимы, если с точки зрения науки больше невозможно
-  Примеры: уровни познания (эмпирический, теоретический), 
+  Примеры: уровни познания (эмпирический, теоретический),
            основные типы систем (однопартийная, двухпартийная)
 
 Будь строгим в оценке релевантности и качества."""

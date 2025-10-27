@@ -11,7 +11,7 @@ from datetime import datetime
 from typing import Set, Dict, List, Optional, Any
 from core import states
 from core import utils as core_utils
-from .checker import PlanBotData, evaluate_plan, FEEDBACK_KB, evaluate_plan_with_ai
+from .checker import PlanBotData, evaluate_plan, FEEDBACK_KB, evaluate_plan_with_ai, build_feedback_keyboard
 from . import keyboards
 from core.document_processor import DocumentProcessor, DocumentHandlerMixin
 from core.admin_tools import admin_manager, admin_only, get_admin_keyboard_extension
@@ -872,14 +872,15 @@ async def handle_plan_enhanced(update: Update, context: ContextTypes.DEFAULT_TYP
         # Проверяем, включена ли AI-проверка
         use_ai = context.bot_data.get('use_ai_checking', True)
         
-        # Оцениваем план с AI
+        # Оцениваем план с AI (передаём user_id для логирования подсказок)
         if 'evaluate_plan_with_ai' in globals():
             feedback = await evaluate_plan_with_ai(
                 user_plan_text,
                 ideal_plan_data,
                 plan_bot_data,
                 topic_name,
-                use_ai=use_ai
+                use_ai=use_ai,
+                user_id=update.effective_user.id
             )
         else:
             # Fallback на обычную проверку
@@ -898,13 +899,17 @@ async def handle_plan_enhanced(update: Update, context: ContextTypes.DEFAULT_TYP
         k2_score = int(k2_match.group(1)) if k2_match else 0
         total_score = k1_score + k2_score
         
-        # Сохраняем результат
+        # Сохраняем результат (включая данные для возможной жалобы)
         context.user_data['last_plan_result'] = {
             'topic': topic_name,
             'k1': k1_score,
             'k2': k2_score,
             'total': total_score,
-            'timestamp': datetime.now()
+            'timestamp': datetime.now(),
+            # Данные для системы жалоб
+            'user_answer': user_plan_text,
+            'ai_feedback': feedback,
+            'task_type': 'task24'
         }
         
         # Добавляем тему в изученные
@@ -929,10 +934,10 @@ async def handle_plan_enhanced(update: Update, context: ContextTypes.DEFAULT_TYP
         except Exception as e:
             logger.debug(f"Failed to delete thinking message: {e}")
         
-        # Отправляем результат с клавиатурой действий
+        # Отправляем результат с динамической клавиатурой (с кнопкой жалобы если нужно)
         result_msg = await update.message.reply_text(
             feedback,
-            reply_markup=FEEDBACK_KB,
+            reply_markup=build_feedback_keyboard(total_score, max_score=4),
             parse_mode=ParseMode.HTML
         )
         

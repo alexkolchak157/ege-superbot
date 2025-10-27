@@ -8,6 +8,7 @@ from telegram.ext import (
 from core.plugin_base import BotPlugin
 from core import states
 from . import handlers
+from . import complaint_handlers
 
 logger = logging.getLogger(__name__)
 
@@ -83,6 +84,16 @@ class Task24Plugin(BotPlugin):
                     CallbackQueryHandler(handlers.next_topic, pattern="^next_topic$"),
                     CallbackQueryHandler(handlers.back_to_main_menu, pattern="^to_main_menu$"),
                     CallbackQueryHandler(handlers.return_to_menu, pattern="^t24_menu$"),
+                    # Обработчик для кнопки "Оспорить оценку"
+                    CallbackQueryHandler(complaint_handlers.initiate_complaint, pattern="^t24_complaint$"),
+                ],
+                # Состояния для системы жалоб
+                complaint_handlers.COMPLAINT_CHOOSING_REASON: [
+                    CallbackQueryHandler(complaint_handlers.handle_complaint_reason, pattern=r"^cr_"),
+                    CallbackQueryHandler(complaint_handlers.handle_complaint_reason, pattern="^t24_cancel_complaint$"),
+                ],
+                complaint_handlers.COMPLAINT_AWAITING_DETAILS: [
+                    MessageHandler(filters.TEXT & ~filters.COMMAND, complaint_handlers.handle_complaint_details),
                 ],
                 states.AWAITING_SEARCH: [
                     MessageHandler(filters.TEXT & ~filters.COMMAND, handlers.handle_search_query),
