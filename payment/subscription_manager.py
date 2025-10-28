@@ -40,22 +40,54 @@ class SubscriptionManager:
         """
         Проверяет, был ли платеж уже активирован.
         Защита от повторной обработки webhook.
+
+        ВАЖНО: Проверяет не только статус платежа, но и наличие активных подписок,
+        чтобы избежать ситуации, когда статус 'completed', но подписки не созданы.
         """
         try:
             async with aiosqlite.connect(self.database_file, timeout=30.0) as conn:
+                # Получаем информацию о платеже
                 cursor = await conn.execute(
                     """
-                    SELECT status FROM payments 
+                    SELECT status, user_id FROM payments
                     WHERE order_id = ?
                     """,
                     (order_id,)
                 )
                 result = await cursor.fetchone()
-                
-                if result and result[0] in ['completed', 'activated']:
+
+                if not result:
+                    return False
+
+                status, user_id = result
+
+                # Если статус не 'completed' или 'activated', платеж точно не активирован
+                if status not in ['completed', 'activated']:
+                    return False
+
+                # ИСПРАВЛЕНИЕ: Дополнительно проверяем наличие активных подписок
+                # Это защищает от случая, когда статус установлен в 'completed',
+                # но подписки не были созданы из-за ошибки
+                cursor = await conn.execute(
+                    """
+                    SELECT COUNT(*) FROM module_subscriptions
+                    WHERE user_id = ? AND is_active = 1
+                    """,
+                    (user_id,)
+                )
+                count_result = await cursor.fetchone()
+
+                if count_result and count_result[0] > 0:
+                    logger.info(f"Payment {order_id} already activated with {count_result[0]} active subscriptions")
                     return True
-                return False
-                
+                else:
+                    # Статус 'completed', но подписок нет - это ошибка!
+                    logger.warning(
+                        f"Payment {order_id} has status '{status}' but no active subscriptions found. "
+                        f"This indicates a previous activation failure. Will retry activation."
+                    )
+                    return False
+
         except Exception as e:
             logger.error(f"Error checking payment activation status: {e}")
             return False
@@ -1239,34 +1271,34 @@ class SubscriptionManager:
     async def activate_subscription(self, order_id: str, payment_id: str = None) -> bool:
         """Активирует подписку после успешной оплаты."""
         try:
-            # НОВОЕ: Проверка на повторную активацию
+            # ПРОВЕРКА: Проверяем, не была ли подписка уже активирована
+            # Эта функция проверяет не только статус платежа, но и наличие активных подписок
             if await self.is_payment_already_activated(order_id):
-                logger.info(f"Payment {order_id} already activated, skipping")
+                logger.info(f"Payment {order_id} already activated with active subscriptions, skipping")
                 return True
-                
+
             async with aiosqlite.connect(self.database_file, timeout=30.0) as conn:
                 # Получаем информацию о платеже
                 cursor = await conn.execute(
                     """
-                    SELECT user_id, plan_id, metadata, status 
-                    FROM payments 
+                    SELECT user_id, plan_id, metadata, status
+                    FROM payments
                     WHERE order_id = ?
                     """,
                     (order_id,)
                 )
-                
+
                 payment_info = await cursor.fetchone()
-                
+
                 if not payment_info:
                     logger.error(f"Payment not found for order {order_id}")
                     return False
-                
+
                 user_id, plan_id, metadata_str, current_status = payment_info
-                
-                # Проверяем что платеж еще не обработан
-                if current_status in ['completed', 'activated']:
-                    logger.info(f"Payment {order_id} already activated")
-                    return True
+
+                # ПРИМЕЧАНИЕ: Не проверяем статус здесь повторно, т.к. is_payment_already_activated()
+                # уже проверил и статус, и наличие подписок. Если мы дошли до этой точки,
+                # значит нужно (пере)создать подписки.
                 
                 # Парсим metadata
                 try:
@@ -2290,26 +2322,32 @@ class SubscriptionManager:
     
     async def update_payment_status(self, order_id: str, status: str) -> bool:
         """Обновляет статус платежа.
-        
+
         Args:
             order_id: ID заказа
             status: Новый статус ('pending', 'completed', 'failed', 'cancelled')
-            
+
         Returns:
             bool: True если успешно обновлено
         """
         try:
             async with aiosqlite.connect(self.database_file, timeout=30.0) as conn:
+                # ИСПРАВЛЕНИЕ: обновляем completed_at вместо created_at
+                # created_at должна хранить время создания заказа, а не время изменения статуса
                 await conn.execute("""
-                    UPDATE payments 
-                    SET status = ?, created_at = CURRENT_TIMESTAMP
+                    UPDATE payments
+                    SET status = ?,
+                        completed_at = CASE
+                            WHEN ? IN ('completed', 'failed', 'cancelled') THEN CURRENT_TIMESTAMP
+                            ELSE completed_at
+                        END
                     WHERE order_id = ?
-                """, (status, order_id))
+                """, (status, status, order_id))
                 await conn.commit()
-                
+
                 logger.info(f"Updated payment status for {order_id}: {status}")
                 return True
-                
+
         except Exception as e:
             logger.error(f"Error updating payment status: {e}")
             return False

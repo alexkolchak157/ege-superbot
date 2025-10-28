@@ -122,6 +122,9 @@ async def handle_webhook(request: web.Request) -> web.Response:
             """)
             await db.commit()
 
+            # Флаг, указывающий, является ли это дубликатом webhook
+            is_duplicate = False
+
             # Пытаемся вставить запись о webhook
             try:
                 await db.execute(
@@ -134,34 +137,56 @@ async def handle_webhook(request: web.Request) -> web.Response:
                 await db.commit()
             except aiosqlite.IntegrityError:
                 # Если запись уже существует - webhook дублируется
-                logger.info(f"Webhook for order {order_id} with status {status} already processed")
-                return web.Response(text='OK')
+                logger.info(f"Duplicate webhook detected for order {order_id} with status {status}")
+                is_duplicate = True
         
         # Получаем subscription_manager
         subscription_manager = SubscriptionManager()
-        
+
         # Обрабатываем успешные статусы
         if status in ['AUTHORIZED', 'CONFIRMED']:
             logger.info(f"Payment {order_id} confirmed with status {status}")
-            
-            # Активируем подписку
+
+            # ИСПРАВЛЕНИЕ: Для дубликатов webhook проверяем, была ли успешная активация
+            if is_duplicate:
+                is_already_activated = await subscription_manager.is_payment_already_activated(order_id)
+                if is_already_activated:
+                    logger.info(f"Duplicate webhook for already activated payment {order_id}. Returning OK.")
+                    return web.Response(text='OK')
+                else:
+                    logger.warning(
+                        f"Duplicate webhook for order {order_id}, but payment not fully activated. "
+                        f"Retrying activation..."
+                    )
+
+            # Активируем подписку (или повторно активируем если предыдущая попытка не удалась)
             success = await subscription_manager.activate_subscription(
                 order_id=order_id,
                 payment_id=payment_id
             )
-            
+
             if success:
                 logger.info(f"✅ Payment {order_id} successfully activated")
-                
+
                 # Отправляем уведомление только если оно еще не было отправлено
                 bot = request.app.get('bot')
                 if bot:
                     await notify_user_success_safe(bot, order_id)
-                
+
                 return web.Response(text='OK')
             else:
                 logger.error(f"Failed to activate subscription for order {order_id}")
-                return web.Response(text='ACTIVATION_FAILED', status=500)
+                # ИСПРАВЛЕНИЕ: Возвращаем OK даже если активация не удалась для дубликата
+                # чтобы не вызывать бесконечные повторы от Tinkoff
+                if is_duplicate:
+                    logger.error(
+                        f"Duplicate webhook: Activation failed for {order_id}. "
+                        f"Returning OK to prevent infinite retries."
+                    )
+                    return web.Response(text='OK')
+                else:
+                    # Для первого webhook возвращаем ошибку, чтобы Tinkoff повторил
+                    return web.Response(text='ACTIVATION_FAILED', status=500)
         
         elif status in ['REJECTED', 'CANCELED']:
             logger.warning(f"Payment {order_id} rejected/canceled")
