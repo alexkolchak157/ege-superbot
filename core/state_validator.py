@@ -29,6 +29,7 @@ class StateTransitionValidator:
                 states.REVIEWING_MISTAKES,
                 states.ANSWERING_PARTS,
                 states.CHOOSING_BLOCK_T25,
+                states.EXAM_MODE,
                 ConversationHandler.END
             },
             
@@ -108,6 +109,14 @@ class StateTransitionValidator:
                 states.CHOOSING_MODE,
                 states.CHOOSING_NEXT_ACTION,
                 states.TASK25_WAITING,
+                ConversationHandler.END
+            },
+
+            # Режим экзамена
+            states.EXAM_MODE: {
+                states.EXAM_MODE,              # Переход к следующему вопросу
+                states.CHOOSING_MODE,          # Завершение или отмена экзамена
+                states.CHOOSING_NEXT_ACTION,   # После завершения экзамена
                 ConversationHandler.END
             },
         }

@@ -14,6 +14,7 @@ from telegram.ext import ContextTypes, ConversationHandler
 from core.plugin_loader import build_main_menu
 from core import db, states
 from core.config import DATABASE_FILE
+from core.utils import safe_edit_message
 from core.ui_helpers import (create_visual_progress, get_motivational_message,
                              get_personalized_greeting,
                              show_streak_notification, show_thinking_animation)
@@ -1670,14 +1671,16 @@ async def send_exam_question(message, context: ContextTypes.DEFAULT_TYPE, index:
             )
         else:
             # Отправляем только текст
-            # Используем edit_text если это callback_query, иначе reply_text
-            if hasattr(message, 'edit_text'):
-                await message.edit_text(
-                    text,
-                    reply_markup=kb,
-                    parse_mode=ParseMode.HTML
-                )
-            else:
+            # Пытаемся безопасно отредактировать сообщение
+            edit_success = await safe_edit_message(
+                message,
+                text,
+                reply_markup=kb,
+                parse_mode=ParseMode.HTML
+            )
+
+            # Если редактирование не удалось, отправляем новое сообщение
+            if not edit_success:
                 await message.reply_text(
                     text,
                     reply_markup=kb,
