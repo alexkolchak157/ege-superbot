@@ -26,10 +26,6 @@ from . import keyboards, utils
 from .loader import AVAILABLE_BLOCKS, QUESTIONS_DATA, get_questions_data, get_questions_list_flat, get_available_blocks
 
 try:
-except ImportError:
-    process_payment = None
-
-try:
     from .topic_data import TOPIC_NAMES
 except ImportError:
     logger.warning("Не удалось импортировать TOPIC_NAMES из topic_data.py")
@@ -1431,21 +1427,22 @@ async def continue_test(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return
 
 # Обработчик для перехода к оплате пробного периода
-@safe_handler()  
+@safe_handler()
 async def pay_trial_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Переход к оплате пробного периода."""
     query = update.callback_query
-    
+    await query.answer()
+
     # Сохраняем текущее состояние для возврата
     context.user_data['return_to_test'] = True
-    
-    # Вызываем обработчик оплаты из payment модуля
-    
+
     # Устанавливаем параметры для пробного периода
     context.user_data['selected_plan'] = 'trial_7days'
     context.user_data['selected_duration'] = 1
-    
-    return await process_payment(update, context)
+
+    # Вызываем обработчик оплаты из payment модуля
+    from payment.handlers import cmd_subscribe
+    return await cmd_subscribe(update, context)
 
 @safe_handler()
 @validate_state_transition({states.CHOOSING_MODE})
