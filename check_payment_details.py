@@ -100,25 +100,27 @@ def check_payment_details(order_id: str):
 
     # Проверяем историю уведомлений
     print(f"\n📬 ИСТОРИЯ УВЕДОМЛЕНИЙ:")
-    cursor.execute(
-        """
-        SELECT id, user_id, order_id, notification_type, created_at
-        FROM notification_history
-        WHERE order_id = ?
-        ORDER BY created_at DESC
-        """,
-        (order_id,)
-    )
-    notifications = cursor.fetchall()
+    try:
+        cursor.execute(
+            """
+            SELECT id, user_id, order_id, notification_type
+            FROM notification_history
+            WHERE order_id = ?
+            ORDER BY id DESC
+            """,
+            (order_id,)
+        )
+        notifications = cursor.fetchall()
 
-    if notifications:
-        for notif in notifications:
-            notif_id, notif_user_id, notif_order_id, notif_type, notif_created_at = notif
-            print(f"\n   📧 Notification ID: {notif_id}")
-            print(f"      Type: {notif_type}")
-            print(f"      Created At: {notif_created_at}")
-    else:
-        print(f"   ❌ Уведомления не отправлялись")
+        if notifications:
+            for notif in notifications:
+                notif_id, notif_user_id, notif_order_id, notif_type = notif
+                print(f"\n   📧 Notification ID: {notif_id}")
+                print(f"      Type: {notif_type}")
+        else:
+            print(f"   ❌ Уведомления не отправлялись")
+    except Exception as e:
+        print(f"   ⚠️  Не удалось получить историю уведомлений: {e}")
 
     # Все платежи пользователя
     print(f"\n📊 ВСЕ ПЛАТЕЖИ ПОЛЬЗОВАТЕЛЯ {user_id}:")
@@ -150,16 +152,46 @@ def check_payment_details(order_id: str):
 
     if status == 'NEW':
         print(f"\n⚠️  Статус платежа: 'NEW'")
-        print(f"   Это означает, что:")
-        print(f"   1. Платеж был создан в системе Tinkoff")
-        print(f"   2. Webhook от Tinkoff НЕ был получен")
-        print(f"   3. Возможные причины:")
-        print(f"      - Пользователь не завершил оплату")
-        print(f"      - Оплата была отклонена банком")
-        print(f"      - Webhook не дошел до сервера (проблемы с сетью)")
-        print(f"      - Webhook был отправлен, но не был обработан (ошибка в коде)")
 
-        if not webhooks:
+        if webhooks:
+            # Webhook'и были получены, но платеж не активирован
+            confirmed_count = sum(1 for wh in webhooks if wh[2] == 'CONFIRMED')
+            authorized_count = sum(1 for wh in webhooks if wh[2] == 'AUTHORIZED')
+
+            print(f"\n🔴 КРИТИЧЕСКАЯ ПРОБЛЕМА:")
+            print(f"   ✅ Платеж был ОПЛАЧЕН (Amount: {amount/100:.2f} руб.)")
+            print(f"   ✅ Webhook'и БЫЛИ ПОЛУЧЕНЫ ({len(webhooks)} шт.)")
+            print(f"      - CONFIRMED: {confirmed_count}")
+            print(f"      - AUTHORIZED: {authorized_count}")
+            print(f"   ❌ НО статус платежа остался 'NEW'")
+            print(f"   ❌ Подписки НЕ СОЗДАНЫ")
+            print()
+            print(f"   Причина:")
+            print(f"   Это баг в старом коде обработки webhook'ов.")
+            print(f"   Webhook'и были получены, но из-за ошибки в логике")
+            print(f"   обработки дубликатов активация не произошла.")
+            print()
+            print(f"   📋 РЕШЕНИЕ:")
+            print(f"   1. Активировать подписку ВРУЧНУЮ:")
+            print(f"      cd /opt/ege-bot")
+            print(f"      python3 manual_activate_subscription.py {order_id}")
+            print()
+            print(f"   2. ОБЯЗАТЕЛЬНО обновить код на сервере и перезапустить бота!")
+            print(f"      git pull")
+            print(f"      systemctl restart ege-bot  # или как у вас называется сервис")
+            print()
+            print(f"   Баг уже исправлен в новой версии кода.")
+        else:
+            # Webhook'ов нет
+            print(f"   Это означает, что:")
+            print(f"   1. Платеж был создан в системе Tinkoff")
+            print(f"   2. Webhook от Tinkoff НЕ был получен")
+            print(f"   3. Возможные причины:")
+            print(f"      - Пользователь не завершил оплату")
+            print(f"      - Оплата была отклонена банком")
+            print(f"      - Webhook не дошел до сервера (проблемы с сетью)")
+            print(f"      - Webhook был отправлен, но не был обработан (ошибка в коде)")
+
             print(f"\n   ❌ Webhook логи ОТСУТСТВУЮТ")
             print(f"   Рекомендации:")
             print(f"   1. Проверить в личном кабинете Tinkoff, был ли платеж оплачен")
