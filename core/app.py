@@ -139,7 +139,17 @@ async def post_init(application: Application) -> None:
     
     # Инициализация модуля платежей
     await init_payment_module(application)
-    
+
+    # Инициализация FreemiumManager
+    try:
+        from core.freemium_manager import get_freemium_manager
+        subscription_manager = application.bot_data.get('subscription_manager')
+        freemium_manager = get_freemium_manager(subscription_manager)
+        application.bot_data['freemium_manager'] = freemium_manager
+        logger.info("FreemiumManager initialized and added to bot_data")
+    except Exception as e:
+        logger.error(f"Failed to initialize FreemiumManager: {e}")
+
     # Загрузка модулей-плагинов
     try:
         from core import plugin_loader

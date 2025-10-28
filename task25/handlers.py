@@ -808,7 +808,39 @@ async def safe_handle_answer_task25(update: Update, context: ContextTypes.DEFAUL
             ]])
         )
         return states.ANSWERING
-    
+
+    # Проверка лимитов AI-проверок
+    freemium_manager = context.bot_data.get('freemium_manager')
+    user_id = update.effective_user.id
+    if freemium_manager:
+        can_use, remaining, limit_msg = await freemium_manager.check_ai_limit(user_id, 'task25')
+
+        if not can_use:
+            # Показываем paywall
+            from payment.config import MODULE_PLANS
+            trial_price = MODULE_PLANS.get('trial_7days', {}).get('price_rub', 1)
+            full_price = MODULE_PLANS.get('package_full', {}).get('price_rub', 249)
+
+            paywall_text = (
+                f"⏸ {limit_msg}\n\n"
+                f"<b>Получите безлимитные проверки:</b>\n"
+                f"• Попробуйте 7 дней за {trial_price}₽\n"
+                f"• Полный доступ: {full_price}₽/месяц"
+            )
+
+            kb = InlineKeyboardMarkup([
+                [InlineKeyboardButton(f"Попробовать за {trial_price}₽", callback_data="subscribe")],
+                [InlineKeyboardButton("Подробнее о подписке", callback_data="subscribe")],
+                [InlineKeyboardButton("🏠 Главное меню", callback_data="to_main_menu")]
+            ])
+
+            await update.message.reply_text(
+                paywall_text,
+                reply_markup=kb,
+                parse_mode=ParseMode.HTML
+            )
+            return states.ANSWERING
+
     # Показываем анимацию обработки
     thinking_msg = await show_ai_evaluation_animation(
         update.message,
@@ -856,7 +888,21 @@ async def safe_handle_answer_task25(update: Update, context: ContextTypes.DEFAUL
         
         # Удаляем анимацию
         await thinking_msg.delete()
-        
+
+        # Регистрируем использование AI-проверки
+        if freemium_manager:
+            await freemium_manager.use_ai_check(user_id, 'task25')
+            # Получаем информацию об остатке
+            limit_info = await freemium_manager.get_limit_info(user_id, 'task25')
+            remaining_checks = limit_info.get('checks_remaining', 0)
+
+            # Добавляем информацию о лимите к feedback
+            if not limit_info.get('is_premium') and remaining_checks <= 3:
+                if remaining_checks > 0:
+                    feedback_text += f"\n\n📊 Осталось проверок сегодня: <b>{remaining_checks}</b>"
+                else:
+                    feedback_text += f"\n\n⏳ Бесплатные проверки на сегодня исчерпаны. Лимит обновится завтра."
+
         # Сохраняем результат
         result_data = {
             'topic_title': topic.get('title', 'Неизвестная тема'),  # Изменить ключ
