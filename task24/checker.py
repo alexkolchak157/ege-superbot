@@ -1298,35 +1298,3 @@ FEEDBACK_KB = InlineKeyboardMarkup([
 ])
 
 
-def build_feedback_keyboard(score: int, max_score: int = 4) -> InlineKeyboardMarkup:
-    """
-    Создаёт клавиатуру для обратной связи после проверки плана.
-
-    Добавляет кнопку "Оспорить оценку", если оценка ниже 60% от максимума.
-
-    Args:
-        score: Полученная оценка (K1 + K2)
-        max_score: Максимальная оценка (по умолчанию 4 для Task24)
-
-    Returns:
-        InlineKeyboardMarkup с кнопками действий
-    """
-    buttons = [
-        [
-            InlineKeyboardButton("🔄 Ещё тема", callback_data="next_topic"),
-            InlineKeyboardButton("📝 Меню планов", callback_data="t24_menu")
-        ]
-    ]
-
-    # Добавляем кнопку жалобы, если оценка низкая (менее 60%)
-    threshold = max_score * 0.6
-    if score < threshold:
-        buttons.insert(1, [
-            InlineKeyboardButton("⚠️ Оспорить оценку", callback_data="t24_complaint")
-        ])
-
-    buttons.append([
-        InlineKeyboardButton("🏠 Главное меню", callback_data="to_main_menu")
-    ])
-
-    return InlineKeyboardMarkup(buttons)

@@ -136,6 +136,16 @@ async def post_init(application: Application) -> None:
         logger.error(f"Could not import admin_tools: {e}")
     except Exception as e:
         logger.error(f"Error registering admin handlers: {e}")
+
+    # Регистрируем админские обработчики для жалоб
+    try:
+        from core.complaint_admin import register_admin_complaint_handlers
+        register_admin_complaint_handlers(application)
+        logger.info("Admin complaint handlers registered")
+    except ImportError as e:
+        logger.error(f"Could not import complaint_admin: {e}")
+    except Exception as e:
+        logger.error(f"Error registering admin complaint handlers: {e}")
     
     # Инициализация модуля платежей
     await init_payment_module(application)
