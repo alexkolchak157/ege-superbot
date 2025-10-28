@@ -11,8 +11,9 @@ from datetime import datetime
 from typing import Set, Dict, List, Optional, Any
 from core import states
 from core import utils as core_utils
-from .checker import PlanBotData, evaluate_plan, FEEDBACK_KB, evaluate_plan_with_ai, build_feedback_keyboard
+from .checker import PlanBotData, evaluate_plan, FEEDBACK_KB, evaluate_plan_with_ai
 from . import keyboards
+from .keyboards import build_feedback_keyboard
 from core.document_processor import DocumentProcessor, DocumentHandlerMixin
 from core.admin_tools import admin_manager, admin_only, get_admin_keyboard_extension
 from core.universal_ui import UniversalUIComponents, AdaptiveKeyboards, MessageFormatter
