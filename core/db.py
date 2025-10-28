@@ -5,7 +5,7 @@
 
 import os
 import logging
-from datetime import datetime, date, timezone
+from datetime import datetime, date, timezone, timedelta
 from typing import Dict, Any, List, Tuple, Optional, Set
 import aiosqlite
 from core.config import DATABASE_FILE
@@ -324,6 +324,18 @@ async def init_db():
                     reminders_enabled BOOLEAN DEFAULT TRUE
                 )
             ''')
+
+            # Таблица для отслеживания дневных лимитов AI-проверок
+            await db.execute('''
+                CREATE TABLE IF NOT EXISTS user_ai_limits (
+                    user_id INTEGER NOT NULL,
+                    check_date DATE NOT NULL,
+                    checks_used INTEGER DEFAULT 0,
+                    last_check_time DATETIME,
+                    PRIMARY KEY (user_id, check_date),
+                    FOREIGN KEY (user_id) REFERENCES users(user_id)
+                )
+            ''')
             
             logger.info("Проверка/создание таблиц завершено.")
 
@@ -366,7 +378,8 @@ async def init_db():
                 (f'idx_{TABLE_ANSWERED}_user_id', TABLE_ANSWERED, 'user_id'),
                 (f'idx_{TABLE_MISTAKES}_question_id', TABLE_MISTAKES, 'question_id'),
                 (f'idx_{TABLE_ANSWERED}_question_id', TABLE_ANSWERED, 'question_id'),
-                (f'idx_{TABLE_USERS}_last_activity_date', TABLE_USERS, 'last_activity_date')
+                (f'idx_{TABLE_USERS}_last_activity_date', TABLE_USERS, 'last_activity_date'),
+                ('idx_user_ai_limits_date', 'user_ai_limits', 'check_date')
             ]
             
             for idx_name, table_name, column_name in indices:
@@ -1188,6 +1201,157 @@ async def update_user_info(user_id: int, username: str = None, first_name: str =
             
             await db.commit()
             logger.info(f"Updated user info for {user_id}: {first_name} (@{username})")
-            
+
     except Exception as e:
         logger.error(f"Error updating user info for {user_id}: {e}")
+
+
+# ==================== Функции для работы с лимитами AI-проверок ====================
+
+async def get_daily_ai_checks_used(user_id: int) -> int:
+    """
+    Получает количество использованных AI-проверок за сегодня.
+
+    Args:
+        user_id: ID пользователя
+
+    Returns:
+        Количество использованных проверок сегодня
+    """
+    try:
+        today = date.today()
+        async with aiosqlite.connect(DATABASE_FILE) as db:
+            cursor = await db.execute(
+                "SELECT checks_used FROM user_ai_limits WHERE user_id = ? AND check_date = ?",
+                (user_id, today)
+            )
+            row = await cursor.fetchone()
+            return row[0] if row else 0
+    except Exception as e:
+        logger.error(f"Error getting daily AI checks for user {user_id}: {e}")
+        return 0
+
+
+async def increment_ai_check_usage(user_id: int) -> bool:
+    """
+    Увеличивает счетчик использованных AI-проверок на 1.
+
+    Args:
+        user_id: ID пользователя
+
+    Returns:
+        True если успешно, False в случае ошибки
+    """
+    try:
+        today = date.today()
+        now = datetime.now(timezone.utc)
+
+        async with aiosqlite.connect(DATABASE_FILE) as db:
+            # Проверяем, есть ли запись на сегодня
+            cursor = await db.execute(
+                "SELECT checks_used FROM user_ai_limits WHERE user_id = ? AND check_date = ?",
+                (user_id, today)
+            )
+            row = await cursor.fetchone()
+
+            if row:
+                # Обновляем существующую запись
+                await db.execute(
+                    """UPDATE user_ai_limits
+                       SET checks_used = checks_used + 1, last_check_time = ?
+                       WHERE user_id = ? AND check_date = ?""",
+                    (now, user_id, today)
+                )
+            else:
+                # Создаем новую запись
+                await db.execute(
+                    """INSERT INTO user_ai_limits (user_id, check_date, checks_used, last_check_time)
+                       VALUES (?, ?, 1, ?)""",
+                    (user_id, today, now)
+                )
+
+            await db.commit()
+            logger.debug(f"Incremented AI check usage for user {user_id}")
+            return True
+
+    except Exception as e:
+        logger.error(f"Error incrementing AI check usage for user {user_id}: {e}")
+        return False
+
+
+async def reset_daily_ai_limits() -> int:
+    """
+    Удаляет старые записи лимитов (старше 30 дней) для очистки БД.
+    Актуальные лимиты автоматически сбрасываются при проверке по дате.
+
+    Returns:
+        Количество удаленных записей
+    """
+    try:
+        cutoff_date = date.today() - timedelta(days=30)
+
+        async with aiosqlite.connect(DATABASE_FILE) as db:
+            cursor = await db.execute(
+                "DELETE FROM user_ai_limits WHERE check_date < ?",
+                (cutoff_date,)
+            )
+            await db.commit()
+            deleted_count = cursor.rowcount
+
+            if deleted_count > 0:
+                logger.info(f"Cleaned up {deleted_count} old AI limit records")
+
+            return deleted_count
+
+    except Exception as e:
+        logger.error(f"Error resetting daily AI limits: {e}")
+        return 0
+
+
+async def get_ai_limit_stats(user_id: int, days: int = 7) -> Dict[str, Any]:
+    """
+    Получает статистику использования AI-проверок за последние N дней.
+
+    Args:
+        user_id: ID пользователя
+        days: Количество дней для анализа (по умолчанию 7)
+
+    Returns:
+        Словарь со статистикой
+    """
+    try:
+        start_date = date.today() - timedelta(days=days)
+
+        async with aiosqlite.connect(DATABASE_FILE) as db:
+            db.row_factory = aiosqlite.Row
+
+            cursor = await db.execute(
+                """SELECT check_date, checks_used
+                   FROM user_ai_limits
+                   WHERE user_id = ? AND check_date >= ?
+                   ORDER BY check_date DESC""",
+                (user_id, start_date)
+            )
+            rows = await cursor.fetchall()
+
+            total_checks = sum(row['checks_used'] for row in rows)
+            avg_checks = total_checks / days if days > 0 else 0
+
+            return {
+                'total_checks': total_checks,
+                'average_per_day': round(avg_checks, 1),
+                'days_active': len(rows),
+                'last_7_days': [
+                    {'date': str(row['check_date']), 'checks': row['checks_used']}
+                    for row in rows
+                ]
+            }
+
+    except Exception as e:
+        logger.error(f"Error getting AI limit stats for user {user_id}: {e}")
+        return {
+            'total_checks': 0,
+            'average_per_day': 0,
+            'days_active': 0,
+            'last_7_days': []
+        }

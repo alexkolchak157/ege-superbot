@@ -853,7 +853,39 @@ async def handle_plan_enhanced(update: Update, context: ContextTypes.DEFAULT_TYP
             "❌ Ошибка: не найдены эталонные данные для темы."
         )
         return ConversationHandler.END
-    
+
+    # Проверка лимитов AI-проверок
+    freemium_manager = context.bot_data.get('freemium_manager')
+    if freemium_manager:
+        user_id = update.effective_user.id
+        can_use, remaining, limit_msg = await freemium_manager.check_ai_limit(user_id, 'task24')
+
+        if not can_use:
+            # Показываем paywall
+            from payment.config import MODULE_PLANS
+            trial_price = MODULE_PLANS.get('trial_7days', {}).get('price_rub', 1)
+            full_price = MODULE_PLANS.get('package_full', {}).get('price_rub', 249)
+
+            paywall_text = (
+                f"⏸ {limit_msg}\n\n"
+                f"<b>Получите безлимитные проверки:</b>\n"
+                f"• Попробуйте 7 дней за {trial_price}₽\n"
+                f"• Полный доступ: {full_price}₽/месяц"
+            )
+
+            kb = InlineKeyboardMarkup([
+                [InlineKeyboardButton(f"Попробовать за {trial_price}₽", callback_data="subscribe")],
+                [InlineKeyboardButton("Подробнее о подписке", callback_data="subscribe")],
+                [InlineKeyboardButton("🏠 Главное меню", callback_data="to_main_menu")]
+            ])
+
+            await update.message.reply_text(
+                paywall_text,
+                reply_markup=kb,
+                parse_mode=ParseMode.HTML
+            )
+            return states.AWAITING_FEEDBACK
+
     # ИСПРАВЛЕНИЕ: Отправляем сообщение "Анализирую..." ДО блока try
     thinking_msg = await show_extended_thinking_animation(
         update.message,
@@ -934,13 +966,27 @@ async def handle_plan_enhanced(update: Update, context: ContextTypes.DEFAULT_TYP
         except Exception as e:
             logger.debug(f"Failed to delete thinking message: {e}")
         
+        # Регистрируем использование AI-проверки
+        if freemium_manager:
+            await freemium_manager.use_ai_check(user_id, 'task24')
+            # Получаем информацию об остатке
+            limit_info = await freemium_manager.get_limit_info(user_id, 'task24')
+            remaining_checks = limit_info.get('checks_remaining', 0)
+
+            # Добавляем информацию о лимите к feedback
+            if not limit_info.get('is_premium') and remaining_checks <= 3:
+                if remaining_checks > 0:
+                    feedback += f"\n\n📊 Осталось проверок сегодня: <b>{remaining_checks}</b>"
+                else:
+                    feedback += f"\n\n⏳ Бесплатные проверки на сегодня исчерпаны. Лимит обновится завтра."
+
         # Отправляем результат с динамической клавиатурой (с кнопкой жалобы если нужно)
         result_msg = await update.message.reply_text(
             feedback,
             reply_markup=build_feedback_keyboard(total_score, max_score=4),
             parse_mode=ParseMode.HTML
         )
-        
+
         # Сохраняем ID сообщения с результатом
         context.user_data['task24_result_msg_id'] = result_msg.message_id
         save_result(context, topic_name, total_score)

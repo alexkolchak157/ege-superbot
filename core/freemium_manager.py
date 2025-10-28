@@ -1,19 +1,24 @@
 """
 Freemium менеджер для управления лимитами AI-проверок.
 
-ВАЖНО: Этот модуль является заглушкой.
-Полноценный функционал freemium/лимитов пока не реализован.
-В текущей версии возвращает неограниченный доступ.
+Логика:
+- Бесплатные пользователи: 3 AI-проверки в день
+- Пользователи с подпиской: безлимитные проверки
+- Лимиты сбрасываются ежедневно автоматически
 """
 
 import logging
 from typing import Tuple, Dict, Optional, Any
+from core import db
 
 logger = logging.getLogger(__name__)
 
+# Константы
+FREE_DAILY_LIMIT = 3  # Бесплатных проверок в день
+
 
 class FreemiumManager:
-    """Менеджер для управления лимитами freemium пользователей (заглушка)"""
+    """Менеджер для управления лимитами freemium пользователей"""
 
     def __init__(self, subscription_manager=None):
         """
@@ -23,7 +28,7 @@ class FreemiumManager:
             subscription_manager: Менеджер подписок (опционально)
         """
         self.subscription_manager = subscription_manager
-        logger.warning("FreemiumManager initialized as stub - unlimited access enabled")
+        logger.info(f"FreemiumManager initialized with daily limit: {FREE_DAILY_LIMIT}")
 
     async def check_ai_limit(
         self,
@@ -40,11 +45,39 @@ class FreemiumManager:
         Returns:
             Tuple: (can_use, remaining, limit_msg)
                 - can_use: Может ли пользователь использовать AI-проверку
-                - remaining: Сколько проверок осталось
+                - remaining: Сколько проверок осталось (999 для premium)
                 - limit_msg: Сообщение о лимитах
         """
-        # Заглушка: всегда разрешаем использование
-        return (True, 999, "✅ Доступ разрешен")
+        try:
+            # Проверяем наличие активной подписки
+            has_subscription = False
+            if self.subscription_manager:
+                has_subscription = await self.subscription_manager.check_module_access(
+                    user_id, module_code or 'task24'
+                )
+
+            # Если есть подписка - безлимит
+            if has_subscription:
+                return (True, 999, "✨ У вас безлимитный доступ")
+
+            # Для бесплатных - проверяем дневной лимит
+            checks_used = await db.get_daily_ai_checks_used(user_id)
+            remaining = FREE_DAILY_LIMIT - checks_used
+
+            if remaining > 0:
+                msg = f"Осталось проверок сегодня: {remaining}/{FREE_DAILY_LIMIT}"
+                return (True, remaining, msg)
+            else:
+                msg = (
+                    f"Вы использовали все {FREE_DAILY_LIMIT} бесплатных проверки сегодня.\n"
+                    "Лимит обновится завтра."
+                )
+                return (False, 0, msg)
+
+        except Exception as e:
+            logger.error(f"Error checking AI limit for user {user_id}: {e}")
+            # В случае ошибки - разрешаем использование
+            return (True, 999, "✅ Доступ разрешен")
 
     async def get_limit_info(
         self,
@@ -61,15 +94,39 @@ class FreemiumManager:
         Returns:
             Dict с информацией о лимитах
         """
-        # Заглушка: возвращаем информацию о "премиум" пользователе
-        return {
-            'is_premium': True,
-            'has_subscription': True,
-            'checks_remaining': 999,
-            'checks_limit': 999,
-            'reset_date': None,
-            'module_code': module_code
-        }
+        try:
+            # Проверяем подписку
+            has_subscription = False
+            if self.subscription_manager:
+                has_subscription = await self.subscription_manager.check_module_access(
+                    user_id, module_code or 'task24'
+                )
+
+            # Получаем использованные проверки
+            checks_used = await db.get_daily_ai_checks_used(user_id)
+            checks_remaining = max(0, FREE_DAILY_LIMIT - checks_used) if not has_subscription else 999
+
+            return {
+                'is_premium': has_subscription,
+                'has_subscription': has_subscription,
+                'checks_remaining': checks_remaining,
+                'checks_limit': FREE_DAILY_LIMIT if not has_subscription else 999,
+                'checks_used_today': checks_used,
+                'reset_date': None,  # Лимиты сбрасываются автоматически каждый день
+                'module_code': module_code
+            }
+
+        except Exception as e:
+            logger.error(f"Error getting limit info for user {user_id}: {e}")
+            return {
+                'is_premium': False,
+                'has_subscription': False,
+                'checks_remaining': FREE_DAILY_LIMIT,
+                'checks_limit': FREE_DAILY_LIMIT,
+                'checks_used_today': 0,
+                'reset_date': None,
+                'module_code': module_code
+            }
 
     def format_limit_message(self, limit_info: Dict[str, Any]) -> str:
         """
@@ -81,13 +138,16 @@ class FreemiumManager:
         Returns:
             Отформатированное сообщение
         """
-        # Заглушка: возвращаем простое сообщение
         if limit_info.get('is_premium'):
-            return "✨ <b>Premium доступ активен</b>"
+            return "✨ <b>Безлимитный доступ активен</b>"
         else:
             remaining = limit_info.get('checks_remaining', 0)
-            limit = limit_info.get('checks_limit', 0)
-            return f"🔢 Осталось проверок: {remaining}/{limit}"
+            limit = limit_info.get('checks_limit', FREE_DAILY_LIMIT)
+
+            if remaining > 0:
+                return f"📊 Проверок сегодня: {remaining}/{limit}"
+            else:
+                return f"⏳ Лимит исчерпан. Завтра: {limit}/{limit}"
 
     async def use_ai_check(
         self,
@@ -104,19 +164,41 @@ class FreemiumManager:
         Returns:
             True если использование зарегистрировано успешно
         """
-        # Заглушка: всегда возвращаем успех
-        logger.debug(f"AI check used by user {user_id} for module {module_code}")
-        return True
+        try:
+            # Проверяем, можно ли использовать
+            can_use, _, _ = await self.check_ai_limit(user_id, module_code)
+
+            if not can_use:
+                logger.warning(f"User {user_id} tried to use AI check but limit exceeded")
+                return False
+
+            # Увеличиваем счетчик
+            success = await db.increment_ai_check_usage(user_id)
+
+            if success:
+                logger.info(f"AI check used by user {user_id} for module {module_code}")
+
+            return success
+
+        except Exception as e:
+            logger.error(f"Error using AI check for user {user_id}: {e}")
+            return False
 
     async def reset_daily_limits(self) -> int:
         """
         Сброс дневных лимитов для всех пользователей.
+        (Фактически удаляет старые записи для очистки БД)
 
         Returns:
             Количество пользователей, для которых сброшены лимиты
         """
-        # Заглушка: ничего не делаем
-        return 0
+        try:
+            deleted = await db.reset_daily_ai_limits()
+            logger.info(f"Daily limits reset: {deleted} old records cleaned")
+            return deleted
+        except Exception as e:
+            logger.error(f"Error resetting daily limits: {e}")
+            return 0
 
     async def get_user_stats(self, user_id: int) -> Dict[str, Any]:
         """
@@ -128,12 +210,16 @@ class FreemiumManager:
         Returns:
             Словарь со статистикой
         """
-        # Заглушка: возвращаем пустую статистику
-        return {
-            'total_checks': 0,
-            'checks_today': 0,
-            'modules_used': []
-        }
+        try:
+            stats = await db.get_ai_limit_stats(user_id, days=7)
+            return stats
+        except Exception as e:
+            logger.error(f"Error getting user stats for {user_id}: {e}")
+            return {
+                'total_checks': 0,
+                'checks_today': 0,
+                'modules_used': []
+            }
 
 
 # Глобальный экземпляр менеджера
