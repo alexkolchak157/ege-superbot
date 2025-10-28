@@ -2819,7 +2819,12 @@ async def close_admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Закрытие админской панели."""
     query = update.callback_query
     await query.answer("Панель закрыта")
-    await query.delete_message()
+    try:
+        await query.delete_message()
+    except BadRequest as e:
+        # Если сообщение не может быть удалено (слишком старое или уже удалено)
+        # просто игнорируем ошибку - панель уже закрыта с точки зрения пользователя
+        logger.debug(f"Не удалось удалить сообщение админ-панели: {e}")
 
 
 @admin_only
