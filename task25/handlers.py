@@ -891,7 +891,11 @@ async def safe_handle_answer_task25(update: Update, context: ContextTypes.DEFAUL
 
         # Регистрируем использование AI-проверки
         if freemium_manager:
-            await freemium_manager.use_ai_check(user_id, 'task25')
+            # ИСПРАВЛЕНО: Используем прямой вызов БД вместо use_ai_check
+            # чтобы избежать двойной проверки лимита
+            from core import db
+            await db.increment_ai_check_usage(user_id)
+
             # Получаем информацию об остатке
             limit_info = await freemium_manager.get_limit_info(user_id, 'task25')
             remaining_checks = limit_info.get('checks_remaining', 0)
