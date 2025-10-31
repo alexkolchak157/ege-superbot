@@ -307,5 +307,15 @@ def build_feedback_keyboard(score: int = 0, max_score: int = 4) -> InlineKeyboar
         
         if new_row:
             new_buttons.append(new_row)
-    
+
+    # Добавляем кнопку "Оспорить оценку" если оценка низкая (менее 60%)
+    threshold = max_score * 0.6
+    if score < threshold:
+        # Вставляем перед последней строкой (обычно там "Главное меню")
+        complaint_button = [InlineKeyboardButton("⚠️ Оспорить оценку", callback_data="t24_complaint")]
+        if len(new_buttons) > 0:
+            new_buttons.insert(-1, complaint_button)
+        else:
+            new_buttons.append(complaint_button)
+
     return InlineKeyboardMarkup(new_buttons)
