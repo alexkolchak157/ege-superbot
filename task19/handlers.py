@@ -694,20 +694,12 @@ async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
     can_use, remaining, limit_msg = await freemium_manager.check_ai_limit(user_id, module_code)
     
     if not can_use:
-        # Лимит исчерпан - показываем "размытый" результат
+        # Лимит исчерпан - показываем улучшенное сообщение с CTA
         await update.message.reply_text(
-            "🔒 <b>Лимит бесплатных проверок исчерпан</b>\n\n"
-            "Ваш ответ получен, но для детальной AI-проверки "
-            "необходима подписка на модуль.\n\n"
-            f"<i>Длина ответа: {len(user_answer)} символов</i>\n"
-            f"<i>Обнаружено примеров: ~{user_answer.count('.')} </i>\n\n"
-            "💎 <b>Оформите подписку на задание 19:</b>\n"
-            "• Безлимитные AI-проверки\n"
-            "• Детальный разбор каждого примера\n"
-            "• Персональные рекомендации\n"
-            "• Эталонные ответы\n\n",
+            f"{limit_msg}",
             reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("💎 Оформить подписку", callback_data="subscribe")],
+                [InlineKeyboardButton("🎁 Попробовать за 1₽", callback_data="subscribe_start")],
+                [InlineKeyboardButton("💎 Оформить подписку", callback_data="subscribe_start")],
                 [InlineKeyboardButton("📝 В меню", callback_data="t19_menu")]
             ]),
             parse_mode=ParseMode.HTML
@@ -1805,10 +1797,10 @@ async def handle_confirm_ocr(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
     if not can_use:
         await query.edit_message_text(
-            "🔒 <b>Лимит бесплатных проверок исчерпан</b>\n\n"
-            "💎 Оформите Premium для безлимитных проверок!",
+            limit_msg,
             reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("💎 Оформить Premium", callback_data="subscribe")],
+                [InlineKeyboardButton("🎁 Попробовать за 1₽", callback_data="subscribe_start")],
+                [InlineKeyboardButton("💎 Оформить подписку", callback_data="subscribe_start")],
                 [InlineKeyboardButton("📝 В меню", callback_data="t19_menu")]
             ]),
             parse_mode=ParseMode.HTML
