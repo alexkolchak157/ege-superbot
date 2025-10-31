@@ -968,7 +968,11 @@ async def handle_plan_enhanced(update: Update, context: ContextTypes.DEFAULT_TYP
         
         # Регистрируем использование AI-проверки
         if freemium_manager:
-            await freemium_manager.use_ai_check(user_id, 'task24')
+            # ИСПРАВЛЕНО: Используем прямой вызов БД вместо use_ai_check
+            # чтобы избежать двойной проверки лимита
+            from core import db
+            await db.increment_ai_check_usage(user_id)
+
             # Получаем информацию об остатке
             limit_info = await freemium_manager.get_limit_info(user_id, 'task24')
             remaining_checks = limit_info.get('checks_remaining', 0)

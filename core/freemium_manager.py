@@ -51,9 +51,11 @@ class FreemiumManager:
         try:
             # Проверяем наличие активной подписки
             has_subscription = False
-            if self.subscription_manager:
+            if self.subscription_manager and module_code:
+                # ИСПРАВЛЕНО: Используем module_code напрямую, без fallback
+                # Если module_code не передан - проверяем наличие любой активной подписки
                 has_subscription = await self.subscription_manager.check_module_access(
-                    user_id, module_code or 'task24'
+                    user_id, module_code
                 )
 
             # Если есть подписка - безлимит
@@ -75,9 +77,9 @@ class FreemiumManager:
                 return (False, 0, msg)
 
         except Exception as e:
-            logger.error(f"Error checking AI limit for user {user_id}: {e}")
-            # В случае ошибки - разрешаем использование
-            return (True, 999, "✅ Доступ разрешен")
+            logger.error(f"Error checking AI limit for user {user_id}: {e}", exc_info=True)
+            # ИСПРАВЛЕНО: В случае ошибки БД - блокируем доступ (безопасный вариант)
+            return (False, 0, "❌ Временные технические неполадки. Попробуйте позже.")
 
     async def get_limit_info(
         self,

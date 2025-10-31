@@ -1235,6 +1235,7 @@ async def get_daily_ai_checks_used(user_id: int) -> int:
 async def increment_ai_check_usage(user_id: int) -> bool:
     """
     Увеличивает счетчик использованных AI-проверок на 1.
+    Использует атомарный UPSERT для предотвращения race conditions.
 
     Args:
         user_id: ID пользователя
@@ -1247,28 +1248,16 @@ async def increment_ai_check_usage(user_id: int) -> bool:
         now = datetime.now(timezone.utc)
 
         async with aiosqlite.connect(DATABASE_FILE) as db:
-            # Проверяем, есть ли запись на сегодня
-            cursor = await db.execute(
-                "SELECT checks_used FROM user_ai_limits WHERE user_id = ? AND check_date = ?",
-                (user_id, today)
+            # ИСПРАВЛЕНО: Используем атомарный UPSERT вместо SELECT + UPDATE/INSERT
+            # Это предотвращает race conditions при параллельных запросах
+            await db.execute(
+                """INSERT INTO user_ai_limits (user_id, check_date, checks_used, last_check_time)
+                   VALUES (?, ?, 1, ?)
+                   ON CONFLICT(user_id, check_date) DO UPDATE
+                   SET checks_used = checks_used + 1,
+                       last_check_time = excluded.last_check_time""",
+                (user_id, today, now)
             )
-            row = await cursor.fetchone()
-
-            if row:
-                # Обновляем существующую запись
-                await db.execute(
-                    """UPDATE user_ai_limits
-                       SET checks_used = checks_used + 1, last_check_time = ?
-                       WHERE user_id = ? AND check_date = ?""",
-                    (now, user_id, today)
-                )
-            else:
-                # Создаем новую запись
-                await db.execute(
-                    """INSERT INTO user_ai_limits (user_id, check_date, checks_used, last_check_time)
-                       VALUES (?, ?, 1, ?)""",
-                    (user_id, today, now)
-                )
 
             await db.commit()
             logger.debug(f"Incremented AI check usage for user {user_id}")
