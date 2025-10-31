@@ -2627,7 +2627,10 @@ async def detailed_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
             text += "• Отличный результат! Попробуйте более сложные темы\n"
         elif overall_percentage < 60:
             text += "• Уделите больше времени теории перед практикой\n"
-        
+
+        # Инициализируем клавиатуру по умолчанию
+        kb = keyboards.get_initial_choice_keyboard()
+
         subscription_manager = context.bot_data.get('subscription_manager')
         if subscription_manager:
             user_id = query.from_user.id
