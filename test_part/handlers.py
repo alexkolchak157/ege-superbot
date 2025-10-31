@@ -2121,7 +2121,7 @@ async def send_mistake_question(message, context: ContextTypes.DEFAULT_TYPE):
     
     # Получаем данные текущей ошибки
     question_id = mistake_queue[current_index]
-    question_data = find_question_by_id(question_id)
+    question_data = utils.find_question_by_id(question_id)
     
     if not question_data:
         logger.error(f"Question not found for mistake review: {question_id}")
@@ -2715,12 +2715,21 @@ async def work_mistakes(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 
                 kb = InlineKeyboardMarkup([
                     [InlineKeyboardButton("💎 Активировать премиум", callback_data="pay_trial")],
-                    [InlineKeyboardButton("📝 Начать работу над ошибками", callback_data="start_mistakes_work")],
+                    [InlineKeyboardButton("📝 Начать работу над ошибками", callback_data="test_start_mistakes")],
                     [InlineKeyboardButton("⬅️ Назад", callback_data="to_test_part_menu")]
                 ])
                 
                 await query.edit_message_text(text, reply_markup=kb, parse_mode=ParseMode.HTML)
                 return states.CHOOSING_MODE
+
+    # Обычный случай (без премиум-промо)
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("▶️ Начать", callback_data="test_start_mistakes")],
+        [InlineKeyboardButton("⬅️ Назад", callback_data="to_test_part_menu")]
+    ])
+
+    await query.edit_message_text(text, reply_markup=kb, parse_mode=ParseMode.HTML)
+    return states.CHOOSING_MODE
 
 @safe_handler()
 @validate_state_transition({states.CHOOSING_MODE})
