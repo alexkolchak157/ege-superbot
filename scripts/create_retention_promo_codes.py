@@ -6,19 +6,40 @@
 - TOP20, TRIAL20, LASTDAY25, COMEBACK30, STAY15, SAVE25, URGENT30, RETURN40, LAST50
 
 Usage:
+    python scripts/create_retention_promo_codes.py [database_path]
+
+    database_path - опциональный путь к БД (по умолчанию quiz_async.db)
+
+Examples:
     python scripts/create_retention_promo_codes.py
+    python scripts/create_retention_promo_codes.py /opt/ege-bot/quiz_async.db
+    python3 scripts/create_retention_promo_codes.py quiz_async.db
 """
 
 import asyncio
 import aiosqlite
 import sys
 import os
+from pathlib import Path
 from datetime import datetime, timezone
 
 # Добавляем путь к корневой директории
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+ROOT_DIR = Path(__file__).parent.parent
 
-from core.db import DATABASE_FILE
+# Определяем путь к БД без импорта core.db (чтобы избежать зависимостей)
+if len(sys.argv) > 1:
+    DATABASE_FILE = sys.argv[1]
+else:
+    # По умолчанию ищем quiz_async.db в текущей директории или в корне проекта
+    current_dir = Path.cwd()
+
+    if (current_dir / 'quiz_async.db').exists():
+        DATABASE_FILE = str(current_dir / 'quiz_async.db')
+    elif (ROOT_DIR / 'quiz_async.db').exists():
+        DATABASE_FILE = str(ROOT_DIR / 'quiz_async.db')
+    else:
+        # Если не найдена, используем текущую директорию (будет ошибка позже если не существует)
+        DATABASE_FILE = 'quiz_async.db'
 
 # Промокоды из retention-системы
 RETENTION_PROMO_CODES = [
