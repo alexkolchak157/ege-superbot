@@ -32,7 +32,11 @@ DATABASE_PATH = 'quiz_async.db'
 SUBSCRIPTION_MODE = 'modular'  # Режим работы
 FREE_MODULES = ['test_part']  # Тестовая часть ВСЕГДА бесплатна
 
+# Модули с freemium доступом (3 бесплатных AI-проверки в день)
+FREEMIUM_MODULES = ['task19', 'task20', 'task24', 'task25']
+
 logger.info(f"Payment module loaded with SUBSCRIPTION_MODE = {SUBSCRIPTION_MODE}")
+logger.info(f"Freemium modules: {FREEMIUM_MODULES}")
 
 # ==================== УПРОЩЕННАЯ СИСТЕМА ПОДПИСОК ====================
 MODULE_PLANS = {
@@ -362,6 +366,7 @@ __all__ = [
     'DATABASE_PATH',
     'SUBSCRIPTION_MODE',
     'FREE_MODULES',
+    'FREEMIUM_MODULES',
     'MODULE_PLANS',
     'SUBSCRIPTION_PLANS',
     'DURATION_DISCOUNTS',
