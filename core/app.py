@@ -146,7 +146,17 @@ async def post_init(application: Application) -> None:
         logger.error(f"Could not import complaint_admin: {e}")
     except Exception as e:
         logger.error(f"Error registering admin complaint handlers: {e}")
-    
+
+    # Регистрируем retention admin обработчики
+    try:
+        from core.retention_admin import register_retention_admin_handlers
+        register_retention_admin_handlers(application)
+        logger.info("Retention admin handlers registered")
+    except ImportError as e:
+        logger.error(f"Could not import retention_admin: {e}")
+    except Exception as e:
+        logger.error(f"Error registering retention admin handlers: {e}")
+
     # Инициализация модуля платежей
     await init_payment_module(application)
 

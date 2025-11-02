@@ -29,6 +29,7 @@ from core.plugin_loader import build_main_menu
 from core.state_validator import validate_state_transition, state_validator
 from core.utils import safe_edit_message
 from core.menu_handlers import handle_to_main_menu
+from core.freemium_manager import get_freemium_manager
 from telegram.error import BadRequest
 from core.document_processor import DocumentHandlerMixin
 from core.migration import ensure_module_migration
@@ -847,7 +848,31 @@ async def safe_handle_answer_task20(update: Update, context: ContextTypes.DEFAUL
             ]])
         )
         return states.ANSWERING_T20
-    
+
+    # FREEMIUM: Проверяем лимит AI-проверок
+    user_id = update.effective_user.id
+    module_code = 'task20'
+    freemium_manager = get_freemium_manager(
+        context.application.bot_data.get('subscription_manager')
+    )
+
+    can_use, remaining, limit_msg = await freemium_manager.check_ai_limit(user_id, module_code)
+
+    if not can_use:
+        # Пользователь исчерпал лимит
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("🎁 Попробовать за 1₽", callback_data="subscribe_start")],
+            [InlineKeyboardButton("💎 Оформить подписку", callback_data="subscribe_start")],
+            [InlineKeyboardButton("🏠 Главное меню", callback_data="to_main_menu")]
+        ])
+
+        await update.message.reply_text(
+            limit_msg,
+            reply_markup=kb,
+            parse_mode=ParseMode.HTML
+        )
+        return states.CHOOSING_MODE
+
     # Показываем анимацию обработки
     thinking_msg = await show_ai_evaluation_animation(
         update.message,
@@ -891,7 +916,10 @@ async def safe_handle_answer_task20(update: Update, context: ContextTypes.DEFAUL
         
         # Удаляем анимацию
         await thinking_msg.delete()
-        
+
+        # FREEMIUM: Расходуем AI-проверку
+        await freemium_manager.use_ai_check(user_id, module_code)
+
         # Сохраняем результат
         if 'task20_results' not in context.user_data:
             context.user_data['task20_results'] = []
