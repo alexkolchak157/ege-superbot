@@ -160,6 +160,33 @@ async def post_init(application: Application) -> None:
     except Exception as e:
         logger.error(f"Failed to initialize FreemiumManager: {e}")
 
+    # Регистрация обработчиков уведомлений
+    try:
+        from core.notification_handlers import register_notification_handlers
+        register_notification_handlers(application)
+        logger.info("Notification handlers registered")
+    except Exception as e:
+        logger.error(f"Failed to register notification handlers: {e}")
+
+    # Инициализация retention scheduler
+    try:
+        from datetime import time as dt_time
+        from core.retention_scheduler import get_retention_scheduler
+
+        scheduler = get_retention_scheduler()
+        application.bot_data['retention_scheduler'] = scheduler
+
+        # Запускаем ежедневную отправку уведомлений в 17:00 (после школы)
+        application.job_queue.run_daily(
+            scheduler.send_daily_notifications,
+            time=dt_time(hour=17, minute=0, second=0),
+            name='daily_retention_notifications'
+        )
+
+        logger.info("Retention scheduler initialized and scheduled for 17:00 daily")
+    except Exception as e:
+        logger.error(f"Failed to initialize retention scheduler: {e}")
+
     # Загрузка модулей-плагинов
     try:
         from core import plugin_loader
