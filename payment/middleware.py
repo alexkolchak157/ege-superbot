@@ -229,17 +229,22 @@ class SubscriptionMiddleware:
             return True
         
         # ИСПРАВЛЕНИЕ: Теперь можно проверять FREE_MODULES
-        from .config import FREE_MODULES
+        from .config import FREE_MODULES, FREEMIUM_MODULES
         if module_code in FREE_MODULES:
             logger.info(f"Free module {module_code} accessed by user {user_id}")
             return True
-        
+
+        # Модули с freemium доступом - пропускаем, обработчик сам проверит лимиты
+        if module_code in FREEMIUM_MODULES:
+            logger.info(f"Freemium module {module_code} accessed by user {user_id} - delegating check to handler")
+            return True
+
         # Получаем менеджер подписок
         subscription_manager = application.bot_data.get('subscription_manager')
         if not subscription_manager:
             logger.warning("SubscriptionManager not found in bot_data")
             return True
-        
+
         # Проверяем доступ к модулю (с кэшем)
         cache_key = (user_id, module_code)
         if cache_key in self._access_cache:
@@ -247,7 +252,7 @@ class SubscriptionMiddleware:
         else:
             has_access = await subscription_manager.check_module_access(user_id, module_code)
             self._access_cache[cache_key] = has_access
-        
+
         if not has_access:
             logger.info(f"Access denied for user {user_id} to module {module_code}")
             await self._send_module_subscription_required(update, context, module_code)
