@@ -82,7 +82,7 @@ class UserSegmentClassifier:
 
                 # Количество AI-проверок за всё время
                 cursor = await db.execute("""
-                    SELECT COUNT(*) FROM ai_limit_usage
+                    SELECT COALESCE(SUM(checks_used), 0) FROM user_ai_limits
                     WHERE user_id = ?
                 """, (user_id,))
                 ai_checks_total = (await cursor.fetchone())[0]
@@ -90,10 +90,11 @@ class UserSegmentClassifier:
                 # AI-проверки за сегодня
                 today = datetime.now(timezone.utc).date()
                 cursor = await db.execute("""
-                    SELECT COUNT(*) FROM ai_limit_usage
-                    WHERE user_id = ? AND DATE(check_date) = ?
+                    SELECT COALESCE(checks_used, 0) FROM user_ai_limits
+                    WHERE user_id = ? AND check_date = ?
                 """, (user_id, today.isoformat()))
-                ai_checks_today = (await cursor.fetchone())[0]
+                result = await cursor.fetchone()
+                ai_checks_today = result[0] if result else 0
 
                 # Активность за последнюю неделю
                 week_ago = datetime.now(timezone.utc) - timedelta(days=7)
