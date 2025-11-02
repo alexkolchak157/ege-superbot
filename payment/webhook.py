@@ -168,6 +168,39 @@ async def handle_webhook(request: web.Request) -> web.Response:
             if success:
                 logger.info(f"✅ Payment {order_id} successfully activated")
 
+                # Трекинг конверсии из retention уведомлений
+                try:
+                    # Получаем user_id и promo_code из платежа
+                    import aiosqlite
+                    async with aiosqlite.connect(subscription_manager.database_file) as db:
+                        cursor = await db.execute("""
+                            SELECT user_id, metadata FROM payments
+                            WHERE order_id = ?
+                        """, (order_id,))
+                        payment_row = await cursor.fetchone()
+
+                        if payment_row:
+                            user_id = payment_row[0]
+                            metadata_str = payment_row[1]
+
+                            # Извлекаем promo_code из metadata (JSON string)
+                            promo_code = None
+                            if metadata_str:
+                                import json
+                                try:
+                                    metadata = json.loads(metadata_str)
+                                    promo_code = metadata.get('promo_code')
+                                except:
+                                    pass
+
+                            # Трекинг конверсии
+                            from core.notification_handlers import track_notification_conversion
+                            await track_notification_conversion(user_id, promo_code)
+                            logger.info(f"Tracked conversion for user {user_id} with promo {promo_code}")
+                except Exception as e:
+                    # Не падаем если трекинг не сработал
+                    logger.error(f"Failed to track conversion for {order_id}: {e}")
+
                 # Отправляем уведомление только если оно еще не было отправлено
                 bot = request.app.get('bot')
                 if bot:
