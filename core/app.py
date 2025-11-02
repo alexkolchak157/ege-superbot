@@ -187,16 +187,16 @@ async def post_init(application: Application) -> None:
         scheduler = get_retention_scheduler()
         application.bot_data['retention_scheduler'] = scheduler
 
-        # Запускаем ежедневную отправку уведомлений в 17:00 МСК (после школы)
+        # Запускаем ежедневную отправку уведомлений в 18:00 МСК (после школы)
         # Используем московское время явно
         msk_tz = ZoneInfo("Europe/Moscow")
         application.job_queue.run_daily(
             scheduler.send_daily_notifications,
-            time=dt_time(hour=17, minute=0, second=0, tzinfo=msk_tz),
+            time=dt_time(hour=18, minute=0, second=0, tzinfo=msk_tz),
             name='daily_retention_notifications'
         )
 
-        logger.info("Retention scheduler initialized and scheduled for 17:00 MSK daily")
+        logger.info("Retention scheduler initialized and scheduled for 18:00 MSK daily")
     except Exception as e:
         logger.error(f"Failed to initialize retention scheduler: {e}")
 
