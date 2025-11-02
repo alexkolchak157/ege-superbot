@@ -21,7 +21,6 @@ import aiosqlite
 import sys
 import os
 from pathlib import Path
-from datetime import datetime, timezone
 
 # Добавляем путь к корневой директории
 ROOT_DIR = Path(__file__).parent.parent
@@ -133,7 +132,8 @@ async def create_promo_code(db: aiosqlite.Connection, promo_data: dict) -> bool:
         print(f"  ⚠️  {code} уже существует, пропускаем")
         return False
 
-    # Создаём промокод
+    # Создаём промокод (без поля description - его нет в схеме)
+    # created_at имеет DEFAULT CURRENT_TIMESTAMP, поэтому не указываем его
     await db.execute("""
         INSERT INTO promo_codes (
             code,
@@ -141,19 +141,15 @@ async def create_promo_code(db: aiosqlite.Connection, promo_data: dict) -> bool:
             discount_amount,
             usage_limit,
             used_count,
-            is_active,
-            created_at,
-            description
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            is_active
+        ) VALUES (?, ?, ?, ?, ?, ?)
     """, (
         code,
         promo_data['discount_percent'],
-        None,  # discount_amount (используем процент, не фикс. сумму)
+        0,  # discount_amount (используем процент, не фикс. сумму)
         promo_data['usage_limit'],
         0,  # used_count
-        1,  # is_active
-        datetime.now(timezone.utc).isoformat(),
-        promo_data['description']
+        1  # is_active
     ))
 
     print(f"  ✅ {code} создан ({promo_data['discount_percent']}% скидка)")
@@ -213,7 +209,7 @@ async def create_all_promo_codes():
         print()
 
         cursor = await db.execute("""
-            SELECT code, discount_percent, description, is_active
+            SELECT code, discount_percent, is_active
             FROM promo_codes
             WHERE code IN ({})
             ORDER BY discount_percent ASC
@@ -223,8 +219,12 @@ async def create_all_promo_codes():
 
         codes = await cursor.fetchall()
 
-        for code, discount, description, is_active in codes:
+        # Создаём словарь для быстрого поиска описаний
+        descriptions = {p['code'].upper(): p['description'] for p in RETENTION_PROMO_CODES}
+
+        for code, discount, is_active in codes:
             status = "✅" if is_active else "❌"
+            description = descriptions.get(code, "")
             print(f"  {status} {code:12} - {discount:2}% - {description}")
 
         print()
