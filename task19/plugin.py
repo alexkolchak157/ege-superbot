@@ -121,6 +121,11 @@ class Task19Plugin(BotPlugin):
 
                     # Сброс и подтверждения
                     CallbackQueryHandler(handlers.handle_settings_actions, pattern="^t19_(reset_progress|confirm_reset)$"),
+
+                    # OCR обработчики
+                    CallbackQueryHandler(handlers.handle_confirm_ocr, pattern="^t19_confirm_ocr$"),
+                    CallbackQueryHandler(handlers.handle_edit_ocr, pattern="^t19_edit_ocr$"),
+                    CallbackQueryHandler(handlers.handle_retry_photo, pattern="^t19_retry_photo$"),
                 ],
                 
                 states.CHOOSING_BLOCK: [
@@ -167,12 +172,6 @@ class Task19Plugin(BotPlugin):
         )
         # Регистрируем обработчики в приложении
         app.add_handler(conv_handler)
-        app.add_handler(CallbackQueryHandler(
-            handlers.handle_confirm_ocr, pattern="^t19_confirm_ocr$"
-        ))
-        app.add_handler(CallbackQueryHandler(
-            handlers.handle_edit_ocr, pattern="^t19_edit_ocr$"
-        ))
         app.add_handler(CallbackQueryHandler(
             handlers.achievement_ok,
             pattern="^achievement_ok$"

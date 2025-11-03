@@ -1968,8 +1968,49 @@ async def handle_edit_ocr(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     # Устанавливаем состояние ожидания отредактированного текста
     state_validator.set_state(query.from_user.id, TASK19_WAITING)
-    
+
     return TASK19_WAITING
+
+
+async def handle_retry_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Повторная загрузка фото для OCR."""
+    query = update.callback_query
+    await query.answer()
+
+    # Очищаем временные данные
+    context.user_data.pop('pending_answer', None)
+
+    topic = context.user_data.get('pending_topic') or context.user_data.get('current_topic')
+
+    if not topic:
+        await query.edit_message_text(
+            "❌ Ошибка: тема не найдена. Начните заново.",
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("🔄 Начать заново", callback_data="t19_practice")
+            ]])
+        )
+        return states.CHOOSING_MODE
+
+    await query.edit_message_text(
+        "📸 <b>Загрузите новое фото</b>\n\n"
+        "Отправьте фотографию с вашими примерами.\n\n"
+        "💡 <i>Советы для лучшего распознавания:</i>\n"
+        "• Убедитесь, что текст четкий\n"
+        "• Используйте хорошее освещение\n"
+        "• Держите камеру ровно\n"
+        "• Пишите разборчиво",
+        reply_markup=InlineKeyboardMarkup([[
+            InlineKeyboardButton("✏️ Ввести текстом", callback_data="t19_retry"),
+            InlineKeyboardButton("❌ Отмена", callback_data="t19_practice")
+        ]]),
+        parse_mode=ParseMode.HTML
+    )
+
+    # Переводим в состояние ожидания фото
+    state_validator.set_state(query.from_user.id, TASK19_WAITING)
+
+    return TASK19_WAITING
+
 
 # ============== ВСПОМОГАТЕЛЬНАЯ ФУНКЦИЯ ==============
 def format_basic_feedback_task19(result: EvaluationResult, topic: Dict) -> str:
