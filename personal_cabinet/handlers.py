@@ -395,26 +395,20 @@ async def handle_auto_renewal_toggle(update: Update, context: ContextTypes.DEFAU
 async def handle_buy_subscription(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
     Перенаправляет пользователя к покупке/продлению подписки.
+    Напрямую открывает магазин подписок.
     """
-    query = update.callback_query
-    await query.answer()
-
-    # Просто вызываем обработчик подписки из payment модуля
-    # Устанавливаем callback_data для входа в процесс покупки
-    query.data = "subscribe_start"
-
-    # Импортируем и вызываем обработчик подписки
     try:
-        from payment.handlers import cmd_subscribe
+        from payment.handlers import show_modular_interface
 
-        # Завершаем текущий ConversationHandler
-        context.user_data['return_to_cabinet'] = True
+        # Прямой переход к магазину подписок
+        await show_modular_interface(update, context)
 
-        await cmd_subscribe(update, context)
-
+        # Завершаем текущий ConversationHandler для перехода к процессу оплаты
         return ConversationHandler.END
 
     except Exception as e:
-        logger.error(f"Error redirecting to subscription: {e}")
-        await query.answer("❌ Ошибка при переходе к оформлению подписки", show_alert=True)
+        logger.error(f"Error redirecting to subscription shop: {e}")
+        query = update.callback_query
+        if query:
+            await query.answer("❌ Ошибка при переходе к оформлению подписки", show_alert=True)
         return VIEWING
