@@ -638,7 +638,10 @@ async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
                     reply_markup=keyboard,
                     parse_mode=ParseMode.HTML
                 )
-                
+
+                # Устанавливаем состояние явно
+                state_validator.set_state(update.effective_user.id, states.CHOOSING_MODE)
+
                 return states.CHOOSING_MODE
                 
             else:
