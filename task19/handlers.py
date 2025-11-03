@@ -64,7 +64,44 @@ def set_active_module(context: ContextTypes.DEFAULT_TYPE):
     """Устанавливает task19 как активный модуль."""
     context.user_data['active_module'] = 'task19'
     context.user_data['current_module'] = 'task19'
-    
+
+async def delete_previous_messages(context: ContextTypes.DEFAULT_TYPE, chat_id: int, keep_message_id: Optional[int] = None):
+    """Удаляет предыдущие сообщения диалога task19."""
+    if not hasattr(context, 'bot') or not context.bot:
+        logger.warning("Bot instance not available for message deletion")
+        return
+
+    # Список ключей с ID сообщений для удаления
+    message_keys = [
+        'task19_question_msg_id',   # Сообщение с вопросом
+        'task19_answer_msg_id',     # Сообщение с ответом пользователя
+        'task19_result_msg_id',     # Сообщение с результатом проверки
+        'task19_thinking_msg_id'    # Сообщение "Анализирую..."
+    ]
+
+    messages_to_delete = []
+    deleted_count = 0
+
+    for key in message_keys:
+        msg_id = context.user_data.get(key)
+        if msg_id and msg_id != keep_message_id:
+            messages_to_delete.append((key, msg_id))
+
+    # Удаляем сообщения
+    for key, msg_id in messages_to_delete:
+        try:
+            await context.bot.delete_message(chat_id=chat_id, message_id=msg_id)
+            deleted_count += 1
+            logger.debug(f"Deleted {key}: {msg_id}")
+        except Exception as e:
+            logger.debug(f"Failed to delete {key} {msg_id}: {e}")
+
+    # Очищаем контекст
+    for key in message_keys:
+        context.user_data.pop(key, None)
+
+    logger.info(f"Task19: Deleted {deleted_count}/{len(messages_to_delete)} messages")
+
 # Меню выбора уровня строгости (только для админов)
 @safe_handler()
 async def strictness_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -330,6 +367,9 @@ async def random_topic_all(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Случайная тема из всех блоков."""
     query = update.callback_query
 
+    # Удаляем предыдущие сообщения перед показом нового вопроса
+    await delete_previous_messages(context, query.message.chat_id)
+
     topics: List[Dict] = task19_data.get("topics", [])
     if not topics:
         return states.CHOOSING_MODE
@@ -342,10 +382,13 @@ async def random_topic_all(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     context.user_data["current_topic"] = topic
     await query.edit_message_text(text, reply_markup=kb, parse_mode=ParseMode.HTML)
-    
+
+    # Сохраняем ID сообщения с вопросом
+    context.user_data['task19_question_msg_id'] = query.message.message_id
+
     # ВАЖНО: Устанавливаем состояние явно
     state_validator.set_state(query.from_user.id, TASK19_WAITING)
-    
+
     return TASK19_WAITING
 
 
@@ -353,6 +396,9 @@ async def random_topic_all(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def random_topic_block(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Случайная тема из выбранного блока."""
     query = update.callback_query
+
+    # Удаляем предыдущие сообщения перед показом нового вопроса
+    await delete_previous_messages(context, query.message.chat_id)
 
     block_name = context.user_data.get("selected_block")
     if not block_name:
@@ -369,6 +415,9 @@ async def random_topic_block(update: Update, context: ContextTypes.DEFAULT_TYPE)
     )
     context.user_data["current_topic"] = topic
     await query.edit_message_text(text, reply_markup=kb, parse_mode=ParseMode.HTML)
+
+    # Сохраняем ID сообщения с вопросом
+    context.user_data['task19_question_msg_id'] = query.message.message_id
 
     # ВАЖНО: Устанавливаем состояние явно
     state_validator.set_state(query.from_user.id, TASK19_WAITING)
@@ -468,22 +517,28 @@ async def select_topic(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text("❌ Тема не найдена")
         return states.CHOOSING_MODE
     
+    # Удаляем предыдущие сообщения перед показом нового вопроса
+    await delete_previous_messages(context, query.message.chat_id)
+
     # Сохраняем текущую тему
     context.user_data['current_topic'] = topic
     text = _build_topic_message(topic)
     kb = InlineKeyboardMarkup([[
         InlineKeyboardButton("⬅️ Выбрать другую тему", callback_data="t19_practice")
     ]])
-    
-    await query.edit_message_text(
+
+    edited_msg = await query.edit_message_text(
         text,
         reply_markup=kb,
         parse_mode=ParseMode.HTML
     )
-    
+
+    # Сохраняем ID сообщения с вопросом
+    context.user_data['task19_question_msg_id'] = query.message.message_id
+
     # ВАЖНО: Устанавливаем состояние явно
     state_validator.set_state(query.from_user.id, TASK19_WAITING)
-    
+
     return TASK19_WAITING
 
 @safe_handler()
@@ -679,7 +734,10 @@ async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
     # Обработка текстового ответа (существующий функционал)
     else:
         user_answer = update.message.text.strip()
-        
+
+        # Сохраняем ID сообщения с ответом пользователя
+        context.user_data['task19_answer_msg_id'] = update.message.message_id
+
         # Проверяем минимальную длину
         if len(user_answer) < 50:
             await update.message.reply_text(
@@ -725,7 +783,10 @@ async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
         "<i>Это займет несколько секунд</i>",
         parse_mode=ParseMode.HTML
     )
-    
+
+    # Сохраняем ID сообщения "думаю"
+    context.user_data['task19_thinking_msg_id'] = thinking_msg.message_id
+
     # Регистрируем использование проверки для модуля
     await freemium_manager.use_ai_check(user_id, module_code)
     
@@ -777,7 +838,11 @@ async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
             reply_markup=after_check_keyboard,
             parse_mode=ParseMode.HTML
         )
-        
+
+        # Обновляем ID - теперь это сообщение с результатом
+        context.user_data.pop('task19_thinking_msg_id', None)
+        context.user_data['task19_result_msg_id'] = thinking_msg.message_id
+
         # Сохраняем для возврата
         context.user_data['t19_last_screen'] = 'feedback'
         context.user_data['t19_last_feedback'] = {
@@ -1448,6 +1513,9 @@ async def handle_result_action(update: Update, context: ContextTypes.DEFAULT_TYP
         return await practice_mode(update, context)
     
     elif action == "t19_retry":
+        # Удаляем предыдущие сообщения перед повторной попыткой
+        await delete_previous_messages(context, query.message.chat_id)
+
         # Показываем то же задание заново
         topic = context.user_data.get('current_topic')
         if topic:
@@ -1455,16 +1523,19 @@ async def handle_result_action(update: Update, context: ContextTypes.DEFAULT_TYP
             kb = InlineKeyboardMarkup([[
                 InlineKeyboardButton("⬅️ Выбрать другую тему", callback_data="t19_practice")
             ]])
-            
+
             await query.edit_message_text(
-                text, 
-                reply_markup=kb, 
+                text,
+                reply_markup=kb,
                 parse_mode=ParseMode.HTML
             )
-            
+
+            # Сохраняем ID сообщения с вопросом
+            context.user_data['task19_question_msg_id'] = query.message.message_id
+
             # Устанавливаем состояние
             state_validator.set_state(query.from_user.id, TASK19_WAITING)
-            
+
             return TASK19_WAITING
         else:
             await query.answer("❌ Ошибка: тема не найдена", show_alert=True)

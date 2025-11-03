@@ -72,6 +72,43 @@ except ImportError as e:
     logger.error(f"Failed to import utils: {e}")
     TopicSelector = None
 
+async def delete_previous_messages(context: ContextTypes.DEFAULT_TYPE, chat_id: int, keep_message_id: Optional[int] = None):
+    """Удаляет предыдущие сообщения диалога task25."""
+    if not hasattr(context, 'bot') or not context.bot:
+        logger.warning("Bot instance not available for message deletion")
+        return
+
+    # Список ключей с ID сообщений для удаления
+    message_keys = [
+        'task25_question_msg_id',   # Сообщение с вопросом
+        'task25_answer_msg_id',     # Сообщение с ответом пользователя
+        'task25_result_msg_id',     # Сообщение с результатом проверки
+        'task25_thinking_msg_id'    # Сообщение "Анализирую..."
+    ]
+
+    messages_to_delete = []
+    deleted_count = 0
+
+    for key in message_keys:
+        msg_id = context.user_data.get(key)
+        if msg_id and msg_id != keep_message_id:
+            messages_to_delete.append((key, msg_id))
+
+    # Удаляем сообщения
+    for key, msg_id in messages_to_delete:
+        try:
+            await context.bot.delete_message(chat_id=chat_id, message_id=msg_id)
+            deleted_count += 1
+            logger.debug(f"Deleted {key}: {msg_id}")
+        except Exception as e:
+            logger.debug(f"Failed to delete {key} {msg_id}: {e}")
+
+    # Очищаем контекст
+    for key in message_keys:
+        context.user_data.pop(key, None)
+
+    logger.info(f"Task25: Deleted {deleted_count}/{len(messages_to_delete)} messages")
+
 def check_data_loaded():
     """Проверяет загрузку данных."""
     global task25_data
@@ -688,7 +725,10 @@ def _build_topic_message(topic: Dict) -> str:
 async def random_topic_all(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Случайная тема из всех с правильными кнопками."""
     query = update.callback_query
-    
+
+    # Удаляем предыдущие сообщения перед показом нового вопроса
+    await delete_previous_messages(context, query.message.chat_id)
+
     topics = task25_data.get("topics", [])
     if not topics:
         return states.CHOOSING_MODE
@@ -736,7 +776,10 @@ async def random_topic_all(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=kb,
             parse_mode=ParseMode.HTML
         )
-        
+
+        # Сохраняем ID сообщения с вопросом
+        context.user_data['task25_question_msg_id'] = query.message.message_id
+
         return ANSWERING_PARTS
     else:
         # Стандартный режим
@@ -744,13 +787,16 @@ async def random_topic_all(update: Update, context: ContextTypes.DEFAULT_TYPE):
             [InlineKeyboardButton("🎲 Другая тема", callback_data="t25_another_topic")],
             [InlineKeyboardButton("⬅️ К выбору", callback_data="t25_practice")]
         ])
-        
+
         await query.edit_message_text(
             text,
             reply_markup=kb,
             parse_mode=ParseMode.HTML
         )
-        
+
+        # Сохраняем ID сообщения с вопросом
+        context.user_data['task25_question_msg_id'] = query.message.message_id
+
         return states.ANSWERING
 
 def _get_fallback_feedback(user_answer: str, topic: Dict) -> str:
@@ -799,7 +845,10 @@ async def safe_handle_answer_task25(update: Update, context: ContextTypes.DEFAUL
     else:
         user_answer = update.message.text.strip()
         logger.info("Using text from message")
-    
+
+    # Сохраняем ID сообщения с ответом пользователя
+    context.user_data['task25_answer_msg_id'] = update.message.message_id
+
     # Проверяем минимальную длину
     if len(user_answer) < 100:
         await update.message.reply_text(
@@ -836,7 +885,10 @@ async def safe_handle_answer_task25(update: Update, context: ContextTypes.DEFAUL
         update.message,
         duration=45  # 45 секунд для task25 (сложнее)
     )
-    
+
+    # Сохраняем ID сообщения "думаю"
+    context.user_data['task25_thinking_msg_id'] = thinking_msg.message_id
+
     try:    
         # Инициализируем evaluator если нужно
         global evaluator
@@ -930,14 +982,18 @@ async def safe_handle_answer_task25(update: Update, context: ContextTypes.DEFAUL
             max_score=6,
             module_code="t25"
         )
-        
+
         # Отправляем результат
-        await update.message.reply_text(
+        result_msg = await update.message.reply_text(
             feedback_text,
             reply_markup=kb,
             parse_mode=ParseMode.HTML
         )
-        
+
+        # Обновляем ID - теперь это сообщение с результатом
+        context.user_data.pop('task25_thinking_msg_id', None)
+        context.user_data['task25_result_msg_id'] = result_msg.message_id
+
         # Меняем состояние на AWAITING_FEEDBACK для обработки дальнейших действий
         return states.AWAITING_FEEDBACK
         
@@ -3370,26 +3426,32 @@ async def show_example_answer(update: Update, context: ContextTypes.DEFAULT_TYPE
 async def handle_select_topic(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Выбор конкретной темы из списка."""
     query = update.callback_query
-    
+
+    # Удаляем предыдущие сообщения перед показом нового вопроса
+    await delete_previous_messages(context, query.message.chat_id)
+
     # Извлекаем ID темы
     _, topic_id = query.data.split(':')
     topic = task25_data.get('topic_by_id', {}).get(int(topic_id))
-    
+
     if not topic:
         return states.CHOOSING_MODE
-    
+
     context.user_data['current_topic'] = topic
-    
+
     # Показываем задание
     from .utils import format_topic_for_display
     topic_text = format_topic_for_display(topic)
-    
+
     await query.edit_message_text(
         f"{topic_text}\n\n"
         "📝 <b>Напишите развёрнутый ответ:</b>",
         parse_mode=ParseMode.HTML
     )
-    
+
+    # Сохраняем ID сообщения с вопросом
+    context.user_data['task25_question_msg_id'] = query.message.message_id
+
     return states.ANSWERING
 
 
