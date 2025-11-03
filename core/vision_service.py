@@ -197,10 +197,25 @@ class VisionService:
                         error_text = await response.text()
                         logger.error(f"Vision API error: {response.status} - {error_text}")
 
-                        if attempt == self.config.retries - 1:
+                        # Специальная обработка ошибки прав доступа
+                        if response.status == 403:
                             return {
                                 'success': False,
-                                'error': f'Ошибка API: {response.status}',
+                                'error': 'OCR сервис временно недоступен',
+                                'warning': (
+                                    'Для работы OCR требуется настроить права доступа в Yandex Cloud.\n'
+                                    'Пожалуйста, введите текст вручную.'
+                                ),
+                                'text': '',
+                                'confidence': 0.0
+                            }
+
+                        if attempt == self.config.retries - 1:
+                            # Для остальных ошибок - общее сообщение
+                            error_msg = 'Ошибка сервиса распознавания' if response.status >= 500 else 'Ошибка обработки фото'
+                            return {
+                                'success': False,
+                                'error': error_msg,
                                 'text': '',
                                 'confidence': 0.0
                             }
