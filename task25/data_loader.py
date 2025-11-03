@@ -15,23 +15,39 @@ def load_data_sync() -> Optional[Dict[str, Any]]:
         with open(data_file, "r", encoding="utf-8") as f:
             data = json.load(f)
 
+        topics = []
         if isinstance(data, list):
-            # Если это список тем, оборачиваем в словарь
-            return {"topics": data}
+            # Если это список тем
+            topics = data
         elif isinstance(data, dict) and "topics" in data:
-            return data
+            topics = data["topics"]
         else:
             logger.error("Unexpected data format in task25_topics.json")
-            return {"topics": []}
+            return {"topics": [], "topics_by_block": {}}
+
+        # Создаем структуру topics_by_block для группировки по блокам
+        topics_by_block = {}
+        for topic in topics:
+            block_name = topic.get("block", "Без блока")
+            if block_name not in topics_by_block:
+                topics_by_block[block_name] = []
+            topics_by_block[block_name].append(topic)
+
+        logger.info(f"Loaded {len(topics)} topics in {len(topics_by_block)} blocks")
+
+        return {
+            "topics": topics,
+            "topics_by_block": topics_by_block
+        }
     except FileNotFoundError:
         logger.error(f"Data file not found: {data_file}")
-        return {"topics": []}
+        return {"topics": [], "topics_by_block": {}}
     except json.JSONDecodeError as e:
         logger.error(f"Failed to parse JSON: {e}")
-        return {"topics": []}
+        return {"topics": [], "topics_by_block": {}}
     except Exception as e:
         logger.error(f"Failed to load topics data: {e}")
-        return {"topics": []}
+        return {"topics": [], "topics_by_block": {}}
 
 
 def get_data() -> Dict[str, Any]:
