@@ -115,7 +115,7 @@ async def post_init(application: Application) -> None:
     application.add_handler(CommandHandler("start", start_command))
     application.add_handler(CommandHandler("help", help_command))
     application.add_handler(CommandHandler("menu", menu_command))
-    application.add_handler(CallbackQueryHandler(handle_my_subscription, pattern="^my_subscription$"))
+    # Обработчик my_subscription теперь в плагине personal_cabinet
     application.add_handler(CommandHandler("cancel", global_cancel), group=10)
     # ВАЖНО: Регистрируем глобальные обработчики меню
     try:
