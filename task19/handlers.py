@@ -1969,6 +1969,9 @@ async def handle_confirm_ocr(update: Update, context: ContextTypes.DEFAULT_TYPE)
         duration=35  # 35 секунд для task19
     )
 
+    # Сохраняем ID сообщения "думаю"
+    context.user_data['task19_thinking_msg_id'] = thinking_msg.message_id
+
     # Регистрируем использование проверки для модуля
     await freemium_manager.use_ai_check(user_id, module_code)
 
