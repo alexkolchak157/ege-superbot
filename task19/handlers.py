@@ -776,12 +776,18 @@ async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
     # Показываем оставшиеся проверки для модуля
     limit_info = await freemium_manager.get_limit_info(user_id, module_code)
     limit_display = freemium_manager.format_limit_message(limit_info)
-    
-    thinking_msg = await update.message.reply_text(
-        f"{limit_display}\n\n"
-        "🤔 Проверяю ваш ответ через AI...\n"
-        "<i>Это займет несколько секунд</i>",
-        parse_mode=ParseMode.HTML
+
+    # Отправляем информацию о лимитах если нужно
+    if limit_display:
+        await update.message.reply_text(
+            limit_display,
+            parse_mode=ParseMode.HTML
+        )
+
+    # Показываем анимацию проверки
+    thinking_msg = await show_ai_evaluation_animation(
+        update.message,
+        duration=35  # 35 секунд для task19
     )
 
     # Сохраняем ID сообщения "думаю"
@@ -1944,11 +1950,23 @@ async def handle_confirm_ocr(update: Update, context: ContextTypes.DEFAULT_TYPE)
     limit_info = await freemium_manager.get_limit_info(user_id, module_code)
     limit_display = freemium_manager.format_limit_message(limit_info)
 
-    thinking_msg = await query.edit_message_text(
-        f"{limit_display}\n\n"
-        "🤔 Проверяю ваш ответ через AI...\n"
-        "<i>Это займет несколько секунд</i>",
-        parse_mode=ParseMode.HTML
+    # Удаляем старое сообщение с подтверждением OCR
+    try:
+        await query.message.delete()
+    except Exception as e:
+        logger.debug(f"Failed to delete OCR confirmation message: {e}")
+
+    # Отправляем информацию о лимитах если нужно
+    if limit_display:
+        await query.message.reply_text(
+            limit_display,
+            parse_mode=ParseMode.HTML
+        )
+
+    # Показываем анимацию проверки
+    thinking_msg = await show_ai_evaluation_animation(
+        query.message,
+        duration=35  # 35 секунд для task19
     )
 
     # Регистрируем использование проверки для модуля
