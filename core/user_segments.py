@@ -65,11 +65,20 @@ class UserSegmentClassifier:
                 # Парсим даты
                 try:
                     created_at = datetime.fromisoformat(created_at_str.replace('Z', '+00:00'))
+                    # Если дата timezone-naive, добавляем UTC
+                    if created_at.tzinfo is None:
+                        created_at = created_at.replace(tzinfo=timezone.utc)
                 except:
                     created_at = datetime.now(timezone.utc) - timedelta(days=1)
 
                 try:
-                    last_activity = datetime.fromisoformat(last_activity_str.replace('Z', '+00:00')) if last_activity_str else created_at
+                    if last_activity_str:
+                        last_activity = datetime.fromisoformat(last_activity_str.replace('Z', '+00:00'))
+                        # Если дата timezone-naive, добавляем UTC
+                        if last_activity.tzinfo is None:
+                            last_activity = last_activity.replace(tzinfo=timezone.utc)
+                    else:
+                        last_activity = created_at
                 except:
                     last_activity = created_at
 
@@ -161,6 +170,9 @@ class UserSegmentClassifier:
 
                     if expired_row:
                         end_date = datetime.fromisoformat(expired_row[1].replace('Z', '+00:00'))
+                        # Если дата timezone-naive, добавляем UTC
+                        if end_date.tzinfo is None:
+                            end_date = end_date.replace(tzinfo=timezone.utc)
                         days_since_cancel = (datetime.now(timezone.utc) - end_date).days
 
                         return {
@@ -176,7 +188,14 @@ class UserSegmentClassifier:
                 sub_id, user_id, plan_id, start_date, end_date, is_active, auto_renew, sub_type = row
 
                 start_dt = datetime.fromisoformat(start_date.replace('Z', '+00:00'))
+                # Если дата timezone-naive, добавляем UTC
+                if start_dt.tzinfo is None:
+                    start_dt = start_dt.replace(tzinfo=timezone.utc)
+
                 end_dt = datetime.fromisoformat(end_date.replace('Z', '+00:00'))
+                # Если дата timezone-naive, добавляем UTC
+                if end_dt.tzinfo is None:
+                    end_dt = end_dt.replace(tzinfo=timezone.utc)
 
                 days_until_expiry = (end_dt - datetime.now(timezone.utc)).days
                 days_since_start = (datetime.now(timezone.utc) - start_dt).days
