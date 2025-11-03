@@ -4,6 +4,7 @@ import logging
 import os
 import json
 import random
+import html
 from typing import Optional, Dict, List, Any
 from core.document_processor import DocumentHandlerMixin
 from core.vision_service import process_photo_message
@@ -602,16 +603,20 @@ async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
             if result['success']:
                 user_answer = result['text']
                 confidence = result.get('confidence', 0)
-                
+
                 # Показываем распознанный текст для подтверждения
+                # Экранируем HTML-символы для безопасного отображения
+                preview = user_answer[:500] + ('...' if len(user_answer) > 500 else '')
+                preview_escaped = html.escape(preview)
+
                 confirm_text = (
                     "✅ <b>Текст распознан!</b>\n\n"
                     f"<i>Уверенность: {confidence:.0%}</i>\n\n"
                     "📝 <b>Распознанный текст:</b>\n"
-                    f"{user_answer[:500]}{'...' if len(user_answer) > 500 else ''}\n\n"
+                    f"<code>{preview_escaped}</code>\n\n"
                     "Проверить этот ответ?"
                 )
-                
+
                 # Сохраняем в контексте для последующего использования
                 context.user_data['pending_answer'] = user_answer
                 context.user_data['pending_topic'] = topic
@@ -1952,14 +1957,18 @@ async def handle_edit_ocr(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Редактирование распознанного текста."""
     query = update.callback_query
     await query.answer()
-    
+
     user_answer = context.user_data.get('pending_answer', '')
-    
+
+    # Экранируем HTML-символы для безопасного отображения
+    preview = user_answer[:300] + ('...' if len(user_answer) > 300 else '')
+    preview_escaped = html.escape(preview)
+
     await query.edit_message_text(
         "✏️ <b>Редактирование ответа</b>\n\n"
         "Отправьте исправленный текст ответа.\n\n"
         f"<b>Распознанный текст:</b>\n"
-        f"<i>{user_answer[:300]}...</i>",
+        f"<code>{preview_escaped}</code>",
         reply_markup=InlineKeyboardMarkup([[
             InlineKeyboardButton("❌ Отмена", callback_data="t19_practice")
         ]]),
