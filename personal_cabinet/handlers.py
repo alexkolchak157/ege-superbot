@@ -396,25 +396,34 @@ async def handle_buy_subscription(update: Update, context: ContextTypes.DEFAULT_
     """
     Перенаправляет пользователя к покупке/продлению подписки.
     """
+    from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+
     query = update.callback_query
     await query.answer()
 
-    # Просто вызываем обработчик подписки из payment модуля
-    # Устанавливаем callback_data для входа в процесс покупки
-    query.data = "subscribe_start"
+    # Показываем сообщение с кнопкой для оформления подписки
+    text = (
+        "💳 <b>Оформление подписки</b>\n\n"
+        "Нажми на кнопку ниже, чтобы выбрать план подписки и оформить оплату.\n\n"
+        "📦 Доступны различные тарифы и варианты оплаты."
+    )
 
-    # Импортируем и вызываем обработчик подписки
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("🛒 Оформить подписку", callback_data="subscribe_start")],
+        [InlineKeyboardButton("« Назад в кабинет", callback_data="back_to_cabinet")]
+    ])
+
     try:
-        from payment.handlers import cmd_subscribe
+        await query.edit_message_text(
+            text,
+            reply_markup=keyboard,
+            parse_mode=ParseMode.HTML
+        )
 
-        # Завершаем текущий ConversationHandler
-        context.user_data['return_to_cabinet'] = True
-
-        await cmd_subscribe(update, context)
-
+        # Завершаем текущий ConversationHandler, чтобы subscribe_start мог обработаться
         return ConversationHandler.END
 
     except Exception as e:
-        logger.error(f"Error redirecting to subscription: {e}")
+        logger.error(f"Error showing subscription menu: {e}")
         await query.answer("❌ Ошибка при переходе к оформлению подписки", show_alert=True)
         return VIEWING
