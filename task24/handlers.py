@@ -15,6 +15,7 @@ from .checker import PlanBotData, evaluate_plan, FEEDBACK_KB, evaluate_plan_with
 from . import keyboards
 from .keyboards import build_feedback_keyboard
 from core.document_processor import DocumentProcessor, DocumentHandlerMixin
+from core.vision_service import process_photo_message
 from core.admin_tools import admin_manager, admin_only, get_admin_keyboard_extension
 from core.universal_ui import UniversalUIComponents, AdaptiveKeyboards, MessageFormatter
 from core.ui_helpers import (
@@ -1008,7 +1009,7 @@ async def handle_plan_enhanced(update: Update, context: ContextTypes.DEFAULT_TYP
 @safe_handler()
 async def handle_plan_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработка плана, присланного документом."""
-    
+
     # Проверяем состояние
     topic_name = context.user_data.get('current_topic')
     if not topic_name:
@@ -1016,24 +1017,64 @@ async def handle_plan_document(update: Update, context: ContextTypes.DEFAULT_TYP
             "❌ Ошибка: тема не выбрана. Используйте /start_plan"
         )
         return ConversationHandler.END
-    
+
     # Используем миксин для обработки документа
     extracted_text = await DocumentHandlerMixin.handle_document_answer(
-        update, 
+        update,
         context,
         task_name="план"
     )
-    
+
     if not extracted_text:
         # Ошибка уже показана пользователю
         return states.AWAITING_PLAN
-    
+
     # Валидация содержимого для плана
     is_valid, error_msg = DocumentHandlerMixin.validate_document_content(
         extracted_text,
         task_type="plan"
     )
-    
+
+    if not is_valid:
+        await update.message.reply_text(f"❌ {error_msg}")
+        return states.AWAITING_PLAN
+
+    # Сохраняем текст и передаем в обычный обработчик
+    update.message.text = extracted_text
+
+    # Вызываем стандартный обработчик планов
+    return await handle_plan_enhanced(update, context)
+
+
+@safe_handler()
+async def handle_plan_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработка плана с фотографии."""
+
+    # Проверяем состояние
+    topic_name = context.user_data.get('current_topic')
+    if not topic_name:
+        await update.message.reply_text(
+            "❌ Ошибка: тема не выбрана. Используйте /start_plan"
+        )
+        return ConversationHandler.END
+
+    # Обрабатываем фото через OCR
+    extracted_text = await process_photo_message(
+        update,
+        context.application.bot,
+        task_name="план"
+    )
+
+    if not extracted_text:
+        # Ошибка уже показана пользователю
+        return states.AWAITING_PLAN
+
+    # Валидация содержимого для плана
+    is_valid, error_msg = DocumentHandlerMixin.validate_document_content(
+        extracted_text,
+        task_type="plan"
+    )
+
     if not is_valid:
         await update.message.reply_text(f"❌ {error_msg}")
         return states.AWAITING_PLAN

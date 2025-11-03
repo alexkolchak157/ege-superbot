@@ -7,6 +7,7 @@ import random
 from typing import Dict, List, Optional, Any, Tuple
 from datetime import datetime
 from core.document_processor import DocumentHandlerMixin
+from core.vision_service import process_photo_message
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.constants import ParseMode
 from telegram.ext import ContextTypes, ConversationHandler
@@ -3609,7 +3610,40 @@ async def handle_answer_document_task25(update: Update, context: ContextTypes.DE
         # Если полный ответ - сохраняем текст в context
         context.user_data['document_text'] = extracted_text
         return await safe_handle_answer_task25(update, context)
-        
+
+
+@safe_handler()
+async def handle_answer_photo_task25(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработка развернутого ответа с фотографии для task25."""
+
+    topic = context.user_data.get('current_topic')
+    if not topic:
+        await update.message.reply_text("❌ Ошибка: тема не выбрана.")
+        return states.CHOOSING_MODE
+
+    # Обрабатываем фото через OCR
+    extracted_text = await process_photo_message(
+        update,
+        context.application.bot,
+        task_name="развернутый ответ"
+    )
+
+    if not extracted_text:
+        return states.ANSWERING
+
+    # Для task25 может быть разбивка на части
+    current_part = context.user_data.get('current_part', 0)
+
+    if current_part > 0:
+        # Если отвечаем по частям - сохраняем текст в context
+        context.user_data['document_text'] = extracted_text
+        return await handle_answer_parts(update, context)
+    else:
+        # Если полный ответ - сохраняем текст в context
+        context.user_data['document_text'] = extracted_text
+        return await safe_handle_answer_task25(update, context)
+
+
 @safe_handler()
 async def handle_all_examples(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Показать все доступные примеры."""

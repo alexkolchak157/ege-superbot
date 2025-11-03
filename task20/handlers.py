@@ -33,6 +33,7 @@ from core.freemium_manager import get_freemium_manager
 from telegram.error import BadRequest
 from core.document_processor import DocumentHandlerMixin
 from core.migration import ensure_module_migration
+from core.vision_service import process_photo_message
 
 logger = logging.getLogger(__name__)
 
@@ -2044,26 +2045,53 @@ async def block_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
 #@validate_state_transition({ANSWERING_T20})
 async def handle_answer_document_task20(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработка суждений из документа для task20."""
-    
+
     topic = context.user_data.get('current_topic')
     if not topic:
         await update.message.reply_text("❌ Ошибка: тема не выбрана.")
         return states.CHOOSING_MODE
-    
+
     extracted_text = await DocumentHandlerMixin.handle_document_answer(
-        update, 
+        update,
         context,
         task_name="суждения"
     )
-    
+
     if not extracted_text:
         return ANSWERING_T20
-    
+
     # Сохраняем текст в context вместо изменения message.text
     context.user_data['document_text'] = extracted_text
-    
+
     # Вызываем handle_answer напрямую
     return await handle_answer(update, context)
+
+
+@safe_handler()
+async def handle_answer_photo_task20(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработка суждений с фотографии для task20."""
+
+    topic = context.user_data.get('current_topic')
+    if not topic:
+        await update.message.reply_text("❌ Ошибка: тема не выбрана.")
+        return states.CHOOSING_MODE
+
+    # Обрабатываем фото через OCR
+    extracted_text = await process_photo_message(
+        update,
+        context.application.bot,
+        task_name="суждения"
+    )
+
+    if not extracted_text:
+        return ANSWERING_T20
+
+    # Сохраняем текст в context
+    context.user_data['document_text'] = extracted_text
+
+    # Вызываем handle_answer напрямую
+    return await handle_answer(update, context)
+
 
 @safe_handler()
 async def select_topic(update: Update, context: ContextTypes.DEFAULT_TYPE):
