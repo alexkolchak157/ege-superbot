@@ -6,6 +6,7 @@ import json
 import random
 from typing import Optional, Dict, List, Any
 from core.document_processor import DocumentHandlerMixin
+from core.vision_service import process_photo_message
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, Message
 from telegram.constants import ParseMode
 from telegram.ext import ContextTypes, ConversationHandler
@@ -1113,9 +1114,62 @@ async def handle_answer_document_task19(update: Update, context: ContextTypes.DE
     
     # ИСПРАВЛЕНИЕ: Сохраняем текст в контексте
     context.user_data['document_text'] = extracted_text
-    
+
     # Вызываем обычный обработчик
     return await handle_answer(update, context)
+
+
+@safe_handler()
+async def handle_answer_photo_task19(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработка примеров с фотографии для task19."""
+
+    topic = context.user_data.get('current_topic')
+    if not topic:
+        await update.message.reply_text(
+            "❌ Ошибка: тема не выбрана."
+        )
+        return ConversationHandler.END
+
+    # Обработка старого формата (если topic - строка)
+    if isinstance(topic, str):
+        # Ищем полный объект темы
+        for t in task19_data.get('topics', []):
+            if t.get('title') == topic:
+                topic = t
+                context.user_data['current_topic'] = topic
+                break
+        else:
+            await update.message.reply_text(
+                "❌ Ошибка: данные темы не найдены."
+            )
+            return ConversationHandler.END
+
+    # Обрабатываем фото через OCR
+    extracted_text = await process_photo_message(
+        update,
+        context.application.bot,
+        task_name="примеры"
+    )
+
+    if not extracted_text:
+        return TASK19_WAITING
+
+    # Валидация
+    is_valid, error_msg = DocumentHandlerMixin.validate_document_content(
+        extracted_text,
+        task_type="examples"
+    )
+
+    if not is_valid:
+        await update.message.reply_text(f"❌ {error_msg}")
+        return TASK19_WAITING
+
+    # Сохраняем текст в контексте
+    context.user_data['document_text'] = extracted_text
+
+    # Вызываем обычный обработчик
+    return await handle_answer(update, context)
+
 
 @safe_handler()
 @validate_state_transition({states.CHOOSING_MODE})

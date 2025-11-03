@@ -78,6 +78,7 @@ class Task24Plugin(BotPlugin):
                 states.AWAITING_PLAN: [
                     MessageHandler(filters.TEXT & ~filters.COMMAND, handlers.handle_plan_enhanced),
                     MessageHandler(filters.Document.ALL, handlers.handle_plan_document),
+                    MessageHandler(filters.PHOTO, handlers.handle_plan_photo),
                 ],
                 states.AWAITING_FEEDBACK: [
                     CallbackQueryHandler(handlers.t24_retry, pattern="^t24_retry$"),

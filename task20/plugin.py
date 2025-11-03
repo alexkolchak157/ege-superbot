@@ -104,6 +104,7 @@ class Task20Plugin(BotPlugin):
                 states.ANSWERING_T20: [
                     MessageHandler(filters.TEXT & ~filters.COMMAND, handlers.handle_answer),
                     MessageHandler(filters.Document.ALL, handlers.handle_answer_document_task20),
+                    MessageHandler(filters.PHOTO, handlers.handle_answer_photo_task20),
                     CallbackQueryHandler(handlers.skip_question, pattern="^t20_skip$"),
                     CallbackQueryHandler(handlers.return_to_menu, pattern="^t20_menu$"),
                     CallbackQueryHandler(handlers.practice_mode, pattern="^t20_practice$"),
