@@ -100,7 +100,7 @@ class UserSegmentClassifier:
                 week_ago = datetime.now(timezone.utc) - timedelta(days=7)
                 cursor = await db.execute("""
                     SELECT COUNT(*) FROM answered_questions
-                    WHERE user_id = ? AND answered_at > ?
+                    WHERE user_id = ? AND timestamp > ?
                 """, (user_id, week_ago.isoformat()))
                 answered_week = (await cursor.fetchone())[0]
 
