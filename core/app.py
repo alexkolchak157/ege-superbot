@@ -5,7 +5,7 @@ import logging
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from typing import Optional, Dict, Any
 from datetime import datetime
-from telegram.ext import Application, CommandHandler, CallbackQueryHandler, PicklePersistence, ContextTypes
+from telegram.ext import Application, CommandHandler, CallbackQueryHandler, PicklePersistence, ContextTypes, PersistenceInput
 from telegram.constants import ParseMode
 import sys
 import os
@@ -690,7 +690,15 @@ def main():
         persistence = PicklePersistence(
             filepath="bot_persistence.pickle",
             # Сохраняем данные каждые 30 секунд и при завершении
-            update_interval=30
+            update_interval=30,
+            # ИСПРАВЛЕНИЕ: Исключаем bot_data из сохранения, т.к. он содержит
+            # несериализуемые объекты (managers, schedulers с ссылками на Bot)
+            store_data=PersistenceInput(
+                bot_data=False,      # НЕ сохраняем bot_data (содержит менеджеры)
+                chat_data=True,      # Сохраняем chat_data
+                user_data=True,      # Сохраняем user_data
+                callback_data=True   # Сохраняем callback_data
+            )
         )
         builder.persistence(persistence)
         
