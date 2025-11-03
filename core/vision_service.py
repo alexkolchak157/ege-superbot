@@ -9,6 +9,7 @@ import logging
 import base64
 import asyncio
 import aiohttp
+import html
 from typing import Dict, Any, Optional, List
 from telegram import PhotoSize, Bot
 from dataclasses import dataclass
@@ -419,13 +420,16 @@ async def process_photo_message(
         else:
             preview = text
 
+        # Экранируем HTML-символы для безопасного отображения
+        preview_escaped = html.escape(preview)
+
         confidence_emoji = "✅" if confidence > 0.8 else "⚠️" if confidence > 0.5 else "❌"
         confidence_text = f"{confidence * 100:.0f}%"
 
         await update.message.reply_text(
             f"✅ Текст распознан!\n\n"
             f"📝 <b>Распознанный текст (предпросмотр):</b>\n"
-            f"<code>{preview}</code>\n\n"
+            f"<code>{preview_escaped}</code>\n\n"
             f"{confidence_emoji} <b>Уверенность:</b> {confidence_text}\n\n"
             f"🔍 Проверяю {task_name}...",
             parse_mode='HTML'
