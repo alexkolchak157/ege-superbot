@@ -143,30 +143,31 @@ class UserSegmentClassifier:
         """
         try:
             async with aiosqlite.connect(self.database_file) as db:
+                now = datetime.now(timezone.utc)
+
                 cursor = await db.execute("""
                     SELECT
                         us.id, us.user_id, us.plan_id, us.created_at, us.expires_at,
-                        us.is_active,
                         COALESCE(ar.enabled, 0) as auto_renew
                     FROM user_subscriptions us
                     LEFT JOIN auto_renewal_settings ar ON us.user_id = ar.user_id
-                    WHERE us.user_id = ? AND us.is_active = 1
+                    WHERE us.user_id = ? AND us.expires_at > ?
                     ORDER BY us.expires_at DESC
                     LIMIT 1
-                """, (user_id,))
+                """, (user_id, now.isoformat()))
 
                 row = await cursor.fetchone()
 
                 if not row:
-                    # Проверяем была ли подписка раньше
+                    # Проверяем была ли подписка раньше (истекшие)
                     cursor = await db.execute("""
                         SELECT
                             us.id, us.expires_at, us.plan_id
                         FROM user_subscriptions us
-                        WHERE us.user_id = ? AND us.is_active = 0
+                        WHERE us.user_id = ? AND us.expires_at <= ?
                         ORDER BY us.expires_at DESC
                         LIMIT 1
-                    """, (user_id,))
+                    """, (user_id, now.isoformat()))
 
                     expired_row = await cursor.fetchone()
 
@@ -187,7 +188,7 @@ class UserSegmentClassifier:
                     return {'has_subscription': False, 'had_subscription': False}
 
                 # Парсим активную подписку
-                sub_id, user_id, plan_id, start_date, end_date, is_active, auto_renew = row
+                sub_id, user_id, plan_id, start_date, end_date, auto_renew = row
 
                 start_dt = datetime.fromisoformat(start_date.replace('Z', '+00:00'))
                 # Если дата timezone-naive, добавляем UTC
