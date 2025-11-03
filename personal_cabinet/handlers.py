@@ -216,14 +216,6 @@ async def show_statistics(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         ai_limit_text = f"{ai_checks_today}/3 использовано сегодня"
 
-    # Дополнительная статистика: топ-3 модуля
-    top_modules = await get_top_modules(user_id)
-    top_modules_text = ""
-    if top_modules:
-        top_modules_text = "\n<b>🏆 Топ модулей:</b>\n"
-        for i, (module, count) in enumerate(top_modules[:3], 1):
-            top_modules_text += f"{i}. {module}: {count} вопросов\n"
-
     text = (
         f"📊 <b>Твоя статистика</b>\n\n"
         f"<b>📅 Зарегистрирован:</b> {reg_date_str}\n"
@@ -234,8 +226,7 @@ async def show_statistics(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"• За неделю: {answered_week}\n\n"
         f"<b>🤖 AI-проверки:</b>\n"
         f"• Всего использовано: {ai_checks_total}\n"
-        f"• Сегодня: {ai_limit_text}\n"
-        f"{top_modules_text}\n"
+        f"• Сегодня: {ai_limit_text}\n\n"
         f"💪 Продолжай в том же духе!"
     )
 
@@ -248,51 +239,6 @@ async def show_statistics(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
     return VIEWING
-
-
-async def get_top_modules(user_id: int) -> list:
-    """
-    Получает топ-3 модуля по количеству решенных вопросов.
-
-    Args:
-        user_id: ID пользователя
-
-    Returns:
-        Список кортежей (module_name, count)
-    """
-    try:
-        async with aiosqlite.connect(DATABASE_FILE) as db:
-            cursor = await db.execute("""
-                SELECT task_type, COUNT(*) as count
-                FROM answered_questions
-                WHERE user_id = ?
-                GROUP BY task_type
-                ORDER BY count DESC
-                LIMIT 3
-            """, (user_id,))
-            rows = await cursor.fetchall()
-
-            # Форматируем названия модулей
-            module_names = {
-                'test_part': '📚 Тестовая часть',
-                'task19': '📋 Задание 19',
-                'task20': '📋 Задание 20',
-                'task24': '📋 Задание 24',
-                'task25': '📋 Задание 25',
-            }
-
-            result = []
-            for row in rows:
-                task_type = row[0]
-                count = row[1]
-                module_name = module_names.get(task_type, task_type)
-                result.append((module_name, count))
-
-            return result
-
-    except Exception as e:
-        logger.error(f"Error getting top modules for user {user_id}: {e}")
-        return []
 
 
 async def show_settings(update: Update, context: ContextTypes.DEFAULT_TYPE):
