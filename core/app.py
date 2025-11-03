@@ -443,11 +443,16 @@ async def show_main_menu_with_access(context, user_id):
             icon = "🆓"
             badge = " БЕСПЛАТНО"
             text = f"{icon} {plugin.title}{badge}"
-            
+
+        elif plugin.code == 'personal_cabinet':
+            # Личный кабинет - всегда доступен без замочка
+            icon = ""
+            text = f"{plugin.title}"
+
         elif subscription_manager:
             # Проверяем доступ к платным модулям
             has_access = await subscription_manager.check_module_access(user_id, plugin.code)
-            
+
             if has_access:
                 icon = "✅"
                 text = f"{icon} {plugin.title}"
@@ -458,32 +463,13 @@ async def show_main_menu_with_access(context, user_id):
             # Если система подписок недоступна
             icon = "📚"
             text = f"{icon} {plugin.title}"
-        
+
         button = InlineKeyboardButton(
             text=text,
             callback_data=f"choose_{plugin.code}"
         )
         buttons.append([button])
-    
-    # Добавляем системные кнопки
-    system_buttons = []
-    
-    if subscription_manager:
-        subscription_info = await subscription_manager.get_subscription_info(user_id)
-        
-        if subscription_info:
-            system_buttons.append(
-                InlineKeyboardButton("💳 Моя подписка", callback_data="my_subscription")  # ИСПРАВЛЕНО
-            )
-        else:
-            system_buttons.append(
-                InlineKeyboardButton("💎 Оформить подписку", callback_data="subscribe_start")
-            )
-    
-    # ИСПРАВЛЕНИЕ: Добавляем системные кнопки в основной массив
-    if system_buttons:
-        buttons.append(system_buttons)
-    
+
     return InlineKeyboardMarkup(buttons)
 
 async def handle_my_subscription(update: Update, context: ContextTypes.DEFAULT_TYPE):

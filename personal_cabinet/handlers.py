@@ -395,35 +395,20 @@ async def handle_auto_renewal_toggle(update: Update, context: ContextTypes.DEFAU
 async def handle_buy_subscription(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
     Перенаправляет пользователя к покупке/продлению подписки.
+    Напрямую открывает магазин подписок.
     """
-    from telegram import InlineKeyboardButton, InlineKeyboardMarkup
-
-    query = update.callback_query
-    await query.answer()
-
-    # Показываем сообщение с кнопкой для оформления подписки
-    text = (
-        "💳 <b>Оформление подписки</b>\n\n"
-        "Нажми на кнопку ниже, чтобы выбрать план подписки и оформить оплату.\n\n"
-        "📦 Доступны различные тарифы и варианты оплаты."
-    )
-
-    keyboard = InlineKeyboardMarkup([
-        [InlineKeyboardButton("🛒 Оформить подписку", callback_data="subscribe_start")],
-        [InlineKeyboardButton("« Назад в кабинет", callback_data="back_to_cabinet")]
-    ])
-
     try:
-        await query.edit_message_text(
-            text,
-            reply_markup=keyboard,
-            parse_mode=ParseMode.HTML
-        )
+        from payment.handlers import show_modular_interface
 
-        # Завершаем текущий ConversationHandler, чтобы subscribe_start мог обработаться
+        # Прямой переход к магазину подписок
+        await show_modular_interface(update, context)
+
+        # Завершаем текущий ConversationHandler для перехода к процессу оплаты
         return ConversationHandler.END
 
     except Exception as e:
-        logger.error(f"Error showing subscription menu: {e}")
-        await query.answer("❌ Ошибка при переходе к оформлению подписки", show_alert=True)
+        logger.error(f"Error redirecting to subscription shop: {e}")
+        query = update.callback_query
+        if query:
+            await query.answer("❌ Ошибка при переходе к оформлению подписки", show_alert=True)
         return VIEWING
