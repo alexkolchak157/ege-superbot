@@ -77,6 +77,44 @@ async def clear_task20_cache():
         except Exception as e:
             logger.error(f"Failed to clear task20 cache: {e}")
 
+async def delete_previous_messages(context: ContextTypes.DEFAULT_TYPE, chat_id: int, keep_message_id: Optional[int] = None):
+    """Удаляет предыдущие сообщения диалога task20."""
+    if not hasattr(context, 'bot') or not context.bot:
+        logger.warning("Bot instance not available for message deletion")
+        return
+
+    # Список ключей с ID сообщений для удаления
+    message_keys = [
+        'task20_question_msg_id',   # Сообщение с вопросом
+        'task20_answer_msg_id',     # Сообщение с ответом пользователя
+        'task20_result_msg_id',     # Сообщение с результатом проверки
+        'task20_thinking_msg_id',   # Сообщение "Анализирую..."
+        'task20_example_msg_id'     # Сообщение с примером
+    ]
+
+    messages_to_delete = []
+    deleted_count = 0
+
+    for key in message_keys:
+        msg_id = context.user_data.get(key)
+        if msg_id and msg_id != keep_message_id:
+            messages_to_delete.append((key, msg_id))
+
+    # Удаляем сообщения
+    for key, msg_id in messages_to_delete:
+        try:
+            await context.bot.delete_message(chat_id=chat_id, message_id=msg_id)
+            deleted_count += 1
+            logger.debug(f"Deleted {key}: {msg_id}")
+        except Exception as e:
+            logger.debug(f"Failed to delete {key} {msg_id}: {e}")
+
+    # Очищаем контекст
+    for key in message_keys:
+        context.user_data.pop(key, None)
+
+    logger.info(f"Task20: Deleted {deleted_count}/{len(messages_to_delete)} messages")
+
 @safe_handler()
 async def back_to_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработчик кнопки Главное меню - вызывает глобальный обработчик."""
@@ -839,7 +877,10 @@ async def safe_handle_answer_task20(update: Update, context: ContextTypes.DEFAUL
     else:
         user_answer = update.message.text.strip()
         logger.info("Using text from message")
-    
+
+    # Сохраняем ID сообщения с ответом пользователя
+    context.user_data['task20_answer_msg_id'] = update.message.message_id
+
     # Проверяем минимальную длину
     if len(user_answer) < 50:
         await update.message.reply_text(
@@ -879,7 +920,10 @@ async def safe_handle_answer_task20(update: Update, context: ContextTypes.DEFAUL
         update.message,
         duration=40  # 40 секунд для task20
     )
-    
+
+    # Сохраняем ID сообщения "думаю"
+    context.user_data['task20_thinking_msg_id'] = thinking_msg.message_id
+
     try:
         # Оцениваем ответ
         if evaluator and AI_EVALUATOR_AVAILABLE:
@@ -974,13 +1018,17 @@ async def safe_handle_answer_task20(update: Update, context: ContextTypes.DEFAUL
             ],
             [InlineKeyboardButton("⬅️ В меню", callback_data="t20_menu")]
         ])
-        
-        await update.message.reply_text(
+
+        result_msg = await update.message.reply_text(
             feedback_text,
             reply_markup=kb,
             parse_mode=ParseMode.HTML
         )
-        
+
+        # Обновляем ID - теперь это сообщение с результатом
+        context.user_data.pop('task20_thinking_msg_id', None)
+        context.user_data['task20_result_msg_id'] = result_msg.message_id
+
         context.user_data['t20_last_screen'] = 'feedback'
         context.user_data['t20_last_feedback'] = {
             'text': feedback_text,
@@ -2098,29 +2146,35 @@ async def select_topic(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Выбор конкретной темы по ID."""
     query = update.callback_query
     
+    # Удаляем предыдущие сообщения перед показом нового вопроса
+    await delete_previous_messages(context, query.message.chat_id)
+
     topic_id = query.data.split(":")[1]
     topic = task20_data["topic_by_id"].get(str(topic_id))
-    
+
     if not topic:
         await query.answer("Тема не найдена", show_alert=True)
         return states.CHOOSING_MODE
-    
+
     context.user_data['current_topic'] = topic
-    
+
     text = _build_topic_message(topic)
     kb = InlineKeyboardMarkup([
         [InlineKeyboardButton("❌ Отмена", callback_data="t20_list_topics")]
     ])
-    
+
     await query.edit_message_text(
         text,
         reply_markup=kb,
         parse_mode=ParseMode.HTML
     )
-    
+
+    # Сохраняем ID сообщения с вопросом
+    context.user_data['task20_question_msg_id'] = query.message.message_id
+
     # ДОБАВИТЬ: Явная установка состояния
     state_validator.set_state(query.from_user.id, ANSWERING_T20)
-    
+
     return ANSWERING_T20
 
 
@@ -2219,7 +2273,10 @@ async def list_topics(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def random_topic_all(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Выбор случайной темы из всей базы."""
     query = update.callback_query
-    
+
+    # Удаляем предыдущие сообщения перед показом нового вопроса
+    await delete_previous_messages(context, query.message.chat_id)
+
     # Проверяем наличие данных
     if not task20_data.get("topics"):
         await query.edit_message_text(
@@ -2250,24 +2307,31 @@ async def random_topic_all(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return states.CHOOSING_MODE
     
     context.user_data['current_topic'] = topic
-    
+
     text = _build_topic_message(topic)
     kb = InlineKeyboardMarkup([
         [InlineKeyboardButton("❌ Отмена", callback_data="t20_practice")]
     ])
-    
+
     await query.edit_message_text(text, reply_markup=kb, parse_mode=ParseMode.HTML)
+
+    # Сохраняем ID сообщения с вопросом
+    context.user_data['task20_question_msg_id'] = query.message.message_id
+
     state_validator.set_state(query.from_user.id, ANSWERING_T20)
-    
+
     return ANSWERING_T20
 
 @safe_handler()
 async def random_topic_block(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Выбор случайной темы из блока."""
     query = update.callback_query
-    
+
+    # Удаляем предыдущие сообщения перед показом нового вопроса
+    await delete_previous_messages(context, query.message.chat_id)
+
     import random
-    
+
     block_name = context.user_data.get('current_block')  # Используем current_block
     if not block_name:
         await query.answer("Блок не выбран", show_alert=True)
@@ -2280,21 +2344,24 @@ async def random_topic_block(update: Update, context: ContextTypes.DEFAULT_TYPE)
     
     topic = random.choice(topics)
     context.user_data['current_topic'] = topic
-    
+
     text = _build_topic_message(topic)
-    
+
     kb = InlineKeyboardMarkup([
         [InlineKeyboardButton("❌ Отмена", callback_data=f"t20_block:{block_name}")]
     ])
-    
+
     await query.edit_message_text(
         text,
         reply_markup=kb,
         parse_mode=ParseMode.HTML
     )
-    
+
+    # Сохраняем ID сообщения с вопросом
+    context.user_data['task20_question_msg_id'] = query.message.message_id
+
     state_validator.set_state(query.from_user.id, states.ANSWERING_T20)
-    
+
     return states.ANSWERING_T20
 
 
