@@ -209,6 +209,16 @@ class RetentionScheduler:
 
         except BadRequest as e:
             logger.error(f"BadRequest sending to {user_id}: {e}")
+            # Если чат не найден - отключаем уведомления
+            if "chat not found" in str(e).lower():
+                async with aiosqlite.connect(self.database_file) as db:
+                    await db.execute("""
+                        INSERT OR REPLACE INTO notification_preferences (
+                            user_id, enabled, disabled_at, disabled_reason
+                        ) VALUES (?, 0, ?, 'chat_not_found')
+                    """, (user_id, datetime.now(timezone.utc)))
+                    await db.commit()
+                logger.warning(f"Disabled notifications for user {user_id}: chat not found")
             return False
 
         except Exception as e:
@@ -232,10 +242,10 @@ class RetentionScheduler:
 
             days_since_reg = activity['days_since_registration']
 
-            # Определяем триггер
-            if days_since_reg == 1:
+            # Определяем триггер (используем диапазоны вместо точных значений)
+            if 1 <= days_since_reg <= 2:
                 trigger = NotificationTrigger.BOUNCED_DAY1
-            elif days_since_reg == 3:
+            elif 3 <= days_since_reg <= 4:
                 trigger = NotificationTrigger.BOUNCED_DAY3
             else:
                 continue
@@ -276,15 +286,15 @@ class RetentionScheduler:
             days_until_expiry = subscription.get('days_until_expiry', 999)
             days_since_start = subscription.get('days_since_start', 0)
 
-            # Определяем триггер
-            if days_since_start == 3:
-                trigger = NotificationTrigger.TRIAL_DAY3
-            elif days_until_expiry == 2:
-                trigger = NotificationTrigger.TRIAL_EXPIRING_2DAYS
-            elif days_until_expiry == 1:
-                trigger = NotificationTrigger.TRIAL_EXPIRING_1DAY
-            elif days_until_expiry <= 0:
+            # Определяем триггер (используем диапазоны, приоритет - более срочным)
+            if days_until_expiry <= 0:
                 trigger = NotificationTrigger.TRIAL_EXPIRED
+            elif 0 < days_until_expiry <= 1:
+                trigger = NotificationTrigger.TRIAL_EXPIRING_1DAY
+            elif 1 < days_until_expiry <= 2:
+                trigger = NotificationTrigger.TRIAL_EXPIRING_2DAYS
+            elif 3 <= days_since_start <= 4:
+                trigger = NotificationTrigger.TRIAL_DAY3
             else:
                 continue
 
@@ -325,13 +335,13 @@ class RetentionScheduler:
 
             days_until_expiry = subscription.get('days_until_expiry', 999)
 
-            # Определяем триггер
-            if days_until_expiry == 7:
-                trigger = NotificationTrigger.CHURN_RISK_7DAYS
-            elif days_until_expiry == 3:
-                trigger = NotificationTrigger.CHURN_RISK_3DAYS
-            elif days_until_expiry == 1:
+            # Определяем триггер (используем диапазоны, приоритет - более срочным)
+            if 0 < days_until_expiry <= 1:
                 trigger = NotificationTrigger.CHURN_RISK_1DAY
+            elif 1 < days_until_expiry <= 3:
+                trigger = NotificationTrigger.CHURN_RISK_3DAYS
+            elif 3 < days_until_expiry <= 7:
+                trigger = NotificationTrigger.CHURN_RISK_7DAYS
             else:
                 continue
 
@@ -369,10 +379,10 @@ class RetentionScheduler:
 
             days_inactive = activity['days_inactive']
 
-            # Определяем триггер
-            if days_inactive == 3:
+            # Определяем триггер (используем диапазоны)
+            if 3 <= days_inactive <= 6:
                 trigger = NotificationTrigger.CURIOUS_DAY3
-            elif days_inactive == 7:
+            elif 7 <= days_inactive <= 14:
                 trigger = NotificationTrigger.CURIOUS_DAY7
             else:
                 continue
@@ -411,13 +421,13 @@ class RetentionScheduler:
             days_since_reg = activity['days_since_registration']
             ai_checks_today = activity['ai_checks_today']
 
-            # Определяем триггер
-            if days_since_reg == 10:
-                trigger = NotificationTrigger.ACTIVE_FREE_DAY10
-            elif days_since_reg == 20:
-                trigger = NotificationTrigger.ACTIVE_FREE_DAY20
-            elif ai_checks_today >= 3:  # Использовал дневной лимит
+            # Определяем триггер (используем диапазоны)
+            if ai_checks_today >= 3:  # Приоритет - использовал лимит прямо сейчас
                 trigger = NotificationTrigger.ACTIVE_FREE_LIMIT_WARNING
+            elif 10 <= days_since_reg <= 11:
+                trigger = NotificationTrigger.ACTIVE_FREE_DAY10
+            elif 20 <= days_since_reg <= 21:
+                trigger = NotificationTrigger.ACTIVE_FREE_DAY20
             else:
                 continue
 
@@ -457,12 +467,12 @@ class RetentionScheduler:
 
             days_inactive = activity['days_inactive']
 
-            # Определяем триггер
-            if days_inactive == 3:
+            # Определяем триггер (используем диапазоны)
+            if 3 <= days_inactive <= 6:
                 trigger = NotificationTrigger.PAYING_INACTIVE_DAY3
-            elif days_inactive == 7:
+            elif 7 <= days_inactive <= 13:
                 trigger = NotificationTrigger.PAYING_INACTIVE_DAY7
-            elif days_inactive == 14:
+            elif 14 <= days_inactive <= 20:
                 trigger = NotificationTrigger.PAYING_INACTIVE_DAY14
             else:
                 continue
@@ -503,12 +513,12 @@ class RetentionScheduler:
 
             days_since_cancel = subscription.get('days_since_cancel', 999)
 
-            # Определяем триггер
-            if days_since_cancel == 1:
+            # Определяем триггер (используем диапазоны)
+            if 1 <= days_since_cancel <= 2:
                 trigger = NotificationTrigger.CANCELLED_DAY1
-            elif days_since_cancel == 3:
+            elif 3 <= days_since_cancel <= 6:
                 trigger = NotificationTrigger.CANCELLED_DAY3
-            elif days_since_cancel == 7:
+            elif 7 <= days_since_cancel <= 14:
                 trigger = NotificationTrigger.CANCELLED_DAY7
             else:
                 continue
