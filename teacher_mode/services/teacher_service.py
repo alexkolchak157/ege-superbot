@@ -187,8 +187,9 @@ async def add_student_to_teacher(
     """
     try:
         # Проверяем лимит учеников по тарифу
-        if not await can_add_student(teacher_id):
-            logger.warning(f"Учитель {teacher_id} достиг лимита учеников")
+        can_add, reason = await can_add_student(teacher_id)
+        if not can_add:
+            logger.warning(f"Учитель {teacher_id} не может добавить ученика: {reason}")
             return None
 
         async with aiosqlite.connect(DATABASE_FILE) as db:
@@ -280,7 +281,7 @@ async def get_student_teachers(student_id: int) -> List[int]:
         return []
 
 
-async def can_add_student(teacher_id: int) -> bool:
+async def can_add_student(teacher_id: int) -> tuple[bool, str]:
     """
     Проверяет, может ли учитель добавить еще одного ученика.
 
@@ -288,15 +289,49 @@ async def can_add_student(teacher_id: int) -> bool:
         teacher_id: ID учителя
 
     Returns:
-        True если может, False если достигнут лимит
+        Кортеж (bool, str): (можно добавить, сообщение-причина)
     """
     profile = await get_teacher_profile(teacher_id)
     if not profile:
-        return False
+        return False, "Профиль учителя не найден"
+
+    if not profile.has_active_subscription:
+        return False, "У учителя нет активной подписки"
 
     max_students = profile.max_students
     if max_students == -1:  # Безлимит
-        return True
+        return True, ""
 
     current_students = await get_teacher_students(teacher_id)
-    return len(current_students) < max_students
+    current_count = len(current_students)
+
+    if current_count >= max_students:
+        return False, f"Достигнут лимит учеников ({max_students})"
+
+    return True, ""
+
+
+async def is_student_connected(teacher_id: int, student_id: int) -> bool:
+    """
+    Проверяет, подключен ли ученик к учителю.
+
+    Args:
+        teacher_id: ID учителя
+        student_id: ID ученика
+
+    Returns:
+        True если связь существует и активна
+    """
+    try:
+        async with aiosqlite.connect(DATABASE_FILE) as db:
+            cursor = await db.execute("""
+                SELECT id FROM teacher_student_relationships
+                WHERE teacher_id = ? AND student_id = ? AND status = 'active'
+            """, (teacher_id, student_id))
+
+            row = await cursor.fetchone()
+            return row is not None
+
+    except Exception as e:
+        logger.error(f"Ошибка при проверке связи учитель-ученик: {e}")
+        return False
