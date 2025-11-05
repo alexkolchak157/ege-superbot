@@ -1,4 +1,7 @@
 """Обработчики для задания 19."""
+
+from __future__ import annotations  # Python 3.8 compatibility
+
 import asyncio
 import logging
 import os

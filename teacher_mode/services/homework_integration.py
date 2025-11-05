@@ -5,6 +5,8 @@
 с существующими плагинами (task19, task20, task24, task25).
 """
 
+from __future__ import annotations  # Python 3.8 compatibility
+
 import logging
 from typing import Optional, Dict, Any
 from datetime import datetime

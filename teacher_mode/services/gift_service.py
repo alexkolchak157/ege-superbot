@@ -2,6 +2,8 @@
 Сервис для работы с подарочными подписками и промокодами.
 """
 
+from __future__ import annotations  # Python 3.8 compatibility
+
 import secrets
 import string
 import logging

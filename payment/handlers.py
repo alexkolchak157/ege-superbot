@@ -1,13 +1,16 @@
 # payment/handlers.py - адаптированная версия с поддержкой модулей
 """Обработчики команд для работы с платежами (модульная версия)."""
+
+from __future__ import annotations  # Python 3.8 compatibility
+
 import logging
 from datetime import datetime, timedelta, timezone
 import uuid
 from typing import Optional, Dict, Any, List
 import json
 from telegram import (
-    InlineKeyboardButton, 
-    InlineKeyboardMarkup, 
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
     Update)
 from telegram.error import BadRequest
 from telegram.constants import ParseMode
