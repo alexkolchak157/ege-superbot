@@ -16,6 +16,7 @@ def get_main_cabinet_keyboard() -> InlineKeyboardMarkup:
         [InlineKeyboardButton("💳 Моя подписка", callback_data="cabinet_subscription")],
         [InlineKeyboardButton("📊 Статистика", callback_data="cabinet_statistics")],
         [InlineKeyboardButton("📚 Мои домашние задания", callback_data="student_homework_list")],
+        [InlineKeyboardButton("👨‍🏫 Режим учителя", callback_data="teacher_menu")],
         [InlineKeyboardButton("👨‍🏫 Подключиться к учителю", callback_data="connect_to_teacher")],
         [InlineKeyboardButton("⚙️ Настройки", callback_data="cabinet_settings")],
         [InlineKeyboardButton("🏠 Главное меню", callback_data="to_main_menu")]
