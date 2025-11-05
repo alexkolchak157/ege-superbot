@@ -412,13 +412,21 @@ async def show_modular_interface(update: Update, context: ContextTypes.DEFAULT_T
             callback_data="pay_package_full"
         )
     ])
-    
+
+    # Кнопка подписок для учителей
+    keyboard.append([
+        InlineKeyboardButton(
+            "👨‍🏫 Подписки для учителей - от 349₽/мес",
+            callback_data="show_teacher_subscriptions"
+        )
+    ])
+
     # Кнопка "Мои подписки" (если есть активные)
     if active_modules:
         keyboard.append([
             InlineKeyboardButton("📋 Мои подписки", callback_data="my_subscriptions")
         ])
-    
+
     # Кнопка главного меню
     keyboard.append([
         InlineKeyboardButton("🏠 Главное меню", callback_data="to_main_menu")
@@ -433,19 +441,108 @@ async def show_modular_interface(update: Update, context: ContextTypes.DEFAULT_T
     # Возвращаем состояние для ConversationHandler
     if update.message or (update.callback_query and update.callback_query.data in ["subscribe", "subscribe_start"]):
         return CHOOSING_PLAN
-    
+
     return
 
 
 @safe_handler()
-async def handle_plan_selection(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обработчик выбора плана подписки (только trial и package_full)."""
+async def show_teacher_plans_in_shop(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Показывает доступные подписки для учителей в магазине."""
     query = update.callback_query
     await query.answer()
-    
+
+    from payment.config import get_all_teacher_plans
+
+    teacher_plans = get_all_teacher_plans()
+
+    text = (
+        "👨‍🏫 <b>Подписки для учителей</b>\n\n"
+        "Управляйте учениками, создавайте задания и отслеживайте прогресс!\n\n"
+        "<b>Выберите подходящий тариф:</b>\n"
+    )
+
+    keyboard = []
+    for plan in teacher_plans:
+        plan_id = plan['plan_id']
+        name = plan['name']
+        price = plan['price_rub']
+        max_students = plan.get('max_students', 0)
+
+        if max_students == -1:
+            students_text = "∞ учеников"
+        else:
+            students_text = f"до {max_students} учеников"
+
+        button_text = f"{name} — {price}₽/мес ({students_text})"
+        keyboard.append([InlineKeyboardButton(button_text, callback_data=f"view_teacher_plan_{plan_id}")])
+
+    keyboard.append([InlineKeyboardButton("« Назад к подпискам", callback_data="subscribe")])
+    keyboard.append([InlineKeyboardButton("🏠 Главное меню", callback_data="to_main_menu")])
+
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
+    await query.edit_message_text(text, reply_markup=reply_markup, parse_mode=ParseMode.HTML)
+
+    return CHOOSING_PLAN
+
+
+@safe_handler()
+async def show_teacher_plan_details_in_shop(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Показывает детали конкретного плана учителя в магазине."""
+    query = update.callback_query
+    await query.answer()
+
+    # Извлекаем plan_id из callback_data
+    plan_id = query.data.replace("view_teacher_plan_", "")
+
+    from payment.config import get_plan_info
+
+    plan = get_plan_info(plan_id)
+    if not plan:
+        await query.edit_message_text("❌ План не найден")
+        return CHOOSING_PLAN
+
+    max_students = plan.get('max_students', 0)
+    if max_students == -1:
+        students_text = "Безлимит учеников"
+    else:
+        students_text = f"До {max_students} учеников"
+
+    # Формируем описание плана
+    text = f"👨‍🏫 <b>{plan['name']}</b>\n\n"
+    text += f"💰 <b>Цена:</b> {plan['price_rub']}₽/месяц\n"
+    text += f"👥 <b>Учеников:</b> {students_text}\n\n"
+
+    if 'detailed_description' in plan:
+        text += "<b>Возможности:</b>\n"
+        for feature in plan['detailed_description']:
+            text += f"{feature}\n"
+    else:
+        text += "<b>Возможности:</b>\n"
+        for feature in plan.get('features', []):
+            text += f"{feature}\n"
+
+    keyboard = [
+        [InlineKeyboardButton("💳 Оформить подписку", callback_data=f"pay_teacher_{plan_id}")],
+        [InlineKeyboardButton("« Назад к тарифам", callback_data="show_teacher_subscriptions")],
+        [InlineKeyboardButton("🏠 Главное меню", callback_data="to_main_menu")]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
+    await query.edit_message_text(text, reply_markup=reply_markup, parse_mode=ParseMode.HTML)
+
+    return CHOOSING_PLAN
+
+
+@safe_handler()
+async def handle_plan_selection(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработчик выбора плана подписки (trial, package_full и teacher plans)."""
+    query = update.callback_query
+    await query.answer()
+
     plan_id = query.data.replace("pay_", "")
     logger.info(f"Plan selected: {plan_id}")
-    
+
     # Обработка пробного периода
     if plan_id == "trial":
         plan_id = "trial_7days"
@@ -455,37 +552,63 @@ async def handle_plan_selection(update: Update, context: ContextTypes.DEFAULT_TY
         context.user_data['total_price'] = 1
         context.user_data['base_price'] = 1
         context.user_data['plan_name'] = "🎁 Пробный период 7 дней"
-        
+
         logger.info(f"Trial selected: price set to 1₽ for user {update.effective_user.id}")
-        
+
         # Сразу запрашиваем email для триала
         return await request_email_for_trial(update, context)
-    
+
     # Обработка полной подписки
     elif plan_id == "package_full":
         plan_id = "package_full"
         context.user_data['is_trial'] = False
         context.user_data['selected_plan'] = plan_id
-        
+
         # Получаем информацию о плане
         from payment.config import SUBSCRIPTION_PLANS
         plan = SUBSCRIPTION_PLANS.get(plan_id)
-        
+
         if not plan:
             logger.error(f"Plan {plan_id} not found in configs!")
             await query.edit_message_text("❌ Ошибка: план не найден")
             return ConversationHandler.END
-        
+
         # Сохраняем информацию о плане
         context.user_data['plan_info'] = plan
         context.user_data['plan_name'] = plan['name']
         context.user_data['base_price'] = plan['price_rub']
-        
+
         logger.info(f"Plan info loaded: {plan['name']}, base price: {plan['price_rub']}₽")
-        
+
         # Показываем варианты длительности
         return await show_duration_options(update, context)
-    
+
+    # Обработка подписок для учителей (teacher_basic, teacher_standard, teacher_premium)
+    elif plan_id.startswith("teacher_"):
+        from payment.config import SUBSCRIPTION_PLANS, is_teacher_plan
+
+        context.user_data['is_trial'] = False
+        context.user_data['selected_plan'] = plan_id
+        context.user_data['is_teacher_plan'] = True
+
+        # Получаем информацию о плане
+        plan = SUBSCRIPTION_PLANS.get(plan_id)
+
+        if not plan or not is_teacher_plan(plan_id):
+            logger.error(f"Teacher plan {plan_id} not found in configs!")
+            await query.edit_message_text("❌ Ошибка: план не найден")
+            return ConversationHandler.END
+
+        # Сохраняем информацию о плане
+        context.user_data['plan_info'] = plan
+        context.user_data['plan_name'] = plan['name']
+        context.user_data['base_price'] = plan['price_rub']
+
+        logger.info(f"Teacher plan info loaded: {plan['name']}, base price: {plan['price_rub']}₽")
+
+        # Показываем варианты длительности
+        return await show_duration_options(update, context)
+
     # Неизвестный план
     else:
         logger.error(f"Unknown plan_id: {plan_id}")
@@ -2200,8 +2323,11 @@ def register_payment_handlers(app):
         states={
             CHOOSING_PLAN: [
                 CallbackQueryHandler(handle_plan_selection, pattern="^pay_"),
+                # Обработчики для подписок учителей
+                CallbackQueryHandler(show_teacher_plans_in_shop, pattern="^show_teacher_subscriptions$"),
+                CallbackQueryHandler(show_teacher_plan_details_in_shop, pattern="^view_teacher_plan_"),
                 # УДАЛЕНО: show_individual_modules - больше нет отдельных модулей
-                CallbackQueryHandler(show_modular_interface, pattern="^back_to_main$"),
+                CallbackQueryHandler(show_modular_interface, pattern="^(back_to_main|subscribe)$"),
                 CallbackQueryHandler(handle_my_subscriptions, pattern="^my_subscriptions$")
             ],
             

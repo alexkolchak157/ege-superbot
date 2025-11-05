@@ -10,6 +10,7 @@ from telegram.ext import ContextTypes, ConversationHandler
 from ..states import TeacherStates
 from ..services import teacher_service
 from payment.config import get_all_teacher_plans, is_teacher_plan
+from core.config import ADMIN_IDS
 
 logger = logging.getLogger(__name__)
 
@@ -39,17 +40,25 @@ async def teacher_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
 
     user_id = update.effective_user.id
 
-    # Проверяем, является ли пользователь учителем
-    if not await is_teacher(user_id):
+    # Админы имеют доступ к режиму учителя по умолчанию
+    is_admin = user_id in ADMIN_IDS
+
+    # Проверяем, является ли пользователь учителем (или админом)
+    if not is_admin and not await is_teacher(user_id):
         text = (
             "👨‍🏫 <b>Режим учителя</b>\n\n"
             "У вас еще нет профиля учителя.\n\n"
-            "Чтобы стать учителем, оформите подписку для учителей."
+            "Чтобы стать учителем, оформите подписку для учителей.\n\n"
+            "💡 Получите доступ к:\n"
+            "• Созданию домашних заданий\n"
+            "• Отслеживанию прогресса учеников\n"
+            "• Подробной статистике\n"
+            "• Возможности подарить подписку"
         )
 
         keyboard = [
             [InlineKeyboardButton("💳 Подписки для учителей", callback_data="teacher_subscriptions")],
-            [InlineKeyboardButton("◀️ Назад", callback_data="main_menu")],
+            [InlineKeyboardButton("◀️ Назад", callback_data="back_to_cabinet")],
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
 
@@ -60,8 +69,8 @@ async def teacher_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
 
         return ConversationHandler.END
 
-    # Проверяем активность подписки
-    if not await has_active_teacher_subscription(user_id):
+    # Проверяем активность подписки (админы освобождаются от этой проверки)
+    if not is_admin and not await has_active_teacher_subscription(user_id):
         text = (
             "👨‍🏫 <b>Режим учителя</b>\n\n"
             "⚠️ Ваша подписка учителя неактивна.\n\n"
@@ -70,7 +79,7 @@ async def teacher_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
 
         keyboard = [
             [InlineKeyboardButton("💳 Продлить подписку", callback_data="teacher_subscriptions")],
-            [InlineKeyboardButton("◀️ Назад", callback_data="main_menu")],
+            [InlineKeyboardButton("◀️ Назад", callback_data="back_to_cabinet")],
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
 
@@ -109,9 +118,28 @@ async def teacher_profile(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     await query.answer()
 
     user_id = update.effective_user.id
+    is_admin = user_id in ADMIN_IDS
 
     # Получаем профиль учителя
     profile = await teacher_service.get_teacher_profile(user_id)
+
+    # Если админ без профиля учителя - показываем упрощённое сообщение
+    if not profile and is_admin:
+        text = (
+            "👤 <b>Ваш профиль учителя</b>\n\n"
+            "👑 <b>Статус:</b> Администратор\n"
+            "🔓 <b>Доступ:</b> Полный доступ к функциям учителя\n\n"
+            "ℹ️ У вас нет профиля учителя, но как администратор вы имеете полный доступ к функциям.\n\n"
+            "💡 Чтобы получить код для учеников, оформите подписку учителя."
+        )
+        keyboard = [
+            [InlineKeyboardButton("💳 Оформить подписку", callback_data="teacher_subscriptions")],
+            [InlineKeyboardButton("◀️ Назад", callback_data="teacher_menu")]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        await query.message.edit_text(text, reply_markup=reply_markup, parse_mode='HTML')
+        return TeacherStates.TEACHER_MENU
+
     if not profile:
         await query.message.edit_text(
             "❌ Профиль учителя не найден.",
@@ -240,8 +268,9 @@ async def create_assignment_start(update: Update, context: ContextTypes.DEFAULT_
 
     user_id = update.effective_user.id
 
-    # Проверяем, что пользователь учитель
-    if not await has_active_teacher_subscription(user_id):
+    # Проверяем, что пользователь учитель (админы освобождаются от проверки)
+    is_admin = user_id in ADMIN_IDS
+    if not is_admin and not await has_active_teacher_subscription(user_id):
         await query.message.edit_text(
             "❌ Для создания заданий требуется активная подписка учителя.",
             parse_mode='HTML'
