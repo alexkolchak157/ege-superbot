@@ -2,11 +2,14 @@
 Плагин режима учителя.
 """
 
+import logging
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, filters, ConversationHandler
 
 from core.plugin_base import BotPlugin
-from .handlers import teacher_handlers, student_handlers, assignment_handlers, analytics_handlers
+from .handlers import teacher_handlers, student_handlers
 from .states import TeacherStates, StudentStates
+
+logger = logging.getLogger(__name__)
 
 
 class TeacherModePlugin(BotPlugin):
@@ -18,8 +21,14 @@ class TeacherModePlugin(BotPlugin):
 
     async def post_init(self, app: Application):
         """Инициализация плагина"""
-        # TODO: Инициализация БД для режима учителя
-        pass
+        logger.info("Teacher mode plugin initialized")
+
+    def entry_handler(self):
+        """Возвращает обработчик для входа из главного меню"""
+        return CallbackQueryHandler(
+            teacher_handlers.teacher_menu,
+            pattern=f"^choose_{self.code}$"
+        )
 
     def register(self, app: Application):
         """Регистрация обработчиков"""
@@ -31,22 +40,28 @@ class TeacherModePlugin(BotPlugin):
             ],
             states={
                 TeacherStates.TEACHER_MENU: [
-                    CallbackQueryHandler(analytics_handlers.show_student_list, pattern="^teacher_students$"),
-                    CallbackQueryHandler(assignment_handlers.create_assignment_start, pattern="^teacher_create_assignment$"),
-                    CallbackQueryHandler(analytics_handlers.show_statistics, pattern="^teacher_statistics$"),
+                    # Основные пункты меню
                     CallbackQueryHandler(teacher_handlers.teacher_profile, pattern="^teacher_profile$"),
+                    CallbackQueryHandler(teacher_handlers.show_teacher_subscriptions, pattern="^teacher_subscriptions$"),
+                    CallbackQueryHandler(teacher_handlers.show_teacher_plan_details, pattern="^buy_teacher_"),
+
+                    # Создание задания
+                    CallbackQueryHandler(teacher_handlers.create_assignment_start, pattern="^teacher_create_assignment$"),
                 ],
-                TeacherStates.SELECT_ASSIGNMENT_TYPE: [
-                    CallbackQueryHandler(assignment_handlers.select_module, pattern="^assign_existing$"),
-                ],
-                TeacherStates.SELECT_MODULE: [
-                    CallbackQueryHandler(teacher_handlers.teacher_menu, pattern="^create_assignment$"),
-                ],
-                TeacherStates.STUDENT_LIST: [
-                    CallbackQueryHandler(teacher_handlers.teacher_menu, pattern="^teacher_menu$"),
-                ],
-                TeacherStates.VIEW_STATISTICS: [
-                    CallbackQueryHandler(analytics_handlers.show_student_list, pattern="^teacher_students$"),
+                TeacherStates.CREATE_ASSIGNMENT: [
+                    # Выбор типа задания
+                    CallbackQueryHandler(teacher_handlers.select_task_type, pattern="^assign_task_"),
+
+                    # Выбор учеников
+                    CallbackQueryHandler(teacher_handlers.toggle_student_selection, pattern="^toggle_student_"),
+
+                    # Установка дедлайна
+                    CallbackQueryHandler(teacher_handlers.set_assignment_deadline, pattern="^assignment_set_deadline$"),
+
+                    # Создание задания
+                    CallbackQueryHandler(teacher_handlers.confirm_and_create_assignment, pattern="^deadline_"),
+
+                    # Отмена
                     CallbackQueryHandler(teacher_handlers.teacher_menu, pattern="^teacher_menu$"),
                 ],
             },
@@ -55,6 +70,7 @@ class TeacherModePlugin(BotPlugin):
             ],
             name="teacher_conversation",
             persistent=False,
+            allow_reentry=True,
         )
 
         # ConversationHandler для учеников (подключение к учителю)
@@ -65,22 +81,29 @@ class TeacherModePlugin(BotPlugin):
             states={
                 StudentStates.ENTER_TEACHER_CODE: [
                     MessageHandler(filters.TEXT & ~filters.COMMAND, student_handlers.process_teacher_code),
+                    CallbackQueryHandler(student_handlers.cancel_connection, pattern="^main_menu$"),
                 ],
                 StudentStates.CONFIRM_TEACHER: [
-                    CallbackQueryHandler(student_handlers.homework_list, pattern="^confirm_teacher_"),
+                    CallbackQueryHandler(student_handlers.confirm_teacher_connection, pattern="^confirm_teacher_connection$"),
+                    CallbackQueryHandler(student_handlers.cancel_connection, pattern="^main_menu$"),
                 ],
             },
-            fallbacks=[],
+            fallbacks=[
+                CallbackQueryHandler(student_handlers.cancel_connection, pattern="^main_menu$"),
+            ],
             name="student_connect_conversation",
             persistent=False,
+            allow_reentry=True,
         )
 
-        # Обработчик для списка ДЗ
-        app.add_handler(CallbackQueryHandler(student_handlers.homework_list, pattern="^my_homeworks$"))
+        # Обработчик для списка ДЗ ученика
+        app.add_handler(CallbackQueryHandler(student_handlers.homework_list, pattern="^student_homework_list$"))
 
         # Регистрация ConversationHandler'ов
         app.add_handler(teacher_conv_handler)
         app.add_handler(student_conv_handler)
+
+        logger.info("Teacher mode plugin handlers registered")
 
 
 # Экспорт экземпляра плагина
