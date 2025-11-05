@@ -213,10 +213,139 @@ async def evaluate_task19_answer(
         evaluator = Task19AIEvaluator(strictness=StrictnessLevel.STRICT)
         result = await evaluator.evaluate(answer, topic, **kwargs)
 
-        return result.is_correct, result.feedback
+        # Считаем корректным если набрано >= 50% баллов
+        is_correct = result.total_score >= (result.max_score / 2)
+        return is_correct, result.feedback
 
     except Exception as e:
         logger.error(f"Error evaluating task19 answer: {e}")
+        return False, "Ошибка при проверке ответа"
+
+
+async def evaluate_task20_answer(
+    answer: str,
+    topic: str,
+    **kwargs
+) -> tuple[bool, Optional[str]]:
+    """
+    Проверяет ответ через evaluator task20.
+
+    Args:
+        answer: Ответ ученика
+        topic: Тема вопроса
+        **kwargs: Дополнительные параметры
+
+    Returns:
+        Tuple (is_correct, feedback)
+    """
+    try:
+        from task20.evaluator import Task20AIEvaluator, StrictnessLevel
+
+        evaluator = Task20AIEvaluator(strictness=StrictnessLevel.STRICT)
+        result = await evaluator.evaluate(answer, topic, **kwargs)
+
+        # Считаем корректным если набрано >= 50% баллов
+        is_correct = result.total_score >= (result.max_score / 2)
+        return is_correct, result.feedback
+
+    except Exception as e:
+        logger.error(f"Error evaluating task20 answer: {e}")
+        return False, "Ошибка при проверке ответа"
+
+
+async def evaluate_task24_answer(
+    answer: str,
+    topic: str,
+    **kwargs
+) -> tuple[bool, Optional[str]]:
+    """
+    Проверяет ответ (план) через evaluator task24.
+
+    Args:
+        answer: План ученика
+        topic: Название темы плана
+        **kwargs: Дополнительные параметры (должны содержать ideal_plan_data, bot_data)
+
+    Returns:
+        Tuple (is_correct, feedback)
+    """
+    try:
+        from task24.checker import evaluate_plan_with_ai, PlanBotData
+
+        # Для task24 нужны дополнительные параметры
+        ideal_plan_data = kwargs.get('ideal_plan_data')
+        bot_data = kwargs.get('bot_data')
+        user_id = kwargs.get('user_id')
+
+        if not ideal_plan_data or not bot_data:
+            logger.error("Task24 requires ideal_plan_data and bot_data parameters")
+            return False, "Недостаточно данных для проверки плана"
+
+        # Вызываем проверку плана с AI
+        feedback = await evaluate_plan_with_ai(
+            user_plan_text=answer,
+            ideal_plan_data=ideal_plan_data,
+            bot_data=bot_data,
+            topic_name=topic,
+            use_ai=True,
+            user_id=user_id
+        )
+
+        # Парсим баллы из feedback (формат: "К1: X/3, К2: Y/1")
+        import re
+        k1_match = re.search(r'К1.*?(\d+)/3', feedback)
+        k2_match = re.search(r'К2.*?(\d+)/1', feedback)
+
+        k1_score = int(k1_match.group(1)) if k1_match else 0
+        k2_score = int(k2_match.group(1)) if k2_match else 0
+        total_score = k1_score + k2_score
+
+        # Считаем корректным если набрано >= 50% баллов (минимум 2 из 4)
+        is_correct = total_score >= 2
+        return is_correct, feedback
+
+    except Exception as e:
+        logger.error(f"Error evaluating task24 answer: {e}")
+        return False, "Ошибка при проверке плана"
+
+
+async def evaluate_task25_answer(
+    answer: str,
+    topic: dict,
+    **kwargs
+) -> tuple[bool, Optional[str]]:
+    """
+    Проверяет ответ через evaluator task25.
+
+    Args:
+        answer: Ответ ученика (развернутый ответ с обоснованием, ответом на вопрос и примерами)
+        topic: Данные о задании (dict с полями task_text, parts и т.д.)
+        **kwargs: Дополнительные параметры (user_id)
+
+    Returns:
+        Tuple (is_correct, feedback)
+    """
+    try:
+        from task25.evaluator import Task25AIEvaluator, StrictnessLevel
+
+        evaluator = Task25AIEvaluator(strictness=StrictnessLevel.STRICT)
+
+        user_id = kwargs.get('user_id')
+        result = await evaluator.evaluate(answer, topic, user_id=user_id)
+
+        # Считаем корректным если набрано >= 50% баллов (минимум 3 из 6)
+        is_correct = result.total_score >= (result.max_score / 2)
+
+        # Для task25 можно использовать format_feedback() если доступно
+        if hasattr(result, 'format_feedback'):
+            feedback = result.format_feedback()
+        else:
+            feedback = result.feedback
+
+        return is_correct, feedback
+
+    except Exception as e:
+        logger.error(f"Error evaluating task25 answer: {e}")
         return False, "Ошибка при проверке ответа"
 
 
@@ -229,9 +358,9 @@ async def evaluate_homework_answer(
     Универсальная функция для проверки ответа на вопрос домашнего задания.
 
     Args:
-        task_module: Модуль задания ('task19', 'task20', etc.)
+        task_module: Модуль задания ('task19', 'task20', 'task24', 'task25')
         answer: Ответ ученика
-        question_data: Данные вопроса (topic, question_text, etc.)
+        question_data: Данные вопроса (topic, question_text, и т.д.)
 
     Returns:
         Tuple (is_correct, feedback)
@@ -243,7 +372,30 @@ async def evaluate_homework_answer(
             **question_data
         )
 
-    # TODO: Добавить интеграцию с task20, task24, task25
+    elif task_module == 'task20':
+        return await evaluate_task20_answer(
+            answer,
+            question_data.get('topic', ''),
+            **question_data
+        )
 
-    logger.warning(f"Evaluator for {task_module} not implemented")
-    return False, "Проверка для этого типа заданий пока не реализована"
+    elif task_module == 'task24':
+        # Для task24 topic это название темы плана
+        return await evaluate_task24_answer(
+            answer,
+            question_data.get('topic', ''),
+            **question_data
+        )
+
+    elif task_module == 'task25':
+        # Для task25 topic это dict с данными задания
+        topic_dict = question_data.get('topic_data', question_data)
+        return await evaluate_task25_answer(
+            answer,
+            topic_dict,
+            **question_data
+        )
+
+    else:
+        logger.warning(f"Evaluator for {task_module} not implemented")
+        return False, f"Проверка для модуля {task_module} пока не реализована"
