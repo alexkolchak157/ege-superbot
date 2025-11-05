@@ -230,3 +230,259 @@ async def show_teacher_plan_details(update: Update, context: ContextTypes.DEFAUL
     await query.message.edit_text(text, reply_markup=reply_markup, parse_mode='HTML')
 
     return TeacherStates.TEACHER_MENU
+
+
+async def create_assignment_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Начало создания домашнего задания"""
+    query = update.callback_query
+    await query.answer()
+
+    user_id = update.effective_user.id
+
+    # Проверяем, что пользователь учитель
+    if not await has_active_teacher_subscription(user_id):
+        await query.message.edit_text(
+            "❌ Для создания заданий требуется активная подписка учителя.",
+            parse_mode='HTML'
+        )
+        return ConversationHandler.END
+
+    # Проверяем, что у учителя есть ученики
+    students = await teacher_service.get_teacher_students(user_id)
+    if not students:
+        text = (
+            "📝 <b>Создание задания</b>\n\n"
+            "❌ У вас пока нет учеников.\n\n"
+            "Сначала поделитесь своим кодом с учениками, чтобы они могли подключиться."
+        )
+        keyboard = [
+            [InlineKeyboardButton("🔑 Мой код", callback_data="teacher_profile")],
+            [InlineKeyboardButton("◀️ Назад", callback_data="teacher_menu")]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        await query.message.edit_text(text, reply_markup=reply_markup, parse_mode='HTML')
+        return ConversationHandler.END
+
+    # Показываем выбор типа задания
+    text = (
+        "📝 <b>Создание домашнего задания</b>\n\n"
+        "Выберите тип задания:"
+    )
+
+    keyboard = [
+        [InlineKeyboardButton("💡 Задание 19", callback_data="assign_task_task19")],
+        [InlineKeyboardButton("⚙️ Задание 20", callback_data="assign_task_task20")],
+        [InlineKeyboardButton("📊 Задание 24", callback_data="assign_task_task24")],
+        [InlineKeyboardButton("💻 Задание 25", callback_data="assign_task_task25")],
+        [InlineKeyboardButton("◀️ Отмена", callback_data="teacher_menu")]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
+    await query.message.edit_text(text, reply_markup=reply_markup, parse_mode='HTML')
+
+    return TeacherStates.CREATE_ASSIGNMENT
+
+
+async def select_task_type(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Выбор типа задачи и переход к выбору учеников"""
+    query = update.callback_query
+    await query.answer()
+
+    # Извлекаем тип задачи из callback_data
+    task_type = query.data.replace("assign_task_", "")
+
+    # Сохраняем выбранный тип задания
+    context.user_data['assignment_task_type'] = task_type
+
+    task_names = {
+        'task19': '💡 Задание 19',
+        'task20': '⚙️ Задание 20',
+        'task24': '📊 Задание 24',
+        'task25': '💻 Задание 25'
+    }
+    task_name = task_names.get(task_type, task_type)
+
+    # Получаем список учеников
+    user_id = update.effective_user.id
+    student_ids = await teacher_service.get_teacher_students(user_id)
+
+    # Инициализируем список выбранных учеников
+    if 'selected_students' not in context.user_data:
+        context.user_data['selected_students'] = []
+
+    text = (
+        f"📝 <b>Создание задания: {task_name}</b>\n\n"
+        "Выберите учеников для назначения задания:\n"
+        "(можно выбрать несколько)"
+    )
+
+    keyboard = []
+
+    # TODO: Загрузить имена учеников из БД пользователей
+    for student_id in student_ids:
+        selected = student_id in context.user_data['selected_students']
+        emoji = "✅" if selected else "⬜"
+        keyboard.append([
+            InlineKeyboardButton(
+                f"{emoji} Ученик {student_id}",
+                callback_data=f"toggle_student_{student_id}"
+            )
+        ])
+
+    if context.user_data['selected_students']:
+        keyboard.append([InlineKeyboardButton("➡️ Далее", callback_data="assignment_set_deadline")])
+
+    keyboard.append([InlineKeyboardButton("◀️ Отмена", callback_data="teacher_menu")])
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
+    await query.message.edit_text(text, reply_markup=reply_markup, parse_mode='HTML')
+
+    return TeacherStates.CREATE_ASSIGNMENT
+
+
+async def toggle_student_selection(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Переключение выбора ученика"""
+    query = update.callback_query
+    await query.answer()
+
+    # Извлекаем student_id из callback_data
+    student_id = int(query.data.replace("toggle_student_", ""))
+
+    # Переключаем выбор
+    if 'selected_students' not in context.user_data:
+        context.user_data['selected_students'] = []
+
+    if student_id in context.user_data['selected_students']:
+        context.user_data['selected_students'].remove(student_id)
+    else:
+        context.user_data['selected_students'].append(student_id)
+
+    # Перерисовываем меню
+    return await select_task_type(update, context)
+
+
+async def set_assignment_deadline(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Установка дедлайна для задания"""
+    query = update.callback_query
+    await query.answer()
+
+    task_type = context.user_data.get('assignment_task_type', '')
+    task_names = {
+        'task19': '💡 Задание 19',
+        'task20': '⚙️ Задание 20',
+        'task24': '📊 Задание 24',
+        'task25': '💻 Задание 25'
+    }
+    task_name = task_names.get(task_type, task_type)
+
+    selected_count = len(context.user_data.get('selected_students', []))
+
+    text = (
+        f"📝 <b>Создание задания: {task_name}</b>\n\n"
+        f"👥 Выбрано учеников: {selected_count}\n\n"
+        "Установите дедлайн для выполнения задания:"
+    )
+
+    from datetime import datetime, timedelta
+
+    keyboard = []
+
+    # Предлагаем варианты дедлайнов
+    today = datetime.now()
+    for days in [1, 3, 7, 14]:
+        deadline_date = today + timedelta(days=days)
+        date_str = deadline_date.strftime("%d.%m.%Y")
+        keyboard.append([
+            InlineKeyboardButton(
+                f"Через {days} дн. ({date_str})",
+                callback_data=f"deadline_{days}"
+            )
+        ])
+
+    keyboard.append([InlineKeyboardButton("⏰ Без дедлайна", callback_data="deadline_none")])
+    keyboard.append([InlineKeyboardButton("◀️ Назад", callback_data=f"assign_task_{task_type}")])
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
+    await query.message.edit_text(text, reply_markup=reply_markup, parse_mode='HTML')
+
+    return TeacherStates.CREATE_ASSIGNMENT
+
+
+async def confirm_and_create_assignment(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Подтверждение и создание задания"""
+    query = update.callback_query
+    await query.answer()
+
+    user_id = update.effective_user.id
+
+    # Извлекаем данные из контекста
+    task_type = context.user_data.get('assignment_task_type')
+    selected_students = context.user_data.get('selected_students', [])
+
+    # Парсим дедлайн из callback_data
+    deadline_days = query.data.replace("deadline_", "")
+
+    deadline = None
+    if deadline_days != "none":
+        from datetime import datetime, timedelta
+        deadline = datetime.now() + timedelta(days=int(deadline_days))
+
+    # Создаём задание через assignment_service
+    from ..services import assignment_service
+    from ..models import AssignmentType, TargetType
+
+    task_names = {
+        'task19': 'Задание 19',
+        'task20': 'Задание 20',
+        'task24': 'Задание 24',
+        'task25': 'Задание 25'
+    }
+    title = task_names.get(task_type, f"Задание {task_type}")
+
+    assignment_data = {
+        'task_module': task_type,
+        'questions_count': 10  # По умолчанию 10 вопросов
+    }
+
+    homework = await assignment_service.create_homework_assignment(
+        teacher_id=user_id,
+        title=title,
+        assignment_type=AssignmentType.EXISTING_TASK,
+        assignment_data=assignment_data,
+        target_type=TargetType.SELECTED_STUDENTS,
+        student_ids=selected_students,
+        description=f"Практика по теме '{title}'",
+        deadline=deadline
+    )
+
+    if homework:
+        deadline_text = deadline.strftime("%d.%m.%Y") if deadline else "не установлен"
+
+        text = (
+            "✅ <b>Задание успешно создано!</b>\n\n"
+            f"📝 <b>Тип:</b> {title}\n"
+            f"👥 <b>Назначено учеников:</b> {len(selected_students)}\n"
+            f"⏰ <b>Дедлайн:</b> {deadline_text}\n\n"
+            "Ученики получат уведомление о новом задании."
+        )
+
+        keyboard = [
+            [InlineKeyboardButton("📊 Статистика по заданию", callback_data=f"homework_stats_{homework.id}")],
+            [InlineKeyboardButton("◀️ В меню учителя", callback_data="teacher_menu")]
+        ]
+    else:
+        text = (
+            "❌ <b>Ошибка при создании задания</b>\n\n"
+            "Попробуйте еще раз позже."
+        )
+        keyboard = [[InlineKeyboardButton("◀️ В меню учителя", callback_data="teacher_menu")]]
+
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
+    await query.message.edit_text(text, reply_markup=reply_markup, parse_mode='HTML')
+
+    # Очищаем контекст
+    context.user_data.pop('assignment_task_type', None)
+    context.user_data.pop('selected_students', None)
+
+    return ConversationHandler.END
