@@ -1,0 +1,55 @@
+"""
+FSM состояния для режима учителя.
+"""
+
+from enum import IntEnum
+
+
+class TeacherStates(IntEnum):
+    """Состояния для учителей"""
+    # Регистрация
+    TEACHER_MENU = 1
+    AWAITING_TEACHER_NAME = 2
+
+    # Управление учениками
+    STUDENT_LIST = 10
+    STUDENT_DETAIL = 11
+
+    # Создание домашнего задания
+    CREATE_ASSIGNMENT = 20
+    SELECT_ASSIGNMENT_TYPE = 21
+    SELECT_MODULE = 22  # task19, task20, task24, task25
+    SELECT_TOPICS = 23
+    SELECT_QUESTIONS = 24
+    SET_DEADLINE = 25
+    SELECT_STUDENTS = 26
+    CONFIRM_ASSIGNMENT = 27
+
+    # Просмотр статистики
+    VIEW_STATISTICS = 30
+
+    # Дарение подписок
+    GIFT_SUBSCRIPTION_MENU = 40
+    SELECT_STUDENT_FOR_GIFT = 41
+    SELECT_GIFT_DURATION = 42
+    CONFIRM_GIFT = 43
+
+    # Промокоды
+    CREATE_PROMO_CODE = 50
+    SET_PROMO_USES = 51
+    SET_PROMO_DURATION = 52
+
+
+class StudentStates(IntEnum):
+    """Состояния для учеников (связь с учителем)"""
+    # Подключение к учителю
+    ENTER_TEACHER_CODE = 100
+    CONFIRM_TEACHER = 101
+
+    # Домашние задания
+    HOMEWORK_LIST = 110
+    HOMEWORK_DETAIL = 111
+    DOING_HOMEWORK = 112
+
+    # Активация промокода
+    ENTER_PROMO_CODE = 120

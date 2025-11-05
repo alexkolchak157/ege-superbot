@@ -393,6 +393,9 @@ async def init_db():
             # --- 4. Применение миграций для системы жалоб и подсказок ---
             await apply_complaint_hints_migration(db)
 
+            # --- 5. Применение миграций для режима учителя ---
+            await apply_teacher_mode_migration(db)
+
     except Exception as e:
         logger.exception(f"Ошибка при инициализации БД: {e}")
         raise
@@ -1344,3 +1347,202 @@ async def get_ai_limit_stats(user_id: int, days: int = 7) -> Dict[str, Any]:
             'days_active': 0,
             'last_7_days': []
         }
+
+
+async def apply_teacher_mode_migration(db: aiosqlite.Connection):
+    """
+    Применяет миграцию для режима учителя.
+
+    Создаёт таблицы:
+    - user_roles (роли пользователей: teacher, student)
+    - teacher_profiles (профили учителей с кодами)
+    - teacher_student_relationships (связи учитель-ученик)
+    - homework_assignments (домашние задания)
+    - homework_student_assignments (назначения заданий ученикам)
+    - homework_progress (прогресс выполнения заданий)
+    - gifted_subscriptions (подаренные подписки)
+    - gift_promo_codes (промокоды для подписок)
+    - promo_code_usage (использование промокодов)
+
+    Args:
+        db: Соединение с БД
+    """
+    try:
+        logger.info("Применение миграции режима учителя...")
+
+        # 1. Таблица ролей пользователей
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS user_roles (
+                user_id INTEGER NOT NULL,
+                role TEXT NOT NULL CHECK(role IN ('teacher', 'student')),
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (user_id, role),
+                FOREIGN KEY (user_id) REFERENCES users(user_id)
+            )
+        """)
+        logger.info("✓ Таблица user_roles готова")
+
+        # 2. Таблица профилей учителей
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS teacher_profiles (
+                user_id INTEGER PRIMARY KEY,
+                teacher_code TEXT UNIQUE NOT NULL,
+                display_name TEXT NOT NULL,
+                has_active_subscription BOOLEAN DEFAULT FALSE,
+                subscription_expires DATETIME NULL,
+                subscription_tier TEXT DEFAULT 'teacher_basic' CHECK(
+                    subscription_tier IN ('teacher_basic', 'teacher_standard', 'teacher_premium')
+                ),
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                feedback_settings TEXT DEFAULT '{}',
+                FOREIGN KEY (user_id) REFERENCES users(user_id)
+            )
+        """)
+        logger.info("✓ Таблица teacher_profiles готова")
+
+        # 3. Таблица связей учитель-ученик
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS teacher_student_relationships (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                teacher_id INTEGER NOT NULL,
+                student_id INTEGER NOT NULL,
+                invited_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                status TEXT DEFAULT 'active' CHECK(status IN ('active', 'inactive', 'blocked')),
+                UNIQUE(teacher_id, student_id),
+                FOREIGN KEY (teacher_id) REFERENCES teacher_profiles(user_id),
+                FOREIGN KEY (student_id) REFERENCES users(user_id)
+            )
+        """)
+        logger.info("✓ Таблица teacher_student_relationships готова")
+
+        # 4. Таблица домашних заданий
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS homework_assignments (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                teacher_id INTEGER NOT NULL,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                title TEXT NOT NULL,
+                description TEXT,
+                deadline DATETIME NULL,
+                assignment_type TEXT NOT NULL CHECK(
+                    assignment_type IN ('existing_topics', 'custom', 'test_part')
+                ),
+                assignment_data TEXT NOT NULL,
+                target_type TEXT DEFAULT 'all_students' CHECK(
+                    target_type IN ('all_students', 'specific_students', 'group')
+                ),
+                status TEXT DEFAULT 'active' CHECK(status IN ('active', 'archived')),
+                FOREIGN KEY (teacher_id) REFERENCES teacher_profiles(user_id)
+            )
+        """)
+        logger.info("✓ Таблица homework_assignments готова")
+
+        # 5. Таблица назначений заданий ученикам
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS homework_student_assignments (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                homework_id INTEGER NOT NULL,
+                student_id INTEGER NOT NULL,
+                assigned_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                status TEXT DEFAULT 'assigned' CHECK(
+                    status IN ('assigned', 'in_progress', 'completed', 'overdue')
+                ),
+                UNIQUE(homework_id, student_id),
+                FOREIGN KEY (homework_id) REFERENCES homework_assignments(id) ON DELETE CASCADE,
+                FOREIGN KEY (student_id) REFERENCES users(user_id)
+            )
+        """)
+        logger.info("✓ Таблица homework_student_assignments готова")
+
+        # 6. Таблица прогресса выполнения заданий
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS homework_progress (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                homework_id INTEGER NOT NULL,
+                student_id INTEGER NOT NULL,
+                question_id TEXT NOT NULL,
+                user_answer TEXT NOT NULL,
+                is_correct BOOLEAN NOT NULL,
+                ai_feedback TEXT,
+                completed_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(homework_id, student_id, question_id),
+                FOREIGN KEY (homework_id) REFERENCES homework_assignments(id) ON DELETE CASCADE,
+                FOREIGN KEY (student_id) REFERENCES users(user_id)
+            )
+        """)
+        logger.info("✓ Таблица homework_progress готова")
+
+        # 7. Таблица подаренных подписок
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS gifted_subscriptions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                gifter_id INTEGER NOT NULL,
+                recipient_id INTEGER NOT NULL,
+                duration_days INTEGER NOT NULL,
+                activated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                expires_at DATETIME NOT NULL,
+                status TEXT DEFAULT 'active' CHECK(status IN ('active', 'expired', 'cancelled')),
+                FOREIGN KEY (gifter_id) REFERENCES users(user_id),
+                FOREIGN KEY (recipient_id) REFERENCES users(user_id)
+            )
+        """)
+        logger.info("✓ Таблица gifted_subscriptions готова")
+
+        # 8. Таблица промокодов
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS gift_promo_codes (
+                code TEXT PRIMARY KEY,
+                creator_id INTEGER NOT NULL,
+                duration_days INTEGER NOT NULL,
+                max_uses INTEGER NOT NULL,
+                used_count INTEGER DEFAULT 0,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                expires_at DATETIME NULL,
+                status TEXT DEFAULT 'active' CHECK(status IN ('active', 'expired', 'exhausted')),
+                FOREIGN KEY (creator_id) REFERENCES users(user_id)
+            )
+        """)
+        logger.info("✓ Таблица gift_promo_codes готова")
+
+        # 9. Таблица использования промокодов
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS promo_code_usage (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                promo_code TEXT NOT NULL,
+                student_id INTEGER NOT NULL,
+                used_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(promo_code, student_id),
+                FOREIGN KEY (promo_code) REFERENCES gift_promo_codes(code),
+                FOREIGN KEY (student_id) REFERENCES users(user_id)
+            )
+        """)
+        logger.info("✓ Таблица promo_code_usage готова")
+
+        # Создание индексов для оптимизации запросов
+        indices = [
+            ('idx_teacher_code', 'teacher_profiles', 'teacher_code'),
+            ('idx_teacher_student_teacher', 'teacher_student_relationships', 'teacher_id'),
+            ('idx_teacher_student_student', 'teacher_student_relationships', 'student_id'),
+            ('idx_homework_teacher', 'homework_assignments', 'teacher_id'),
+            ('idx_homework_deadline', 'homework_assignments', 'deadline'),
+            ('idx_homework_student_homework', 'homework_student_assignments', 'homework_id'),
+            ('idx_homework_student_student', 'homework_student_assignments', 'student_id'),
+            ('idx_homework_progress_homework', 'homework_progress', 'homework_id'),
+            ('idx_homework_progress_student', 'homework_progress', 'student_id'),
+            ('idx_gifted_gifter', 'gifted_subscriptions', 'gifter_id'),
+            ('idx_gifted_recipient', 'gifted_subscriptions', 'recipient_id'),
+            ('idx_promo_creator', 'gift_promo_codes', 'creator_id'),
+            ('idx_promo_usage_student', 'promo_code_usage', 'student_id'),
+        ]
+
+        for idx_name, table_name, column_name in indices:
+            await db.execute(f'CREATE INDEX IF NOT EXISTS {idx_name} ON {table_name} ({column_name})')
+
+        logger.info("✓ Индексы для режима учителя созданы")
+
+        await db.commit()
+        logger.info("Миграция режима учителя успешно применена")
+
+    except Exception as e:
+        logger.exception(f"Ошибка при применении миграции режима учителя: {e}")
+        raise
