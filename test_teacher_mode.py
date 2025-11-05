@@ -61,7 +61,8 @@ def test_models():
         print(f"   Max students: {profile.max_students}")
 
         # Тест enum
-        assert AssignmentType.EXISTING_TASK.value == 'existing_task'
+        assert AssignmentType.EXISTING_TOPICS.value == 'existing_topics'
+        assert AssignmentType.CUSTOM.value == 'custom'
         assert AssignmentStatus.ACTIVE.value == 'active'
         print("✅ Enum работают корректно")
 
