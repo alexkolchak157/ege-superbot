@@ -3,6 +3,7 @@
 """
 
 import logging
+from datetime import datetime, timedelta
 from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton
 from telegram.ext import ContextTypes, ConversationHandler
 
@@ -382,8 +383,6 @@ async def set_assignment_deadline(update: Update, context: ContextTypes.DEFAULT_
         "Установите дедлайн для выполнения задания:"
     )
 
-    from datetime import datetime, timedelta
-
     keyboard = []
 
     # Предлагаем варианты дедлайнов
@@ -423,7 +422,6 @@ async def confirm_and_create_assignment(update: Update, context: ContextTypes.DE
 
     deadline = None
     if deadline_days != "none":
-        from datetime import datetime, timedelta
         deadline = datetime.now() + timedelta(days=int(deadline_days))
 
     # Создаём задание через assignment_service
@@ -446,7 +444,7 @@ async def confirm_and_create_assignment(update: Update, context: ContextTypes.DE
     homework = await assignment_service.create_homework_assignment(
         teacher_id=user_id,
         title=title,
-        assignment_type=AssignmentType.EXISTING_TASK,
+        assignment_type=AssignmentType.EXISTING_TOPICS,
         assignment_data=assignment_data,
         target_type=TargetType.SELECTED_STUDENTS,
         student_ids=selected_students,
