@@ -45,6 +45,12 @@ class TeacherModePlugin(BotPlugin):
                     CallbackQueryHandler(teacher_handlers.show_teacher_subscriptions, pattern="^teacher_subscriptions$"),
                     CallbackQueryHandler(teacher_handlers.show_teacher_plan_details, pattern="^buy_teacher_"),
 
+                    # Ученики и статистика
+                    CallbackQueryHandler(teacher_handlers.show_student_list, pattern="^teacher_students$"),
+                    CallbackQueryHandler(teacher_handlers.show_teacher_statistics, pattern="^teacher_statistics$"),
+                    CallbackQueryHandler(teacher_handlers.show_teacher_assignments, pattern="^teacher_my_assignments$"),
+                    CallbackQueryHandler(teacher_handlers.show_homework_stats, pattern="^homework_stats_"),
+
                     # Создание задания
                     CallbackQueryHandler(teacher_handlers.create_assignment_start, pattern="^teacher_create_assignment$"),
                 ],

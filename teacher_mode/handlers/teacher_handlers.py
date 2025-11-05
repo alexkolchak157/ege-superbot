@@ -83,10 +83,9 @@ async def teacher_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
     # Все проверки пройдены - показываем меню
     keyboard = [
         [InlineKeyboardButton("👥 Мои ученики", callback_data="teacher_students")],
+        [InlineKeyboardButton("📋 Мои задания", callback_data="teacher_my_assignments")],
         [InlineKeyboardButton("➕ Создать задание", callback_data="teacher_create_assignment")],
         [InlineKeyboardButton("📊 Статистика", callback_data="teacher_statistics")],
-        [InlineKeyboardButton("🎁 Подарить подписку", callback_data="teacher_gift_subscription")],
-        [InlineKeyboardButton("🔑 Промокоды", callback_data="teacher_promo_codes")],
         [InlineKeyboardButton("👤 Мой профиль", callback_data="teacher_profile")],
         [InlineKeyboardButton("◀️ Назад в главное меню", callback_data="main_menu")],
     ]
@@ -486,3 +485,230 @@ async def confirm_and_create_assignment(update: Update, context: ContextTypes.DE
     context.user_data.pop('selected_students', None)
 
     return ConversationHandler.END
+
+
+async def show_student_list(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Показать список учеников учителя"""
+    query = update.callback_query
+    await query.answer()
+
+    user_id = update.effective_user.id
+
+    # Получаем профиль учителя
+    profile = await teacher_service.get_teacher_profile(user_id)
+    if not profile:
+        await query.message.edit_text(
+            "❌ Профиль учителя не найден.",
+            parse_mode='HTML'
+        )
+        return ConversationHandler.END
+
+    # Получаем список учеников
+    student_ids = await teacher_service.get_teacher_students(user_id)
+
+    if not student_ids:
+        text = (
+            "👥 <b>Мои ученики</b>\n\n"
+            "У вас пока нет учеников.\n\n"
+            f"📤 Отправьте свой код <code>{profile.teacher_code}</code> ученикам, "
+            "чтобы они могли подключиться к вам."
+        )
+        keyboard = [
+            [InlineKeyboardButton("◀️ Назад", callback_data="teacher_menu")]
+        ]
+    else:
+        max_students = profile.max_students
+        max_students_text = "∞" if max_students == -1 else str(max_students)
+
+        text = (
+            "👥 <b>Мои ученики</b>\n\n"
+            f"📊 Всего учеников: {len(student_ids)}/{max_students_text}\n\n"
+        )
+
+        # TODO: Получить имена учеников из БД пользователей
+        text += "<b>Список учеников:</b>\n"
+        for i, student_id in enumerate(student_ids, 1):
+            text += f"{i}. Ученик ID: {student_id}\n"
+
+        keyboard = [
+            [InlineKeyboardButton("📊 Общая статистика", callback_data="teacher_statistics")],
+            [InlineKeyboardButton("◀️ Назад", callback_data="teacher_menu")]
+        ]
+
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await query.message.edit_text(text, reply_markup=reply_markup, parse_mode='HTML')
+
+    return TeacherStates.TEACHER_MENU
+
+
+async def show_teacher_statistics(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Показать статистику учителя"""
+    query = update.callback_query
+    await query.answer()
+
+    user_id = update.effective_user.id
+
+    # Получаем список учеников
+    student_ids = await teacher_service.get_teacher_students(user_id)
+
+    # Получаем все задания учителя
+    from ..services import assignment_service
+    homeworks = await assignment_service.get_teacher_homeworks(user_id)
+
+    # Собираем статистику
+    total_students = len(student_ids)
+    total_homeworks = len(homeworks)
+
+    # Считаем статистику по заданиям
+    active_homeworks = sum(1 for hw in homeworks if hw.status.value == 'active')
+    completed_count = 0
+    in_progress_count = 0
+
+    for hw in homeworks:
+        stats = await assignment_service.get_homework_statistics(hw.id)
+        completed_count += stats.get('completed', 0) + stats.get('checked', 0)
+        in_progress_count += stats.get('in_progress', 0)
+
+    text = (
+        "📊 <b>Статистика учителя</b>\n\n"
+        f"👥 <b>Учеников:</b> {total_students}\n"
+        f"📝 <b>Всего заданий:</b> {total_homeworks}\n"
+        f"✅ <b>Активных заданий:</b> {active_homeworks}\n\n"
+        "<b>Выполнение заданий:</b>\n"
+        f"✅ Завершено: {completed_count}\n"
+        f"⏳ В процессе: {in_progress_count}\n"
+    )
+
+    if homeworks:
+        text += "\n<b>Последние задания:</b>\n"
+        for hw in homeworks[:5]:  # Показываем последние 5
+            status_emoji = {
+                'active': '✅',
+                'archived': '📦',
+                'draft': '📝'
+            }.get(hw.status.value, '❓')
+
+            deadline_text = ""
+            if hw.deadline:
+                deadline_text = f" (до {hw.deadline.strftime('%d.%m')})"
+
+            text += f"\n{status_emoji} {hw.title}{deadline_text}"
+
+    keyboard = [
+        [InlineKeyboardButton("👥 Список учеников", callback_data="teacher_students")],
+        [InlineKeyboardButton("📋 Мои задания", callback_data="teacher_my_assignments")],
+        [InlineKeyboardButton("◀️ Назад", callback_data="teacher_menu")]
+    ]
+
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await query.message.edit_text(text, reply_markup=reply_markup, parse_mode='HTML')
+
+    return TeacherStates.TEACHER_MENU
+
+
+async def show_teacher_assignments(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Показать список заданий учителя"""
+    query = update.callback_query
+    await query.answer()
+
+    user_id = update.effective_user.id
+
+    # Получаем все задания учителя
+    from ..services import assignment_service
+    homeworks = await assignment_service.get_teacher_homeworks(user_id)
+
+    if not homeworks:
+        text = (
+            "📋 <b>Мои задания</b>\n\n"
+            "У вас пока нет созданных заданий."
+        )
+        keyboard = [
+            [InlineKeyboardButton("➕ Создать задание", callback_data="teacher_create_assignment")],
+            [InlineKeyboardButton("◀️ Назад", callback_data="teacher_menu")]
+        ]
+    else:
+        text = (
+            "📋 <b>Мои задания</b>\n\n"
+            f"Всего заданий: {len(homeworks)}\n"
+            "Выберите задание для просмотра статистики:"
+        )
+
+        keyboard = []
+        for hw in homeworks[:10]:  # Показываем последние 10
+            # Получаем статистику по заданию
+            stats = await assignment_service.get_homework_statistics(hw.id)
+
+            status_emoji = {
+                'active': '✅',
+                'archived': '📦',
+                'draft': '📝'
+            }.get(hw.status.value, '❓')
+
+            deadline_text = ""
+            if hw.deadline:
+                deadline_text = f" до {hw.deadline.strftime('%d.%m')}"
+
+            button_text = f"{status_emoji} {hw.title} ({stats['completed']}/{stats['total']}){deadline_text}"
+
+            keyboard.append([
+                InlineKeyboardButton(button_text, callback_data=f"homework_stats_{hw.id}")
+            ])
+
+        keyboard.append([InlineKeyboardButton("➕ Создать новое задание", callback_data="teacher_create_assignment")])
+        keyboard.append([InlineKeyboardButton("◀️ Назад", callback_data="teacher_menu")])
+
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await query.message.edit_text(text, reply_markup=reply_markup, parse_mode='HTML')
+
+    return TeacherStates.TEACHER_MENU
+
+
+async def show_homework_stats(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Показать детальную статистику по заданию"""
+    query = update.callback_query
+    await query.answer()
+
+    # Извлекаем homework_id из callback_data
+    homework_id = int(query.data.replace("homework_stats_", ""))
+
+    # Получаем задание
+    from ..services import assignment_service
+    homework = await assignment_service.get_homework_by_id(homework_id)
+
+    if not homework:
+        await query.message.edit_text(
+            "❌ Задание не найдено.",
+            parse_mode='HTML'
+        )
+        return ConversationHandler.END
+
+    # Получаем статистику
+    stats = await assignment_service.get_homework_statistics(homework_id)
+
+    deadline_text = "не установлен"
+    if homework.deadline:
+        deadline_text = homework.deadline.strftime("%d.%m.%Y %H:%M")
+
+    text = (
+        f"📊 <b>Статистика: {homework.title}</b>\n\n"
+        f"📝 <b>Описание:</b> {homework.description or 'Не указано'}\n"
+        f"⏰ <b>Дедлайн:</b> {deadline_text}\n"
+        f"📅 <b>Создано:</b> {homework.created_at.strftime('%d.%m.%Y')}\n\n"
+        "<b>Статус выполнения:</b>\n"
+        f"👥 Всего учеников: {stats['total']}\n"
+        f"✅ Завершили: {stats['completed']} ({stats['completed']*100//stats['total'] if stats['total'] > 0 else 0}%)\n"
+        f"✔️ Проверено: {stats['checked']}\n"
+        f"⏳ В процессе: {stats['in_progress']}\n"
+        f"📝 Назначено: {stats['assigned']}\n"
+    )
+
+    keyboard = [
+        [InlineKeyboardButton("📋 Все задания", callback_data="teacher_my_assignments")],
+        [InlineKeyboardButton("◀️ Назад", callback_data="teacher_menu")]
+    ]
+
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await query.message.edit_text(text, reply_markup=reply_markup, parse_mode='HTML')
+
+    return TeacherStates.TEACHER_MENU
+
