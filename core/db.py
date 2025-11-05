@@ -3,6 +3,8 @@
 Все SQL запросы используют параметризацию для безопасности.
 """
 
+from __future__ import annotations  # Python 3.8 compatibility
+
 import os
 import logging
 from datetime import datetime, date, timezone, timedelta

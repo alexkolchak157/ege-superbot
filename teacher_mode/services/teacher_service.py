@@ -2,6 +2,8 @@
 Сервис для работы с учителями.
 """
 
+from __future__ import annotations  # Python 3.8 compatibility
+
 import secrets
 import string
 import json
