@@ -456,3 +456,11 @@ async def deactivate_promo_code(code: str) -> bool:
     except Exception as e:
         logger.error(f"Ошибка при деактивации промокода: {e}")
         return False
+
+# Псевдоним для совместимости с teacher_handlers
+async def get_teacher_promo_codes(teacher_id: int) -> List[PromoCode]:
+    """
+    Псевдоним для get_creator_promo_codes.
+    Получает промокоды учителя.
+    """
+    return await get_creator_promo_codes(teacher_id)

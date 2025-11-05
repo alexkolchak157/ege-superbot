@@ -87,6 +87,7 @@ async def teacher_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
         [InlineKeyboardButton("📋 Мои задания", callback_data="teacher_my_assignments")],
         [InlineKeyboardButton("➕ Создать задание", callback_data="teacher_create_assignment")],
         [InlineKeyboardButton("📊 Статистика", callback_data="teacher_statistics")],
+        [InlineKeyboardButton("🎁 Подарить подписку", callback_data="teacher_gift_menu")],
         [InlineKeyboardButton("👤 Мой профиль", callback_data="teacher_profile")],
         [InlineKeyboardButton("◀️ Назад в главное меню", callback_data="main_menu")],
     ]
@@ -710,3 +711,162 @@ async def show_homework_stats(update: Update, context: ContextTypes.DEFAULT_TYPE
 
     return TeacherStates.TEACHER_MENU
 
+
+# ========== ПОДАРКИ И ПРОМОКОДЫ ==========
+
+async def show_gift_subscription_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Меню подарков подписок"""
+    query = update.callback_query
+    await query.answer()
+
+    text = (
+        "🎁 <b>Подарить подписку</b>\n\n"
+        "Выберите способ подарка:"
+    )
+
+    keyboard = [
+        [InlineKeyboardButton("🎟️ Создать промокод", callback_data="gift_create_promo")],
+        [InlineKeyboardButton("📋 Мои промокоды", callback_data="gift_my_promos")],
+        [InlineKeyboardButton("◀️ Назад", callback_data="teacher_menu")]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
+    await query.message.edit_text(text, reply_markup=reply_markup, parse_mode='HTML')
+    return TeacherStates.TEACHER_MENU
+
+
+async def show_promo_codes_list(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Показать список промокодов учителя"""
+    query = update.callback_query
+    await query.answer()
+
+    user_id = update.effective_user.id
+    from ..services import gift_service
+
+    # Получаем промокоды учителя
+    promos = await gift_service.get_teacher_promo_codes(user_id)
+
+    if not promos:
+        text = (
+            "🎟️ <b>Мои промокоды</b>\n\n"
+            "У вас пока нет созданных промокодов.\n\n"
+            "Создайте промокод, чтобы подарить подписку нескольким ученикам."
+        )
+        keyboard = [
+            [InlineKeyboardButton("➕ Создать промокод", callback_data="gift_create_promo")],
+            [InlineKeyboardButton("◀️ Назад", callback_data="teacher_gift_menu")]
+        ]
+    else:
+        text = (
+            f"🎟️ <b>Мои промокоды</b>\n\n"
+            f"Всего промокодов: {len(promos)}\n\n"
+        )
+
+        for promo in promos[:10]:
+            status = "✅ Активен" if promo.status == "active" else "❌ Использован"
+            used_text = f"{promo.used_count}/{promo.max_uses if promo.max_uses else '∞'}"
+            text += f"<code>{promo.code}</code> - {used_text} ({status})\n"
+
+        keyboard = [
+            [InlineKeyboardButton("➕ Создать промокод", callback_data="gift_create_promo")],
+            [InlineKeyboardButton("◀️ Назад", callback_data="teacher_gift_menu")]
+        ]
+
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await query.message.edit_text(text, reply_markup=reply_markup, parse_mode='HTML')
+    return TeacherStates.TEACHER_MENU
+
+
+async def start_create_promo_code(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Начало создания промокода"""
+    query = update.callback_query
+    await query.answer()
+
+    text = (
+        "🎟️ <b>Создание промокода</b>\n\n"
+        "Промокод позволит нескольким ученикам получить подписку.\n\n"
+        "Выберите срок действия подписки:"
+    )
+
+    keyboard = [
+        [InlineKeyboardButton("📅 7 дней", callback_data="promo_duration_7")],
+        [InlineKeyboardButton("📅 14 дней", callback_data="promo_duration_14")],
+        [InlineKeyboardButton("📅 30 дней", callback_data="promo_duration_30")],
+        [InlineKeyboardButton("📅 90 дней", callback_data="promo_duration_90")],
+        [InlineKeyboardButton("◀️ Отмена", callback_data="gift_my_promos")]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
+    await query.message.edit_text(text, reply_markup=reply_markup, parse_mode='HTML')
+    return TeacherStates.TEACHER_MENU
+
+
+async def set_promo_duration(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Установка срока действия промокода"""
+    query = update.callback_query
+    await query.answer()
+
+    # Извлекаем количество дней из callback_data
+    days = int(query.data.replace("promo_duration_", ""))
+    context.user_data['promo_duration'] = days
+
+    text = (
+        f"🎟️ <b>Создание промокода</b>\n\n"
+        f"Срок подписки: {days} дней\n\n"
+        "Выберите количество использований:"
+    )
+
+    keyboard = [
+        [InlineKeyboardButton("1️⃣ 1 использование", callback_data="promo_uses_1")],
+        [InlineKeyboardButton("5️⃣ 5 использований", callback_data="promo_uses_5")],
+        [InlineKeyboardButton("🔟 10 использований", callback_data="promo_uses_10")],
+        [InlineKeyboardButton("♾️ Без ограничений", callback_data="promo_uses_unlimited")],
+        [InlineKeyboardButton("◀️ Назад", callback_data="gift_create_promo")]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
+    await query.message.edit_text(text, reply_markup=reply_markup, parse_mode='HTML')
+    return TeacherStates.TEACHER_MENU
+
+
+async def create_promo_code_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Финальное создание промокода"""
+    query = update.callback_query
+    await query.answer()
+
+    user_id = update.effective_user.id
+    uses_str = query.data.replace("promo_uses_", "")
+    max_uses = None if uses_str == "unlimited" else int(uses_str)
+    duration_days = context.user_data.get('promo_duration', 30)
+
+    from ..services import gift_service
+
+    promo = await gift_service.create_promo_code(
+        creator_id=user_id,
+        duration_days=duration_days,
+        max_uses=max_uses,
+        expires_at=None
+    )
+
+    if promo:
+        uses_text = f"{max_uses} раз" if max_uses else "Неограниченно"
+        text = (
+            "✅ <b>Промокод создан!</b>\n\n"
+            f"🎟️ <b>Код:</b> <code>{promo.code}</code>\n"
+            f"📅 <b>Подписка:</b> {duration_days} дней\n"
+            f"🔢 <b>Использований:</b> {uses_text}\n\n"
+            "Отправьте этот код своим ученикам."
+        )
+        keyboard = [
+            [InlineKeyboardButton("📋 Мои промокоды", callback_data="gift_my_promos")],
+            [InlineKeyboardButton("➕ Создать еще", callback_data="gift_create_promo")],
+            [InlineKeyboardButton("◀️ В меню", callback_data="teacher_menu")]
+        ]
+    else:
+        text = "❌ Ошибка при создании промокода"
+        keyboard = [[InlineKeyboardButton("◀️ Назад", callback_data="gift_my_promos")]]
+
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await query.message.edit_text(text, reply_markup=reply_markup, parse_mode='HTML')
+    context.user_data.pop('promo_duration', None)
+    return TeacherStates.TEACHER_MENU
