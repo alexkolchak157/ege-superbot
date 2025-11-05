@@ -31,6 +31,73 @@ class RetentionScheduler:
         self.database_file = database_file
         self.classifier = get_segment_classifier()
 
+    def _pluralize_days(self, days: int) -> str:
+        """Склонение слова 'день'"""
+        if days % 10 == 1 and days % 100 != 11:
+            return "день"
+        elif days % 10 in [2, 3, 4] and days % 100 not in [12, 13, 14]:
+            return "дня"
+        else:
+            return "дней"
+
+    def _enrich_variables(
+        self,
+        activity: Dict[str, Any],
+        subscription: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, Any]:
+        """
+        Обогащает переменные для шаблонов всеми необходимыми данными.
+
+        Args:
+            activity: Статистика активности пользователя
+            subscription: Информация о подписке (опционально)
+
+        Returns:
+            Полный набор переменных для шаблонов
+        """
+        # Копируем базовые данные
+        variables = dict(activity)
+
+        # Дата ЕГЭ 2025 (предполагаем 1 июня 2025)
+        ege_date = datetime(2025, 6, 1, tzinfo=timezone.utc)
+        days_to_ege = (ege_date - datetime.now(timezone.utc)).days
+        variables['days_to_ege'] = max(0, days_to_ege)
+        variables['days_word'] = self._pluralize_days(variables['days_to_ege'])
+
+        # Вопросов до milestone (10 вопросов)
+        answered_total = activity.get('answered_total', 0)
+        variables['questions_to_milestone'] = max(0, 10 - answered_total)
+
+        # Оставшиеся бесплатные проверки (3 в день для free users)
+        ai_checks_today = activity.get('ai_checks_today', 0)
+        variables['checks_remaining'] = max(0, 3 - ai_checks_today)
+
+        # Streak (пока не реализовано, ставим 0)
+        variables['current_streak'] = 0
+
+        # Данные о подписке
+        if subscription:
+            # Дата окончания подписки (форматированная)
+            if subscription.get('end_date'):
+                end_date = subscription['end_date']
+                if isinstance(end_date, str):
+                    try:
+                        end_dt = datetime.fromisoformat(end_date.replace('Z', '+00:00'))
+                        variables['subscription_end'] = end_dt.strftime('%d.%m.%Y')
+                    except:
+                        variables['subscription_end'] = end_date[:10]
+                else:
+                    variables['subscription_end'] = end_date.strftime('%d.%m.%Y')
+            else:
+                variables['subscription_end'] = 'неизвестно'
+
+            # Дней до окончания
+            days_until_expiry = subscription.get('days_until_expiry', 0)
+            variables['days_until_expiry'] = days_until_expiry
+            variables['days_word'] = self._pluralize_days(days_until_expiry)
+
+        return variables
+
     async def can_send_notification(
         self,
         user_id: int,
@@ -250,16 +317,16 @@ class RetentionScheduler:
             else:
                 continue
 
+            # Обогащаем переменные
+            variables = self._enrich_variables(activity)
+
             # Отправляем
             success = await self.send_notification(
                 bot=bot,
                 user_id=user_id,
                 segment=UserSegment.BOUNCED,
                 trigger=trigger,
-                variables={
-                    'first_name': activity['first_name'] or 'друг',
-                    'answered_total': activity['answered_total']
-                }
+                variables=variables
             )
 
             if success:
@@ -298,18 +365,16 @@ class RetentionScheduler:
             else:
                 continue
 
+            # Обогащаем переменные
+            variables = self._enrich_variables(activity, subscription)
+
             # Отправляем
             success = await self.send_notification(
                 bot=bot,
                 user_id=user_id,
                 segment=UserSegment.TRIAL_USER,
                 trigger=trigger,
-                variables={
-                    'first_name': activity['first_name'] or 'друг',
-                    'answered_total': activity['answered_total'],
-                    'ai_checks_total': activity['ai_checks_total'],
-                    'days_until_expiry': max(0, days_until_expiry)
-                }
+                variables=variables
             )
 
             if success:
@@ -345,17 +410,16 @@ class RetentionScheduler:
             else:
                 continue
 
+            # Обогащаем переменные
+            variables = self._enrich_variables(activity, subscription)
+
             # Отправляем
             success = await self.send_notification(
                 bot=bot,
                 user_id=user_id,
                 segment=UserSegment.CHURN_RISK,
                 trigger=trigger,
-                variables={
-                    'first_name': activity['first_name'] or 'друг',
-                    'answered_total': activity['answered_total'],
-                    'days_until_expiry': max(0, days_until_expiry)
-                }
+                variables=variables
             )
 
             if success:
@@ -387,16 +451,16 @@ class RetentionScheduler:
             else:
                 continue
 
+            # Обогащаем переменные
+            variables = self._enrich_variables(activity)
+
             # Отправляем
             success = await self.send_notification(
                 bot=bot,
                 user_id=user_id,
                 segment=UserSegment.CURIOUS,
                 trigger=trigger,
-                variables={
-                    'first_name': activity['first_name'] or 'друг',
-                    'answered_total': activity['answered_total']
-                }
+                variables=variables
             )
 
             if success:
@@ -431,17 +495,16 @@ class RetentionScheduler:
             else:
                 continue
 
+            # Обогащаем переменные
+            variables = self._enrich_variables(activity)
+
             # Отправляем
             success = await self.send_notification(
                 bot=bot,
                 user_id=user_id,
                 segment=UserSegment.ACTIVE_FREE,
                 trigger=trigger,
-                variables={
-                    'first_name': activity['first_name'] or 'друг',
-                    'answered_total': activity['answered_total'],
-                    'ai_checks_total': activity['ai_checks_total']
-                }
+                variables=variables
             )
 
             if success:
@@ -477,17 +540,16 @@ class RetentionScheduler:
             else:
                 continue
 
+            # Обогащаем переменные
+            variables = self._enrich_variables(activity, subscription)
+
             # Отправляем
             success = await self.send_notification(
                 bot=bot,
                 user_id=user_id,
                 segment=UserSegment.PAYING_INACTIVE,
                 trigger=trigger,
-                variables={
-                    'first_name': activity['first_name'] or 'друг',
-                    'answered_total': activity['answered_total'],
-                    'days_until_expiry': subscription.get('days_until_expiry', 0)
-                }
+                variables=variables
             )
 
             if success:
@@ -523,16 +585,16 @@ class RetentionScheduler:
             else:
                 continue
 
+            # Обогащаем переменные
+            variables = self._enrich_variables(activity, subscription)
+
             # Отправляем
             success = await self.send_notification(
                 bot=bot,
                 user_id=user_id,
                 segment=UserSegment.CANCELLED,
                 trigger=trigger,
-                variables={
-                    'first_name': activity['first_name'] or 'друг',
-                    'answered_total': activity['answered_total']
-                }
+                variables=variables
             )
 
             if success:
