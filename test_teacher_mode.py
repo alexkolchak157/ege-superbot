@@ -122,7 +122,7 @@ def test_payment_config():
         from payment.config import (
             is_teacher_plan, is_student_plan,
             get_teacher_max_students, get_all_teacher_plans,
-            get_student_discount_plan
+            get_student_discount_plan, get_plan_info
         )
 
         # Проверяем распознавание планов
@@ -143,9 +143,11 @@ def test_payment_config():
         print(f"✅ Получено {len(teacher_plans)} плана для учителей")
 
         # Проверяем скидочный план
-        discount_plan = get_student_discount_plan()
-        assert discount_plan is not None
-        assert discount_plan['price_rub'] == 149
+        discount_plan_id = get_student_discount_plan()
+        assert discount_plan_id is not None, "Скидочный план должен существовать"
+        discount_plan = get_plan_info(discount_plan_id)
+        assert discount_plan is not None, f"План {discount_plan_id} должен существовать в SUBSCRIPTION_PLANS"
+        assert discount_plan['price_rub'] == 149, f"Цена должна быть 149₽, получено {discount_plan['price_rub']}₽"
         print("✅ Скидочный план для учеников: 149₽")
 
         return True
