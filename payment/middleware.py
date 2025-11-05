@@ -4,7 +4,7 @@ import logging
 from typing import Optional, Dict, Set, Tuple
 from datetime import datetime, timezone
 from functools import lru_cache
-from .config import FREE_MODULES
+from .config import FREE_MODULES, FREEMIUM_MODULES
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.constants import ParseMode
 from telegram.ext import Application, CallbackContext, ApplicationHandlerStop, ContextTypes
@@ -227,9 +227,8 @@ class SubscriptionMiddleware:
         if not module_code:
             logger.debug(f"No module detected for user {user_id}")
             return True
-        
-        # ИСПРАВЛЕНИЕ: Теперь можно проверять FREE_MODULES
-        from .config import FREE_MODULES, FREEMIUM_MODULES
+
+        # Проверяем бесплатные модули
         if module_code in FREE_MODULES:
             logger.info(f"Free module {module_code} accessed by user {user_id}")
             return True
