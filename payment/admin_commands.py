@@ -1,13 +1,17 @@
 # payment/admin_commands.py
 """Админские команды для управления подписками."""
 import logging
-from telegram import Update
+from datetime import datetime
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes, CommandHandler, Application, CallbackQueryHandler
 from telegram.constants import ParseMode
 from functools import wraps
 import aiosqlite
 from core import config
+from core.config import DATABASE_FILE
 from .subscription_manager import SubscriptionManager
+from .config import SUBSCRIPTION_MODE
+
 DATABASE_PATH = 'quiz_async.db'
 logger = logging.getLogger(__name__)
 

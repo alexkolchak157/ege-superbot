@@ -246,8 +246,8 @@ class AutoRenewalConsent:
 6.2. При недостатке средств подписка приостанавливается.
 
 <b>7. Контакт</b>
-Поддержка: @obshestvonapalcahsupport
-        
+Поддержка: @obshestvonapalcahsupport"""
+
         keyboard = [[
             InlineKeyboardButton("⬅️ Назад", callback_data="back_to_consent")
         ]]
