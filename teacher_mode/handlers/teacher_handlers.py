@@ -366,6 +366,7 @@ async def select_task_type(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         [InlineKeyboardButton("🔢 Конкретные номера", callback_data="selection_mode_numbers")],
         [InlineKeyboardButton("◀️ Назад", callback_data="teacher_create_assignment")]
     ]
+
     reply_markup = InlineKeyboardMarkup(keyboard)
 
     await query.message.edit_text(text, reply_markup=reply_markup, parse_mode='HTML')
