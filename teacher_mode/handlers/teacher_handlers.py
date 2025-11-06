@@ -379,13 +379,16 @@ async def select_task_type(update: Update, context: ContextTypes.DEFAULT_TYPE) -
             "(можно выбрать несколько или создать задание без назначения)"
         )
 
-        # TODO: Загрузить имена учеников из БД пользователей
+        # Получаем отображаемые имена учеников
+        student_names = await teacher_service.get_users_display_names(student_ids)
+
         for student_id in student_ids:
             selected = student_id in context.user_data['selected_students']
             emoji = "✅" if selected else "⬜"
+            display_name = student_names.get(student_id, f"ID: {student_id}")
             keyboard.append([
                 InlineKeyboardButton(
-                    f"{emoji} Ученик {student_id}",
+                    f"{emoji} {display_name}",
                     callback_data=f"toggle_student_{student_id}"
                 )
             ])
@@ -636,10 +639,13 @@ async def show_student_list(update: Update, context: ContextTypes.DEFAULT_TYPE) 
             f"📊 Всего учеников: {len(student_ids)}/{max_students_text}\n\n"
         )
 
-        # TODO: Получить имена учеников из БД пользователей
+        # Получаем имена учеников из БД
+        student_names = await teacher_service.get_users_display_names(student_ids)
+
         text += "<b>Список учеников:</b>\n"
         for i, student_id in enumerate(student_ids, 1):
-            text += f"{i}. Ученик ID: {student_id}\n"
+            display_name = student_names.get(student_id, f"ID: {student_id}")
+            text += f"{i}. {display_name}\n"
 
         keyboard = [
             [InlineKeyboardButton("📊 Общая статистика", callback_data="teacher_statistics")],

@@ -337,3 +337,68 @@ async def is_student_connected(teacher_id: int, student_id: int) -> bool:
     except Exception as e:
         logger.error(f"Ошибка при проверке связи учитель-ученик: {e}")
         return False
+
+
+async def get_users_display_names(user_ids: List[int]) -> dict[int, str]:
+    """
+    Получает отображаемые имена пользователей по их ID.
+
+    Args:
+        user_ids: Список ID пользователей
+
+    Returns:
+        Словарь {user_id: display_name}, где display_name формируется как:
+        - "Имя (@username)" если есть и имя и username
+        - "@username" если есть только username
+        - "Имя" если есть только имя
+        - "ID: {user_id}" если нет ни username ни имени
+    """
+    if not user_ids:
+        return {}
+
+    try:
+        async with aiosqlite.connect(DATABASE_FILE) as db:
+            db.row_factory = aiosqlite.Row
+
+            # Формируем SQL запрос с множественным IN
+            placeholders = ','.join('?' * len(user_ids))
+            query = f"""
+                SELECT user_id, username, first_name, last_name
+                FROM users
+                WHERE user_id IN ({placeholders})
+            """
+
+            cursor = await db.execute(query, user_ids)
+            rows = await cursor.fetchall()
+
+            result = {}
+            for row in rows:
+                user_id = row['user_id']
+                username = row['username']
+                first_name = row['first_name']
+                last_name = row['last_name']
+
+                # Формируем отображаемое имя
+                if first_name and username:
+                    display_name = f"{first_name} (@{username})"
+                elif username:
+                    display_name = f"@{username}"
+                elif first_name:
+                    full_name = f"{first_name} {last_name}" if last_name else first_name
+                    display_name = full_name
+                else:
+                    display_name = f"ID: {user_id}"
+
+                result[user_id] = display_name
+
+            # Для пользователей, которых нет в БД, используем ID
+            for user_id in user_ids:
+                if user_id not in result:
+                    result[user_id] = f"ID: {user_id}"
+
+            return result
+
+    except Exception as e:
+        logger.error(f"Ошибка при получении имен пользователей: {e}")
+        # Возвращаем fallback с ID
+        return {user_id: f"ID: {user_id}" for user_id in user_ids}
