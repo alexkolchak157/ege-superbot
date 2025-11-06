@@ -408,20 +408,208 @@ async def select_selection_mode(update: Update, context: ContextTypes.DEFAULT_TY
         return await show_topic_blocks_selection(update, context)
 
     elif mode == "numbers":
-        # Режим "Конкретные номера" - пока заглушка
+        # Режим "Конкретные номера" - показываем инструкцию для ввода
+        from ..services.topics_loader import load_topics_for_module
+
+        topics_data = load_topics_for_module(task_type)
+        total_count = topics_data['total_count']
+
         await query.message.edit_text(
-            f"🔢 <b>Ввод номеров: {task_name}</b>\n\n"
-            "🚧 Функция в разработке\n\n"
-            "Скоро вы сможете вводить конкретные ID заданий\n"
-            "(например: 1,5,10-15,20)",
+            f"🔢 <b>{task_name}: Ввод номеров заданий</b>\n\n"
+            f"📚 В банке доступно: {total_count} заданий (ID: 1-{total_count})\n\n"
+            "Введите ID заданий одним сообщением:\n\n"
+            "<b>Примеры форматов:</b>\n"
+            "• Отдельные номера: <code>1,5,10,23</code>\n"
+            "• Диапазоны: <code>1-5,10-15,20</code>\n"
+            "• Комбинированно: <code>1,3,5-10,15,20-25</code>\n\n"
+            "💡 Можно использовать пробелы для читаемости",
             reply_markup=InlineKeyboardMarkup([[
-                InlineKeyboardButton("◀️ Назад", callback_data=f"assign_task_{task_type}")
+                InlineKeyboardButton("◀️ Отмена", callback_data=f"assign_task_{task_type}")
             ]]),
             parse_mode='HTML'
         )
-        return TeacherStates.CREATE_ASSIGNMENT
+        return TeacherStates.ENTER_QUESTION_NUMBERS
 
     return TeacherStates.CREATE_ASSIGNMENT
+
+
+def parse_question_numbers(input_text: str) -> list:
+    """
+    Парсит строку с номерами заданий.
+
+    Поддерживаемые форматы:
+    - Отдельные номера: "1,5,10"
+    - Диапазоны: "1-5,10-15"
+    - Комбинированно: "1,3,5-10,15"
+
+    Args:
+        input_text: Строка с номерами
+
+    Returns:
+        Список уникальных ID заданий
+    """
+    result = set()
+
+    # Убираем пробелы
+    text = input_text.replace(' ', '')
+
+    # Разбиваем по запятым
+    parts = text.split(',')
+
+    for part in parts:
+        part = part.strip()
+        if not part:
+            continue
+
+        # Проверяем, есть ли диапазон
+        if '-' in part:
+            try:
+                start, end = part.split('-', 1)
+                start_num = int(start)
+                end_num = int(end)
+
+                if start_num > end_num:
+                    raise ValueError(f"Некорректный диапазон: {part}")
+
+                result.update(range(start_num, end_num + 1))
+            except ValueError as e:
+                raise ValueError(f"Ошибка в диапазоне '{part}': {e}")
+        else:
+            # Отдельный номер
+            try:
+                num = int(part)
+                result.add(num)
+            except ValueError:
+                raise ValueError(f"Некорректный номер: '{part}'")
+
+    return sorted(list(result))
+
+
+async def process_question_numbers_input(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Обработка ввода номеров заданий"""
+    user_input = update.message.text
+    task_type = context.user_data.get('assignment_task_type')
+
+    task_names = {
+        'task19': '💡 Задание 19',
+        'task20': '⚙️ Задание 20',
+        'task24': '📊 Задание 24',
+        'task25': '💻 Задание 25'
+    }
+    task_name = task_names.get(task_type, task_type)
+
+    try:
+        # Парсим введенные номера
+        question_ids = parse_question_numbers(user_input)
+
+        if not question_ids:
+            await update.message.reply_text(
+                "❌ Не удалось распознать номера заданий.\n\n"
+                "Попробуйте еще раз, например: <code>1,5,10-15</code>",
+                parse_mode='HTML'
+            )
+            return TeacherStates.ENTER_QUESTION_NUMBERS
+
+        # Проверяем валидность номеров
+        from ..services.topics_loader import load_topics_for_module
+
+        topics_data = load_topics_for_module(task_type)
+        valid_ids = set(topics_data['topics_by_id'].keys())
+
+        invalid_ids = [qid for qid in question_ids if qid not in valid_ids]
+
+        if invalid_ids:
+            await update.message.reply_text(
+                f"❌ Некоторые ID не найдены в банке заданий:\n"
+                f"<code>{', '.join(map(str, invalid_ids[:10]))}</code>"
+                f"{' и другие...' if len(invalid_ids) > 10 else ''}\n\n"
+                f"Доступны ID: 1-{topics_data['total_count']}\n\n"
+                "Попробуйте еще раз:",
+                parse_mode='HTML'
+            )
+            return TeacherStates.ENTER_QUESTION_NUMBERS
+
+        # Сохраняем в assignment_data
+        context.user_data['assignment_data'] = {
+            'task_module': task_type,
+            'selection_mode': 'numbers',
+            'topic_ids': question_ids,
+            'questions_count': len(question_ids)
+        }
+
+        # Показываем подтверждение и переходим к выбору учеников
+        await update.message.reply_text(
+            f"✅ <b>Выбрано заданий: {len(question_ids)}</b>\n\n"
+            f"ID заданий: <code>{', '.join(map(str, question_ids[:20]))}</code>"
+            f"{f' и еще {len(question_ids) - 20}...' if len(question_ids) > 20 else ''}\n\n"
+            "Переходим к выбору учеников...",
+            parse_mode='HTML'
+        )
+
+        # Создаем фиктивный Update с callback_query для proceed_to_student_selection
+        # Вместо этого просто вызовем логику напрямую
+        user_id = update.effective_user.id
+        student_ids = await teacher_service.get_teacher_students(user_id)
+
+        # Инициализируем список выбранных учеников
+        if 'selected_students' not in context.user_data:
+            context.user_data['selected_students'] = []
+
+        keyboard = []
+
+        if not student_ids:
+            # Если учеников нет
+            text = (
+                f"📝 <b>Создание задания: {task_name}</b>\n\n"
+                "У вас пока нет подключенных учеников.\n\n"
+                "Вы можете создать задание сейчас, и назначить его ученикам позже, "
+                "когда они подключатся к вам."
+            )
+            keyboard.append([InlineKeyboardButton("➡️ Создать задание", callback_data="assignment_set_deadline")])
+            keyboard.append([InlineKeyboardButton("🔑 Мой код учителя", callback_data="teacher_profile")])
+        else:
+            # Если есть ученики - показываем список для выбора
+            text = (
+                f"📝 <b>Создание задания: {task_name}</b>\n\n"
+                "Выберите учеников для назначения задания:\n"
+                "(можно выбрать несколько или создать задание без назначения)"
+            )
+
+            # Получаем отображаемые имена учеников
+            student_names = await teacher_service.get_users_display_names(student_ids)
+
+            for student_id in student_ids:
+                selected = student_id in context.user_data['selected_students']
+                emoji = "✅" if selected else "⬜"
+                display_name = student_names.get(student_id, f"ID: {student_id}")
+                keyboard.append([
+                    InlineKeyboardButton(
+                        f"{emoji} {display_name}",
+                        callback_data=f"toggle_student_{student_id}"
+                    )
+                ])
+
+            # Всегда показываем кнопку "Далее"
+            if context.user_data['selected_students']:
+                keyboard.append([InlineKeyboardButton("➡️ Назначить выбранным", callback_data="assignment_set_deadline")])
+            else:
+                keyboard.append([InlineKeyboardButton("➡️ Создать без назначения", callback_data="assignment_set_deadline")])
+
+        keyboard.append([InlineKeyboardButton("◀️ Отмена", callback_data="teacher_menu")])
+        reply_markup = InlineKeyboardMarkup(keyboard)
+
+        await update.message.reply_text(text, reply_markup=reply_markup, parse_mode='HTML')
+
+        return TeacherStates.CREATE_ASSIGNMENT
+
+    except ValueError as e:
+        await update.message.reply_text(
+            f"❌ <b>Ошибка при парсинге номеров:</b>\n\n"
+            f"{str(e)}\n\n"
+            "Попробуйте еще раз:",
+            parse_mode='HTML'
+        )
+        return TeacherStates.ENTER_QUESTION_NUMBERS
 
 
 async def show_topic_blocks_selection(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
