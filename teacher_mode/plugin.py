@@ -61,6 +61,9 @@ class TeacherModePlugin(BotPlugin):
 
                     # Создание задания
                     CallbackQueryHandler(teacher_handlers.create_assignment_start, pattern="^teacher_create_assignment$"),
+
+                    # Навигация
+                    CallbackQueryHandler(teacher_handlers.back_to_personal_cabinet, pattern="^back_to_cabinet$"),
                 ],
                 TeacherStates.CREATE_ASSIGNMENT: [
                     # Выбор типа задания

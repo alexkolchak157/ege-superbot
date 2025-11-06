@@ -102,7 +102,7 @@ async def teacher_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
         else:
             await message.reply_text(text, reply_markup=reply_markup, parse_mode='HTML')
 
-        return ConversationHandler.END
+        return TeacherStates.TEACHER_MENU  # Остаемся в состоянии, чтобы кнопки работали
 
     # Проверяем активность подписки (админы освобождаются от этой проверки)
     if not is_admin and not await has_active_teacher_subscription(user_id):
@@ -123,7 +123,7 @@ async def teacher_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
         else:
             await message.reply_text(text, reply_markup=reply_markup, parse_mode='HTML')
 
-        return ConversationHandler.END
+        return TeacherStates.TEACHER_MENU  # Остаемся в состоянии, чтобы кнопки работали
 
     # Все проверки пройдены - показываем меню
     keyboard = [
@@ -1087,3 +1087,18 @@ async def create_promo_code_handler(update: Update, context: ContextTypes.DEFAUL
     await query.message.edit_text(text, reply_markup=reply_markup, parse_mode='HTML')
     context.user_data.pop('promo_duration', None)
     return TeacherStates.TEACHER_MENU
+
+
+async def back_to_personal_cabinet(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Возврат в личный кабинет"""
+    query = update.callback_query
+    await query.answer()
+
+    # Импортируем функцию показа личного кабинета
+    from personal_cabinet.handlers import show_personal_cabinet
+
+    # Показываем личный кабинет
+    await show_personal_cabinet(update, context)
+
+    # Выходим из conversation handler режима учителя
+    return ConversationHandler.END
