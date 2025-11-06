@@ -8,6 +8,10 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 from telegram import Bot
 from telegram.constants import ParseMode
+from .admin_alerts import (
+    notify_admin_auto_renewal_activation_failed,
+    notify_admin_multiple_renewal_failures
+)
 
 logger = logging.getLogger(__name__)
 
@@ -389,7 +393,14 @@ class AutoRenewalScheduler:
                     f"❌ CRITICAL: Payment succeeded but activation failed for user {user_id}! "
                     f"Manual intervention required. order_id={order_id}"
                 )
-                # Здесь нужно уведомить администратора!
+                # Уведомляем администратора о критичной ошибке!
+                await notify_admin_auto_renewal_activation_failed(
+                    bot=self.bot,
+                    order_id=order_id,
+                    user_id=user_id,
+                    plan_id=plan_id,
+                    amount=amount
+                )
                 return False
             
             # Обновляем дату следующего продления
@@ -417,7 +428,20 @@ class AutoRenewalScheduler:
         except Exception as e:
             logger.exception(f"❌ EXCEPTION during auto-renewal for user {user_id}: {e}")
             await self._notify_renewal_failed(user_id, str(e))
+
+            # Увеличиваем счетчик неудач
             await self.subscription_manager.increment_renewal_failures(user_id)
+
+            # Проверяем количество неудач и уведомляем админа если >= 3
+            failures_info = await self.subscription_manager.get_renewal_failures_count(user_id)
+            if failures_info and failures_info >= 3:
+                await notify_admin_multiple_renewal_failures(
+                    bot=self.bot,
+                    user_id=user_id,
+                    failures_count=failures_info,
+                    last_error=str(e)
+                )
+
             return False
 
     async def retry_failed_renewals(self):

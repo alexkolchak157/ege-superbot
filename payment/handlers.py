@@ -1665,7 +1665,26 @@ async def handle_payment_confirmation_with_recurrent(update: Update, context: Co
     # ==== НОВОЕ: Сохраняем оригинальную цену для отображения скидки ====
     if not original_price:
         original_price = total_price_rub
-    
+
+    # ==== КРИТИЧНОЕ: Проверяем rate limit перед созданием платежа ====
+    from payment.rate_limiter import get_rate_limiter
+
+    rate_limiter = get_rate_limiter()
+    allowed, limit_message = rate_limiter.check_rate_limit(user_id)
+
+    if not allowed:
+        error_text = f"⚠️ {limit_message}\n\n" \
+                    "Это защита от случайных множественных платежей.\n" \
+                    "Если у вас возникли проблемы, обратитесь в поддержку: @obshestvonapalcahsupport"
+
+        if query:
+            await query.edit_message_text(error_text)
+        else:
+            await message.reply_text(error_text)
+
+        logger.warning(f"Rate limit exceeded for user {user_id}: {limit_message}")
+        return ConversationHandler.END
+
     try:
         # Создаем менеджер подписок
         from payment.subscription_manager import SubscriptionManager
@@ -1674,6 +1693,9 @@ async def handle_payment_confirmation_with_recurrent(update: Update, context: Co
         # Создаем уникальный order_id с UUID для предотвращения дублирования
         import uuid
         order_id = f"order_{user_id}_{int(datetime.now().timestamp())}_{uuid.uuid4().hex[:8]}"
+
+        # Записываем попытку создания платежа в rate limiter
+        rate_limiter.record_payment_attempt(user_id, order_id)
         
         # Получаем название плана
         from payment.config import MODULE_PLANS, SUBSCRIPTION_PLANS
