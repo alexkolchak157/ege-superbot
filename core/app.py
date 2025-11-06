@@ -187,6 +187,16 @@ async def post_init(application: Application) -> None:
     except Exception as e:
         logger.error(f"Error registering funnel admin handlers: {e}")
 
+    # Регистрируем команды для тестирования
+    try:
+        from core.testing_commands import register_testing_commands
+        register_testing_commands(application)
+        logger.info("Testing commands registered")
+    except ImportError as e:
+        logger.error(f"Could not import testing_commands: {e}")
+    except Exception as e:
+        logger.error(f"Error registering testing commands: {e}")
+
     # Инициализация модуля платежей
     await init_payment_module(application)
 
