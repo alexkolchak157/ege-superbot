@@ -1446,6 +1446,7 @@ async def apply_teacher_mode_migration(db: aiosqlite.Connection):
                 homework_id INTEGER NOT NULL,
                 student_id INTEGER NOT NULL,
                 assigned_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                completed_at DATETIME,
                 status TEXT DEFAULT 'assigned' CHECK(
                     status IN ('assigned', 'in_progress', 'completed', 'overdue')
                 ),
