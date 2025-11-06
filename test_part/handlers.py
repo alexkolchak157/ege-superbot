@@ -1823,8 +1823,10 @@ async def skip_exam_question(update: Update, context: ContextTypes.DEFAULT_TYPE)
     
     current_index = context.user_data.get('exam_current', 1) - 1
     current_question_id = context.user_data.get('current_question_id')
-    
+
     # Добавляем в список пропущенных
+    if 'exam_skipped' not in context.user_data:
+        context.user_data['exam_skipped'] = []
     context.user_data['exam_skipped'].append(current_question_id)
     
     # Переходим к следующему вопросу
@@ -2281,8 +2283,7 @@ async def select_exam_num(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     context._update = update  # Сохраняем update для send_question
     context.user_data['user_id'] = query.from_user.id  # Гарантируем правильный user_id
-    context.user_data['user_id'] = query.from_user.id
-    
+
     try:
         exam_number = int(query.data.split(":", 2)[2])
     except (ValueError, IndexError):
