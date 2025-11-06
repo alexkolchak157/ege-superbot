@@ -765,7 +765,6 @@ __all__ = [
     'AutoRenewalConsent',
     'SubscriptionNotificationManager',
     'MultiMonthSubscriptionManager',
-    'AutoRenewalStates',
     'SHOWING_TERMS',
     'CONSENT_CHECKBOX', 
     'FINAL_CONFIRMATION',

@@ -1412,6 +1412,39 @@ async def show_final_consent_screen(update: Update, context: ContextTypes.DEFAUL
     
     return AUTO_RENEWAL_CHOICE
 
+def calculate_custom_price(modules: List[str], duration_months: int) -> int:
+    """
+    Рассчитывает стоимость кастомного набора модулей в РУБЛЯХ.
+
+    Args:
+        modules: Список ID модулей
+        duration_months: Длительность в месяцах
+
+    Returns:
+        Итоговая стоимость в РУБЛЯХ
+    """
+    # Базовая цена за модуль
+    price_per_module = 199
+
+    # Подсчитываем количество платных модулей (исключаем test_part)
+    paid_modules = [m for m in modules if m not in ['test_part']]
+    num_modules = len(paid_modules)
+
+    if num_modules == 0:
+        return 0
+
+    # Базовая цена за месяц
+    base_price = num_modules * price_per_module
+
+    # Скидка при выборе всех модулей (4 модуля)
+    if num_modules >= 4:
+        base_price = 249  # Цена полного пакета
+
+    # Умножаем на количество месяцев
+    total_price = base_price * duration_months
+
+    return total_price
+
 def calculate_subscription_price(plan_id: str, duration_months: int, custom_plan_data: dict = None) -> int:
     """
     Рассчитывает стоимость подписки в РУБЛЯХ.

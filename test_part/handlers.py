@@ -25,6 +25,8 @@ from core.menu_handlers import handle_to_main_menu
 from . import keyboards, utils
 from .loader import AVAILABLE_BLOCKS, QUESTIONS_DATA, get_questions_data, get_questions_list_flat, get_available_blocks
 
+logger = logging.getLogger(__name__)
+
 try:
     from .topic_data import TOPIC_NAMES
 except ImportError:
@@ -34,10 +36,8 @@ except ImportError:
 try:
     from .cache import questions_cache
 except ImportError:
-    logging.warning("Модуль cache не найден, работаем без кеширования")
+    logger.warning("Модуль cache не найден, работаем без кеширования")
     questions_cache = None
-
-logger = logging.getLogger(__name__)
 
 def ensure_user_id_in_context(context, update=None, function_name="unknown"):
     """
