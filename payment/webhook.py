@@ -13,6 +13,10 @@ from enum import Enum
 from core import config
 from .subscription_manager import SubscriptionManager
 from .tinkoff import TinkoffPayment
+from .admin_alerts import (
+    notify_admin_payment_activation_failed,
+    notify_admin_webhook_processing_error
+)
 
 logger = logging.getLogger(__name__)
 
@@ -209,6 +213,28 @@ async def handle_webhook(request: web.Request) -> web.Response:
                 return web.Response(text='OK')
             else:
                 logger.error(f"Failed to activate subscription for order {order_id}")
+
+                # Уведомляем админа о критичной ошибке активации
+                bot = request.app.get('bot')
+                if bot and not is_duplicate:
+                    # Получаем информацию о платеже для алерта
+                    async with aiosqlite.connect(config.DATABASE_PATH) as db:
+                        cursor = await db.execute(
+                            "SELECT user_id, plan_id, amount FROM payments WHERE order_id = ?",
+                            (order_id,)
+                        )
+                        payment_info = await cursor.fetchone()
+                        if payment_info:
+                            user_id, plan_id, amount = payment_info
+                            await notify_admin_payment_activation_failed(
+                                bot=bot,
+                                order_id=order_id,
+                                user_id=user_id,
+                                plan_id=plan_id,
+                                amount=amount // 100 if amount else 0,  # Конвертируем из копеек
+                                error="Subscription activation failed"
+                            )
+
                 # ИСПРАВЛЕНИЕ: Возвращаем OK даже если активация не удалась для дубликата
                 # чтобы не вызывать бесконечные повторы от Tinkoff
                 if is_duplicate:

@@ -209,17 +209,38 @@ class SubscriptionManager:
             logger.warning(f"Could not send activation notification: {e}")
             # Не прерываем процесс активации - подписка уже активирована
 
+    async def get_renewal_failures_count(self, user_id: int) -> int:
+        """
+        Возвращает количество неудачных попыток автопродления для пользователя.
+
+        Args:
+            user_id: ID пользователя
+
+        Returns:
+            Количество неудач или 0
+        """
+        try:
+            async with aiosqlite.connect(self.database_file, timeout=30.0) as conn:
+                cursor = await conn.execute("""
+                    SELECT failures_count FROM auto_renewal_settings WHERE user_id = ?
+                """, (user_id,))
+                result = await cursor.fetchone()
+                return result[0] if result else 0
+        except Exception as e:
+            logger.error(f"Error getting renewal failures count: {e}")
+            return 0
+
     async def increment_renewal_failures(self, user_id: int):
         """Увеличивает счетчик неудачных попыток автопродления."""
         try:
             async with aiosqlite.connect(self.database_file, timeout=30.0) as conn:
                 await conn.execute("""
-                    UPDATE auto_renewal_settings 
+                    UPDATE auto_renewal_settings
                     SET failures_count = failures_count + 1,
                         last_renewal_attempt = CURRENT_TIMESTAMP
                     WHERE user_id = ?
                 """, (user_id,))
-                
+
                 # Проверяем, не превышен ли лимит
                 cursor = await conn.execute("""
                     SELECT failures_count FROM auto_renewal_settings WHERE user_id = ?
