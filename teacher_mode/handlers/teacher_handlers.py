@@ -512,13 +512,19 @@ async def confirm_and_create_assignment(update: Update, context: ContextTypes.DE
         'questions_count': 10  # По умолчанию 10 вопросов
     }
 
+    # Определяем тип назначения в зависимости от выбранных учеников
+    if selected_students:
+        target_type = TargetType.SPECIFIC_STUDENTS
+    else:
+        target_type = TargetType.ALL_STUDENTS
+
     homework = await assignment_service.create_homework_assignment(
         teacher_id=user_id,
         title=title,
         assignment_type=AssignmentType.EXISTING_TOPICS,
         assignment_data=assignment_data,
-        target_type=TargetType.SELECTED_STUDENTS,
-        student_ids=selected_students,
+        target_type=target_type,
+        student_ids=selected_students if selected_students else [],
         description=f"Практика по теме '{title}'",
         deadline=deadline
     )
