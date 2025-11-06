@@ -18,12 +18,9 @@ class TeacherStates(IntEnum):
     # Создание домашнего задания
     CREATE_ASSIGNMENT = 20
     SELECT_ASSIGNMENT_TYPE = 21
-    SELECT_MODULE = 22  # task19, task20, task24, task25
-    SELECT_TOPICS = 23
-    SELECT_QUESTIONS = 24
-    SET_DEADLINE = 25
-    SELECT_STUDENTS = 26
-    CONFIRM_ASSIGNMENT = 27
+    SELECT_SELECTION_MODE = 22  # Способ отбора заданий (все/темы/номера)
+    SELECT_TOPICS = 23  # Выбор тем из банка
+    ENTER_QUESTION_NUMBERS = 24  # Ввод конкретных номеров заданий
 
     # Просмотр статистики
     VIEW_STATISTICS = 30

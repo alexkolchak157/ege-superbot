@@ -333,7 +333,7 @@ async def create_assignment_start(update: Update, context: ContextTypes.DEFAULT_
 
 
 async def select_task_type(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Выбор типа задачи и переход к выбору учеников"""
+    """Выбор типа задачи и переход к выбору способа отбора"""
     query = update.callback_query
     await query.answer()
 
@@ -342,6 +342,101 @@ async def select_task_type(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 
     # Сохраняем выбранный тип задания
     context.user_data['assignment_task_type'] = task_type
+
+    task_names = {
+        'task19': '💡 Задание 19',
+        'task20': '⚙️ Задание 20',
+        'task24': '📊 Задание 24',
+        'task25': '💻 Задание 25'
+    }
+    task_name = task_names.get(task_type, task_type)
+
+    # Показываем выбор способа отбора заданий
+    text = (
+        f"📝 <b>Создание задания: {task_name}</b>\n\n"
+        "Выберите способ отбора заданий:\n\n"
+        "🎲 <b>Все задания</b> - случайные задания из всего банка\n"
+        "📚 <b>По темам</b> - выбор конкретных тем из кодификатора\n"
+        "🔢 <b>Конкретные номера</b> - ввод ID конкретных заданий"
+    )
+
+    keyboard = [
+        [InlineKeyboardButton("🎲 Все задания", callback_data="selection_mode_all")],
+        [InlineKeyboardButton("📚 По темам", callback_data="selection_mode_topics")],
+        [InlineKeyboardButton("🔢 Конкретные номера", callback_data="selection_mode_numbers")],
+        [InlineKeyboardButton("◀️ Назад", callback_data="teacher_create_assignment")]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
+    await query.message.edit_text(text, reply_markup=reply_markup, parse_mode='HTML')
+
+    return TeacherStates.SELECT_SELECTION_MODE
+
+
+async def select_selection_mode(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Обработка выбора способа отбора заданий"""
+    query = update.callback_query
+    await query.answer()
+
+    mode = query.data.replace("selection_mode_", "")
+    task_type = context.user_data.get('assignment_task_type')
+
+    # Сохраняем выбранный режим
+    context.user_data['selection_mode'] = mode
+
+    task_names = {
+        'task19': '💡 Задание 19',
+        'task20': '⚙️ Задание 20',
+        'task24': '📊 Задание 24',
+        'task25': '💻 Задание 25'
+    }
+    task_name = task_names.get(task_type, task_type)
+
+    # Обрабатываем разные режимы отбора
+    if mode == "all":
+        # Режим "Все задания" - используем 10 случайных заданий (как раньше)
+        context.user_data['assignment_data'] = {
+            'task_module': task_type,
+            'questions_count': 10,
+            'selection_mode': 'all'
+        }
+        # Переходим к выбору учеников
+        return await proceed_to_student_selection(update, context)
+
+    elif mode == "topics":
+        # Режим "По темам" - пока заглушка
+        await query.message.edit_text(
+            f"📚 <b>Выбор тем: {task_name}</b>\n\n"
+            "🚧 Функция в разработке\n\n"
+            "Скоро вы сможете выбирать конкретные темы из кодификатора ЕГЭ.",
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("◀️ Назад", callback_data=f"assign_task_{task_type}")
+            ]]),
+            parse_mode='HTML'
+        )
+        return TeacherStates.CREATE_ASSIGNMENT
+
+    elif mode == "numbers":
+        # Режим "Конкретные номера" - пока заглушка
+        await query.message.edit_text(
+            f"🔢 <b>Ввод номеров: {task_name}</b>\n\n"
+            "🚧 Функция в разработке\n\n"
+            "Скоро вы сможете вводить конкретные ID заданий\n"
+            "(например: 1,5,10-15,20)",
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("◀️ Назад", callback_data=f"assign_task_{task_type}")
+            ]]),
+            parse_mode='HTML'
+        )
+        return TeacherStates.CREATE_ASSIGNMENT
+
+    return TeacherStates.CREATE_ASSIGNMENT
+
+
+async def proceed_to_student_selection(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Переход к выбору учеников после определения заданий"""
+    query = update.callback_query
+    task_type = context.user_data.get('assignment_task_type')
 
     task_names = {
         'task19': '💡 Задание 19',
@@ -424,8 +519,8 @@ async def toggle_student_selection(update: Update, context: ContextTypes.DEFAULT
     else:
         context.user_data['selected_students'].append(student_id)
 
-    # Перерисовываем меню
-    return await select_task_type(update, context)
+    # Перерисовываем меню выбора учеников
+    return await proceed_to_student_selection(update, context)
 
 
 async def set_assignment_deadline(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -510,10 +605,12 @@ async def confirm_and_create_assignment(update: Update, context: ContextTypes.DE
     }
     title = task_names.get(task_type, f"Задание {task_type}")
 
-    assignment_data = {
+    # Используем assignment_data из контекста если он установлен, иначе создаем по умолчанию
+    assignment_data = context.user_data.get('assignment_data', {
         'task_module': task_type,
-        'questions_count': 10  # По умолчанию 10 вопросов
-    }
+        'questions_count': 10,  # По умолчанию 10 вопросов
+        'selection_mode': 'all'  # По умолчанию все задания
+    })
 
     # Определяем тип назначения в зависимости от выбранных учеников
     if selected_students:
@@ -573,6 +670,8 @@ async def confirm_and_create_assignment(update: Update, context: ContextTypes.DE
     # Очищаем контекст
     context.user_data.pop('assignment_task_type', None)
     context.user_data.pop('selected_students', None)
+    context.user_data.pop('assignment_data', None)
+    context.user_data.pop('selection_mode', None)
 
     return ConversationHandler.END
 
