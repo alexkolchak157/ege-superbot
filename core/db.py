@@ -35,6 +35,12 @@ async def get_db() -> aiosqlite.Connection:
     return _db
 
 
+# Алиас для совместимости
+async def get_connection() -> aiosqlite.Connection:
+    """Алиас для get_db() для обратной совместимости."""
+    return await get_db()
+
+
 async def close_db():
     """Закрывает соединение с БД."""
     global _db
@@ -1547,4 +1553,231 @@ async def apply_teacher_mode_migration(db: aiosqlite.Connection):
 
     except Exception as e:
         logger.exception(f"Ошибка при применении миграции режима учителя: {e}")
+        raise
+
+
+# ==================== ONBOARDING И АНАЛИТИКА ВОРОНКИ ====================
+
+async def get_user_data(user_id: int) -> Optional[Dict[str, Any]]:
+    """
+    Получает данные пользователя включая onboarding статус.
+
+    Args:
+        user_id: ID пользователя
+
+    Returns:
+        Словарь с данными пользователя или None
+    """
+    try:
+        db = await get_db()
+
+        # Проверяем наличие колонок onboarding
+        has_onboarding = await check_column_exists(db, 'users', 'onboarding_completed')
+
+        if has_onboarding:
+            cursor = await db.execute(
+                """SELECT user_id, onboarding_completed, onboarding_skipped,
+                          onboarding_completed_at, first_seen, last_activity_date
+                   FROM users WHERE user_id = ?""",
+                (user_id,)
+            )
+        else:
+            cursor = await db.execute(
+                """SELECT user_id, first_seen, last_activity_date
+                   FROM users WHERE user_id = ?""",
+                (user_id,)
+            )
+
+        row = await cursor.fetchone()
+
+        if row:
+            return dict(row)
+        return None
+
+    except Exception as e:
+        logger.error(f"Error getting user data for {user_id}: {e}")
+        return None
+
+
+async def track_funnel_event(user_id: int, event_type: str, event_data: Optional[Dict] = None):
+    """
+    Трекинг событий воронки для аналитики.
+
+    Args:
+        user_id: ID пользователя
+        event_type: Тип события (onboarding_started, onboarding_completed, etc.)
+        event_data: Дополнительные данные в формате словаря
+    """
+    try:
+        import json
+        db = await get_db()
+
+        # Проверяем существование таблицы
+        cursor = await db.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='funnel_events'"
+        )
+        table_exists = await cursor.fetchone()
+
+        if not table_exists:
+            # Создаем таблицу если её нет
+            await db.execute("""
+                CREATE TABLE funnel_events (
+                    event_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER NOT NULL,
+                    event_type TEXT NOT NULL,
+                    event_data TEXT,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (user_id) REFERENCES users(user_id)
+                )
+            """)
+            await db.execute("CREATE INDEX idx_funnel_events_user ON funnel_events(user_id)")
+            await db.execute("CREATE INDEX idx_funnel_events_type ON funnel_events(event_type)")
+            await db.commit()
+
+        # Сохраняем событие
+        event_data_json = json.dumps(event_data) if event_data else None
+
+        await db.execute(
+            """INSERT INTO funnel_events (user_id, event_type, event_data)
+               VALUES (?, ?, ?)""",
+            (user_id, event_type, event_data_json)
+        )
+        await db.commit()
+
+        logger.info(f"Funnel event tracked: {event_type} for user {user_id}")
+
+    except Exception as e:
+        logger.error(f"Error tracking funnel event {event_type} for user {user_id}: {e}")
+
+
+async def get_funnel_stats() -> Dict[str, Any]:
+    """
+    Получает статистику по воронке.
+
+    Returns:
+        Словарь со статистикой конверсий
+    """
+    try:
+        db = await get_db()
+
+        # Проверяем существование view
+        cursor = await db.execute(
+            "SELECT name FROM sqlite_master WHERE type='view' AND name='funnel_analysis'"
+        )
+        view_exists = await cursor.fetchone()
+
+        if view_exists:
+            cursor = await db.execute("SELECT * FROM funnel_analysis")
+            row = await cursor.fetchone()
+            if row:
+                return dict(row)
+
+        # Если view нет - считаем вручную
+        cursor = await db.execute("""
+            SELECT
+                COUNT(DISTINCT u.user_id) as total_users,
+                COUNT(DISTINCT CASE WHEN aq.user_id IS NOT NULL THEN u.user_id END) as answered_questions,
+                COUNT(DISTINCT CASE WHEN al.user_id IS NOT NULL THEN u.user_id END) as used_ai_check,
+                COUNT(DISTINCT CASE WHEN s.user_id IS NOT NULL AND s.is_active = 1 THEN u.user_id END) as active_subscribers
+            FROM users u
+            LEFT JOIN answered_questions aq ON u.user_id = aq.user_id
+            LEFT JOIN user_ai_limits al ON u.user_id = al.user_id
+            LEFT JOIN subscriptions s ON u.user_id = s.user_id
+        """)
+
+        row = await cursor.fetchone()
+        if row:
+            data = dict(row)
+            total = data['total_users']
+            if total > 0:
+                data['activation_rate'] = round(data['answered_questions'] / total * 100, 2)
+                data['ai_usage_rate'] = round(data['used_ai_check'] / total * 100, 2)
+                data['paid_conversion_rate'] = round(data['active_subscribers'] / total * 100, 2)
+            return data
+
+        return {}
+
+    except Exception as e:
+        logger.error(f"Error getting funnel stats: {e}")
+        return {}
+
+
+async def get_cohort_stats(weeks: int = 8) -> List[Dict[str, Any]]:
+    """
+    Получает когортную статистику.
+
+    Args:
+        weeks: Количество недель для анализа
+
+    Returns:
+        Список когорт с метриками
+    """
+    try:
+        db = await get_db()
+
+        cursor = await db.execute("""
+            SELECT
+                strftime('%Y-W%W', u.first_seen) as cohort_week,
+                COUNT(DISTINCT u.user_id) as users,
+                COUNT(DISTINCT CASE WHEN aq.user_id IS NOT NULL THEN u.user_id END) as answered_questions,
+                COUNT(DISTINCT CASE WHEN s.user_id IS NOT NULL AND s.is_active = 1 THEN u.user_id END) as paying_now,
+                ROUND(COUNT(DISTINCT CASE WHEN aq.user_id IS NOT NULL THEN u.user_id END) * 100.0 / COUNT(DISTINCT u.user_id), 1) as activation_rate,
+                ROUND(COUNT(DISTINCT CASE WHEN s.user_id IS NOT NULL AND s.is_active = 1 THEN u.user_id END) * 100.0 / COUNT(DISTINCT u.user_id), 1) as conversion_rate
+            FROM users u
+            LEFT JOIN answered_questions aq ON u.user_id = aq.user_id
+            LEFT JOIN subscriptions s ON u.user_id = s.user_id
+            WHERE u.first_seen IS NOT NULL
+            GROUP BY cohort_week
+            ORDER BY cohort_week DESC
+            LIMIT ?
+        """, (weeks,))
+
+        rows = await cursor.fetchall()
+        return [dict(row) for row in rows]
+
+    except Exception as e:
+        logger.error(f"Error getting cohort stats: {e}")
+        return []
+
+
+async def apply_onboarding_migration(db: aiosqlite.Connection):
+    """
+    Применяет миграцию для onboarding и аналитики воронки.
+    """
+    try:
+        logger.info("Применение миграции onboarding...")
+
+        # Добавляем поля onboarding если их нет
+        has_onboarding = await check_column_exists(db, 'users', 'onboarding_completed')
+
+        if not has_onboarding:
+            await db.execute("ALTER TABLE users ADD COLUMN onboarding_completed BOOLEAN DEFAULT 0")
+            await db.execute("ALTER TABLE users ADD COLUMN onboarding_skipped BOOLEAN DEFAULT 0")
+            await db.execute("ALTER TABLE users ADD COLUMN onboarding_completed_at TIMESTAMP")
+            logger.info("✓ Поля onboarding добавлены в users")
+
+        # Создаем таблицу для funnel events
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS funnel_events (
+                event_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                event_type TEXT NOT NULL,
+                event_data TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (user_id) REFERENCES users(user_id)
+            )
+        """)
+        logger.info("✓ Таблица funnel_events создана")
+
+        # Индексы
+        await db.execute("CREATE INDEX IF NOT EXISTS idx_funnel_events_user ON funnel_events(user_id)")
+        await db.execute("CREATE INDEX IF NOT EXISTS idx_funnel_events_type ON funnel_events(event_type)")
+        await db.execute("CREATE INDEX IF NOT EXISTS idx_funnel_events_created ON funnel_events(created_at)")
+        logger.info("✓ Индексы funnel_events созданы")
+
+        await db.commit()
+        logger.info("Миграция onboarding успешно применена")
+
+    except Exception as e:
+        logger.exception(f"Ошибка при применении миграции onboarding: {e}")
         raise
