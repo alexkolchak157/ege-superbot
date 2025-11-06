@@ -388,17 +388,8 @@ async def handle_retention_callback(update: Update, context: ContextTypes.DEFAUL
     action = query.data.split(':')[1] if ':' in query.data else ''
 
     if action == 'refresh_stats' or action == 'overall_stats':
-        # Обновить общую статистику
-        context_copy = context
-        context_copy._user_id = query.from_user.id
-
-        # Имитируем update с message
-        from telegram import Message
-        new_update = Update(
-            update_id=update.update_id,
-            message=query.message
-        )
-        await retention_stats(new_update, context)
+        # Обновить общую статистику - используем оригинальный update с правильным from_user
+        await retention_stats(update, context)
         await query.message.delete()
 
     elif action == 'promo_stats':
