@@ -261,6 +261,11 @@ async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return ONBOARDING_AI_DEMO
 
 
+async def start_first_question(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Показывает первый вопрос onboarding."""
+    return await show_question(update, context, 0)
+
+
 async def show_next_question(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Переход к следующему вопросу."""
     query = update.callback_query
@@ -476,7 +481,7 @@ def get_onboarding_handler():
         ],
         states={
             ONBOARDING_WELCOME: [
-                CallbackQueryHandler(show_question, pattern="^onboarding_start$"),
+                CallbackQueryHandler(start_first_question, pattern="^onboarding_start$"),
                 CallbackQueryHandler(skip_onboarding, pattern="^onboarding_skip$")
             ],
             ONBOARDING_QUESTION_1: [
