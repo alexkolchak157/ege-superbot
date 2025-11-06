@@ -1648,7 +1648,7 @@ async def send_exam_question(message, context: ContextTypes.DEFAULT_TYPE, index:
     # Создаем клавиатуру с кнопками управления
     kb = InlineKeyboardMarkup([
         [
-            InlineKeyboardButton("⏭️ Пропустить", callback_data="exam_skip"),
+            InlineKeyboardButton("⏭️ Пропустить", callback_data="exam_skip_question"),
             InlineKeyboardButton("❌ Завершить экзамен", callback_data="exam_abort")
         ]
     ])
