@@ -105,6 +105,7 @@ class HomeworkStudentAssignment:
     student_id: int
     assigned_at: datetime
     status: StudentAssignmentStatus
+    completed_at: Optional[datetime] = None
 
 
 @dataclass
