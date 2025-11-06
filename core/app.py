@@ -77,6 +77,15 @@ async def post_init(application: Application) -> None:
 
     # Инициализация БД
     await db.init_db()
+
+    # Применяем миграцию onboarding
+    try:
+        conn = await db.get_db()
+        await db.apply_onboarding_migration(conn)
+        logger.info("Onboarding migration applied")
+    except Exception as e:
+        logger.error(f"Failed to apply onboarding migration: {e}")
+
     try:
         from core.admin_tools import init_price_tables
         await init_price_tables()
@@ -156,6 +165,27 @@ async def post_init(application: Application) -> None:
         logger.error(f"Could not import retention_admin: {e}")
     except Exception as e:
         logger.error(f"Error registering retention admin handlers: {e}")
+
+    # Регистрируем onboarding handler
+    try:
+        from core.onboarding import get_onboarding_handler
+        onboarding_handler = get_onboarding_handler()
+        application.add_handler(onboarding_handler, group=0)
+        logger.info("Onboarding handler registered")
+    except ImportError as e:
+        logger.error(f"Could not import onboarding: {e}")
+    except Exception as e:
+        logger.error(f"Error registering onboarding handler: {e}")
+
+    # Регистрируем админские команды для воронки
+    try:
+        from core.funnel_admin import register_funnel_admin_handlers
+        register_funnel_admin_handlers(application)
+        logger.info("Funnel admin handlers registered")
+    except ImportError as e:
+        logger.error(f"Could not import funnel_admin: {e}")
+    except Exception as e:
+        logger.error(f"Error registering funnel admin handlers: {e}")
 
     # Инициализация модуля платежей
     await init_payment_module(application)
@@ -258,7 +288,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработчик команды /start с улучшенным приветствием."""
     user = update.effective_user
     user_id = user.id
-    
+
     # Сохраняем/обновляем информацию о пользователе
     await db.update_user_info(
         user_id=user.id,
@@ -266,7 +296,21 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         first_name=user.first_name,
         last_name=user.last_name
     )
-    
+
+    # Проверяем, нужен ли onboarding
+    try:
+        from core.onboarding import should_start_onboarding, start_onboarding
+
+        if await should_start_onboarding(user_id):
+            # Запускаем onboarding для новых пользователей
+            logger.info(f"Starting onboarding for new user {user_id}")
+            await db.track_funnel_event(user_id, 'onboarding_started')
+            return await start_onboarding(update, context)
+
+    except Exception as e:
+        logger.error(f"Error checking onboarding for user {user_id}: {e}")
+        # Продолжаем нормальный flow если ошибка
+
     args = context.args
     
     if args and len(args) > 0:
