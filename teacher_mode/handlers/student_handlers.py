@@ -252,3 +252,130 @@ async def homework_list(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
         await message.reply_text(text, reply_markup=reply_markup, parse_mode='HTML')
 
     return ConversationHandler.END
+
+
+async def view_homework(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Просмотр деталей конкретного задания"""
+    query = update.callback_query
+    await query.answer()
+
+    user_id = update.effective_user.id
+
+    # Извлекаем ID задания из callback_data
+    homework_id = int(query.data.replace("homework_", ""))
+
+    # Получаем задание из БД
+    homework = await assignment_service.get_homework_by_id(homework_id)
+
+    if not homework:
+        await query.message.edit_text(
+            "❌ Задание не найдено.",
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("◀️ Назад", callback_data="student_homework_list")
+            ]]),
+            parse_mode='HTML'
+        )
+        return
+
+    # Формируем текст с деталями задания
+    task_type_names = {
+        'task19': '💡 Задание 19 (Примеры с обществознанием)',
+        'task20': '⚙️ Задание 20 (Логические задачи)',
+        'task24': '📊 Задание 24 (Развернутый план)',
+        'task25': '💻 Задание 25 (Эссе)'
+    }
+
+    task_module = homework.assignment_data.get('task_module', 'unknown')
+    task_type_name = task_type_names.get(task_module, task_module)
+    questions_count = homework.assignment_data.get('questions_count', 0)
+    selection_mode = homework.assignment_data.get('selection_mode', 'all')
+
+    mode_names = {
+        'all': '🎲 Случайный выбор',
+        'topics': '📚 По темам',
+        'numbers': '🔢 Конкретные номера'
+    }
+    mode_name = mode_names.get(selection_mode, selection_mode)
+
+    text = (
+        f"📝 <b>{homework.title}</b>\n\n"
+        f"📌 <b>Тип:</b> {task_type_name}\n"
+        f"📊 <b>Количество заданий:</b> {questions_count}\n"
+        f"🎯 <b>Режим отбора:</b> {mode_name}\n"
+    )
+
+    if homework.description:
+        text += f"\n📄 <b>Описание:</b>\n{homework.description}\n"
+
+    if homework.deadline:
+        deadline_str = homework.deadline.strftime("%d.%m.%Y %H:%M")
+        text += f"\n⏰ <b>Срок:</b> {deadline_str}\n"
+
+    text += "\n🚀 Нажмите \"Начать выполнение\" для старта работы над заданием."
+
+    keyboard = [
+        [InlineKeyboardButton("🚀 Начать выполнение", callback_data=f"start_homework_{homework_id}")],
+        [InlineKeyboardButton("◀️ К списку заданий", callback_data="student_homework_list")]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
+    await query.message.edit_text(text, reply_markup=reply_markup, parse_mode='HTML')
+
+
+async def start_homework(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Начало выполнения задания"""
+    query = update.callback_query
+    await query.answer()
+
+    # Извлекаем ID задания из callback_data
+    homework_id = int(query.data.replace("start_homework_", ""))
+
+    # Получаем задание из БД
+    homework = await assignment_service.get_homework_by_id(homework_id)
+
+    if not homework:
+        await query.message.edit_text(
+            "❌ Задание не найдено.",
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("◀️ Назад", callback_data="student_homework_list")
+            ]]),
+            parse_mode='HTML'
+        )
+        return
+
+    task_module = homework.assignment_data.get('task_module', 'unknown')
+
+    # Формируем инструкцию для пользователя
+    module_instructions = {
+        'task19': ('💡 Задание 19', 'choose_task19'),
+        'task20': ('⚙️ Задание 20', 'choose_task20'),
+        'task24': ('📊 Задание 24', 'choose_task24'),
+        'task25': ('💻 Задание 25', 'choose_task25')
+    }
+
+    if task_module not in module_instructions:
+        await query.message.edit_text(
+            "❌ Неизвестный тип задания.",
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("◀️ Назад", callback_data="student_homework_list")
+            ]]),
+            parse_mode='HTML'
+        )
+        return
+
+    task_name, module_callback = module_instructions[task_module]
+
+    text = (
+        f"🚀 <b>Запуск задания: {homework.title}</b>\n\n"
+        f"Для выполнения этого задания перейдите в модуль <b>{task_name}</b>.\n\n"
+        "Нажмите кнопку ниже для перехода в модуль:"
+    )
+
+    keyboard = [
+        [InlineKeyboardButton(f"➡️ {task_name}", callback_data=module_callback)],
+        [InlineKeyboardButton("◀️ К списку заданий", callback_data="student_homework_list")],
+        [InlineKeyboardButton("🏠 Главное меню", callback_data="main_menu")]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
+    await query.message.edit_text(text, reply_markup=reply_markup, parse_mode='HTML')
