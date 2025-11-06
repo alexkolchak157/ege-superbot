@@ -351,37 +351,21 @@ async def select_task_type(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     }
     task_name = task_names.get(task_type, task_type)
 
-    # Проверяем, поддерживает ли модуль систему тем
-    from ..services.topics_loader import module_supports_topics
-    supports_topics = module_supports_topics(task_type)
+    # Показываем выбор способа отбора заданий
+    text = (
+        f"📝 <b>Создание задания: {task_name}</b>\n\n"
+        "Выберите способ отбора заданий:\n\n"
+        "🎲 <b>Все задания</b> - случайные задания из всего банка\n"
+        "📚 <b>По темам</b> - выбор конкретных тем из кодификатора\n"
+        "🔢 <b>Конкретные номера</b> - ввод ID конкретных заданий"
+    )
 
-    # Формируем текст описания в зависимости от доступных опций
-    if supports_topics:
-        text = (
-            f"📝 <b>Создание задания: {task_name}</b>\n\n"
-            "Выберите способ отбора заданий:\n\n"
-            "🎲 <b>Все задания</b> - случайные задания из всего банка\n"
-            "📚 <b>По темам</b> - выбор конкретных тем из кодификатора\n"
-            "🔢 <b>Конкретные номера</b> - ввод ID конкретных заданий"
-        )
-    else:
-        text = (
-            f"📝 <b>Создание задания: {task_name}</b>\n\n"
-            "Выберите способ отбора заданий:\n\n"
-            "🎲 <b>Все задания</b> - случайные задания из всего банка\n\n"
-            "ℹ️ <i>Для этого типа заданий доступен только режим случайного выбора.</i>"
-        )
-
-    # Формируем клавиатуру в зависимости от доступных опций
     keyboard = [
-        [InlineKeyboardButton("🎲 Все задания", callback_data="selection_mode_all")]
+        [InlineKeyboardButton("🎲 Все задания", callback_data="selection_mode_all")],
+        [InlineKeyboardButton("📚 По темам", callback_data="selection_mode_topics")],
+        [InlineKeyboardButton("🔢 Конкретные номера", callback_data="selection_mode_numbers")],
+        [InlineKeyboardButton("◀️ Назад", callback_data="teacher_create_assignment")]
     ]
-
-    if supports_topics:
-        keyboard.append([InlineKeyboardButton("📚 По темам", callback_data="selection_mode_topics")])
-        keyboard.append([InlineKeyboardButton("🔢 Конкретные номера", callback_data="selection_mode_numbers")])
-
-    keyboard.append([InlineKeyboardButton("◀️ Назад", callback_data="teacher_create_assignment")])
 
     reply_markup = InlineKeyboardMarkup(keyboard)
 
@@ -422,21 +406,11 @@ async def select_selection_mode(update: Update, context: ContextTypes.DEFAULT_TY
 
     elif mode == "topics":
         # Режим "По темам" - показываем список блоков
-        from ..services.topics_loader import module_supports_topics
-
-        if not module_supports_topics(task_type):
-            await query.answer("❌ Этот режим недоступен для данного типа заданий", show_alert=True)
-            return await select_task_type(update, context)
-
         return await show_topic_blocks_selection(update, context)
 
     elif mode == "numbers":
         # Режим "Конкретные номера" - показываем инструкцию для ввода
-        from ..services.topics_loader import load_topics_for_module, module_supports_topics
-
-        if not module_supports_topics(task_type):
-            await query.answer("❌ Этот режим недоступен для данного типа заданий", show_alert=True)
-            return await select_task_type(update, context)
+        from ..services.topics_loader import load_topics_for_module
 
         topics_data = load_topics_for_module(task_type)
         total_count = topics_data['total_count']
