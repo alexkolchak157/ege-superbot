@@ -521,15 +521,39 @@ async def show_student_list(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     await query.answer()
 
     user_id = update.effective_user.id
+    is_admin = user_id in ADMIN_IDS
 
     # Получаем профиль учителя
     profile = await teacher_service.get_teacher_profile(user_id)
-    if not profile:
-        await query.message.edit_text(
-            "❌ Профиль учителя не найден.",
-            parse_mode='HTML'
+
+    # Если профиль не найден и пользователь не админ - показываем сообщение с кнопками
+    if not profile and not is_admin:
+        text = (
+            "❌ <b>Профиль учителя не найден</b>\n\n"
+            "Чтобы стать учителем и добавлять учеников, оформите подписку для учителей."
         )
-        return ConversationHandler.END
+        keyboard = [
+            [InlineKeyboardButton("💳 Подписки для учителей", callback_data="teacher_subscriptions")],
+            [InlineKeyboardButton("◀️ Назад", callback_data="teacher_menu")]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        await query.message.edit_text(text, reply_markup=reply_markup, parse_mode='HTML')
+        return TeacherStates.TEACHER_MENU
+
+    # Если админ без профиля - показываем специальное сообщение
+    if not profile and is_admin:
+        text = (
+            "👑 <b>Режим администратора</b>\n\n"
+            "У вас нет профиля учителя, но как администратор вы имеете полный доступ.\n\n"
+            "💡 Чтобы получить код для учеников и управлять ими, оформите подписку учителя."
+        )
+        keyboard = [
+            [InlineKeyboardButton("💳 Оформить подписку", callback_data="teacher_subscriptions")],
+            [InlineKeyboardButton("◀️ Назад", callback_data="teacher_menu")]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        await query.message.edit_text(text, reply_markup=reply_markup, parse_mode='HTML')
+        return TeacherStates.TEACHER_MENU
 
     # Получаем список учеников
     student_ids = await teacher_service.get_teacher_students(user_id)
