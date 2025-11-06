@@ -35,7 +35,7 @@ def load_topics_for_module(task_module: str) -> Dict:
         topics_file = os.path.join(base_dir, task_module, f"{task_module}_topics.json")
 
         if not os.path.exists(topics_file):
-            logger.error(f"Topics file not found: {topics_file}")
+            logger.info(f"Topics file not found for {task_module}: {topics_file}")
             return {'blocks': {}, 'topics_by_id': {}, 'total_count': 0}
 
         with open(topics_file, 'r', encoding='utf-8') as f:
@@ -135,3 +135,18 @@ def get_topic_ids_by_blocks(task_module: str, block_names: List[str]) -> List[in
         topic_ids.extend([t['id'] for t in topics])
 
     return topic_ids
+
+
+def module_supports_topics(task_module: str) -> bool:
+    """
+    Проверяет, поддерживает ли модуль систему тем.
+
+    Args:
+        task_module: Название модуля ('task19', 'task20', 'task24', 'task25')
+
+    Returns:
+        True если модуль имеет файл с темами
+    """
+    base_dir = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
+    topics_file = os.path.join(base_dir, task_module, f"{task_module}_topics.json")
+    return os.path.exists(topics_file)
