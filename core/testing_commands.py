@@ -462,6 +462,7 @@ async def diagnose_retention_command(update: Update, context: ContextTypes.DEFAU
         # Проверяем каждый сегмент
         segments_to_check = [
             (UserSegment.BOUNCED, "BOUNCED"),
+            (UserSegment.LATE_BOUNCED, "LATE_BOUNCED"),
             (UserSegment.CURIOUS, "CURIOUS"),
             (UserSegment.ACTIVE_FREE, "ACTIVE_FREE"),
             (UserSegment.TRIAL_USER, "TRIAL_USER"),

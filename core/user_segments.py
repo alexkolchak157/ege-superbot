@@ -1,14 +1,15 @@
 """
 Модуль сегментации пользователей для retention-стратегии.
 
-Определяет 7 сегментов пользователей:
-1. Bounced - зарегистрировался но не начал
-2. Curious - попробовал, но не зацепило
-3. Active Free - активные бесплатники
-4. Trial Users - пользователи на триале
-5. Paying but Inactive - платят, но не используют
-6. Churn Risk - риск отмены подписки
-7. Cancelled - отменили подписку
+Определяет 8 сегментов пользователей:
+1. Bounced - зарегистрировался но не начал (1-7 дней)
+2. Late Bounced - упущенные bounced (7-60 дней) - resurrection кампания
+3. Curious - попробовал, но не зацепило
+4. Active Free - активные бесплатники
+5. Trial Users - пользователи на триале
+6. Paying but Inactive - платят, но не используют
+7. Churn Risk - риск отмены подписки
+8. Cancelled - отменили подписку
 """
 
 import logging
@@ -25,6 +26,7 @@ logger = logging.getLogger(__name__)
 class UserSegment(Enum):
     """Сегменты пользователей для retention"""
     BOUNCED = "bounced"
+    LATE_BOUNCED = "late_bounced"  # Resurrection кампания для упущенных bounced
     CURIOUS = "curious"
     ACTIVE_FREE = "active_free"
     TRIAL_USER = "trial_user"
@@ -243,7 +245,16 @@ class UserSegmentClassifier:
             1 <= activity['days_since_registration'] <= 7):
             return UserSegment.BOUNCED
 
-        # Сегмент 2: CURIOUS
+        # Сегмент 2: LATE_BOUNCED (Resurrection кампания)
+        # - Зарегистрировался но не решил ни одного вопроса
+        # - Не использовал AI-проверку
+        # - Прошло 7-60 дней (упущенные bounced пользователи)
+        if (activity['answered_total'] == 0 and
+            activity['ai_checks_total'] == 0 and
+            7 < activity['days_since_registration'] <= 60):
+            return UserSegment.LATE_BOUNCED
+
+        # Сегмент 3: CURIOUS
         # - Решил 1-10 вопросов
         # - Использовал 0-1 AI-проверку
         # - Неактивен 2-14 дней
@@ -253,12 +264,23 @@ class UserSegmentClassifier:
             not subscription['has_subscription']):
             return UserSegment.CURIOUS
 
-        # Сегмент 4: TRIAL_USER
+        # Сегмент 4: ACTIVE_FREE
+        # - Решает 5+ вопросов в неделю
+        # - Регулярно использует AI-проверки
+        # - Нет подписки
+        # - Активен 7+ дней
+        if (activity['answered_week'] >= 5 and
+            activity['ai_checks_total'] >= 3 and
+            not subscription['has_subscription'] and
+            activity['days_since_registration'] >= 7):
+            return UserSegment.ACTIVE_FREE
+
+        # Сегмент 5: TRIAL_USER
         # - Есть триальная подписка
         if subscription['has_subscription'] and subscription.get('is_trial'):
             return UserSegment.TRIAL_USER
 
-        # Сегмент 5: PAYING_INACTIVE
+        # Сегмент 6: PAYING_INACTIVE
         # - Есть активная подписка (не trial)
         # - Неактивен 3+ дней
         if (subscription['has_subscription'] and
@@ -266,7 +288,7 @@ class UserSegmentClassifier:
             activity['days_inactive'] >= 3):
             return UserSegment.PAYING_INACTIVE
 
-        # Сегмент 6: CHURN_RISK
+        # Сегмент 7: CHURN_RISK
         # - Подписка истекает через 3-7 дней
         # - Автопродление выключено
         # - Активность снизилась (< 5 вопросов за неделю)
@@ -277,24 +299,13 @@ class UserSegmentClassifier:
             activity['answered_week'] < 5):
             return UserSegment.CHURN_RISK
 
-        # Сегмент 7: CANCELLED
+        # Сегмент 8: CANCELLED
         # - Подписка была, но закончилась
         # - Прошло 1-14 дней после отмены
         if (subscription.get('had_subscription') and
             not subscription['has_subscription'] and
             1 <= subscription.get('days_since_cancel', 999) <= 14):
             return UserSegment.CANCELLED
-
-        # Сегмент 3: ACTIVE_FREE
-        # - Решает 5+ вопросов в неделю
-        # - Регулярно использует AI-проверки
-        # - Нет подписки
-        # - Активен 7+ дней
-        if (activity['answered_week'] >= 5 and
-            activity['ai_checks_total'] >= 3 and
-            not subscription['has_subscription'] and
-            activity['days_since_registration'] >= 7):
-            return UserSegment.ACTIVE_FREE
 
         # Если ни один сегмент не подошёл - активный платящий (не нуждается в retention)
         if subscription['has_subscription'] and activity['days_inactive'] < 3:

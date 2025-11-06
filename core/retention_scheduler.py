@@ -349,6 +349,46 @@ class RetentionScheduler:
 
         return sent_count
 
+    async def process_late_bounced_users(self, bot: Bot) -> int:
+        """
+        Обрабатывает LATE_BOUNCED пользователей (Resurrection кампания).
+
+        Отправляет единственное "последний шанс" уведомление пользователям,
+        которые зарегистрировались 7-60 дней назад, но так и не начали пользоваться ботом.
+        """
+        sent_count = 0
+
+        # Получаем late bounced пользователей (7-60 дней, 0 ответов)
+        late_bounced_users = await self.classifier.get_users_by_segment(
+            UserSegment.LATE_BOUNCED,
+            limit=50  # Ограничиваем чтобы не спамить всех 215 сразу
+        )
+
+        for user_id in late_bounced_users:
+            activity = await self.classifier.get_user_activity_stats(user_id)
+            if not activity:
+                continue
+
+            # Для late bounced отправляем только один тип уведомления - resurrection
+            trigger = NotificationTrigger.LATE_BOUNCED_RESURRECTION
+
+            # Обогащаем переменные
+            variables = self._enrich_variables(activity)
+
+            # Отправляем
+            success = await self.send_notification(
+                bot=bot,
+                user_id=user_id,
+                segment=UserSegment.LATE_BOUNCED,
+                trigger=trigger,
+                variables=variables
+            )
+
+            if success:
+                sent_count += 1
+
+        return sent_count
+
     async def process_trial_users(self, bot: Bot) -> int:
         """Обрабатывает TRIAL пользователей"""
         sent_count = 0
@@ -644,6 +684,11 @@ class RetentionScheduler:
             bounced_sent = await self.process_bounced_users(bot)
             total_sent += bounced_sent
             logger.info(f"BOUNCED: sent {bounced_sent} notifications")
+
+            # LATE_BOUNCED (высокий приоритет - resurrection кампания)
+            late_bounced_sent = await self.process_late_bounced_users(bot)
+            total_sent += late_bounced_sent
+            logger.info(f"LATE_BOUNCED: sent {late_bounced_sent} notifications")
 
             # CANCELLED (высокий приоритет - win-back)
             cancelled_sent = await self.process_cancelled_users(bot)

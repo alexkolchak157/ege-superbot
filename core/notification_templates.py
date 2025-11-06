@@ -30,6 +30,9 @@ class NotificationTrigger(Enum):
     BOUNCED_DAY3 = "bounced_day3"
     BOUNCED_DAY7 = "bounced_day7"  # ДОБАВЛЕНО: финальное напоминание
 
+    # Late Bounced сегмент (Resurrection кампания)
+    LATE_BOUNCED_RESURRECTION = "late_bounced_resurrection"
+
     # Curious сегмент
     CURIOUS_DAY3 = "curious_day3"
     CURIOUS_DAY7 = "curious_day7"
@@ -174,6 +177,37 @@ BOUNCED_TEMPLATES = {
             {"text": "🔥 Попробовать прямо сейчас", "callback_data": "start_onboarding"},
             {"text": "💎 Узнать про trial за 1₽", "callback_data": "subscribe_trial_7days"},
             {"text": "❌ Удалить меня навсегда", "callback_data": "notifications_disable"}
+        ]
+    )
+}
+
+# ==================== LATE BOUNCED СЕГМЕНТ (RESURRECTION) ====================
+
+LATE_BOUNCED_TEMPLATES = {
+    NotificationTrigger.LATE_BOUNCED_RESURRECTION: NotificationTemplate(
+        text="""🔥 {first_name}, возвращайся! Мы обновили бота
+
+Прошло {days_since_registration} {days_word} с твоей регистрации.
+
+<b>Что изменилось:</b>
+✨ Новый интерактивный onboarding - узнай свой уровень за 3 минуты
+🎁 3 бесплатных AI-проверки КАЖДЫЙ день
+💎 Trial доступ за 1₽ на целую неделю
+🎯 Персональные рекомендации на основе твоих ошибок
+
+<b>Специальное предложение для тебя:</b>
+Попробуй прямо сейчас и получи 3 дополнительных бесплатных AI-проверки
+
+⏰ До ЕГЭ: <b>{days_to_ege} {days_word}</b>
+
+⚠️ <b>Это единственное сообщение</b>
+Мы не будем больше беспокоить, но возможность реально крутая.
+
+<i>Дай боту второй шанс - он этого стоит 🚀</i>""",
+        buttons=[
+            {"text": "🚀 Попробовать новую версию", "callback_data": "start_onboarding"},
+            {"text": "💎 Узнать про trial за 1₽", "callback_data": "subscribe_trial_7days"},
+            {"text": "❌ Больше не писать", "callback_data": "notifications_disable"}
         ]
     )
 }
@@ -615,6 +649,7 @@ CANCELLED_TEMPLATES = {
 # Сборка всех шаблонов
 ALL_TEMPLATES = {
     **BOUNCED_TEMPLATES,
+    **LATE_BOUNCED_TEMPLATES,
     **CURIOUS_TEMPLATES,
     **ACTIVE_FREE_TEMPLATES,
     **TRIAL_TEMPLATES,
