@@ -404,17 +404,8 @@ async def select_selection_mode(update: Update, context: ContextTypes.DEFAULT_TY
         return await proceed_to_student_selection(update, context)
 
     elif mode == "topics":
-        # Режим "По темам" - пока заглушка
-        await query.message.edit_text(
-            f"📚 <b>Выбор тем: {task_name}</b>\n\n"
-            "🚧 Функция в разработке\n\n"
-            "Скоро вы сможете выбирать конкретные темы из кодификатора ЕГЭ.",
-            reply_markup=InlineKeyboardMarkup([[
-                InlineKeyboardButton("◀️ Назад", callback_data=f"assign_task_{task_type}")
-            ]]),
-            parse_mode='HTML'
-        )
-        return TeacherStates.CREATE_ASSIGNMENT
+        # Режим "По темам" - показываем список блоков
+        return await show_topic_blocks_selection(update, context)
 
     elif mode == "numbers":
         # Режим "Конкретные номера" - пока заглушка
@@ -431,6 +422,136 @@ async def select_selection_mode(update: Update, context: ContextTypes.DEFAULT_TY
         return TeacherStates.CREATE_ASSIGNMENT
 
     return TeacherStates.CREATE_ASSIGNMENT
+
+
+async def show_topic_blocks_selection(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Показать выбор блоков тем для задания"""
+    query = update.callback_query
+    task_type = context.user_data.get('assignment_task_type')
+
+    from ..services.topics_loader import load_topics_for_module
+
+    # Загружаем темы для модуля
+    topics_data = load_topics_for_module(task_type)
+    blocks = topics_data['blocks']
+
+    if not blocks:
+        await query.message.edit_text(
+            f"❌ <b>Темы не найдены</b>\n\n"
+            f"Для {task_type} отсутствуют темы в банке заданий.",
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("◀️ Назад", callback_data=f"assign_task_{task_type}")
+            ]]),
+            parse_mode='HTML'
+        )
+        return TeacherStates.SELECT_SELECTION_MODE
+
+    # Инициализируем список выбранных блоков
+    if 'selected_blocks' not in context.user_data:
+        context.user_data['selected_blocks'] = []
+
+    task_names = {
+        'task19': '💡 Задание 19',
+        'task20': '⚙️ Задание 20',
+        'task24': '📊 Задание 24',
+        'task25': '💻 Задание 25'
+    }
+    task_name = task_names.get(task_type, task_type)
+
+    text = (
+        f"📚 <b>{task_name}: Выбор тем</b>\n\n"
+        "Выберите блоки тем из кодификатора ЕГЭ:\n"
+        "(можно выбрать несколько)\n\n"
+    )
+
+    # Показываем статистику по блокам
+    for block_name, block_topics in blocks.items():
+        text += f"• {block_name}: {len(block_topics)} тем\n"
+
+    keyboard = []
+
+    # Создаем кнопки для каждого блока
+    for block_name in sorted(blocks.keys()):
+        selected = block_name in context.user_data['selected_blocks']
+        emoji = "✅" if selected else "⬜"
+        topic_count = len(blocks[block_name])
+
+        keyboard.append([
+            InlineKeyboardButton(
+                f"{emoji} {block_name} ({topic_count})",
+                callback_data=f"toggle_block:{block_name}"
+            )
+        ])
+
+    # Кнопка "Далее" если выбран хотя бы один блок
+    if context.user_data['selected_blocks']:
+        total_topics = sum(
+            len(blocks[b]) for b in context.user_data['selected_blocks']
+        )
+        keyboard.append([
+            InlineKeyboardButton(
+                f"➡️ Выбрано блоков: {len(context.user_data['selected_blocks'])} ({total_topics} тем)",
+                callback_data="topics_confirm_blocks"
+            )
+        ])
+
+    keyboard.append([InlineKeyboardButton("◀️ Назад", callback_data=f"assign_task_{task_type}")])
+
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await query.message.edit_text(text, reply_markup=reply_markup, parse_mode='HTML')
+
+    return TeacherStates.SELECT_TOPICS
+
+
+async def toggle_block_selection(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Переключение выбора блока тем"""
+    query = update.callback_query
+    await query.answer()
+
+    # Извлекаем название блока из callback_data
+    block_name = query.data.replace("toggle_block:", "")
+
+    # Переключаем выбор
+    if 'selected_blocks' not in context.user_data:
+        context.user_data['selected_blocks'] = []
+
+    if block_name in context.user_data['selected_blocks']:
+        context.user_data['selected_blocks'].remove(block_name)
+    else:
+        context.user_data['selected_blocks'].append(block_name)
+
+    # Перерисовываем меню
+    return await show_topic_blocks_selection(update, context)
+
+
+async def confirm_topic_blocks(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Подтверждение выбора блоков тем"""
+    query = update.callback_query
+    await query.answer()
+
+    task_type = context.user_data.get('assignment_task_type')
+    selected_blocks = context.user_data.get('selected_blocks', [])
+
+    if not selected_blocks:
+        await query.answer("⚠️ Выберите хотя бы один блок", show_alert=True)
+        return TeacherStates.SELECT_TOPICS
+
+    from ..services.topics_loader import get_topic_ids_by_blocks
+
+    # Получаем ID всех тем из выбранных блоков
+    topic_ids = get_topic_ids_by_blocks(task_type, selected_blocks)
+
+    # Сохраняем в assignment_data
+    context.user_data['assignment_data'] = {
+        'task_module': task_type,
+        'selection_mode': 'topics',
+        'selected_blocks': selected_blocks,
+        'topic_ids': topic_ids,
+        'questions_count': len(topic_ids)
+    }
+
+    # Переходим к выбору учеников
+    return await proceed_to_student_selection(update, context)
 
 
 async def proceed_to_student_selection(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -672,6 +793,7 @@ async def confirm_and_create_assignment(update: Update, context: ContextTypes.DE
     context.user_data.pop('selected_students', None)
     context.user_data.pop('assignment_data', None)
     context.user_data.pop('selection_mode', None)
+    context.user_data.pop('selected_blocks', None)
 
     return ConversationHandler.END
 

@@ -91,6 +91,19 @@ class TeacherModePlugin(BotPlugin):
                     # Отмена
                     CallbackQueryHandler(teacher_handlers.teacher_menu, pattern="^teacher_menu$"),
                 ],
+                TeacherStates.SELECT_TOPICS: [
+                    # Переключение выбора блоков
+                    CallbackQueryHandler(teacher_handlers.toggle_block_selection, pattern="^toggle_block:"),
+
+                    # Подтверждение выбора блоков
+                    CallbackQueryHandler(teacher_handlers.confirm_topic_blocks, pattern="^topics_confirm_blocks$"),
+
+                    # Назад к выбору типа задания
+                    CallbackQueryHandler(teacher_handlers.select_task_type, pattern="^assign_task_"),
+
+                    # Отмена
+                    CallbackQueryHandler(teacher_handlers.teacher_menu, pattern="^teacher_menu$"),
+                ],
             },
             fallbacks=[
                 CallbackQueryHandler(teacher_handlers.teacher_menu, pattern="^teacher_menu$"),
