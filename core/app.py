@@ -449,6 +449,11 @@ async def show_main_menu_with_access(context, user_id):
             icon = ""
             text = f"{plugin.title}"
 
+        elif plugin.code == 'teacher_mode':
+            # Режим учителя - всегда доступен (проверка доступа внутри)
+            icon = ""
+            text = f"{plugin.title}"
+
         elif subscription_manager:
             # Проверяем доступ к платным модулям
             has_access = await subscription_manager.check_module_access(user_id, plugin.code)
