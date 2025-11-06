@@ -441,6 +441,115 @@ async def test_retention_command(update: Update, context: ContextTypes.DEFAULT_T
         await update.message.reply_text(f"❌ Ошибка: {e}")
 
 
+async def diagnose_retention_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Команда /diagnose_retention - диагностирует почему retention не работает.
+    """
+    user_id = update.effective_user.id
+
+    # Проверка админских прав
+    if user_id not in config.ADMIN_IDS:
+        await update.message.reply_text("❌ Нет доступа")
+        return
+
+    try:
+        from core.user_segments import get_segment_classifier, UserSegment
+
+        classifier = get_segment_classifier()
+
+        report = "🔍 <b>ДИАГНОСТИКА RETENTION СИСТЕМЫ</b>\n\n"
+
+        # Проверяем каждый сегмент
+        segments_to_check = [
+            (UserSegment.BOUNCED, "BOUNCED"),
+            (UserSegment.CURIOUS, "CURIOUS"),
+            (UserSegment.ACTIVE_FREE, "ACTIVE_FREE"),
+            (UserSegment.TRIAL_USER, "TRIAL_USER"),
+            (UserSegment.PAYING_INACTIVE, "PAYING_INACTIVE"),
+            (UserSegment.CHURN_RISK, "CHURN_RISK"),
+            (UserSegment.CANCELLED, "CANCELLED"),
+        ]
+
+        total_users_in_segments = 0
+
+        for segment, name in segments_to_check:
+            users = await classifier.get_users_by_segment(segment, limit=200)
+            count = len(users)
+            total_users_in_segments += count
+
+            if count > 0:
+                report += f"✅ <b>{name}:</b> {count} пользователей\n"
+            else:
+                report += f"⚠️ <b>{name}:</b> 0 пользователей\n"
+
+        # Общая статистика
+        conn = await db.get_db()
+        cursor = await conn.execute("SELECT COUNT(*) FROM users")
+        total_users = (await cursor.fetchone())[0]
+
+        report += f"\n📊 <b>Общая статистика:</b>\n"
+        report += f"• Всего пользователей: {total_users}\n"
+        report += f"• В retention сегментах: {total_users_in_segments}\n"
+
+        # Проверяем bounced подробнее
+        if total_users > 0:
+            cursor = await conn.execute("""
+                SELECT COUNT(*) FROM users u
+                WHERE (SELECT COUNT(*) FROM answered_questions WHERE user_id = u.user_id) = 0
+                AND datetime(u.first_seen) BETWEEN datetime('now', '-7 days') AND datetime('now', '-1 day')
+            """)
+            bounced_count = (await cursor.fetchone())[0]
+
+            cursor = await conn.execute("""
+                SELECT COUNT(*) FROM users u
+                WHERE (SELECT COUNT(*) FROM answered_questions WHERE user_id = u.user_id) BETWEEN 1 AND 10
+                AND date(u.last_activity_date) BETWEEN date('now', '-14 days') AND date('now', '-2 days')
+            """)
+            curious_count = (await cursor.fetchone())[0]
+
+            report += f"\n🔍 <b>Детальная проверка:</b>\n"
+            report += f"• Bounced (0 ответов, 1-7 дней): {bounced_count}\n"
+            report += f"• Curious (1-10 ответов, неактивен 2-14 дней): {curious_count}\n"
+
+            if bounced_count == 0 and curious_count == 0:
+                report += f"\n⚠️ <b>ПРОБЛЕМА:</b> Нет пользователей подходящих под критерии!\n\n"
+                report += f"<b>Решение:</b>\n"
+                report += f"1. Используй /simulate_user bounced\n"
+                report += f"2. Или пригласи реальных пользователей\n"
+
+        # Проверяем блокировки
+        cursor = await conn.execute("""
+            SELECT COUNT(*) FROM notification_preferences
+            WHERE enabled = 0
+        """)
+        disabled_count = (await cursor.fetchone())[0]
+
+        if disabled_count > 0:
+            report += f"\n🔕 Отключили уведомления: {disabled_count} пользователей\n"
+
+        # Финальные рекомендации
+        report += f"\n{'='*30}\n"
+
+        if total_users_in_segments > 0:
+            report += f"✅ <b>Система работает корректно</b>\n\n"
+            report += f"Уведомления будут отправлены при следующих условиях:\n"
+            report += f"• Не превышен дневной лимит (2 в день для bounced/curious)\n"
+            report += f"• Прошел cooldown (12ч для bounced/curious)\n"
+            report += f"• Пользователь не отключил уведомления\n"
+        else:
+            report += f"⚠️ <b>Нет подходящих пользователей</b>\n\n"
+            report += f"<b>Что делать:</b>\n"
+            report += f"1. /simulate_user bounced - создать тестового пользователя\n"
+            report += f"2. /test_retention - запустить отправку\n"
+            report += f"3. Или дождаться реальных пользователей\n"
+
+        await update.message.reply_text(report, parse_mode=ParseMode.HTML)
+
+    except Exception as e:
+        logger.error(f"Error in diagnose_retention_command: {e}", exc_info=True)
+        await update.message.reply_text(f"❌ Ошибка: {e}")
+
+
 def register_testing_commands(application):
     """Регистрирует команды для тестирования."""
     application.add_handler(CommandHandler("test_onboarding", test_onboarding_command))
@@ -448,5 +557,6 @@ def register_testing_commands(application):
     application.add_handler(CommandHandler("simulate_user", simulate_user_command))
     application.add_handler(CommandHandler("check_readiness", check_readiness_command))
     application.add_handler(CommandHandler("test_retention", test_retention_command))
+    application.add_handler(CommandHandler("diagnose_retention", diagnose_retention_command))
 
     logger.info("Testing commands registered")
