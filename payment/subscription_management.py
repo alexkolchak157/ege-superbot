@@ -1,6 +1,7 @@
 # payment/subscription_management.py - Управление подпиской и отмена
 
 import logging
+import aiosqlite
 from datetime import datetime
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes, CommandHandler, CallbackQueryHandler, MessageHandler, filters, ConversationHandler
@@ -228,16 +229,6 @@ class SubscriptionManagementUI:
             
             text = """✅ <b>Автопродление отключено</b>
 
-    @staticmethod
-    @safe_handler()
-    async def keep_auto_renewal(update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Отмена отключения автопродления - возврат к управлению."""
-        query = update.callback_query
-        await query.answer("Автопродление остается включенным")
-        
-        # Возвращаемся к управлению подпиской
-        return await SubscriptionManagementUI.cmd_manage_subscription(update, context)
-
 Автоматическое продление подписки отключено.
 
 Ваша подписка останется активной до конца оплаченного периода.
@@ -265,7 +256,17 @@ class SubscriptionManagementUI:
             parse_mode=ParseMode.HTML,
             reply_markup=InlineKeyboardMarkup(keyboard) if keyboard else None
         )
-    
+
+    @staticmethod
+    @safe_handler()
+    async def keep_auto_renewal(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Отмена отключения автопродления - возврат к управлению."""
+        query = update.callback_query
+        await query.answer("Автопродление остается включенным")
+
+        # Возвращаемся к управлению подпиской
+        return await SubscriptionManagementUI.cmd_manage_subscription(update, context)
+
     @staticmethod
     @safe_handler()
     async def cancellation_feedback_start(update: Update, context: ContextTypes.DEFAULT_TYPE):

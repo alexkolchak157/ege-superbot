@@ -235,10 +235,9 @@ class TestPartPlugin(BotPlugin):
                 
                 states.ANSWERING: [
                     MessageHandler(
-                        filters.TEXT & ~filters.COMMAND,  # Убрали & filters.create(...)
+                        filters.TEXT & ~filters.COMMAND,
                         handlers.check_answer
                     ),
-                    MessageHandler(filters.TEXT & ~filters.COMMAND, handlers.check_answer),
                     CallbackQueryHandler(
                         handlers.skip_question,
                         pattern="^skip_question:"

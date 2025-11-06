@@ -121,16 +121,22 @@ class RetentionScheduler:
                 return False, "user_disabled"
 
             # Проверка 2: Лимит уведомлений в день
+            # УЛУЧШЕНО: Для критичных сегментов (bounced) разрешаем 2 уведомления в день
             cursor = await db.execute("""
                 SELECT notification_count_today FROM notification_preferences
                 WHERE user_id = ?
             """, (user_id,))
             count_row = await cursor.fetchone()
 
-            if count_row and count_row[0] >= 1:  # Максимум 1 в день
+            # Bounced и Curious - более агрессивный retention (2 в день)
+            is_critical = trigger.value.startswith(('bounced', 'curious'))
+            daily_limit = 2 if is_critical else 1
+
+            if count_row and count_row[0] >= daily_limit:
                 return False, "daily_limit_exceeded"
 
             # Проверка 3: Cooldown для этого триггера
+            # УЛУЧШЕНО: Cooldown зависит от типа триггера
             cursor = await db.execute("""
                 SELECT cooldown_until FROM notification_cooldown
                 WHERE user_id = ? AND trigger = ?
@@ -142,10 +148,13 @@ class RetentionScheduler:
                 return False, "trigger_cooldown"
 
             # Проверка 4: Уже отправляли это уведомление?
-            cursor = await db.execute("""
+            # УЛУЧШЕНО: Для bounced/curious проверяем только за 3 дня, для остальных - 7
+            days_check = 3 if is_critical else 7
+
+            cursor = await db.execute(f"""
                 SELECT id FROM notification_log
                 WHERE user_id = ? AND trigger = ?
-                AND sent_at > datetime('now', '-7 days')
+                AND sent_at > datetime('now', '-{days_check} days')
             """, (user_id, trigger.value))
             recent = await cursor.fetchone()
 
@@ -175,7 +184,11 @@ class RetentionScheduler:
                 datetime.now(timezone.utc)
             ))
 
-            # Устанавливаем cooldown (24 часа для этого триггера)
+            # УЛУЧШЕНО: Cooldown зависит от критичности
+            # Bounced/Curious - 12 часов, остальные - 24 часа
+            is_critical = trigger.value.startswith(('bounced', 'curious'))
+            cooldown_hours = 12 if is_critical else 24
+
             await db.execute("""
                 INSERT OR REPLACE INTO notification_cooldown (
                     user_id, trigger, cooldown_until
@@ -183,7 +196,7 @@ class RetentionScheduler:
             """, (
                 user_id,
                 trigger.value,
-                (datetime.now(timezone.utc) + timedelta(days=1)).isoformat()
+                (datetime.now(timezone.utc) + timedelta(hours=cooldown_hours)).isoformat()
             ))
 
             await db.commit()
@@ -296,10 +309,10 @@ class RetentionScheduler:
         """Обрабатывает BOUNCED пользователей"""
         sent_count = 0
 
-        # День 1: пользователи зарегистрировались вчера
+        # УЛУЧШЕНО: Увеличили лимит до 100 пользователей (при 291 bounced это важно)
         bounced_users = await self.classifier.get_users_by_segment(
             UserSegment.BOUNCED,
-            limit=50
+            limit=100
         )
 
         for user_id in bounced_users:
@@ -309,11 +322,13 @@ class RetentionScheduler:
 
             days_since_reg = activity['days_since_registration']
 
-            # Определяем триггер (используем диапазоны вместо точных значений)
+            # УЛУЧШЕНО: Добавили день 7 для финального напоминания
             if 1 <= days_since_reg <= 2:
                 trigger = NotificationTrigger.BOUNCED_DAY1
             elif 3 <= days_since_reg <= 4:
                 trigger = NotificationTrigger.BOUNCED_DAY3
+            elif 6 <= days_since_reg <= 7:
+                trigger = NotificationTrigger.BOUNCED_DAY7
             else:
                 continue
 
@@ -325,6 +340,46 @@ class RetentionScheduler:
                 bot=bot,
                 user_id=user_id,
                 segment=UserSegment.BOUNCED,
+                trigger=trigger,
+                variables=variables
+            )
+
+            if success:
+                sent_count += 1
+
+        return sent_count
+
+    async def process_late_bounced_users(self, bot: Bot) -> int:
+        """
+        Обрабатывает LATE_BOUNCED пользователей (Resurrection кампания).
+
+        Отправляет единственное "последний шанс" уведомление пользователям,
+        которые зарегистрировались 7-60 дней назад, но так и не начали пользоваться ботом.
+        """
+        sent_count = 0
+
+        # Получаем late bounced пользователей (7-60 дней, 0 ответов)
+        late_bounced_users = await self.classifier.get_users_by_segment(
+            UserSegment.LATE_BOUNCED,
+            limit=50  # Ограничиваем чтобы не спамить всех 215 сразу
+        )
+
+        for user_id in late_bounced_users:
+            activity = await self.classifier.get_user_activity_stats(user_id)
+            if not activity:
+                continue
+
+            # Для late bounced отправляем только один тип уведомления - resurrection
+            trigger = NotificationTrigger.LATE_BOUNCED_RESURRECTION
+
+            # Обогащаем переменные
+            variables = self._enrich_variables(activity)
+
+            # Отправляем
+            success = await self.send_notification(
+                bot=bot,
+                user_id=user_id,
+                segment=UserSegment.LATE_BOUNCED,
                 trigger=trigger,
                 variables=variables
             )
@@ -629,6 +684,11 @@ class RetentionScheduler:
             bounced_sent = await self.process_bounced_users(bot)
             total_sent += bounced_sent
             logger.info(f"BOUNCED: sent {bounced_sent} notifications")
+
+            # LATE_BOUNCED (высокий приоритет - resurrection кампания)
+            late_bounced_sent = await self.process_late_bounced_users(bot)
+            total_sent += late_bounced_sent
+            logger.info(f"LATE_BOUNCED: sent {late_bounced_sent} notifications")
 
             # CANCELLED (высокий приоритет - win-back)
             cancelled_sent = await self.process_cancelled_users(bot)

@@ -25,6 +25,8 @@ from core.menu_handlers import handle_to_main_menu
 from . import keyboards, utils
 from .loader import AVAILABLE_BLOCKS, QUESTIONS_DATA, get_questions_data, get_questions_list_flat, get_available_blocks
 
+logger = logging.getLogger(__name__)
+
 try:
     from .topic_data import TOPIC_NAMES
 except ImportError:
@@ -34,10 +36,8 @@ except ImportError:
 try:
     from .cache import questions_cache
 except ImportError:
-    logging.warning("Модуль cache не найден, работаем без кеширования")
+    logger.warning("Модуль cache не найден, работаем без кеширования")
     questions_cache = None
-
-logger = logging.getLogger(__name__)
 
 def ensure_user_id_in_context(context, update=None, function_name="unknown"):
     """
@@ -1648,7 +1648,7 @@ async def send_exam_question(message, context: ContextTypes.DEFAULT_TYPE, index:
     # Создаем клавиатуру с кнопками управления
     kb = InlineKeyboardMarkup([
         [
-            InlineKeyboardButton("⏭️ Пропустить", callback_data="exam_skip"),
+            InlineKeyboardButton("⏭️ Пропустить", callback_data="exam_skip_question"),
             InlineKeyboardButton("❌ Завершить экзамен", callback_data="exam_abort")
         ]
     ])
@@ -1823,8 +1823,10 @@ async def skip_exam_question(update: Update, context: ContextTypes.DEFAULT_TYPE)
     
     current_index = context.user_data.get('exam_current', 1) - 1
     current_question_id = context.user_data.get('current_question_id')
-    
+
     # Добавляем в список пропущенных
+    if 'exam_skipped' not in context.user_data:
+        context.user_data['exam_skipped'] = []
     context.user_data['exam_skipped'].append(current_question_id)
     
     # Переходим к следующему вопросу
@@ -2281,8 +2283,7 @@ async def select_exam_num(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     context._update = update  # Сохраняем update для send_question
     context.user_data['user_id'] = query.from_user.id  # Гарантируем правильный user_id
-    context.user_data['user_id'] = query.from_user.id
-    
+
     try:
         exam_number = int(query.data.split(":", 2)[2])
     except (ValueError, IndexError):

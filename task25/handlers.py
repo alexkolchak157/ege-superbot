@@ -1166,7 +1166,8 @@ async def handle_result_action(update: Update, context: ContextTypes.DEFAULT_TYP
     elif action == 'theory':
         return await theory_mode(update, context)
     elif action == 'examples':
-        return await bank_examples(update, context)
+        # Функция bank_examples пока не реализована, используем search_examples
+        return await search_examples(update, context)
     elif action == 'menu':
         return await return_to_menu(update, context)
     
@@ -2641,9 +2642,10 @@ async def set_strictness(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def show_block_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Статистика по блокам тем."""
     query = update.callback_query
-    
+
     task25_stats = context.user_data.get('task25_practice_stats', {})
-    
+    stats = task25_stats
+
     if not stats:
         text = "📊 <b>Статистика по блокам</b>\n\n"
         text += "Вы ещё не решали задания.\n"
@@ -2904,9 +2906,10 @@ async def handle_strictness_change(update: Update, context: ContextTypes.DEFAULT
 async def handle_progress(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Показывает прогресс пользователя."""
     query = update.callback_query
-    
+
     task25_stats = context.user_data.get('task25_practice_stats', {})
-    
+    stats = task25_stats
+
     if not stats:
         text = "📊 <b>Ваш прогресс</b>\n\n"
         text += "Вы ещё не решали задания. Начните практику!"

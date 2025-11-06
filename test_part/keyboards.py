@@ -29,7 +29,7 @@ def get_initial_choice_keyboard() -> InlineKeyboardMarkup:
         [InlineKeyboardButton("📝 По номеру задания", callback_data="initial:select_exam_num")],
         [InlineKeyboardButton("📚 По блокам тем", callback_data="initial:select_block")],
         [InlineKeyboardButton("🎲 Случайные вопросы", callback_data="initial:select_random_all")],
-        [InlineKeyboardButton("🔧 Работа над ошибками", callback_data="initial:select_mistakes")],
+        [InlineKeyboardButton("🔧 Работа над ошибками", callback_data="test_mistakes")],
         [InlineKeyboardButton("📊 Мой прогресс", callback_data="test_part_progress")],
         [InlineKeyboardButton("🏠 Главное меню", callback_data="to_main_menu")]
     ])
@@ -39,7 +39,7 @@ def get_exam_results_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("📊 Подробный разбор", callback_data="exam_detailed_review")],
         [InlineKeyboardButton("🔄 Пройти экзамен снова", callback_data="initial:exam_mode")],
-        [InlineKeyboardButton("🔧 Работа над ошибками", callback_data="initial:select_mistakes")],
+        [InlineKeyboardButton("🔧 Работа над ошибками", callback_data="test_mistakes")],
         [InlineKeyboardButton("🔙 К выбору режима", callback_data="to_test_part_menu")]
     ])
 
@@ -181,7 +181,7 @@ def get_mistakes_nav_keyboard() -> InlineKeyboardMarkup:
         [
             InlineKeyboardButton(
                 "⏩ Пропустить",
-                callback_data="test_mistake_skip",
+                callback_data="skip_mistake",
             )
         ],
         [
