@@ -37,6 +37,7 @@ class TeacherModePlugin(BotPlugin):
         teacher_conv_handler = ConversationHandler(
             entry_points=[
                 CallbackQueryHandler(teacher_handlers.teacher_menu, pattern="^teacher_menu$"),
+                CallbackQueryHandler(teacher_handlers.teacher_menu, pattern=f"^choose_{self.code}$"),
             ],
             states={
                 TeacherStates.TEACHER_MENU: [

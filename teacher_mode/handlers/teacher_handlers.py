@@ -43,6 +43,41 @@ async def teacher_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
     # Админы имеют доступ к режиму учителя по умолчанию
     is_admin = user_id in ADMIN_IDS
 
+    # ИСПРАВЛЕНИЕ: Автоматически создаем профиль учителя для администратора
+    if is_admin:
+        profile = await teacher_service.get_teacher_profile(user_id)
+        if not profile:
+            # Получаем имя пользователя
+            user = update.effective_user
+            display_name = user.first_name or user.username or f"Admin {user_id}"
+
+            # Создаем профиль учителя для администратора с полным доступом
+            profile = await teacher_service.create_teacher_profile(
+                user_id=user_id,
+                display_name=display_name,
+                subscription_tier='teacher_premium'
+            )
+
+            # Активируем подписку для администратора
+            if profile:
+                import aiosqlite
+                from datetime import datetime, timedelta
+                from core.config import DATABASE_FILE
+
+                async with aiosqlite.connect(DATABASE_FILE) as db:
+                    # Устанавливаем бессрочную активную подписку для админа
+                    expires = datetime.now() + timedelta(days=3650)  # 10 лет
+                    await db.execute("""
+                        UPDATE teacher_profiles
+                        SET has_active_subscription = 1,
+                            subscription_expires = ?,
+                            subscription_tier = 'teacher_premium'
+                        WHERE user_id = ?
+                    """, (expires, user_id))
+                    await db.commit()
+
+                logger.info(f"Автоматически создан профиль учителя для администратора {user_id}")
+
     # Проверяем, является ли пользователь учителем (или админом)
     if not is_admin and not await is_teacher(user_id):
         text = (
