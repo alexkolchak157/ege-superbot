@@ -144,8 +144,10 @@ class TeacherModePlugin(BotPlugin):
             allow_reentry=True,
         )
 
-        # Обработчик для списка ДЗ ученика
+        # Обработчики для работы с ДЗ ученика
         app.add_handler(CallbackQueryHandler(student_handlers.homework_list, pattern="^student_homework_list$"))
+        app.add_handler(CallbackQueryHandler(student_handlers.view_homework, pattern="^homework_\\d+$"))
+        app.add_handler(CallbackQueryHandler(student_handlers.start_homework, pattern="^start_homework_\\d+$"))
 
         # Регистрация ConversationHandler'ов
         app.add_handler(teacher_conv_handler)
