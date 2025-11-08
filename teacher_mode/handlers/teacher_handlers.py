@@ -2018,6 +2018,7 @@ async def view_answer_detail(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
     keyboard = [
         [InlineKeyboardButton("💬 Добавить комментарий", callback_data=f"add_comment:{progress_id}")],
+        [InlineKeyboardButton("✏️ Переоценить ответ", callback_data=f"override_score:{progress_id}")],
         [InlineKeyboardButton("◀️ К ответам ученика", callback_data=f"view_student_progress:{homework_id}:{student_id}")],
         [InlineKeyboardButton("🏠 Главное меню", callback_data="teacher_menu")]
     ]
@@ -2033,6 +2034,200 @@ async def view_answer_detail(update: Update, context: ContextTypes.DEFAULT_TYPE)
         await query.message.reply_text(text, reply_markup=reply_markup, parse_mode='HTML')
     else:
         await query.message.edit_text(text, reply_markup=reply_markup, parse_mode='HTML')
+
+    return TeacherStates.TEACHER_MENU
+
+
+async def initiate_comment_entry(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """
+    Начинает процесс ввода комментария учителя к ответу ученика.
+
+    Callback pattern: add_comment:{progress_id}
+    """
+    query = update.callback_query
+    await query.answer()
+
+    # Извлекаем progress_id из callback_data
+    progress_id = int(query.data.split(':')[1])
+
+    # Сохраняем в контексте
+    context.user_data['commenting_progress_id'] = progress_id
+
+    text = "💬 <b>Введите комментарий к ответу ученика:</b>\n\n"
+    text += "Ваш комментарий будет добавлен к AI обратной связи и виден ученику.\n\n"
+    text += "Для отмены нажмите /cancel"
+
+    keyboard = [
+        [InlineKeyboardButton("❌ Отменить", callback_data=f"cancel_comment:{progress_id}")]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
+    await query.message.edit_text(text, reply_markup=reply_markup, parse_mode='HTML')
+
+    return TeacherStates.ENTERING_COMMENT
+
+
+async def process_teacher_comment(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """
+    Обрабатывает введенный комментарий учителя и сохраняет его.
+    """
+    progress_id = context.user_data.get('commenting_progress_id')
+
+    if not progress_id:
+        await update.message.reply_text(
+            "❌ Ошибка: не найден ID ответа для комментирования.",
+            parse_mode='HTML'
+        )
+        return TeacherStates.TEACHER_MENU
+
+    teacher_comment = update.message.text.strip()
+
+    # Сохраняем комментарий
+    from ..services import assignment_service
+    success = await assignment_service.add_teacher_comment(progress_id, teacher_comment)
+
+    if success:
+        text = "✅ <b>Комментарий успешно добавлен!</b>\n\n"
+        text += f"Ваш комментарий:\n{teacher_comment}"
+
+        # Возвращаемся к просмотру ответа
+        keyboard = [
+            [InlineKeyboardButton("◀️ Вернуться к ответу", callback_data=f"view_answer:{progress_id}")],
+            [InlineKeyboardButton("🏠 Главное меню", callback_data="teacher_menu")]
+        ]
+    else:
+        text = "❌ <b>Ошибка при сохранении комментария.</b>\n\n"
+        text += "Попробуйте еще раз или обратитесь к администратору."
+
+        keyboard = [
+            [InlineKeyboardButton("🏠 Главное меню", callback_data="teacher_menu")]
+        ]
+
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await update.message.reply_text(text, reply_markup=reply_markup, parse_mode='HTML')
+
+    # Очищаем контекст
+    context.user_data.pop('commenting_progress_id', None)
+
+    return TeacherStates.TEACHER_MENU
+
+
+async def cancel_comment_entry(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """
+    Отменяет ввод комментария и возвращает к просмотру ответа.
+
+    Callback pattern: cancel_comment:{progress_id}
+    """
+    query = update.callback_query
+    await query.answer()
+
+    progress_id = int(query.data.split(':')[1])
+
+    # Очищаем контекст
+    context.user_data.pop('commenting_progress_id', None)
+
+    # Возвращаемся к просмотру ответа
+    # Создаем фейковый update с правильным callback_data
+    from telegram import Update as TelegramUpdate, CallbackQuery
+
+    # Просто вызываем view_answer_detail напрямую
+    query.data = f"view_answer:{progress_id}"
+    return await view_answer_detail(update, context)
+
+
+async def initiate_score_override(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """
+    Начинает процесс переоценки ответа учителя.
+
+    Callback pattern: override_score:{progress_id}
+    """
+    query = update.callback_query
+    await query.answer()
+
+    # Извлекаем progress_id из callback_data
+    progress_id = int(query.data.split(':')[1])
+
+    # Получаем данные ответа
+    from ..services import assignment_service
+    progress_data = await assignment_service.get_question_progress_by_id(progress_id)
+
+    if not progress_data:
+        await query.message.edit_text(
+            "❌ Ошибка: ответ не найден.",
+            parse_mode='HTML'
+        )
+        return TeacherStates.TEACHER_MENU
+
+    # Сохраняем в контексте
+    context.user_data['overriding_progress_id'] = progress_id
+
+    current_status = "✅ Принят" if progress_data['is_correct'] else "❌ Требует доработки"
+
+    text = f"✏️ <b>Переоценка ответа</b>\n\n"
+    text += f"<b>Текущий статус:</b> {current_status}\n\n"
+    text += "Выберите новый статус для ответа ученика:"
+
+    keyboard = [
+        [InlineKeyboardButton("✅ Принять ответ", callback_data=f"set_score_accept:{progress_id}")],
+        [InlineKeyboardButton("❌ Отклонить ответ", callback_data=f"set_score_reject:{progress_id}")],
+        [InlineKeyboardButton("◀️ Отменить", callback_data=f"view_answer:{progress_id}")]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
+    await query.message.edit_text(text, reply_markup=reply_markup, parse_mode='HTML')
+
+    return TeacherStates.OVERRIDING_SCORE
+
+
+async def process_score_override(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """
+    Обрабатывает переоценку ответа учителя.
+
+    Callback patterns:
+    - set_score_accept:{progress_id}
+    - set_score_reject:{progress_id}
+    """
+    query = update.callback_query
+    await query.answer()
+
+    # Извлекаем action и progress_id из callback_data
+    parts = query.data.split(':')
+    action = parts[0]  # set_score_accept или set_score_reject
+    progress_id = int(parts[1])
+
+    # Определяем новый статус
+    new_is_correct = (action == "set_score_accept")
+
+    # Обновляем статус в БД
+    from ..services import assignment_service
+    success = await assignment_service.override_answer_score(progress_id, new_is_correct)
+
+    if success:
+        status_text = "принят ✅" if new_is_correct else "отклонен ❌"
+        text = f"✅ <b>Оценка успешно изменена!</b>\n\n"
+        text += f"Новый статус: Ответ {status_text}"
+
+        # Добавляем комментарий об override
+        override_comment = f"Оценка изменена учителем: ответ {status_text}"
+        await assignment_service.add_teacher_comment(progress_id, override_comment)
+
+        keyboard = [
+            [InlineKeyboardButton("◀️ Вернуться к ответу", callback_data=f"view_answer:{progress_id}")],
+            [InlineKeyboardButton("🏠 Главное меню", callback_data="teacher_menu")]
+        ]
+    else:
+        text = "❌ <b>Ошибка при изменении оценки.</b>\n\n"
+        text += "Попробуйте еще раз или обратитесь к администратору."
+
+        keyboard = [
+            [InlineKeyboardButton("🏠 Главное меню", callback_data="teacher_menu")]
+        ]
+
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await query.message.edit_text(text, reply_markup=reply_markup, parse_mode='HTML')
+
+    # Очищаем контекст
+    context.user_data.pop('overriding_progress_id', None)
 
     return TeacherStates.TEACHER_MENU
 

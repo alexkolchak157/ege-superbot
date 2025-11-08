@@ -56,6 +56,8 @@ class TeacherModePlugin(BotPlugin):
                     CallbackQueryHandler(teacher_handlers.view_homework_submissions, pattern="^homework_submissions:"),
                     CallbackQueryHandler(teacher_handlers.view_student_progress, pattern="^view_student_progress:"),
                     CallbackQueryHandler(teacher_handlers.view_answer_detail, pattern="^view_answer:"),
+                    CallbackQueryHandler(teacher_handlers.initiate_comment_entry, pattern="^add_comment:"),
+                    CallbackQueryHandler(teacher_handlers.initiate_score_override, pattern="^override_score:"),
 
                     # Подарки и промокоды
                     CallbackQueryHandler(teacher_handlers.show_gift_subscription_menu, pattern="^teacher_gift_menu$"),
@@ -149,6 +151,23 @@ class TeacherModePlugin(BotPlugin):
 
                     # Отмена
                     CallbackQueryHandler(teacher_handlers.select_task_type, pattern="^assign_task_"),
+                    CallbackQueryHandler(teacher_handlers.teacher_menu, pattern="^teacher_menu$"),
+                ],
+                TeacherStates.ENTERING_COMMENT: [
+                    # Обработка текстового ввода комментария
+                    MessageHandler(filters.TEXT & ~filters.COMMAND, teacher_handlers.process_teacher_comment),
+
+                    # Отмена
+                    CallbackQueryHandler(teacher_handlers.cancel_comment_entry, pattern="^cancel_comment:"),
+                    CallbackQueryHandler(teacher_handlers.teacher_menu, pattern="^teacher_menu$"),
+                ],
+                TeacherStates.OVERRIDING_SCORE: [
+                    # Обработка кнопок принятия/отклонения ответа
+                    CallbackQueryHandler(teacher_handlers.process_score_override, pattern="^set_score_accept:"),
+                    CallbackQueryHandler(teacher_handlers.process_score_override, pattern="^set_score_reject:"),
+
+                    # Отмена
+                    CallbackQueryHandler(teacher_handlers.view_answer_detail, pattern="^view_answer:"),
                     CallbackQueryHandler(teacher_handlers.teacher_menu, pattern="^teacher_menu$"),
                 ],
             },

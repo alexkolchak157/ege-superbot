@@ -38,6 +38,10 @@ class TeacherStates(IntEnum):
     SET_PROMO_USES = 51
     SET_PROMO_DURATION = 52
 
+    # Проверка ответов учеников
+    ENTERING_COMMENT = 60  # Ввод комментария к ответу ученика
+    OVERRIDING_SCORE = 61  # Переоценка ответа
+
 
 class StudentStates(IntEnum):
     """Состояния для учеников (связь с учителем)"""

@@ -658,6 +658,33 @@ async def add_teacher_comment(progress_id: int, teacher_comment: str) -> bool:
         return False
 
 
+async def override_answer_score(progress_id: int, is_correct: bool) -> bool:
+    """
+    Переоценивает ответ ученика (изменяет статус is_correct).
+
+    Args:
+        progress_id: ID записи в homework_progress
+        is_correct: Новый статус (True - принят, False - отклонен)
+
+    Returns:
+        True если успешно, False иначе
+    """
+    try:
+        async with aiosqlite.connect(DATABASE_FILE) as db:
+            await db.execute("""
+                UPDATE homework_progress
+                SET is_correct = ?
+                WHERE id = ?
+            """, (1 if is_correct else 0, progress_id))
+
+            await db.commit()
+            return True
+
+    except Exception as e:
+        logger.error(f"Ошибка при переоценке ответа: {e}")
+        return False
+
+
 async def get_question_progress_by_id(progress_id: int) -> Optional[Dict]:
     """
     Получает прогресс выполнения вопроса по ID записи.
