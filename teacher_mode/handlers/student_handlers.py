@@ -597,3 +597,13 @@ async def process_homework_answer(update: Update, context: ContextTypes.DEFAULT_
     await checking_msg.edit_text(text, reply_markup=reply_markup, parse_mode='HTML')
 
     return ConversationHandler.END
+
+
+async def cancel_homework_execution(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Отмена выполнения домашнего задания и возврат в главное меню"""
+    # Очищаем контекст если есть
+    context.user_data.pop('current_homework_id', None)
+    context.user_data.pop('current_question_id', None)
+    context.user_data.pop('current_task_module', None)
+
+    return ConversationHandler.END

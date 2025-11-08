@@ -197,11 +197,11 @@ class TeacherModePlugin(BotPlugin):
                     CallbackQueryHandler(student_handlers.start_homework, pattern="^start_homework_\\d+$"),
 
                     # Возврат в главное меню
-                    CallbackQueryHandler(lambda u, c: ConversationHandler.END, pattern="^main_menu$"),
+                    CallbackQueryHandler(student_handlers.cancel_homework_execution, pattern="^main_menu$"),
                 ],
             },
             fallbacks=[
-                CallbackQueryHandler(lambda u, c: ConversationHandler.END, pattern="^main_menu$"),
+                CallbackQueryHandler(student_handlers.cancel_homework_execution, pattern="^main_menu$"),
             ],
             name="homework_execution",
             persistent=False,
