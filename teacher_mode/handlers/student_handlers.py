@@ -533,14 +533,30 @@ async def process_homework_answer(update: Update, context: ContextTypes.DEFAULT_
 
     # Отправляем сообщение о проверке
     checking_msg = await update.message.reply_text(
-        "⏳ Проверяю ответ...",
+        "⏳ Проверяю ответ через AI...",
         parse_mode='HTML'
     )
 
-    # TODO: Здесь будет интеграция с AI проверкой
-    # Пока используем заглушку
-    is_correct = True  # Заглушка
-    ai_feedback = "Ваш ответ принят и сохранен. Детальная проверка будет проведена учителем."  # Заглушка
+    # Загружаем данные вопроса для AI проверки
+    from ..services.question_loader import load_question_by_id
+    from ..services.ai_homework_evaluator import evaluate_homework_answer
+
+    question_data = load_question_by_id(task_module, question_id)
+
+    if not question_data:
+        await checking_msg.edit_text(
+            "❌ Ошибка: не удалось загрузить данные вопроса для проверки.",
+            parse_mode='HTML'
+        )
+        return ConversationHandler.END
+
+    # Выполняем AI проверку
+    is_correct, ai_feedback = await evaluate_homework_answer(
+        task_module=task_module,
+        question_data=question_data,
+        user_answer=answer,
+        user_id=user_id
+    )
 
     # Сохраняем прогресс
     success = await assignment_service.save_question_progress(
