@@ -125,6 +125,9 @@ class TeacherModePlugin(BotPlugin):
                     # Обработка текстового ввода номеров заданий
                     MessageHandler(filters.TEXT & ~filters.COMMAND, teacher_handlers.process_question_numbers_input),
 
+                    # Подтверждение выбранных номеров
+                    CallbackQueryHandler(teacher_handlers.confirm_numbers_selection, pattern="^confirm_numbers_selection$"),
+
                     # Отмена
                     CallbackQueryHandler(teacher_handlers.select_task_type, pattern="^assign_task_"),
                     CallbackQueryHandler(teacher_handlers.teacher_menu, pattern="^teacher_menu$"),

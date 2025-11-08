@@ -4,6 +4,7 @@
 
 import logging
 from datetime import datetime, timedelta
+from typing import List, Dict
 from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton
 from telegram.ext import ContextTypes, ConversationHandler
 
@@ -530,78 +531,12 @@ async def process_question_numbers_input(update: Update, context: ContextTypes.D
             )
             return TeacherStates.ENTER_QUESTION_NUMBERS
 
-        # Сохраняем в assignment_data
-        context.user_data['assignment_data'] = {
-            'task_module': task_type,
-            'selection_mode': 'numbers',
-            'topic_ids': question_ids,
-            'questions_count': len(question_ids)
-        }
+        # Сохраняем выбранные ID
+        context.user_data['selected_question_ids'] = question_ids
+        context.user_data['selected_blocks'] = []  # Для режима "номера" блоки не используются
 
-        # Показываем подтверждение и переходим к выбору учеников
-        await update.message.reply_text(
-            f"✅ <b>Выбрано заданий: {len(question_ids)}</b>\n\n"
-            f"ID заданий: <code>{', '.join(map(str, question_ids[:20]))}</code>"
-            f"{f' и еще {len(question_ids) - 20}...' if len(question_ids) > 20 else ''}\n\n"
-            "Переходим к выбору учеников...",
-            parse_mode='HTML'
-        )
-
-        # Создаем фиктивный Update с callback_query для proceed_to_student_selection
-        # Вместо этого просто вызовем логику напрямую
-        user_id = update.effective_user.id
-        student_ids = await teacher_service.get_teacher_students(user_id)
-
-        # Инициализируем список выбранных учеников
-        if 'selected_students' not in context.user_data:
-            context.user_data['selected_students'] = []
-
-        keyboard = []
-
-        if not student_ids:
-            # Если учеников нет
-            text = (
-                f"📝 <b>Создание задания: {task_name}</b>\n\n"
-                "У вас пока нет подключенных учеников.\n\n"
-                "Вы можете создать задание сейчас, и назначить его ученикам позже, "
-                "когда они подключатся к вам."
-            )
-            keyboard.append([InlineKeyboardButton("➡️ Создать задание", callback_data="assignment_set_deadline")])
-            keyboard.append([InlineKeyboardButton("🔑 Мой код учителя", callback_data="teacher_profile")])
-        else:
-            # Если есть ученики - показываем список для выбора
-            text = (
-                f"📝 <b>Создание задания: {task_name}</b>\n\n"
-                "Выберите учеников для назначения задания:\n"
-                "(можно выбрать несколько или создать задание без назначения)"
-            )
-
-            # Получаем отображаемые имена учеников
-            student_names = await teacher_service.get_users_display_names(student_ids)
-
-            for student_id in student_ids:
-                selected = student_id in context.user_data['selected_students']
-                emoji = "✅" if selected else "⬜"
-                display_name = student_names.get(student_id, f"ID: {student_id}")
-                keyboard.append([
-                    InlineKeyboardButton(
-                        f"{emoji} {display_name}",
-                        callback_data=f"toggle_student_{student_id}"
-                    )
-                ])
-
-            # Всегда показываем кнопку "Далее"
-            if context.user_data['selected_students']:
-                keyboard.append([InlineKeyboardButton("➡️ Назначить выбранным", callback_data="assignment_set_deadline")])
-            else:
-                keyboard.append([InlineKeyboardButton("➡️ Создать без назначения", callback_data="assignment_set_deadline")])
-
-        keyboard.append([InlineKeyboardButton("◀️ Отмена", callback_data="teacher_menu")])
-        reply_markup = InlineKeyboardMarkup(keyboard)
-
-        await update.message.reply_text(text, reply_markup=reply_markup, parse_mode='HTML')
-
-        return TeacherStates.CREATE_ASSIGNMENT
+        # Показываем список заданий для подтверждения
+        return await show_numbers_confirmation(update, context, question_ids, task_type, topics_data)
 
     except ValueError as e:
         await update.message.reply_text(
@@ -611,6 +546,79 @@ async def process_question_numbers_input(update: Update, context: ContextTypes.D
             parse_mode='HTML'
         )
         return TeacherStates.ENTER_QUESTION_NUMBERS
+
+
+async def show_numbers_confirmation(update: Update, context: ContextTypes.DEFAULT_TYPE,
+                                    question_ids: List[int], task_type: str,
+                                    topics_data: Dict) -> int:
+    """Показать список заданий по введенным номерам для подтверждения"""
+
+    task_names = {
+        'task19': '💡 Задание 19',
+        'task20': '⚙️ Задание 20',
+        'task24': '📊 Задание 24',
+        'task25': '💻 Задание 25'
+    }
+    task_name = task_names.get(task_type, task_type)
+
+    # Формируем список заданий с названиями
+    text = (
+        f"📝 <b>{task_name}: Подтверждение заданий</b>\n\n"
+        f"✅ Выбрано заданий: {len(question_ids)}\n\n"
+        "Список выбранных заданий:\n\n"
+    )
+
+    # Добавляем информацию о каждом задании
+    for idx, q_id in enumerate(question_ids, 1):
+        topic = topics_data['topics_by_id'].get(q_id)
+        if topic:
+            title = topic.get('title', 'Без названия')
+            # Обрезаем длинные названия
+            if len(title) > 60:
+                title = title[:57] + "..."
+            text += f"{idx}. <b>№{q_id}</b>: {title}\n"
+        else:
+            text += f"{idx}. <b>№{q_id}</b>: (название не найдено)\n"
+
+    text += "\n<i>Подтвердите выбор или введите номера заново</i>"
+
+    keyboard = [
+        [InlineKeyboardButton("✅ Подтвердить выбор", callback_data="confirm_numbers_selection")],
+        [InlineKeyboardButton("🔄 Ввести заново", callback_data=f"assign_task_{task_type}:numbers")],
+        [InlineKeyboardButton("◀️ Назад", callback_data=f"assign_task_{task_type}")]
+    ]
+
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
+    # Отправляем новое сообщение (так как предыдущее было текстовым вводом)
+    await update.message.reply_text(text, reply_markup=reply_markup, parse_mode='HTML')
+
+    return TeacherStates.ENTER_QUESTION_NUMBERS
+
+
+async def confirm_numbers_selection(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Подтверждение выбранных заданий по номерам и переход к выбору учеников"""
+    query = update.callback_query
+    await query.answer()
+
+    task_type = context.user_data.get('assignment_task_type')
+    selected_question_ids = context.user_data.get('selected_question_ids', [])
+
+    if not selected_question_ids:
+        await query.answer("⚠️ Список заданий пуст", show_alert=True)
+        return TeacherStates.ENTER_QUESTION_NUMBERS
+
+    # Сохраняем в assignment_data
+    context.user_data['assignment_data'] = {
+        'task_module': task_type,
+        'selection_mode': 'numbers',
+        'selected_blocks': [],
+        'question_ids': selected_question_ids,
+        'questions_count': len(selected_question_ids)
+    }
+
+    # Переходим к выбору учеников
+    return await proceed_to_student_selection(update, context)
 
 
 async def show_topic_blocks_selection(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
