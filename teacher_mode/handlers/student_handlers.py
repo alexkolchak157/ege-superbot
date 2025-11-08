@@ -346,22 +346,44 @@ async def start_homework(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         return
 
     # Получаем список конкретных вопросов из assignment_data
-    question_ids = homework.assignment_data.get('question_ids', [])
-    task_module = homework.assignment_data.get('task_module', 'unknown')
+    assignment_data = homework.assignment_data
 
-    if not question_ids:
-        await query.message.edit_text(
-            "❌ В этом задании нет вопросов.",
-            reply_markup=InlineKeyboardMarkup([[
-                InlineKeyboardButton("◀️ Назад", callback_data="student_homework_list")
-            ]]),
-            parse_mode='HTML'
-        )
-        return
+    if assignment_data.get('is_mixed'):
+        # Для смешанных заданий собираем все вопросы из всех модулей
+        question_ids = []
+        combined_topics = {}
 
-    # Загружаем информацию о вопросах
-    from ..services.topics_loader import load_topics_for_module
-    topics_data = load_topics_for_module(task_module)
+        from ..services.topics_loader import load_topics_for_module
+
+        for module_data in assignment_data.get('modules', []):
+            module_question_ids = module_data.get('question_ids', [])
+            question_ids.extend(module_question_ids)
+
+            # Загружаем topics для каждого модуля
+            module_code = module_data['task_module']
+            topics_data_temp = load_topics_for_module(module_code)
+            combined_topics.update(topics_data_temp['topics_by_id'])
+
+        topics_data = {'topics_by_id': combined_topics}
+        task_module = 'mixed'
+    else:
+        # Для обычных заданий
+        question_ids = assignment_data.get('question_ids', [])
+        task_module = assignment_data.get('task_module', 'unknown')
+
+        if not question_ids:
+            await query.message.edit_text(
+                "❌ В этом задании нет вопросов.",
+                reply_markup=InlineKeyboardMarkup([[
+                    InlineKeyboardButton("◀️ Назад", callback_data="student_homework_list")
+                ]]),
+                parse_mode='HTML'
+            )
+            return
+
+        # Загружаем информацию о вопросах
+        from ..services.topics_loader import load_topics_for_module
+        topics_data = load_topics_for_module(task_module)
 
     # Получаем прогресс выполнения
     completed_questions = await assignment_service.get_completed_question_ids(homework_id, user_id)
@@ -371,7 +393,8 @@ async def start_homework(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         'task19': '💡 Задание 19',
         'task20': '⚙️ Задание 20',
         'task24': '📊 Задание 24',
-        'task25': '💻 Задание 25'
+        'task25': '💻 Задание 25',
+        'mixed': '🔀 Смешанное задание'
     }
     task_name = task_names.get(task_module, task_module)
 
@@ -441,7 +464,28 @@ async def show_homework_question(update: Update, context: ContextTypes.DEFAULT_T
         )
         return ConversationHandler.END
 
-    task_module = homework.assignment_data.get('task_module')
+    # Определяем модуль для вопроса (для смешанных заданий)
+    assignment_data = homework.assignment_data
+
+    if assignment_data.get('is_mixed'):
+        # Для смешанных заданий ищем модуль, содержащий этот вопрос
+        task_module = None
+        for module_data in assignment_data.get('modules', []):
+            if question_id in module_data.get('question_ids', []):
+                task_module = module_data['task_module']
+                break
+        if not task_module:
+            await query.message.edit_text(
+                "❌ Вопрос не найден в задании.",
+                reply_markup=InlineKeyboardMarkup([[
+                    InlineKeyboardButton("◀️ Назад", callback_data="student_homework_list")
+                ]]),
+                parse_mode='HTML'
+            )
+            return ConversationHandler.END
+    else:
+        # Для обычных заданий берем модуль напрямую
+        task_module = assignment_data.get('task_module')
 
     # Проверяем, выполнен ли уже этот вопрос
     progress = await assignment_service.get_question_progress(homework_id, user_id, question_id)

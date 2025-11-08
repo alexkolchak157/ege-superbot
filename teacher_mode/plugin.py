@@ -92,6 +92,10 @@ class TeacherModePlugin(BotPlugin):
                     # Выбор способа отбора заданий
                     CallbackQueryHandler(teacher_handlers.select_selection_mode, pattern="^selection_mode_"),
 
+                    # Смешанное задание
+                    CallbackQueryHandler(teacher_handlers.toggle_mixed_module_selection, pattern="^toggle_mixed_module:"),
+                    CallbackQueryHandler(teacher_handlers.proceed_with_mixed_selection, pattern="^proceed_mixed_selection$"),
+
                     # Назад к выбору типа задания
                     CallbackQueryHandler(teacher_handlers.create_assignment_start, pattern="^teacher_create_assignment$"),
 
@@ -145,6 +149,7 @@ class TeacherModePlugin(BotPlugin):
 
                     # Подтверждение сгенерированных заданий
                     CallbackQueryHandler(teacher_handlers.confirm_all_tasks_selection, pattern="^confirm_all_tasks_selection$"),
+                    CallbackQueryHandler(teacher_handlers.confirm_mixed_selection, pattern="^confirm_mixed_selection$"),
 
                     # Перегенерация
                     CallbackQueryHandler(teacher_handlers.regenerate_all_tasks, pattern="^regenerate_all_tasks$"),

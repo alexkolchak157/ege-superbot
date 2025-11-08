@@ -324,6 +324,7 @@ async def create_assignment_start(update: Update, context: ContextTypes.DEFAULT_
         [InlineKeyboardButton("⚙️ Задание 20", callback_data="assign_task_task20")],
         [InlineKeyboardButton("📊 Задание 24", callback_data="assign_task_task24")],
         [InlineKeyboardButton("💻 Задание 25", callback_data="assign_task_task25")],
+        [InlineKeyboardButton("🔀 Смешанное задание", callback_data="assign_task_mixed")],
         [InlineKeyboardButton("◀️ Отмена", callback_data="teacher_menu")]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
@@ -340,6 +341,13 @@ async def select_task_type(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 
     # Извлекаем тип задачи из callback_data
     task_type = query.data.replace("assign_task_", "")
+
+    # Обрабатываем смешанный тип отдельно
+    if task_type == "mixed":
+        context.user_data['assignment_task_type'] = 'mixed'
+        context.user_data['mixed_modules'] = []  # Список выбранных модулей
+        context.user_data['mixed_modules_data'] = []  # Данные по каждому модулю
+        return await show_mixed_modules_selection(update, context)
 
     # Сохраняем выбранный тип задания
     context.user_data['assignment_task_type'] = task_type
@@ -633,6 +641,10 @@ async def confirm_numbers_selection(update: Update, context: ContextTypes.DEFAUL
 async def process_question_count_input(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Обработка ввода количества случайных заданий"""
     task_type = context.user_data.get('assignment_task_type')
+
+    # Обработка для смешанного задания
+    if task_type == 'mixed':
+        return await process_mixed_question_counts(update, context)
 
     try:
         count = int(update.message.text.strip())
@@ -2230,5 +2242,239 @@ async def process_score_override(update: Update, context: ContextTypes.DEFAULT_T
     context.user_data.pop('overriding_progress_id', None)
 
     return TeacherStates.TEACHER_MENU
+
+
+async def show_mixed_modules_selection(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """
+    Показывает экран выбора модулей для смешанного задания.
+    """
+    query = update.callback_query
+
+    selected_modules = context.user_data.get('mixed_modules', [])
+
+    text = "🔀 <b>Смешанное задание</b>\n\n"
+    text += "Выберите модули для включения в задание:\n\n"
+
+    # Показываем какие модули выбраны
+    module_names = {
+        'task19': '💡 Задание 19',
+        'task20': '⚙️ Задание 20',
+        'task24': '📊 Задание 24',
+        'task25': '💻 Задание 25'
+    }
+
+    keyboard = []
+    for module_code, module_name in module_names.items():
+        is_selected = module_code in selected_modules
+        checkbox = "☑️" if is_selected else "◻️"
+        button_text = f"{checkbox} {module_name}"
+        keyboard.append([InlineKeyboardButton(button_text, callback_data=f"toggle_mixed_module:{module_code}")])
+
+    # Кнопка продолжения (только если выбран хотя бы один модуль)
+    if selected_modules:
+        text += f"\n<b>Выбрано модулей:</b> {len(selected_modules)}"
+        keyboard.append([InlineKeyboardButton("✅ Продолжить", callback_data="proceed_mixed_selection")])
+
+    keyboard.append([InlineKeyboardButton("◀️ Отмена", callback_data="teacher_create_assignment")])
+
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await query.message.edit_text(text, reply_markup=reply_markup, parse_mode='HTML')
+
+    return TeacherStates.SELECT_SELECTION_MODE
+
+
+async def toggle_mixed_module_selection(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """
+    Переключает выбор модуля для смешанного задания.
+
+    Callback pattern: toggle_mixed_module:{module_code}
+    """
+    query = update.callback_query
+    await query.answer()
+
+    module_code = query.data.split(':')[1]
+    selected_modules = context.user_data.get('mixed_modules', [])
+
+    if module_code in selected_modules:
+        selected_modules.remove(module_code)
+    else:
+        selected_modules.append(module_code)
+
+    context.user_data['mixed_modules'] = selected_modules
+
+    return await show_mixed_modules_selection(update, context)
+
+
+async def proceed_with_mixed_selection(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """
+    Переход к вводу количества заданий для каждого выбранного модуля.
+    """
+    query = update.callback_query
+    await query.answer()
+
+    selected_modules = context.user_data.get('mixed_modules', [])
+
+    if not selected_modules:
+        await query.answer("⚠️ Выберите хотя бы один модуль", show_alert=True)
+        return TeacherStates.SELECT_SELECTION_MODE
+
+    module_names = {
+        'task19': '💡 Задание 19',
+        'task20': '⚙️ Задание 20',
+        'task24': '📊 Задание 24',
+        'task25': '💻 Задание 25'
+    }
+
+    text = "🔀 <b>Смешанное задание</b>\n\n"
+    text += "Для каждого выбранного модуля введите количество заданий:\n\n"
+    text += "<b>Формат:</b> числа через запятую в том же порядке\n\n"
+
+    for module_code in selected_modules:
+        text += f"• {module_names[module_code]}\n"
+
+    text += f"\n<b>Пример:</b> 5, 3, 2 (для {len(selected_modules)} модулей)"
+
+    keyboard = [
+        [InlineKeyboardButton("◀️ Назад", callback_data="assign_task_mixed")]
+    ]
+
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await query.message.edit_text(text, reply_markup=reply_markup, parse_mode='HTML')
+
+    return TeacherStates.ENTER_QUESTION_COUNT
+
+
+async def process_mixed_question_counts(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """
+    Обрабатывает ввод количества заданий для каждого модуля в смешанном задании.
+    """
+    import random
+    from ..services.topics_loader import load_topics_for_module
+
+    selected_modules = context.user_data.get('mixed_modules', [])
+    user_input = update.message.text.strip()
+
+    try:
+        # Парсим числа через запятую
+        counts = [int(c.strip()) for c in user_input.split(',')]
+
+        if len(counts) != len(selected_modules):
+            await update.message.reply_text(
+                f"❌ <b>Неверное количество чисел</b>\n\n"
+                f"Вы выбрали {len(selected_modules)} модулей, "
+                f"но ввели {len(counts)} чисел.\n\n"
+                f"Введите ровно {len(selected_modules)} чисел через запятую:",
+                parse_mode='HTML'
+            )
+            return TeacherStates.ENTER_QUESTION_COUNT
+
+        # Проверяем, что все числа > 0
+        if any(c <= 0 for c in counts):
+            await update.message.reply_text(
+                "❌ <b>Все числа должны быть больше нуля</b>\n\n"
+                "Попробуйте еще раз:",
+                parse_mode='HTML'
+            )
+            return TeacherStates.ENTER_QUESTION_COUNT
+
+        # Генерируем задания для каждого модуля
+        modules_data = []
+        total_questions = 0
+
+        module_names = {
+            'task19': '💡 Задание 19',
+            'task20': '⚙️ Задание 20',
+            'task24': '📊 Задание 24',
+            'task25': '💻 Задание 25'
+        }
+
+        for module_code, count in zip(selected_modules, counts):
+            # Загружаем темы для модуля
+            topics_data = load_topics_for_module(module_code)
+            total_count = topics_data['total_count']
+
+            if count > total_count:
+                await update.message.reply_text(
+                    f"❌ <b>Слишком много заданий для {module_names[module_code]}</b>\n\n"
+                    f"Доступно только {total_count} заданий.\n\n"
+                    f"Попробуйте еще раз:",
+                    parse_mode='HTML'
+                )
+                return TeacherStates.ENTER_QUESTION_COUNT
+
+            # Генерируем случайные задания
+            all_question_ids = list(topics_data['topics_by_id'].keys())
+            if count >= len(all_question_ids):
+                selected_ids = all_question_ids
+            else:
+                selected_ids = random.sample(all_question_ids, count)
+
+            selected_ids.sort()
+
+            # Добавляем данные модуля
+            modules_data.append({
+                'task_module': module_code,
+                'selection_mode': 'all',
+                'selected_blocks': [],
+                'question_ids': selected_ids,
+                'questions_count': len(selected_ids)
+            })
+
+            total_questions += len(selected_ids)
+
+        # Сохраняем в assignment_data
+        context.user_data['assignment_data'] = {
+            'is_mixed': True,
+            'modules': modules_data,
+            'total_questions_count': total_questions
+        }
+
+        # Показываем подтверждение
+        text = "🔀 <b>Смешанное задание</b>\n\n"
+        text += f"✅ Всего заданий: {total_questions}\n\n"
+
+        for module_data in modules_data:
+            module_code = module_data['task_module']
+            count = module_data['questions_count']
+            text += f"• {module_names[module_code]}: {count} заданий\n"
+
+        text += "\n<i>Подтвердите выбор или введите количества заново</i>"
+
+        keyboard = [
+            [InlineKeyboardButton("✅ Подтвердить выбор", callback_data="confirm_mixed_selection")],
+            [InlineKeyboardButton("🔄 Ввести заново", callback_data="proceed_mixed_selection")],
+            [InlineKeyboardButton("◀️ Назад", callback_data="assign_task_mixed")]
+        ]
+
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        await update.message.reply_text(text, reply_markup=reply_markup, parse_mode='HTML')
+
+        return TeacherStates.ENTER_QUESTION_COUNT
+
+    except ValueError:
+        await update.message.reply_text(
+            "❌ <b>Неверный формат</b>\n\n"
+            "Введите целые числа через запятую (например: 5, 3, 2):",
+            parse_mode='HTML'
+        )
+        return TeacherStates.ENTER_QUESTION_COUNT
+
+
+async def confirm_mixed_selection(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """
+    Подтверждение смешанного задания и переход к выбору учеников.
+    """
+    query = update.callback_query
+    await query.answer()
+
+    assignment_data = context.user_data.get('assignment_data')
+
+    if not assignment_data or not assignment_data.get('is_mixed'):
+        await query.answer("❌ Ошибка: данные задания не найдены", show_alert=True)
+        return TeacherStates.ENTER_QUESTION_COUNT
+
+    # Переходим к выбору учеников
+    return await proceed_to_student_selection(update, context)
+
 
 
