@@ -52,6 +52,11 @@ class TeacherModePlugin(BotPlugin):
                     CallbackQueryHandler(teacher_handlers.show_teacher_assignments, pattern="^teacher_my_assignments$"),
                     CallbackQueryHandler(teacher_handlers.show_homework_stats, pattern="^homework_stats_"),
 
+                    # Просмотр ответов учеников
+                    CallbackQueryHandler(teacher_handlers.view_homework_submissions, pattern="^homework_submissions:"),
+                    CallbackQueryHandler(teacher_handlers.view_student_progress, pattern="^view_student_progress:"),
+                    CallbackQueryHandler(teacher_handlers.view_answer_detail, pattern="^view_answer:"),
+
                     # Подарки и промокоды
                     CallbackQueryHandler(teacher_handlers.show_gift_subscription_menu, pattern="^teacher_gift_menu$"),
                     CallbackQueryHandler(teacher_handlers.show_promo_codes_list, pattern="^gift_my_promos$"),
@@ -104,9 +109,43 @@ class TeacherModePlugin(BotPlugin):
                     # Отмена
                     CallbackQueryHandler(teacher_handlers.teacher_menu, pattern="^teacher_menu$"),
                 ],
+                TeacherStates.SELECT_SPECIFIC_QUESTIONS: [
+                    # Переключение выбора конкретного задания
+                    CallbackQueryHandler(teacher_handlers.toggle_question_selection, pattern="^toggle_question:"),
+
+                    # Выбор/снятие всех заданий
+                    CallbackQueryHandler(teacher_handlers.select_all_questions, pattern="^select_all_questions$"),
+                    CallbackQueryHandler(teacher_handlers.deselect_all_questions, pattern="^deselect_all_questions$"),
+
+                    # Подтверждение выбора заданий
+                    CallbackQueryHandler(teacher_handlers.confirm_selected_questions, pattern="^confirm_selected_questions$"),
+
+                    # Назад к выбору типа задания
+                    CallbackQueryHandler(teacher_handlers.select_task_type, pattern="^assign_task_"),
+
+                    # Отмена
+                    CallbackQueryHandler(teacher_handlers.teacher_menu, pattern="^teacher_menu$"),
+                ],
                 TeacherStates.ENTER_QUESTION_NUMBERS: [
                     # Обработка текстового ввода номеров заданий
                     MessageHandler(filters.TEXT & ~filters.COMMAND, teacher_handlers.process_question_numbers_input),
+
+                    # Подтверждение выбранных номеров
+                    CallbackQueryHandler(teacher_handlers.confirm_numbers_selection, pattern="^confirm_numbers_selection$"),
+
+                    # Отмена
+                    CallbackQueryHandler(teacher_handlers.select_task_type, pattern="^assign_task_"),
+                    CallbackQueryHandler(teacher_handlers.teacher_menu, pattern="^teacher_menu$"),
+                ],
+                TeacherStates.ENTER_QUESTION_COUNT: [
+                    # Обработка текстового ввода количества заданий для режима "все"
+                    MessageHandler(filters.TEXT & ~filters.COMMAND, teacher_handlers.process_question_count_input),
+
+                    # Подтверждение сгенерированных заданий
+                    CallbackQueryHandler(teacher_handlers.confirm_all_tasks_selection, pattern="^confirm_all_tasks_selection$"),
+
+                    # Перегенерация
+                    CallbackQueryHandler(teacher_handlers.regenerate_all_tasks, pattern="^regenerate_all_tasks$"),
 
                     # Отмена
                     CallbackQueryHandler(teacher_handlers.select_task_type, pattern="^assign_task_"),
@@ -144,7 +183,32 @@ class TeacherModePlugin(BotPlugin):
             allow_reentry=True,
         )
 
-        # Обработчики для работы с ДЗ ученика
+        # ConversationHandler для выполнения домашних заданий
+        homework_execution_handler = ConversationHandler(
+            entry_points=[
+                CallbackQueryHandler(student_handlers.show_homework_question, pattern="^hw_question:"),
+            ],
+            states={
+                StudentStates.DOING_HOMEWORK: [
+                    # Прием ответа от ученика
+                    MessageHandler(filters.TEXT & ~filters.COMMAND, student_handlers.process_homework_answer),
+
+                    # Возврат к списку вопросов
+                    CallbackQueryHandler(student_handlers.start_homework, pattern="^start_homework_\\d+$"),
+
+                    # Возврат в главное меню
+                    CallbackQueryHandler(lambda u, c: ConversationHandler.END, pattern="^main_menu$"),
+                ],
+            },
+            fallbacks=[
+                CallbackQueryHandler(lambda u, c: ConversationHandler.END, pattern="^main_menu$"),
+            ],
+            name="homework_execution",
+            persistent=False,
+            allow_reentry=True,
+        )
+
+        # Обработчики для работы с ДЗ ученика (вне conversation)
         app.add_handler(CallbackQueryHandler(student_handlers.homework_list, pattern="^student_homework_list$"))
         app.add_handler(CallbackQueryHandler(student_handlers.view_homework, pattern="^homework_\\d+$"))
         app.add_handler(CallbackQueryHandler(student_handlers.start_homework, pattern="^start_homework_\\d+$"))
@@ -152,6 +216,7 @@ class TeacherModePlugin(BotPlugin):
         # Регистрация ConversationHandler'ов
         app.add_handler(teacher_conv_handler)
         app.add_handler(student_conv_handler)
+        app.add_handler(homework_execution_handler)
 
         logger.info("Teacher mode plugin handlers registered")
 
