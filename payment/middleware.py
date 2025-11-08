@@ -134,8 +134,10 @@ class SubscriptionMiddleware:
                 'choose_task20': 'task20',
                 'choose_task24': 'task24',
                 'choose_task25': 'task25',
+                'choose_personal_cabinet': 'personal_cabinet',
+                'choose_teacher_mode': 'teacher_mode',
             }
-            
+
             if callback_data in direct_mapping:
                 module_code = direct_mapping[callback_data]
             else:
