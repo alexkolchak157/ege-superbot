@@ -59,6 +59,9 @@ class TeacherModePlugin(BotPlugin):
                     CallbackQueryHandler(teacher_handlers.initiate_comment_entry, pattern="^add_comment:"),
                     CallbackQueryHandler(teacher_handlers.initiate_score_override, pattern="^override_score:"),
 
+                    # Статистика ученика
+                    CallbackQueryHandler(teacher_handlers.show_student_statistics, pattern="^student_stats:"),
+
                     # Подарки и промокоды
                     CallbackQueryHandler(teacher_handlers.show_gift_subscription_menu, pattern="^teacher_gift_menu$"),
                     CallbackQueryHandler(teacher_handlers.show_promo_codes_list, pattern="^gift_my_promos$"),

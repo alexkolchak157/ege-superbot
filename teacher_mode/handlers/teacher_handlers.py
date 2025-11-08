@@ -1447,14 +1447,19 @@ async def show_student_list(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         student_names = await teacher_service.get_users_display_names(student_ids)
 
         text += "<b>Список учеников:</b>\n"
+
+        keyboard = []
+
+        # Добавляем кнопку статистики для каждого ученика
         for i, student_id in enumerate(student_ids, 1):
             display_name = student_names.get(student_id, f"ID: {student_id}")
             text += f"{i}. {display_name}\n"
 
-        keyboard = [
-            [InlineKeyboardButton("📊 Общая статистика", callback_data="teacher_statistics")],
-            [InlineKeyboardButton("◀️ Назад", callback_data="teacher_menu")]
-        ]
+            # Добавляем кнопку с именем ученика и иконкой статистики
+            button_text = f"📊 {display_name[:20]}"
+            keyboard.append([InlineKeyboardButton(button_text, callback_data=f"student_stats:{student_id}")])
+
+        keyboard.append([InlineKeyboardButton("◀️ Назад", callback_data="teacher_menu")])
 
     reply_markup = InlineKeyboardMarkup(keyboard)
     await query.message.edit_text(text, reply_markup=reply_markup, parse_mode='HTML')
@@ -2659,6 +2664,124 @@ async def finish_custom_questions(update: Update, context: ContextTypes.DEFAULT_
 
     # Переходим к выбору учеников
     return await proceed_to_student_selection(update, context)
+
+
+async def show_student_statistics(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """
+    Показывает детальную статистику конкретного ученика.
+
+    Callback pattern: student_stats:{student_id}
+    """
+    query = update.callback_query
+    await query.answer()
+
+    user_id = update.effective_user.id
+
+    # Извлекаем student_id из callback_data
+    student_id = int(query.data.split(':')[1])
+
+    # Получаем статистику
+    from ..services import assignment_service, teacher_service
+
+    stats = await assignment_service.get_student_statistics(user_id, student_id)
+
+    if not stats:
+        await query.message.edit_text(
+            "❌ Ошибка при получении статистики.",
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("◀️ Назад", callback_data="teacher_students")
+            ]]),
+            parse_mode='HTML'
+        )
+        return TeacherStates.TEACHER_MENU
+
+    # Получаем имя ученика
+    student_names = await teacher_service.get_users_display_names([student_id])
+    student_name = student_names.get(student_id, f"ID: {student_id}")
+
+    # Формируем текст статистики
+    text = f"📊 <b>Статистика ученика</b>\n\n"
+    text += f"👤 <b>Ученик:</b> {student_name}\n\n"
+
+    # Общая статистика
+    text += "📈 <b>Общие показатели:</b>\n"
+    text += f"• Получено заданий: {stats['total_assignments']}\n"
+    text += f"• Завершено заданий: {stats['completed_assignments']}\n"
+    text += f"• Всего вопросов: {stats['total_questions']}\n"
+    text += f"• Дано ответов: {stats['total_answered']}\n\n"
+
+    if stats['total_answered'] > 0:
+        text += f"✅ <b>Правильных ответов:</b> {stats['correct_answers']} ({stats['accuracy_rate']}%)\n"
+        text += f"❌ <b>Неправильных ответов:</b> {stats['incorrect_answers']}\n\n"
+
+        # Определяем общий уровень
+        accuracy = stats['accuracy_rate']
+        if accuracy >= 80:
+            level = "🌟 Отличный"
+            emoji = "🎉"
+        elif accuracy >= 60:
+            level = "👍 Хороший"
+            emoji = "💪"
+        elif accuracy >= 40:
+            level = "⚠️ Средний"
+            emoji = "📚"
+        else:
+            level = "❗ Требует внимания"
+            emoji = "🔔"
+
+        text += f"{emoji} <b>Уровень:</b> {level}\n\n"
+
+        # Слабые темы
+        if stats['weak_modules']:
+            text += "📉 <b>Требуют проработки:</b>\n"
+
+            module_names = {
+                'task19': '💡 Задание 19',
+                'task20': '⚙️ Задание 20',
+                'task24': '📊 Задание 24',
+                'task25': '💻 Задание 25',
+                'custom': '📝 Кастомные',
+                'mixed': '🔀 Смешанные'
+            }
+
+            for weak in stats['weak_modules']:
+                module_display = module_names.get(weak['module'], weak['module'])
+                text += f"  • {module_display}: {weak['correct']}/{weak['total']} ({weak['accuracy']:.1f}%)\n"
+
+            text += "\n"
+
+        # Сильные темы
+        if stats['strong_modules']:
+            text += "📈 <b>Сильные стороны:</b>\n"
+
+            for strong in stats['strong_modules']:
+                module_display = module_names.get(strong['module'], strong['module'])
+                text += f"  • {module_display}: {strong['correct']}/{strong['total']} ({strong['accuracy']:.1f}%)\n"
+
+            text += "\n"
+
+        # Рекомендации
+        text += "💡 <b>Рекомендации:</b>\n"
+        if accuracy < 50:
+            text += "  • Рекомендуется дополнительная практика\n"
+            text += "  • Уделите внимание разбору ошибок\n"
+        if stats['weak_modules']:
+            text += "  • Сфокусируйтесь на слабых темах\n"
+        if stats['completed_assignments'] < stats['total_assignments']:
+            text += "  • Завершите все полученные задания\n"
+    else:
+        text += "ℹ️ Ученик еще не начал выполнять задания.\n"
+
+    keyboard = [
+        [InlineKeyboardButton("📋 Домашние задания", callback_data="teacher_my_assignments")],
+        [InlineKeyboardButton("◀️ К списку учеников", callback_data="teacher_students")],
+        [InlineKeyboardButton("🏠 Главное меню", callback_data="teacher_menu")]
+    ]
+
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await query.message.edit_text(text, reply_markup=reply_markup, parse_mode='HTML')
+
+    return TeacherStates.TEACHER_MENU
 
 
 
