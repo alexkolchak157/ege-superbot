@@ -1371,6 +1371,7 @@ async def apply_teacher_mode_migration(db: aiosqlite.Connection):
     - gifted_subscriptions (подаренные подписки)
     - gift_promo_codes (промокоды для подписок)
     - promo_code_usage (использование промокодов)
+    - deadline_reminders (напоминания о дедлайнах)
 
     Args:
         db: Соединение с БД
@@ -1527,6 +1528,21 @@ async def apply_teacher_mode_migration(db: aiosqlite.Connection):
         """)
         logger.info("✓ Таблица promo_code_usage готова")
 
+        # 10. Таблица напоминаний о дедлайнах
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS deadline_reminders (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                student_id INTEGER NOT NULL,
+                homework_id INTEGER NOT NULL,
+                hours_before INTEGER NOT NULL,
+                sent_at TEXT NOT NULL,
+                UNIQUE(student_id, homework_id, hours_before),
+                FOREIGN KEY (student_id) REFERENCES users(user_id),
+                FOREIGN KEY (homework_id) REFERENCES homework_assignments(id) ON DELETE CASCADE
+            )
+        """)
+        logger.info("✓ Таблица deadline_reminders готова")
+
         # Создание индексов для оптимизации запросов
         indices = [
             ('idx_teacher_code', 'teacher_profiles', 'teacher_code'),
@@ -1542,6 +1558,9 @@ async def apply_teacher_mode_migration(db: aiosqlite.Connection):
             ('idx_gifted_recipient', 'gifted_subscriptions', 'recipient_id'),
             ('idx_promo_creator', 'gift_promo_codes', 'creator_id'),
             ('idx_promo_usage_student', 'promo_code_usage', 'student_id'),
+            ('idx_deadline_reminders_student', 'deadline_reminders', 'student_id'),
+            ('idx_deadline_reminders_homework', 'deadline_reminders', 'homework_id'),
+            ('idx_deadline_reminders_sent', 'deadline_reminders', 'sent_at'),
         ]
 
         for idx_name, table_name, column_name in indices:
