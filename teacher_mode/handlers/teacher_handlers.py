@@ -325,6 +325,7 @@ async def create_assignment_start(update: Update, context: ContextTypes.DEFAULT_
         [InlineKeyboardButton("📊 Задание 24", callback_data="assign_task_task24")],
         [InlineKeyboardButton("💻 Задание 25", callback_data="assign_task_task25")],
         [InlineKeyboardButton("🔀 Смешанное задание", callback_data="assign_task_mixed")],
+        [InlineKeyboardButton("📝 Кастомное задание", callback_data="assign_task_custom")],
         [InlineKeyboardButton("◀️ Отмена", callback_data="teacher_menu")]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
@@ -348,6 +349,12 @@ async def select_task_type(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         context.user_data['mixed_modules'] = []  # Список выбранных модулей
         context.user_data['mixed_modules_data'] = []  # Данные по каждому модулю
         return await show_mixed_modules_selection(update, context)
+
+    # Обрабатываем кастомный тип отдельно
+    if task_type == "custom":
+        context.user_data['assignment_task_type'] = 'custom'
+        context.user_data['custom_questions'] = []  # Список кастомных вопросов
+        return await start_custom_question_entry(update, context)
 
     # Сохраняем выбранный тип задания
     context.user_data['assignment_task_type'] = task_type
@@ -2472,6 +2479,183 @@ async def confirm_mixed_selection(update: Update, context: ContextTypes.DEFAULT_
     if not assignment_data or not assignment_data.get('is_mixed'):
         await query.answer("❌ Ошибка: данные задания не найдены", show_alert=True)
         return TeacherStates.ENTER_QUESTION_COUNT
+
+    # Переходим к выбору учеников
+    return await proceed_to_student_selection(update, context)
+
+
+async def start_custom_question_entry(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """
+    Начинает процесс создания кастомного задания.
+    """
+    query = update.callback_query
+
+    custom_questions = context.user_data.get('custom_questions', [])
+    question_count = len(custom_questions)
+
+    text = "📝 <b>Кастомное задание</b>\n\n"
+
+    if question_count == 0:
+        text += "Вы можете создать свои собственные вопросы для учеников.\n\n"
+        text += "💬 Отправьте текст первого вопроса:"
+    else:
+        text += f"✅ Добавлено вопросов: {question_count}\n\n"
+        text += "💬 Отправьте текст следующего вопроса или завершите создание:"
+
+    keyboard = []
+
+    if question_count > 0:
+        keyboard.append([InlineKeyboardButton(f"✅ Завершить ({question_count} вопросов)", callback_data="finish_custom_questions")])
+        keyboard.append([InlineKeyboardButton("👀 Просмотреть вопросы", callback_data="review_custom_questions")])
+
+    keyboard.append([InlineKeyboardButton("❌ Отменить", callback_data="teacher_create_assignment")])
+
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await query.message.edit_text(text, reply_markup=reply_markup, parse_mode='HTML')
+
+    return TeacherStates.ENTER_CUSTOM_QUESTION
+
+
+async def process_custom_question(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """
+    Обрабатывает ввод текста кастомного вопроса.
+    """
+    question_text = update.message.text.strip()
+
+    if len(question_text) < 10:
+        await update.message.reply_text(
+            "❌ <b>Вопрос слишком короткий</b>\n\n"
+            "Минимальная длина вопроса: 10 символов.\n"
+            "Попробуйте еще раз:",
+            parse_mode='HTML'
+        )
+        return TeacherStates.ENTER_CUSTOM_QUESTION
+
+    if len(question_text) > 2000:
+        await update.message.reply_text(
+            "❌ <b>Вопрос слишком длинный</b>\n\n"
+            "Максимальная длина вопроса: 2000 символов.\n"
+            "Попробуйте еще раз:",
+            parse_mode='HTML'
+        )
+        return TeacherStates.ENTER_CUSTOM_QUESTION
+
+    # Добавляем вопрос в список
+    custom_questions = context.user_data.get('custom_questions', [])
+    question_id = len(custom_questions) + 1
+
+    custom_questions.append({
+        'id': question_id,
+        'text': question_text
+    })
+
+    context.user_data['custom_questions'] = custom_questions
+
+    text = f"✅ <b>Вопрос #{question_id} добавлен!</b>\n\n"
+    text += f"<i>{question_text[:100]}{'...' if len(question_text) > 100 else ''}</i>\n\n"
+    text += f"📊 Всего вопросов: {len(custom_questions)}\n\n"
+    text += "💬 Отправьте следующий вопрос или завершите создание:"
+
+    keyboard = [
+        [InlineKeyboardButton(f"✅ Завершить ({len(custom_questions)} вопросов)", callback_data="finish_custom_questions")],
+        [InlineKeyboardButton("👀 Просмотреть все вопросы", callback_data="review_custom_questions")],
+        [InlineKeyboardButton("❌ Отменить", callback_data="teacher_create_assignment")]
+    ]
+
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await update.message.reply_text(text, reply_markup=reply_markup, parse_mode='HTML')
+
+    return TeacherStates.ENTER_CUSTOM_QUESTION
+
+
+async def review_custom_questions(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """
+    Показывает список всех введенных кастомных вопросов.
+    """
+    query = update.callback_query
+    await query.answer()
+
+    custom_questions = context.user_data.get('custom_questions', [])
+
+    if not custom_questions:
+        await query.answer("⚠️ Нет добавленных вопросов", show_alert=True)
+        return TeacherStates.ENTER_CUSTOM_QUESTION
+
+    text = f"📝 <b>Кастомное задание</b>\n\n"
+    text += f"📊 Всего вопросов: {len(custom_questions)}\n\n"
+
+    for q in custom_questions:
+        question_preview = q['text'][:80] + ('...' if len(q['text']) > 80 else '')
+        text += f"<b>{q['id']}.</b> {question_preview}\n\n"
+
+    if len(text) > 3900:
+        text = text[:3900] + "\n\n<i>(список обрезан)</i>"
+
+    keyboard = [
+        [InlineKeyboardButton("➕ Добавить еще вопрос", callback_data="add_more_custom_questions")],
+        [InlineKeyboardButton(f"✅ Завершить ({len(custom_questions)} вопросов)", callback_data="finish_custom_questions")],
+        [InlineKeyboardButton("🗑️ Удалить последний", callback_data="delete_last_custom_question")],
+        [InlineKeyboardButton("❌ Отменить все", callback_data="teacher_create_assignment")]
+    ]
+
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await query.message.edit_text(text, reply_markup=reply_markup, parse_mode='HTML')
+
+    return TeacherStates.REVIEW_CUSTOM_QUESTIONS
+
+
+async def delete_last_custom_question(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """
+    Удаляет последний добавленный вопрос.
+    """
+    query = update.callback_query
+    await query.answer()
+
+    custom_questions = context.user_data.get('custom_questions', [])
+
+    if not custom_questions:
+        await query.answer("⚠️ Нет вопросов для удаления", show_alert=True)
+        return TeacherStates.REVIEW_CUSTOM_QUESTIONS
+
+    deleted_question = custom_questions.pop()
+    context.user_data['custom_questions'] = custom_questions
+
+    await query.answer(f"🗑️ Вопрос #{deleted_question['id']} удален", show_alert=True)
+
+    # Возвращаемся к просмотру
+    return await review_custom_questions(update, context)
+
+
+async def add_more_custom_questions(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """
+    Возвращается к добавлению вопросов из режима просмотра.
+    """
+    query = update.callback_query
+    await query.answer()
+
+    return await start_custom_question_entry(update, context)
+
+
+async def finish_custom_questions(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """
+    Завершает создание кастомных вопросов и переходит к выбору учеников.
+    """
+    query = update.callback_query
+    await query.answer()
+
+    custom_questions = context.user_data.get('custom_questions', [])
+
+    if not custom_questions:
+        await query.answer("⚠️ Добавьте хотя бы один вопрос", show_alert=True)
+        return TeacherStates.ENTER_CUSTOM_QUESTION
+
+    # Сохраняем в assignment_data
+    context.user_data['assignment_data'] = {
+        'task_module': 'custom',
+        'is_custom': True,
+        'custom_questions': custom_questions,
+        'questions_count': len(custom_questions)
+    }
 
     # Переходим к выбору учеников
     return await proceed_to_student_selection(update, context)

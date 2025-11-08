@@ -175,6 +175,28 @@ class TeacherModePlugin(BotPlugin):
                     CallbackQueryHandler(teacher_handlers.view_answer_detail, pattern="^view_answer:"),
                     CallbackQueryHandler(teacher_handlers.teacher_menu, pattern="^teacher_menu$"),
                 ],
+                TeacherStates.ENTER_CUSTOM_QUESTION: [
+                    # Обработка текстового ввода кастомного вопроса
+                    MessageHandler(filters.TEXT & ~filters.COMMAND, teacher_handlers.process_custom_question),
+
+                    # Кнопки управления
+                    CallbackQueryHandler(teacher_handlers.finish_custom_questions, pattern="^finish_custom_questions$"),
+                    CallbackQueryHandler(teacher_handlers.review_custom_questions, pattern="^review_custom_questions$"),
+
+                    # Отмена
+                    CallbackQueryHandler(teacher_handlers.create_assignment_start, pattern="^teacher_create_assignment$"),
+                    CallbackQueryHandler(teacher_handlers.teacher_menu, pattern="^teacher_menu$"),
+                ],
+                TeacherStates.REVIEW_CUSTOM_QUESTIONS: [
+                    # Кнопки управления списком вопросов
+                    CallbackQueryHandler(teacher_handlers.add_more_custom_questions, pattern="^add_more_custom_questions$"),
+                    CallbackQueryHandler(teacher_handlers.finish_custom_questions, pattern="^finish_custom_questions$"),
+                    CallbackQueryHandler(teacher_handlers.delete_last_custom_question, pattern="^delete_last_custom_question$"),
+
+                    # Отмена
+                    CallbackQueryHandler(teacher_handlers.create_assignment_start, pattern="^teacher_create_assignment$"),
+                    CallbackQueryHandler(teacher_handlers.teacher_menu, pattern="^teacher_menu$"),
+                ],
             },
             fallbacks=[
                 CallbackQueryHandler(teacher_handlers.teacher_menu, pattern="^teacher_menu$"),
