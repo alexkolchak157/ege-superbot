@@ -1605,6 +1605,7 @@ async def show_homework_stats(update: Update, context: ContextTypes.DEFAULT_TYPE
     )
 
     keyboard = [
+        [InlineKeyboardButton("📝 Просмотреть ответы учеников", callback_data=f"homework_submissions:{homework_id}")],
         [InlineKeyboardButton("📋 Все задания", callback_data="teacher_my_assignments")],
         [InlineKeyboardButton("◀️ Назад", callback_data="teacher_menu")]
     ]
@@ -1788,3 +1789,251 @@ async def back_to_personal_cabinet(update: Update, context: ContextTypes.DEFAULT
 
     # Выходим из conversation handler режима учителя
     return ConversationHandler.END
+
+
+async def view_homework_submissions(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Просмотр ответов учеников по конкретному заданию"""
+    query = update.callback_query
+    await query.answer()
+
+    # Извлекаем ID задания из callback_data: homework_submissions:homework_id
+    homework_id = int(query.data.split(':')[1])
+
+    # Получаем задание
+    homework = await assignment_service.get_homework_by_id(homework_id)
+    if not homework:
+        await query.message.edit_text(
+            "❌ Задание не найдено.",
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("◀️ Назад", callback_data="teacher_my_assignments")
+            ]]),
+            parse_mode='HTML'
+        )
+        return TeacherStates.TEACHER_MENU
+
+    # Получаем прогресс всех учеников
+    progress_by_student = await assignment_service.get_homework_all_progress(homework_id)
+
+    # Получаем назначения для этого задания
+    student_assignments = await assignment_service.get_homework_student_assignments(homework_id)
+
+    # Получаем имена учеников
+    student_ids = [sa.student_id for sa in student_assignments]
+    student_names = await teacher_service.get_users_display_names(student_ids)
+
+    text = f"📊 <b>{homework.title}</b>\n\n"
+    text += f"👥 <b>Ученики: {len(student_assignments)}</b>\n\n"
+
+    if not student_assignments:
+        text += "Нет назначенных учеников."
+    else:
+        text += "<b>Прогресс учеников:</b>\n\n"
+
+        for sa in student_assignments:
+            student_id = sa.student_id
+            student_name = student_names.get(student_id, f"ID: {student_id}")
+
+            # Получаем прогресс этого ученика
+            student_progress = progress_by_student.get(student_id, [])
+            total_questions = homework.assignment_data.get('questions_count', 0)
+            completed_count = len(student_progress)
+
+            # Эмодзи статуса
+            if completed_count == 0:
+                emoji = "⬜"
+                status = "Не начато"
+            elif completed_count < total_questions:
+                emoji = "🔄"
+                status = f"В процессе ({completed_count}/{total_questions})"
+            else:
+                emoji = "✅"
+                status = f"Выполнено ({completed_count}/{total_questions})"
+
+            text += f"{emoji} <b>{student_name}</b>: {status}\n"
+
+    keyboard = []
+
+    # Кнопки для каждого ученика
+    for sa in student_assignments:
+        student_id = sa.student_id
+        student_name = student_names.get(student_id, f"ID: {student_id}")
+        student_progress = progress_by_student.get(student_id, [])
+
+        if student_progress:
+            keyboard.append([
+                InlineKeyboardButton(
+                    f"📝 {student_name} ({len(student_progress)} отв.)",
+                    callback_data=f"view_student_progress:{homework_id}:{student_id}"
+                )
+            ])
+
+    keyboard.append([InlineKeyboardButton("◀️ К моим заданиям", callback_data="teacher_my_assignments")])
+    keyboard.append([InlineKeyboardButton("🏠 Главное меню", callback_data="teacher_menu")])
+
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await query.message.edit_text(text, reply_markup=reply_markup, parse_mode='HTML')
+
+    return TeacherStates.TEACHER_MENU
+
+
+async def view_student_progress(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Просмотр ответов конкретного ученика на задание"""
+    query = update.callback_query
+    await query.answer()
+
+    # Парсим callback_data: view_student_progress:homework_id:student_id
+    _, homework_id_str, student_id_str = query.data.split(':')
+    homework_id = int(homework_id_str)
+    student_id = int(student_id_str)
+
+    # Получаем задание
+    homework = await assignment_service.get_homework_by_id(homework_id)
+    if not homework:
+        await query.message.edit_text(
+            "❌ Задание не найдено.",
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("◀️ Назад", callback_data="teacher_my_assignments")
+            ]]),
+            parse_mode='HTML'
+        )
+        return TeacherStates.TEACHER_MENU
+
+    # Получаем имя ученика
+    student_names = await teacher_service.get_users_display_names([student_id])
+    student_name = student_names.get(student_id, f"ID: {student_id}")
+
+    # Получаем прогресс ученика
+    progress_list = await assignment_service.get_homework_student_progress(homework_id, student_id)
+
+    # Загружаем информацию о вопросах
+    from ..services.topics_loader import load_topics_for_module
+    task_module = homework.assignment_data.get('task_module')
+    topics_data = load_topics_for_module(task_module)
+
+    text = (
+        f"📝 <b>{homework.title}</b>\n"
+        f"👤 <b>Ученик:</b> {student_name}\n\n"
+        f"📊 Выполнено заданий: {len(progress_list)}/{homework.assignment_data.get('questions_count', 0)}\n\n"
+    )
+
+    if not progress_list:
+        text += "Ученик еще не приступил к выполнению."
+
+    keyboard = []
+
+    # Кнопки для каждого ответа
+    for idx, progress in enumerate(progress_list, 1):
+        q_id = progress['question_id']
+        topic = topics_data['topics_by_id'].get(q_id)
+        title = topic.get('title', f'Вопрос {q_id}') if topic else f'Вопрос {q_id}'
+
+        # Обрезаем название
+        if len(title) > 35:
+            title = title[:32] + "..."
+
+        emoji = "✅" if progress['is_correct'] else "❌"
+
+        keyboard.append([
+            InlineKeyboardButton(
+                f"{emoji} {idx}. {title}",
+                callback_data=f"view_answer:{progress['id']}"
+            )
+        ])
+
+    keyboard.append([InlineKeyboardButton("◀️ К списку учеников", callback_data=f"homework_submissions:{homework_id}")])
+    keyboard.append([InlineKeyboardButton("🏠 Главное меню", callback_data="teacher_menu")])
+
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await query.message.edit_text(text, reply_markup=reply_markup, parse_mode='HTML')
+
+    return TeacherStates.TEACHER_MENU
+
+
+async def view_answer_detail(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Просмотр конкретного ответа ученика с возможностью добавить комментарий"""
+    query = update.callback_query
+    await query.answer()
+
+    # Парсим callback_data: view_answer:progress_id
+    progress_id = int(query.data.split(':')[1])
+
+    # Получаем прогресс по ID
+    progress_data = await assignment_service.get_question_progress_by_id(progress_id)
+
+    if not progress_data:
+        await query.message.edit_text(
+            "❌ Ответ не найден.",
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("◀️ Назад", callback_data="teacher_my_assignments")
+            ]]),
+            parse_mode='HTML'
+        )
+        return TeacherStates.TEACHER_MENU
+
+    homework_id = progress_data['homework_id']
+    student_id = progress_data['student_id']
+    question_id = progress_data['question_id']
+
+    # Получаем задание
+    homework = await assignment_service.get_homework_by_id(homework_id)
+
+    # Получаем имя ученика
+    student_names = await teacher_service.get_users_display_names([student_id])
+    student_name = student_names.get(student_id, f"ID: {student_id}")
+
+    # Загружаем вопрос
+    from ..services.question_loader import load_question_by_id, format_question_for_display
+    task_module = homework.assignment_data.get('task_module')
+    question_data = load_question_by_id(task_module, question_id)
+
+    # Форматируем текст
+    text = f"📝 <b>{homework.title}</b>\n"
+    text += f"👤 <b>Ученик:</b> {student_name}\n\n"
+
+    if question_data:
+        question_text = format_question_for_display(task_module, question_data)
+        text += f"<b>Вопрос:</b>\n{question_text}\n\n"
+
+    # Обрезаем длинные ответы
+    user_answer = progress_data['user_answer']
+    if len(user_answer) > 2000:
+        user_answer = user_answer[:1997] + "..."
+
+    text += f"<b>Ответ ученика:</b>\n{user_answer}\n\n"
+
+    # AI обратная связь
+    if progress_data['ai_feedback']:
+        feedback = progress_data['ai_feedback']
+        if len(feedback) > 2000:
+            feedback = feedback[:1997] + "..."
+        text += f"<b>Обратная связь AI:</b>\n{feedback}\n\n"
+
+    status = "✅ Принят" if progress_data['is_correct'] else "❌ Требует доработки"
+    text += f"<b>Статус:</b> {status}\n"
+
+    # Сохраняем progress_id в контексте для добавления комментария
+    context.user_data['viewing_answer_id'] = progress_id
+    context.user_data['viewing_student_id'] = student_id
+    context.user_data['viewing_homework_id'] = homework_id
+
+    keyboard = [
+        [InlineKeyboardButton("💬 Добавить комментарий", callback_data=f"add_comment:{progress_id}")],
+        [InlineKeyboardButton("◀️ К ответам ученика", callback_data=f"view_student_progress:{homework_id}:{student_id}")],
+        [InlineKeyboardButton("🏠 Главное меню", callback_data="teacher_menu")]
+    ]
+
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
+    # Отправляем как новое сообщение если текст слишком длинный
+    if len(text) > 4000:
+        await query.message.reply_text(
+            "⚠️ Ответ слишком длинный, отправлен отдельным сообщением.",
+            parse_mode='HTML'
+        )
+        await query.message.reply_text(text, reply_markup=reply_markup, parse_mode='HTML')
+    else:
+        await query.message.edit_text(text, reply_markup=reply_markup, parse_mode='HTML')
+
+    return TeacherStates.TEACHER_MENU
+
+
