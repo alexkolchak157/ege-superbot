@@ -56,6 +56,11 @@ class TeacherModePlugin(BotPlugin):
                     CallbackQueryHandler(teacher_handlers.view_homework_submissions, pattern="^homework_submissions:"),
                     CallbackQueryHandler(teacher_handlers.view_student_progress, pattern="^view_student_progress:"),
                     CallbackQueryHandler(teacher_handlers.view_answer_detail, pattern="^view_answer:"),
+                    CallbackQueryHandler(teacher_handlers.initiate_comment_entry, pattern="^add_comment:"),
+                    CallbackQueryHandler(teacher_handlers.initiate_score_override, pattern="^override_score:"),
+
+                    # Статистика ученика
+                    CallbackQueryHandler(teacher_handlers.show_student_statistics, pattern="^student_stats:"),
 
                     # Подарки и промокоды
                     CallbackQueryHandler(teacher_handlers.show_gift_subscription_menu, pattern="^teacher_gift_menu$"),
@@ -89,6 +94,10 @@ class TeacherModePlugin(BotPlugin):
                 TeacherStates.SELECT_SELECTION_MODE: [
                     # Выбор способа отбора заданий
                     CallbackQueryHandler(teacher_handlers.select_selection_mode, pattern="^selection_mode_"),
+
+                    # Смешанное задание
+                    CallbackQueryHandler(teacher_handlers.toggle_mixed_module_selection, pattern="^toggle_mixed_module:"),
+                    CallbackQueryHandler(teacher_handlers.proceed_with_mixed_selection, pattern="^proceed_mixed_selection$"),
 
                     # Назад к выбору типа задания
                     CallbackQueryHandler(teacher_handlers.create_assignment_start, pattern="^teacher_create_assignment$"),
@@ -143,12 +152,52 @@ class TeacherModePlugin(BotPlugin):
 
                     # Подтверждение сгенерированных заданий
                     CallbackQueryHandler(teacher_handlers.confirm_all_tasks_selection, pattern="^confirm_all_tasks_selection$"),
+                    CallbackQueryHandler(teacher_handlers.confirm_mixed_selection, pattern="^confirm_mixed_selection$"),
 
                     # Перегенерация
                     CallbackQueryHandler(teacher_handlers.regenerate_all_tasks, pattern="^regenerate_all_tasks$"),
 
                     # Отмена
                     CallbackQueryHandler(teacher_handlers.select_task_type, pattern="^assign_task_"),
+                    CallbackQueryHandler(teacher_handlers.teacher_menu, pattern="^teacher_menu$"),
+                ],
+                TeacherStates.ENTERING_COMMENT: [
+                    # Обработка текстового ввода комментария
+                    MessageHandler(filters.TEXT & ~filters.COMMAND, teacher_handlers.process_teacher_comment),
+
+                    # Отмена
+                    CallbackQueryHandler(teacher_handlers.cancel_comment_entry, pattern="^cancel_comment:"),
+                    CallbackQueryHandler(teacher_handlers.teacher_menu, pattern="^teacher_menu$"),
+                ],
+                TeacherStates.OVERRIDING_SCORE: [
+                    # Обработка кнопок принятия/отклонения ответа
+                    CallbackQueryHandler(teacher_handlers.process_score_override, pattern="^set_score_accept:"),
+                    CallbackQueryHandler(teacher_handlers.process_score_override, pattern="^set_score_reject:"),
+
+                    # Отмена
+                    CallbackQueryHandler(teacher_handlers.view_answer_detail, pattern="^view_answer:"),
+                    CallbackQueryHandler(teacher_handlers.teacher_menu, pattern="^teacher_menu$"),
+                ],
+                TeacherStates.ENTER_CUSTOM_QUESTION: [
+                    # Обработка текстового ввода кастомного вопроса
+                    MessageHandler(filters.TEXT & ~filters.COMMAND, teacher_handlers.process_custom_question),
+
+                    # Кнопки управления
+                    CallbackQueryHandler(teacher_handlers.finish_custom_questions, pattern="^finish_custom_questions$"),
+                    CallbackQueryHandler(teacher_handlers.review_custom_questions, pattern="^review_custom_questions$"),
+
+                    # Отмена
+                    CallbackQueryHandler(teacher_handlers.create_assignment_start, pattern="^teacher_create_assignment$"),
+                    CallbackQueryHandler(teacher_handlers.teacher_menu, pattern="^teacher_menu$"),
+                ],
+                TeacherStates.REVIEW_CUSTOM_QUESTIONS: [
+                    # Кнопки управления списком вопросов
+                    CallbackQueryHandler(teacher_handlers.add_more_custom_questions, pattern="^add_more_custom_questions$"),
+                    CallbackQueryHandler(teacher_handlers.finish_custom_questions, pattern="^finish_custom_questions$"),
+                    CallbackQueryHandler(teacher_handlers.delete_last_custom_question, pattern="^delete_last_custom_question$"),
+
+                    # Отмена
+                    CallbackQueryHandler(teacher_handlers.create_assignment_start, pattern="^teacher_create_assignment$"),
                     CallbackQueryHandler(teacher_handlers.teacher_menu, pattern="^teacher_menu$"),
                 ],
             },
@@ -197,11 +246,11 @@ class TeacherModePlugin(BotPlugin):
                     CallbackQueryHandler(student_handlers.start_homework, pattern="^start_homework_\\d+$"),
 
                     # Возврат в главное меню
-                    CallbackQueryHandler(lambda u, c: ConversationHandler.END, pattern="^main_menu$"),
+                    CallbackQueryHandler(student_handlers.cancel_homework_execution, pattern="^main_menu$"),
                 ],
             },
             fallbacks=[
-                CallbackQueryHandler(lambda u, c: ConversationHandler.END, pattern="^main_menu$"),
+                CallbackQueryHandler(student_handlers.cancel_homework_execution, pattern="^main_menu$"),
             ],
             name="homework_execution",
             persistent=False,

@@ -346,22 +346,68 @@ async def start_homework(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         return
 
     # Получаем список конкретных вопросов из assignment_data
-    question_ids = homework.assignment_data.get('question_ids', [])
-    task_module = homework.assignment_data.get('task_module', 'unknown')
+    assignment_data = homework.assignment_data
 
-    if not question_ids:
-        await query.message.edit_text(
-            "❌ В этом задании нет вопросов.",
-            reply_markup=InlineKeyboardMarkup([[
-                InlineKeyboardButton("◀️ Назад", callback_data="student_homework_list")
-            ]]),
-            parse_mode='HTML'
-        )
-        return
+    if assignment_data.get('is_custom'):
+        # Для кастомных заданий используем вопросы напрямую
+        custom_questions = assignment_data.get('custom_questions', [])
+        if not custom_questions:
+            await query.message.edit_text(
+                "❌ В этом задании нет вопросов.",
+                reply_markup=InlineKeyboardMarkup([[
+                    InlineKeyboardButton("◀️ Назад", callback_data="student_homework_list")
+                ]]),
+                parse_mode='HTML'
+            )
+            return
 
-    # Загружаем информацию о вопросах
-    from ..services.topics_loader import load_topics_for_module
-    topics_data = load_topics_for_module(task_module)
+        # Для кастомных заданий используем ID вопросов из списка
+        question_ids = [q['id'] for q in custom_questions]
+        task_module = 'custom'
+
+        # Создаем topics_data для кастомных вопросов
+        topics_data = {
+            'topics_by_id': {
+                q['id']: {'title': q['text'][:50] + ('...' if len(q['text']) > 50 else '')}
+                for q in custom_questions
+            }
+        }
+    elif assignment_data.get('is_mixed'):
+        # Для смешанных заданий собираем все вопросы из всех модулей
+        question_ids = []
+        combined_topics = {}
+
+        from ..services.topics_loader import load_topics_for_module
+
+        for module_data in assignment_data.get('modules', []):
+            module_question_ids = module_data.get('question_ids', [])
+            question_ids.extend(module_question_ids)
+
+            # Загружаем topics для каждого модуля
+            module_code = module_data['task_module']
+            topics_data_temp = load_topics_for_module(module_code)
+            combined_topics.update(topics_data_temp['topics_by_id'])
+
+        topics_data = {'topics_by_id': combined_topics}
+        task_module = 'mixed'
+    else:
+        # Для обычных заданий
+        question_ids = assignment_data.get('question_ids', [])
+        task_module = assignment_data.get('task_module', 'unknown')
+
+        if not question_ids:
+            await query.message.edit_text(
+                "❌ В этом задании нет вопросов.",
+                reply_markup=InlineKeyboardMarkup([[
+                    InlineKeyboardButton("◀️ Назад", callback_data="student_homework_list")
+                ]]),
+                parse_mode='HTML'
+            )
+            return
+
+        # Загружаем информацию о вопросах
+        from ..services.topics_loader import load_topics_for_module
+        topics_data = load_topics_for_module(task_module)
 
     # Получаем прогресс выполнения
     completed_questions = await assignment_service.get_completed_question_ids(homework_id, user_id)
@@ -371,7 +417,9 @@ async def start_homework(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         'task19': '💡 Задание 19',
         'task20': '⚙️ Задание 20',
         'task24': '📊 Задание 24',
-        'task25': '💻 Задание 25'
+        'task25': '💻 Задание 25',
+        'mixed': '🔀 Смешанное задание',
+        'custom': '📝 Кастомное задание'
     }
     task_name = task_names.get(task_module, task_module)
 
@@ -441,7 +489,31 @@ async def show_homework_question(update: Update, context: ContextTypes.DEFAULT_T
         )
         return ConversationHandler.END
 
-    task_module = homework.assignment_data.get('task_module')
+    # Определяем модуль для вопроса (для смешанных и кастомных заданий)
+    assignment_data = homework.assignment_data
+
+    if assignment_data.get('is_custom'):
+        # Для кастомных заданий используем модуль custom
+        task_module = 'custom'
+    elif assignment_data.get('is_mixed'):
+        # Для смешанных заданий ищем модуль, содержащий этот вопрос
+        task_module = None
+        for module_data in assignment_data.get('modules', []):
+            if question_id in module_data.get('question_ids', []):
+                task_module = module_data['task_module']
+                break
+        if not task_module:
+            await query.message.edit_text(
+                "❌ Вопрос не найден в задании.",
+                reply_markup=InlineKeyboardMarkup([[
+                    InlineKeyboardButton("◀️ Назад", callback_data="student_homework_list")
+                ]]),
+                parse_mode='HTML'
+            )
+            return ConversationHandler.END
+    else:
+        # Для обычных заданий берем модуль напрямую
+        task_module = assignment_data.get('task_module')
 
     # Проверяем, выполнен ли уже этот вопрос
     progress = await assignment_service.get_question_progress(homework_id, user_id, question_id)
@@ -469,22 +541,40 @@ async def show_homework_question(update: Update, context: ContextTypes.DEFAULT_T
         return ConversationHandler.END
 
     # Загружаем вопрос
-    from ..services.question_loader import load_question_by_id, format_question_for_display
+    if task_module == 'custom':
+        # Для кастомных заданий берем текст вопроса из assignment_data
+        custom_questions = assignment_data.get('custom_questions', [])
+        question_data = next((q for q in custom_questions if q['id'] == question_id), None)
 
-    question_data = load_question_by_id(task_module, question_id)
+        if not question_data:
+            await query.message.edit_text(
+                "❌ Вопрос не найден в задании.",
+                reply_markup=InlineKeyboardMarkup([[
+                    InlineKeyboardButton("◀️ К списку вопросов", callback_data=f"start_homework_{homework_id}")
+                ]]),
+                parse_mode='HTML'
+            )
+            return ConversationHandler.END
 
-    if not question_data:
-        await query.message.edit_text(
-            "❌ Вопрос не найден в базе данных.",
-            reply_markup=InlineKeyboardMarkup([[
-                InlineKeyboardButton("◀️ К списку вопросов", callback_data=f"start_homework_{homework_id}")
-            ]]),
-            parse_mode='HTML'
-        )
-        return ConversationHandler.END
+        question_text = f"<b>Вопрос {question_id}:</b>\n\n{question_data['text']}"
+    else:
+        # Для стандартных заданий используем question_loader
+        from ..services.question_loader import load_question_by_id, format_question_for_display
 
-    # Форматируем вопрос для отображения
-    question_text = format_question_for_display(task_module, question_data)
+        question_data = load_question_by_id(task_module, question_id)
+
+        if not question_data:
+            await query.message.edit_text(
+                "❌ Вопрос не найден в базе данных.",
+                reply_markup=InlineKeyboardMarkup([[
+                    InlineKeyboardButton("◀️ К списку вопросов", callback_data=f"start_homework_{homework_id}")
+                ]]),
+                parse_mode='HTML'
+            )
+            return ConversationHandler.END
+
+        # Форматируем вопрос для отображения
+        question_text = format_question_for_display(task_module, question_data)
 
     text = (
         f"📝 <b>{homework.title}</b>\n\n"
@@ -595,5 +685,15 @@ async def process_homework_answer(update: Update, context: ContextTypes.DEFAULT_
     reply_markup = InlineKeyboardMarkup(keyboard)
 
     await checking_msg.edit_text(text, reply_markup=reply_markup, parse_mode='HTML')
+
+    return ConversationHandler.END
+
+
+async def cancel_homework_execution(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Отмена выполнения домашнего задания и возврат в главное меню"""
+    # Очищаем контекст если есть
+    context.user_data.pop('current_homework_id', None)
+    context.user_data.pop('current_question_id', None)
+    context.user_data.pop('current_task_module', None)
 
     return ConversationHandler.END

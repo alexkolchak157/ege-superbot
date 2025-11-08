@@ -240,6 +240,25 @@ async def post_init(application: Application) -> None:
     except Exception as e:
         logger.error(f"Failed to initialize retention scheduler: {e}")
 
+    # Инициализация deadline reminder scheduler
+    try:
+        from teacher_mode.deadline_scheduler import get_deadline_scheduler
+
+        deadline_scheduler = get_deadline_scheduler()
+        application.bot_data['deadline_scheduler'] = deadline_scheduler
+
+        # Запускаем проверку дедлайнов каждые 3 часа
+        application.job_queue.run_repeating(
+            deadline_scheduler.check_and_send_reminders,
+            interval=10800,  # 3 часа в секундах
+            first=10,  # Первый запуск через 10 секунд после старта
+            name='deadline_reminders_check'
+        )
+
+        logger.info("Deadline scheduler initialized and scheduled to run every 3 hours")
+    except Exception as e:
+        logger.error(f"Failed to initialize deadline scheduler: {e}")
+
     # Загрузка модулей-плагинов
     try:
         from core import plugin_loader

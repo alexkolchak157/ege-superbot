@@ -324,6 +324,8 @@ async def create_assignment_start(update: Update, context: ContextTypes.DEFAULT_
         [InlineKeyboardButton("⚙️ Задание 20", callback_data="assign_task_task20")],
         [InlineKeyboardButton("📊 Задание 24", callback_data="assign_task_task24")],
         [InlineKeyboardButton("💻 Задание 25", callback_data="assign_task_task25")],
+        [InlineKeyboardButton("🔀 Смешанное задание", callback_data="assign_task_mixed")],
+        [InlineKeyboardButton("📝 Кастомное задание", callback_data="assign_task_custom")],
         [InlineKeyboardButton("◀️ Отмена", callback_data="teacher_menu")]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
@@ -340,6 +342,19 @@ async def select_task_type(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 
     # Извлекаем тип задачи из callback_data
     task_type = query.data.replace("assign_task_", "")
+
+    # Обрабатываем смешанный тип отдельно
+    if task_type == "mixed":
+        context.user_data['assignment_task_type'] = 'mixed'
+        context.user_data['mixed_modules'] = []  # Список выбранных модулей
+        context.user_data['mixed_modules_data'] = []  # Данные по каждому модулю
+        return await show_mixed_modules_selection(update, context)
+
+    # Обрабатываем кастомный тип отдельно
+    if task_type == "custom":
+        context.user_data['assignment_task_type'] = 'custom'
+        context.user_data['custom_questions'] = []  # Список кастомных вопросов
+        return await start_custom_question_entry(update, context)
 
     # Сохраняем выбранный тип задания
     context.user_data['assignment_task_type'] = task_type
@@ -633,6 +648,10 @@ async def confirm_numbers_selection(update: Update, context: ContextTypes.DEFAUL
 async def process_question_count_input(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Обработка ввода количества случайных заданий"""
     task_type = context.user_data.get('assignment_task_type')
+
+    # Обработка для смешанного задания
+    if task_type == 'mixed':
+        return await process_mixed_question_counts(update, context)
 
     try:
         count = int(update.message.text.strip())
@@ -1428,14 +1447,19 @@ async def show_student_list(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         student_names = await teacher_service.get_users_display_names(student_ids)
 
         text += "<b>Список учеников:</b>\n"
+
+        keyboard = []
+
+        # Добавляем кнопку статистики для каждого ученика
         for i, student_id in enumerate(student_ids, 1):
             display_name = student_names.get(student_id, f"ID: {student_id}")
             text += f"{i}. {display_name}\n"
 
-        keyboard = [
-            [InlineKeyboardButton("📊 Общая статистика", callback_data="teacher_statistics")],
-            [InlineKeyboardButton("◀️ Назад", callback_data="teacher_menu")]
-        ]
+            # Добавляем кнопку с именем ученика и иконкой статистики
+            button_text = f"📊 {display_name[:20]}"
+            keyboard.append([InlineKeyboardButton(button_text, callback_data=f"student_stats:{student_id}")])
+
+        keyboard.append([InlineKeyboardButton("◀️ Назад", callback_data="teacher_menu")])
 
     reply_markup = InlineKeyboardMarkup(keyboard)
     await query.message.edit_text(text, reply_markup=reply_markup, parse_mode='HTML')
@@ -2018,6 +2042,7 @@ async def view_answer_detail(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
     keyboard = [
         [InlineKeyboardButton("💬 Добавить комментарий", callback_data=f"add_comment:{progress_id}")],
+        [InlineKeyboardButton("✏️ Переоценить ответ", callback_data=f"override_score:{progress_id}")],
         [InlineKeyboardButton("◀️ К ответам ученика", callback_data=f"view_student_progress:{homework_id}:{student_id}")],
         [InlineKeyboardButton("🏠 Главное меню", callback_data="teacher_menu")]
     ]
@@ -2035,5 +2060,728 @@ async def view_answer_detail(update: Update, context: ContextTypes.DEFAULT_TYPE)
         await query.message.edit_text(text, reply_markup=reply_markup, parse_mode='HTML')
 
     return TeacherStates.TEACHER_MENU
+
+
+async def initiate_comment_entry(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """
+    Начинает процесс ввода комментария учителя к ответу ученика.
+
+    Callback pattern: add_comment:{progress_id}
+    """
+    query = update.callback_query
+    await query.answer()
+
+    # Извлекаем progress_id из callback_data
+    progress_id = int(query.data.split(':')[1])
+
+    # Сохраняем в контексте
+    context.user_data['commenting_progress_id'] = progress_id
+
+    text = "💬 <b>Введите комментарий к ответу ученика:</b>\n\n"
+    text += "Ваш комментарий будет добавлен к AI обратной связи и виден ученику.\n\n"
+    text += "Для отмены нажмите /cancel"
+
+    keyboard = [
+        [InlineKeyboardButton("❌ Отменить", callback_data=f"cancel_comment:{progress_id}")]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
+    await query.message.edit_text(text, reply_markup=reply_markup, parse_mode='HTML')
+
+    return TeacherStates.ENTERING_COMMENT
+
+
+async def process_teacher_comment(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """
+    Обрабатывает введенный комментарий учителя и сохраняет его.
+    """
+    progress_id = context.user_data.get('commenting_progress_id')
+
+    if not progress_id:
+        await update.message.reply_text(
+            "❌ Ошибка: не найден ID ответа для комментирования.",
+            parse_mode='HTML'
+        )
+        return TeacherStates.TEACHER_MENU
+
+    teacher_comment = update.message.text.strip()
+
+    # Сохраняем комментарий
+    from ..services import assignment_service
+    success = await assignment_service.add_teacher_comment(progress_id, teacher_comment)
+
+    if success:
+        text = "✅ <b>Комментарий успешно добавлен!</b>\n\n"
+        text += f"Ваш комментарий:\n{teacher_comment}"
+
+        # Возвращаемся к просмотру ответа
+        keyboard = [
+            [InlineKeyboardButton("◀️ Вернуться к ответу", callback_data=f"view_answer:{progress_id}")],
+            [InlineKeyboardButton("🏠 Главное меню", callback_data="teacher_menu")]
+        ]
+    else:
+        text = "❌ <b>Ошибка при сохранении комментария.</b>\n\n"
+        text += "Попробуйте еще раз или обратитесь к администратору."
+
+        keyboard = [
+            [InlineKeyboardButton("🏠 Главное меню", callback_data="teacher_menu")]
+        ]
+
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await update.message.reply_text(text, reply_markup=reply_markup, parse_mode='HTML')
+
+    # Очищаем контекст
+    context.user_data.pop('commenting_progress_id', None)
+
+    return TeacherStates.TEACHER_MENU
+
+
+async def cancel_comment_entry(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """
+    Отменяет ввод комментария и возвращает к просмотру ответа.
+
+    Callback pattern: cancel_comment:{progress_id}
+    """
+    query = update.callback_query
+    await query.answer()
+
+    progress_id = int(query.data.split(':')[1])
+
+    # Очищаем контекст
+    context.user_data.pop('commenting_progress_id', None)
+
+    # Возвращаемся к просмотру ответа
+    # Создаем фейковый update с правильным callback_data
+    from telegram import Update as TelegramUpdate, CallbackQuery
+
+    # Просто вызываем view_answer_detail напрямую
+    query.data = f"view_answer:{progress_id}"
+    return await view_answer_detail(update, context)
+
+
+async def initiate_score_override(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """
+    Начинает процесс переоценки ответа учителя.
+
+    Callback pattern: override_score:{progress_id}
+    """
+    query = update.callback_query
+    await query.answer()
+
+    # Извлекаем progress_id из callback_data
+    progress_id = int(query.data.split(':')[1])
+
+    # Получаем данные ответа
+    from ..services import assignment_service
+    progress_data = await assignment_service.get_question_progress_by_id(progress_id)
+
+    if not progress_data:
+        await query.message.edit_text(
+            "❌ Ошибка: ответ не найден.",
+            parse_mode='HTML'
+        )
+        return TeacherStates.TEACHER_MENU
+
+    # Сохраняем в контексте
+    context.user_data['overriding_progress_id'] = progress_id
+
+    current_status = "✅ Принят" if progress_data['is_correct'] else "❌ Требует доработки"
+
+    text = f"✏️ <b>Переоценка ответа</b>\n\n"
+    text += f"<b>Текущий статус:</b> {current_status}\n\n"
+    text += "Выберите новый статус для ответа ученика:"
+
+    keyboard = [
+        [InlineKeyboardButton("✅ Принять ответ", callback_data=f"set_score_accept:{progress_id}")],
+        [InlineKeyboardButton("❌ Отклонить ответ", callback_data=f"set_score_reject:{progress_id}")],
+        [InlineKeyboardButton("◀️ Отменить", callback_data=f"view_answer:{progress_id}")]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
+    await query.message.edit_text(text, reply_markup=reply_markup, parse_mode='HTML')
+
+    return TeacherStates.OVERRIDING_SCORE
+
+
+async def process_score_override(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """
+    Обрабатывает переоценку ответа учителя.
+
+    Callback patterns:
+    - set_score_accept:{progress_id}
+    - set_score_reject:{progress_id}
+    """
+    query = update.callback_query
+    await query.answer()
+
+    # Извлекаем action и progress_id из callback_data
+    parts = query.data.split(':')
+    action = parts[0]  # set_score_accept или set_score_reject
+    progress_id = int(parts[1])
+
+    # Определяем новый статус
+    new_is_correct = (action == "set_score_accept")
+
+    # Обновляем статус в БД
+    from ..services import assignment_service
+    success = await assignment_service.override_answer_score(progress_id, new_is_correct)
+
+    if success:
+        status_text = "принят ✅" if new_is_correct else "отклонен ❌"
+        text = f"✅ <b>Оценка успешно изменена!</b>\n\n"
+        text += f"Новый статус: Ответ {status_text}"
+
+        # Добавляем комментарий об override
+        override_comment = f"Оценка изменена учителем: ответ {status_text}"
+        await assignment_service.add_teacher_comment(progress_id, override_comment)
+
+        keyboard = [
+            [InlineKeyboardButton("◀️ Вернуться к ответу", callback_data=f"view_answer:{progress_id}")],
+            [InlineKeyboardButton("🏠 Главное меню", callback_data="teacher_menu")]
+        ]
+    else:
+        text = "❌ <b>Ошибка при изменении оценки.</b>\n\n"
+        text += "Попробуйте еще раз или обратитесь к администратору."
+
+        keyboard = [
+            [InlineKeyboardButton("🏠 Главное меню", callback_data="teacher_menu")]
+        ]
+
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await query.message.edit_text(text, reply_markup=reply_markup, parse_mode='HTML')
+
+    # Очищаем контекст
+    context.user_data.pop('overriding_progress_id', None)
+
+    return TeacherStates.TEACHER_MENU
+
+
+async def show_mixed_modules_selection(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """
+    Показывает экран выбора модулей для смешанного задания.
+    """
+    query = update.callback_query
+
+    selected_modules = context.user_data.get('mixed_modules', [])
+
+    text = "🔀 <b>Смешанное задание</b>\n\n"
+    text += "Выберите модули для включения в задание:\n\n"
+
+    # Показываем какие модули выбраны
+    module_names = {
+        'task19': '💡 Задание 19',
+        'task20': '⚙️ Задание 20',
+        'task24': '📊 Задание 24',
+        'task25': '💻 Задание 25'
+    }
+
+    keyboard = []
+    for module_code, module_name in module_names.items():
+        is_selected = module_code in selected_modules
+        checkbox = "☑️" if is_selected else "◻️"
+        button_text = f"{checkbox} {module_name}"
+        keyboard.append([InlineKeyboardButton(button_text, callback_data=f"toggle_mixed_module:{module_code}")])
+
+    # Кнопка продолжения (только если выбран хотя бы один модуль)
+    if selected_modules:
+        text += f"\n<b>Выбрано модулей:</b> {len(selected_modules)}"
+        keyboard.append([InlineKeyboardButton("✅ Продолжить", callback_data="proceed_mixed_selection")])
+
+    keyboard.append([InlineKeyboardButton("◀️ Отмена", callback_data="teacher_create_assignment")])
+
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await query.message.edit_text(text, reply_markup=reply_markup, parse_mode='HTML')
+
+    return TeacherStates.SELECT_SELECTION_MODE
+
+
+async def toggle_mixed_module_selection(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """
+    Переключает выбор модуля для смешанного задания.
+
+    Callback pattern: toggle_mixed_module:{module_code}
+    """
+    query = update.callback_query
+    await query.answer()
+
+    module_code = query.data.split(':')[1]
+    selected_modules = context.user_data.get('mixed_modules', [])
+
+    if module_code in selected_modules:
+        selected_modules.remove(module_code)
+    else:
+        selected_modules.append(module_code)
+
+    context.user_data['mixed_modules'] = selected_modules
+
+    return await show_mixed_modules_selection(update, context)
+
+
+async def proceed_with_mixed_selection(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """
+    Переход к вводу количества заданий для каждого выбранного модуля.
+    """
+    query = update.callback_query
+    await query.answer()
+
+    selected_modules = context.user_data.get('mixed_modules', [])
+
+    if not selected_modules:
+        await query.answer("⚠️ Выберите хотя бы один модуль", show_alert=True)
+        return TeacherStates.SELECT_SELECTION_MODE
+
+    module_names = {
+        'task19': '💡 Задание 19',
+        'task20': '⚙️ Задание 20',
+        'task24': '📊 Задание 24',
+        'task25': '💻 Задание 25'
+    }
+
+    text = "🔀 <b>Смешанное задание</b>\n\n"
+    text += "Для каждого выбранного модуля введите количество заданий:\n\n"
+    text += "<b>Формат:</b> числа через запятую в том же порядке\n\n"
+
+    for module_code in selected_modules:
+        text += f"• {module_names[module_code]}\n"
+
+    text += f"\n<b>Пример:</b> 5, 3, 2 (для {len(selected_modules)} модулей)"
+
+    keyboard = [
+        [InlineKeyboardButton("◀️ Назад", callback_data="assign_task_mixed")]
+    ]
+
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await query.message.edit_text(text, reply_markup=reply_markup, parse_mode='HTML')
+
+    return TeacherStates.ENTER_QUESTION_COUNT
+
+
+async def process_mixed_question_counts(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """
+    Обрабатывает ввод количества заданий для каждого модуля в смешанном задании.
+    """
+    import random
+    from ..services.topics_loader import load_topics_for_module
+
+    selected_modules = context.user_data.get('mixed_modules', [])
+    user_input = update.message.text.strip()
+
+    try:
+        # Парсим числа через запятую
+        counts = [int(c.strip()) for c in user_input.split(',')]
+
+        if len(counts) != len(selected_modules):
+            await update.message.reply_text(
+                f"❌ <b>Неверное количество чисел</b>\n\n"
+                f"Вы выбрали {len(selected_modules)} модулей, "
+                f"но ввели {len(counts)} чисел.\n\n"
+                f"Введите ровно {len(selected_modules)} чисел через запятую:",
+                parse_mode='HTML'
+            )
+            return TeacherStates.ENTER_QUESTION_COUNT
+
+        # Проверяем, что все числа > 0
+        if any(c <= 0 for c in counts):
+            await update.message.reply_text(
+                "❌ <b>Все числа должны быть больше нуля</b>\n\n"
+                "Попробуйте еще раз:",
+                parse_mode='HTML'
+            )
+            return TeacherStates.ENTER_QUESTION_COUNT
+
+        # Генерируем задания для каждого модуля
+        modules_data = []
+        total_questions = 0
+
+        module_names = {
+            'task19': '💡 Задание 19',
+            'task20': '⚙️ Задание 20',
+            'task24': '📊 Задание 24',
+            'task25': '💻 Задание 25'
+        }
+
+        for module_code, count in zip(selected_modules, counts):
+            # Загружаем темы для модуля
+            topics_data = load_topics_for_module(module_code)
+            total_count = topics_data['total_count']
+
+            if count > total_count:
+                await update.message.reply_text(
+                    f"❌ <b>Слишком много заданий для {module_names[module_code]}</b>\n\n"
+                    f"Доступно только {total_count} заданий.\n\n"
+                    f"Попробуйте еще раз:",
+                    parse_mode='HTML'
+                )
+                return TeacherStates.ENTER_QUESTION_COUNT
+
+            # Генерируем случайные задания
+            all_question_ids = list(topics_data['topics_by_id'].keys())
+            if count >= len(all_question_ids):
+                selected_ids = all_question_ids
+            else:
+                selected_ids = random.sample(all_question_ids, count)
+
+            selected_ids.sort()
+
+            # Добавляем данные модуля
+            modules_data.append({
+                'task_module': module_code,
+                'selection_mode': 'all',
+                'selected_blocks': [],
+                'question_ids': selected_ids,
+                'questions_count': len(selected_ids)
+            })
+
+            total_questions += len(selected_ids)
+
+        # Сохраняем в assignment_data
+        context.user_data['assignment_data'] = {
+            'is_mixed': True,
+            'modules': modules_data,
+            'total_questions_count': total_questions
+        }
+
+        # Показываем подтверждение
+        text = "🔀 <b>Смешанное задание</b>\n\n"
+        text += f"✅ Всего заданий: {total_questions}\n\n"
+
+        for module_data in modules_data:
+            module_code = module_data['task_module']
+            count = module_data['questions_count']
+            text += f"• {module_names[module_code]}: {count} заданий\n"
+
+        text += "\n<i>Подтвердите выбор или введите количества заново</i>"
+
+        keyboard = [
+            [InlineKeyboardButton("✅ Подтвердить выбор", callback_data="confirm_mixed_selection")],
+            [InlineKeyboardButton("🔄 Ввести заново", callback_data="proceed_mixed_selection")],
+            [InlineKeyboardButton("◀️ Назад", callback_data="assign_task_mixed")]
+        ]
+
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        await update.message.reply_text(text, reply_markup=reply_markup, parse_mode='HTML')
+
+        return TeacherStates.ENTER_QUESTION_COUNT
+
+    except ValueError:
+        await update.message.reply_text(
+            "❌ <b>Неверный формат</b>\n\n"
+            "Введите целые числа через запятую (например: 5, 3, 2):",
+            parse_mode='HTML'
+        )
+        return TeacherStates.ENTER_QUESTION_COUNT
+
+
+async def confirm_mixed_selection(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """
+    Подтверждение смешанного задания и переход к выбору учеников.
+    """
+    query = update.callback_query
+    await query.answer()
+
+    assignment_data = context.user_data.get('assignment_data')
+
+    if not assignment_data or not assignment_data.get('is_mixed'):
+        await query.answer("❌ Ошибка: данные задания не найдены", show_alert=True)
+        return TeacherStates.ENTER_QUESTION_COUNT
+
+    # Переходим к выбору учеников
+    return await proceed_to_student_selection(update, context)
+
+
+async def start_custom_question_entry(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """
+    Начинает процесс создания кастомного задания.
+    """
+    query = update.callback_query
+
+    custom_questions = context.user_data.get('custom_questions', [])
+    question_count = len(custom_questions)
+
+    text = "📝 <b>Кастомное задание</b>\n\n"
+
+    if question_count == 0:
+        text += "Вы можете создать свои собственные вопросы для учеников.\n\n"
+        text += "💬 Отправьте текст первого вопроса:"
+    else:
+        text += f"✅ Добавлено вопросов: {question_count}\n\n"
+        text += "💬 Отправьте текст следующего вопроса или завершите создание:"
+
+    keyboard = []
+
+    if question_count > 0:
+        keyboard.append([InlineKeyboardButton(f"✅ Завершить ({question_count} вопросов)", callback_data="finish_custom_questions")])
+        keyboard.append([InlineKeyboardButton("👀 Просмотреть вопросы", callback_data="review_custom_questions")])
+
+    keyboard.append([InlineKeyboardButton("❌ Отменить", callback_data="teacher_create_assignment")])
+
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await query.message.edit_text(text, reply_markup=reply_markup, parse_mode='HTML')
+
+    return TeacherStates.ENTER_CUSTOM_QUESTION
+
+
+async def process_custom_question(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """
+    Обрабатывает ввод текста кастомного вопроса.
+    """
+    question_text = update.message.text.strip()
+
+    if len(question_text) < 10:
+        await update.message.reply_text(
+            "❌ <b>Вопрос слишком короткий</b>\n\n"
+            "Минимальная длина вопроса: 10 символов.\n"
+            "Попробуйте еще раз:",
+            parse_mode='HTML'
+        )
+        return TeacherStates.ENTER_CUSTOM_QUESTION
+
+    if len(question_text) > 2000:
+        await update.message.reply_text(
+            "❌ <b>Вопрос слишком длинный</b>\n\n"
+            "Максимальная длина вопроса: 2000 символов.\n"
+            "Попробуйте еще раз:",
+            parse_mode='HTML'
+        )
+        return TeacherStates.ENTER_CUSTOM_QUESTION
+
+    # Добавляем вопрос в список
+    custom_questions = context.user_data.get('custom_questions', [])
+    question_id = len(custom_questions) + 1
+
+    custom_questions.append({
+        'id': question_id,
+        'text': question_text
+    })
+
+    context.user_data['custom_questions'] = custom_questions
+
+    text = f"✅ <b>Вопрос #{question_id} добавлен!</b>\n\n"
+    text += f"<i>{question_text[:100]}{'...' if len(question_text) > 100 else ''}</i>\n\n"
+    text += f"📊 Всего вопросов: {len(custom_questions)}\n\n"
+    text += "💬 Отправьте следующий вопрос или завершите создание:"
+
+    keyboard = [
+        [InlineKeyboardButton(f"✅ Завершить ({len(custom_questions)} вопросов)", callback_data="finish_custom_questions")],
+        [InlineKeyboardButton("👀 Просмотреть все вопросы", callback_data="review_custom_questions")],
+        [InlineKeyboardButton("❌ Отменить", callback_data="teacher_create_assignment")]
+    ]
+
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await update.message.reply_text(text, reply_markup=reply_markup, parse_mode='HTML')
+
+    return TeacherStates.ENTER_CUSTOM_QUESTION
+
+
+async def review_custom_questions(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """
+    Показывает список всех введенных кастомных вопросов.
+    """
+    query = update.callback_query
+    await query.answer()
+
+    custom_questions = context.user_data.get('custom_questions', [])
+
+    if not custom_questions:
+        await query.answer("⚠️ Нет добавленных вопросов", show_alert=True)
+        return TeacherStates.ENTER_CUSTOM_QUESTION
+
+    text = f"📝 <b>Кастомное задание</b>\n\n"
+    text += f"📊 Всего вопросов: {len(custom_questions)}\n\n"
+
+    for q in custom_questions:
+        question_preview = q['text'][:80] + ('...' if len(q['text']) > 80 else '')
+        text += f"<b>{q['id']}.</b> {question_preview}\n\n"
+
+    if len(text) > 3900:
+        text = text[:3900] + "\n\n<i>(список обрезан)</i>"
+
+    keyboard = [
+        [InlineKeyboardButton("➕ Добавить еще вопрос", callback_data="add_more_custom_questions")],
+        [InlineKeyboardButton(f"✅ Завершить ({len(custom_questions)} вопросов)", callback_data="finish_custom_questions")],
+        [InlineKeyboardButton("🗑️ Удалить последний", callback_data="delete_last_custom_question")],
+        [InlineKeyboardButton("❌ Отменить все", callback_data="teacher_create_assignment")]
+    ]
+
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await query.message.edit_text(text, reply_markup=reply_markup, parse_mode='HTML')
+
+    return TeacherStates.REVIEW_CUSTOM_QUESTIONS
+
+
+async def delete_last_custom_question(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """
+    Удаляет последний добавленный вопрос.
+    """
+    query = update.callback_query
+    await query.answer()
+
+    custom_questions = context.user_data.get('custom_questions', [])
+
+    if not custom_questions:
+        await query.answer("⚠️ Нет вопросов для удаления", show_alert=True)
+        return TeacherStates.REVIEW_CUSTOM_QUESTIONS
+
+    deleted_question = custom_questions.pop()
+    context.user_data['custom_questions'] = custom_questions
+
+    await query.answer(f"🗑️ Вопрос #{deleted_question['id']} удален", show_alert=True)
+
+    # Возвращаемся к просмотру
+    return await review_custom_questions(update, context)
+
+
+async def add_more_custom_questions(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """
+    Возвращается к добавлению вопросов из режима просмотра.
+    """
+    query = update.callback_query
+    await query.answer()
+
+    return await start_custom_question_entry(update, context)
+
+
+async def finish_custom_questions(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """
+    Завершает создание кастомных вопросов и переходит к выбору учеников.
+    """
+    query = update.callback_query
+    await query.answer()
+
+    custom_questions = context.user_data.get('custom_questions', [])
+
+    if not custom_questions:
+        await query.answer("⚠️ Добавьте хотя бы один вопрос", show_alert=True)
+        return TeacherStates.ENTER_CUSTOM_QUESTION
+
+    # Сохраняем в assignment_data
+    context.user_data['assignment_data'] = {
+        'task_module': 'custom',
+        'is_custom': True,
+        'custom_questions': custom_questions,
+        'questions_count': len(custom_questions)
+    }
+
+    # Переходим к выбору учеников
+    return await proceed_to_student_selection(update, context)
+
+
+async def show_student_statistics(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """
+    Показывает детальную статистику конкретного ученика.
+
+    Callback pattern: student_stats:{student_id}
+    """
+    query = update.callback_query
+    await query.answer()
+
+    user_id = update.effective_user.id
+
+    # Извлекаем student_id из callback_data
+    student_id = int(query.data.split(':')[1])
+
+    # Получаем статистику
+    from ..services import assignment_service, teacher_service
+
+    stats = await assignment_service.get_student_statistics(user_id, student_id)
+
+    if not stats:
+        await query.message.edit_text(
+            "❌ Ошибка при получении статистики.",
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("◀️ Назад", callback_data="teacher_students")
+            ]]),
+            parse_mode='HTML'
+        )
+        return TeacherStates.TEACHER_MENU
+
+    # Получаем имя ученика
+    student_names = await teacher_service.get_users_display_names([student_id])
+    student_name = student_names.get(student_id, f"ID: {student_id}")
+
+    # Формируем текст статистики
+    text = f"📊 <b>Статистика ученика</b>\n\n"
+    text += f"👤 <b>Ученик:</b> {student_name}\n\n"
+
+    # Общая статистика
+    text += "📈 <b>Общие показатели:</b>\n"
+    text += f"• Получено заданий: {stats['total_assignments']}\n"
+    text += f"• Завершено заданий: {stats['completed_assignments']}\n"
+    text += f"• Всего вопросов: {stats['total_questions']}\n"
+    text += f"• Дано ответов: {stats['total_answered']}\n\n"
+
+    if stats['total_answered'] > 0:
+        text += f"✅ <b>Правильных ответов:</b> {stats['correct_answers']} ({stats['accuracy_rate']}%)\n"
+        text += f"❌ <b>Неправильных ответов:</b> {stats['incorrect_answers']}\n\n"
+
+        # Определяем общий уровень
+        accuracy = stats['accuracy_rate']
+        if accuracy >= 80:
+            level = "🌟 Отличный"
+            emoji = "🎉"
+        elif accuracy >= 60:
+            level = "👍 Хороший"
+            emoji = "💪"
+        elif accuracy >= 40:
+            level = "⚠️ Средний"
+            emoji = "📚"
+        else:
+            level = "❗ Требует внимания"
+            emoji = "🔔"
+
+        text += f"{emoji} <b>Уровень:</b> {level}\n\n"
+
+        # Слабые темы
+        if stats['weak_modules']:
+            text += "📉 <b>Требуют проработки:</b>\n"
+
+            module_names = {
+                'task19': '💡 Задание 19',
+                'task20': '⚙️ Задание 20',
+                'task24': '📊 Задание 24',
+                'task25': '💻 Задание 25',
+                'custom': '📝 Кастомные',
+                'mixed': '🔀 Смешанные'
+            }
+
+            for weak in stats['weak_modules']:
+                module_display = module_names.get(weak['module'], weak['module'])
+                text += f"  • {module_display}: {weak['correct']}/{weak['total']} ({weak['accuracy']:.1f}%)\n"
+
+            text += "\n"
+
+        # Сильные темы
+        if stats['strong_modules']:
+            text += "📈 <b>Сильные стороны:</b>\n"
+
+            for strong in stats['strong_modules']:
+                module_display = module_names.get(strong['module'], strong['module'])
+                text += f"  • {module_display}: {strong['correct']}/{strong['total']} ({strong['accuracy']:.1f}%)\n"
+
+            text += "\n"
+
+        # Рекомендации
+        text += "💡 <b>Рекомендации:</b>\n"
+        if accuracy < 50:
+            text += "  • Рекомендуется дополнительная практика\n"
+            text += "  • Уделите внимание разбору ошибок\n"
+        if stats['weak_modules']:
+            text += "  • Сфокусируйтесь на слабых темах\n"
+        if stats['completed_assignments'] < stats['total_assignments']:
+            text += "  • Завершите все полученные задания\n"
+    else:
+        text += "ℹ️ Ученик еще не начал выполнять задания.\n"
+
+    keyboard = [
+        [InlineKeyboardButton("📋 Домашние задания", callback_data="teacher_my_assignments")],
+        [InlineKeyboardButton("◀️ К списку учеников", callback_data="teacher_students")],
+        [InlineKeyboardButton("🏠 Главное меню", callback_data="teacher_menu")]
+    ]
+
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await query.message.edit_text(text, reply_markup=reply_markup, parse_mode='HTML')
+
+    return TeacherStates.TEACHER_MENU
+
 
 
