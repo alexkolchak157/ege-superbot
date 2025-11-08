@@ -396,14 +396,23 @@ async def select_selection_mode(update: Update, context: ContextTypes.DEFAULT_TY
 
     # Обрабатываем разные режимы отбора
     if mode == "all":
-        # Режим "Все задания" - используем 10 случайных заданий (как раньше)
-        context.user_data['assignment_data'] = {
-            'task_module': task_type,
-            'questions_count': 10,
-            'selection_mode': 'all'
-        }
-        # Переходим к выбору учеников
-        return await proceed_to_student_selection(update, context)
+        # Режим "Все задания" - запрашиваем количество заданий
+        from ..services.topics_loader import load_topics_for_module
+
+        topics_data = load_topics_for_module(task_type)
+        total_count = topics_data['total_count']
+
+        await query.message.edit_text(
+            f"🎲 <b>{task_name}: Случайные задания</b>\n\n"
+            f"📚 В банке доступно: {total_count} заданий\n\n"
+            "Сколько заданий вы хотите включить в домашнюю работу?\n\n"
+            "Введите число (например: 5, 10, 15):",
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("◀️ Отмена", callback_data=f"assign_task_{task_type}")
+            ]]),
+            parse_mode='HTML'
+        )
+        return TeacherStates.ENTER_QUESTION_COUNT
 
     elif mode == "topics":
         # Режим "По темам" - показываем список блоков
@@ -612,6 +621,209 @@ async def confirm_numbers_selection(update: Update, context: ContextTypes.DEFAUL
     context.user_data['assignment_data'] = {
         'task_module': task_type,
         'selection_mode': 'numbers',
+        'selected_blocks': [],
+        'question_ids': selected_question_ids,
+        'questions_count': len(selected_question_ids)
+    }
+
+    # Переходим к выбору учеников
+    return await proceed_to_student_selection(update, context)
+
+
+async def process_question_count_input(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Обработка ввода количества случайных заданий"""
+    task_type = context.user_data.get('assignment_task_type')
+
+    try:
+        count = int(update.message.text.strip())
+
+        if count <= 0:
+            await update.message.reply_text(
+                "❌ <b>Количество должно быть больше нуля</b>\n\n"
+                "Попробуйте еще раз:",
+                parse_mode='HTML'
+            )
+            return TeacherStates.ENTER_QUESTION_COUNT
+
+        # Загружаем темы для проверки максимального количества
+        from ..services.topics_loader import load_topics_for_module
+
+        topics_data = load_topics_for_module(task_type)
+        total_count = topics_data['total_count']
+
+        if count > total_count:
+            await update.message.reply_text(
+                f"❌ <b>Слишком много заданий</b>\n\n"
+                f"В банке доступно только {total_count} заданий.\n"
+                f"Введите число от 1 до {total_count}:",
+                parse_mode='HTML'
+            )
+            return TeacherStates.ENTER_QUESTION_COUNT
+
+        # Сохраняем количество в контексте
+        context.user_data['question_count'] = count
+
+        # Генерируем случайные задания
+        return await generate_and_show_random_questions(update, context, count, task_type, topics_data)
+
+    except ValueError:
+        await update.message.reply_text(
+            "❌ <b>Неверный формат</b>\n\n"
+            "Введите целое число (например: 5, 10, 15):",
+            parse_mode='HTML'
+        )
+        return TeacherStates.ENTER_QUESTION_COUNT
+
+
+async def generate_and_show_random_questions(update: Update, context: ContextTypes.DEFAULT_TYPE,
+                                             count: int, task_type: str, topics_data: Dict) -> int:
+    """Генерирует случайные задания и показывает для подтверждения"""
+    import random
+
+    # Получаем все доступные ID
+    all_question_ids = list(topics_data['topics_by_id'].keys())
+
+    # Выбираем случайные N заданий
+    if count >= len(all_question_ids):
+        selected_ids = all_question_ids
+    else:
+        selected_ids = random.sample(all_question_ids, count)
+
+    # Сортируем для удобства отображения
+    selected_ids.sort()
+
+    # Сохраняем в контексте
+    context.user_data['selected_question_ids'] = selected_ids
+    context.user_data['selected_blocks'] = []  # Для режима "все" блоки не используются
+
+    # Показываем список для подтверждения
+    task_names = {
+        'task19': '💡 Задание 19',
+        'task20': '⚙️ Задание 20',
+        'task24': '📊 Задание 24',
+        'task25': '💻 Задание 25'
+    }
+    task_name = task_names.get(task_type, task_type)
+
+    text = (
+        f"🎲 <b>{task_name}: Случайные задания</b>\n\n"
+        f"✅ Сгенерировано заданий: {len(selected_ids)}\n\n"
+        "Список выбранных заданий:\n\n"
+    )
+
+    # Добавляем информацию о каждом задании
+    for idx, q_id in enumerate(selected_ids, 1):
+        topic = topics_data['topics_by_id'].get(q_id)
+        if topic:
+            title = topic.get('title', 'Без названия')
+            # Обрезаем длинные названия
+            if len(title) > 60:
+                title = title[:57] + "..."
+            text += f"{idx}. <b>№{q_id}</b>: {title}\n"
+        else:
+            text += f"{idx}. <b>№{q_id}</b>: (название не найдено)\n"
+
+    text += "\n<i>Подтвердите выбор или сгенерируйте заново</i>"
+
+    keyboard = [
+        [InlineKeyboardButton("✅ Подтвердить выбор", callback_data="confirm_all_tasks_selection")],
+        [InlineKeyboardButton("🔄 Генерировать заново", callback_data="regenerate_all_tasks")],
+        [InlineKeyboardButton("◀️ Назад", callback_data=f"assign_task_{task_type}")]
+    ]
+
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
+    # Отправляем новое сообщение (так как предыдущее было текстовым вводом)
+    await update.message.reply_text(text, reply_markup=reply_markup, parse_mode='HTML')
+
+    return TeacherStates.ENTER_QUESTION_COUNT
+
+
+async def regenerate_all_tasks(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Перегенерирует случайные задания"""
+    query = update.callback_query
+    await query.answer()
+
+    task_type = context.user_data.get('assignment_task_type')
+    count = context.user_data.get('question_count', 10)
+
+    # Загружаем темы
+    from ..services.topics_loader import load_topics_for_module
+    topics_data = load_topics_for_module(task_type)
+
+    # Генерируем новые случайные задания
+    import random
+    all_question_ids = list(topics_data['topics_by_id'].keys())
+
+    if count >= len(all_question_ids):
+        selected_ids = all_question_ids
+    else:
+        selected_ids = random.sample(all_question_ids, count)
+
+    selected_ids.sort()
+
+    # Сохраняем в контексте
+    context.user_data['selected_question_ids'] = selected_ids
+
+    # Показываем обновленный список
+    task_names = {
+        'task19': '💡 Задание 19',
+        'task20': '⚙️ Задание 20',
+        'task24': '📊 Задание 24',
+        'task25': '💻 Задание 25'
+    }
+    task_name = task_names.get(task_type, task_type)
+
+    text = (
+        f"🎲 <b>{task_name}: Случайные задания</b>\n\n"
+        f"✅ Сгенерировано заданий: {len(selected_ids)}\n\n"
+        "Список выбранных заданий:\n\n"
+    )
+
+    # Добавляем информацию о каждом задании
+    for idx, q_id in enumerate(selected_ids, 1):
+        topic = topics_data['topics_by_id'].get(q_id)
+        if topic:
+            title = topic.get('title', 'Без названия')
+            # Обрезаем длинные названия
+            if len(title) > 60:
+                title = title[:57] + "..."
+            text += f"{idx}. <b>№{q_id}</b>: {title}\n"
+        else:
+            text += f"{idx}. <b>№{q_id}</b>: (название не найдено)\n"
+
+    text += "\n<i>Подтвердите выбор или сгенерируйте заново</i>"
+
+    keyboard = [
+        [InlineKeyboardButton("✅ Подтвердить выбор", callback_data="confirm_all_tasks_selection")],
+        [InlineKeyboardButton("🔄 Генерировать заново", callback_data="regenerate_all_tasks")],
+        [InlineKeyboardButton("◀️ Назад", callback_data=f"assign_task_{task_type}")]
+    ]
+
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
+    # Редактируем сообщение
+    await query.message.edit_text(text, reply_markup=reply_markup, parse_mode='HTML')
+
+    return TeacherStates.ENTER_QUESTION_COUNT
+
+
+async def confirm_all_tasks_selection(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Подтверждение случайно сгенерированных заданий и переход к выбору учеников"""
+    query = update.callback_query
+    await query.answer()
+
+    task_type = context.user_data.get('assignment_task_type')
+    selected_question_ids = context.user_data.get('selected_question_ids', [])
+
+    if not selected_question_ids:
+        await query.answer("⚠️ Список заданий пуст", show_alert=True)
+        return TeacherStates.ENTER_QUESTION_COUNT
+
+    # Сохраняем в assignment_data
+    context.user_data['assignment_data'] = {
+        'task_module': task_type,
+        'selection_mode': 'all',
         'selected_blocks': [],
         'question_ids': selected_question_ids,
         'questions_count': len(selected_question_ids)

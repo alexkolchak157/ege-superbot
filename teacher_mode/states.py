@@ -22,6 +22,7 @@ class TeacherStates(IntEnum):
     SELECT_TOPICS = 23  # Выбор тем/блоков из банка
     SELECT_SPECIFIC_QUESTIONS = 24  # Выбор конкретных заданий из выбранных блоков
     ENTER_QUESTION_NUMBERS = 25  # Ввод конкретных номеров заданий
+    ENTER_QUESTION_COUNT = 26  # Ввод количества случайных заданий для режима "все"
 
     # Просмотр статистики
     VIEW_STATISTICS = 30

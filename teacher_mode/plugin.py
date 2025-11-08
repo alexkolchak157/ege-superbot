@@ -132,6 +132,20 @@ class TeacherModePlugin(BotPlugin):
                     CallbackQueryHandler(teacher_handlers.select_task_type, pattern="^assign_task_"),
                     CallbackQueryHandler(teacher_handlers.teacher_menu, pattern="^teacher_menu$"),
                 ],
+                TeacherStates.ENTER_QUESTION_COUNT: [
+                    # Обработка текстового ввода количества заданий для режима "все"
+                    MessageHandler(filters.TEXT & ~filters.COMMAND, teacher_handlers.process_question_count_input),
+
+                    # Подтверждение сгенерированных заданий
+                    CallbackQueryHandler(teacher_handlers.confirm_all_tasks_selection, pattern="^confirm_all_tasks_selection$"),
+
+                    # Перегенерация
+                    CallbackQueryHandler(teacher_handlers.regenerate_all_tasks, pattern="^regenerate_all_tasks$"),
+
+                    # Отмена
+                    CallbackQueryHandler(teacher_handlers.select_task_type, pattern="^assign_task_"),
+                    CallbackQueryHandler(teacher_handlers.teacher_menu, pattern="^teacher_menu$"),
+                ],
             },
             fallbacks=[
                 CallbackQueryHandler(teacher_handlers.teacher_menu, pattern="^teacher_menu$"),
