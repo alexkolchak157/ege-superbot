@@ -323,9 +323,11 @@ async def view_homework(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
 
 async def start_homework(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Начало выполнения задания"""
+    """Начало выполнения задания - показывает список конкретных вопросов"""
     query = update.callback_query
     await query.answer()
+
+    user_id = update.effective_user.id
 
     # Извлекаем ID задания из callback_data
     homework_id = int(query.data.replace("start_homework_", ""))
@@ -343,19 +345,13 @@ async def start_homework(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         )
         return
 
+    # Получаем список конкретных вопросов из assignment_data
+    question_ids = homework.assignment_data.get('question_ids', [])
     task_module = homework.assignment_data.get('task_module', 'unknown')
 
-    # Формируем инструкцию для пользователя
-    module_instructions = {
-        'task19': ('💡 Задание 19', 'choose_task19'),
-        'task20': ('⚙️ Задание 20', 'choose_task20'),
-        'task24': ('📊 Задание 24', 'choose_task24'),
-        'task25': ('💻 Задание 25', 'choose_task25')
-    }
-
-    if task_module not in module_instructions:
+    if not question_ids:
         await query.message.edit_text(
-            "❌ Неизвестный тип задания.",
+            "❌ В этом задании нет вопросов.",
             reply_markup=InlineKeyboardMarkup([[
                 InlineKeyboardButton("◀️ Назад", callback_data="student_homework_list")
             ]]),
@@ -363,19 +359,225 @@ async def start_homework(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         )
         return
 
-    task_name, module_callback = module_instructions[task_module]
+    # Загружаем информацию о вопросах
+    from ..services.topics_loader import load_topics_for_module
+    topics_data = load_topics_for_module(task_module)
+
+    # Получаем прогресс выполнения
+    completed_questions = await assignment_service.get_completed_question_ids(homework_id, user_id)
+
+    # Формируем текст
+    task_names = {
+        'task19': '💡 Задание 19',
+        'task20': '⚙️ Задание 20',
+        'task24': '📊 Задание 24',
+        'task25': '💻 Задание 25'
+    }
+    task_name = task_names.get(task_module, task_module)
+
+    completed_count = len(completed_questions)
+    total_count = len(question_ids)
 
     text = (
-        f"🚀 <b>Запуск задания: {homework.title}</b>\n\n"
-        f"Для выполнения этого задания перейдите в модуль <b>{task_name}</b>.\n\n"
-        "Нажмите кнопку ниже для перехода в модуль:"
+        f"📝 <b>{homework.title}</b>\n"
+        f"🎯 <b>{task_name}</b>\n\n"
+        f"📊 Прогресс: {completed_count}/{total_count}\n\n"
+        "Выберите задание для выполнения:\n"
     )
 
+    # Формируем клавиатуру с вопросами
+    keyboard = []
+
+    for idx, q_id in enumerate(question_ids, 1):
+        topic = topics_data['topics_by_id'].get(q_id)
+        if topic:
+            title = topic.get('title', f'Вопрос {q_id}')
+            # Обрезаем длинные названия
+            if len(title) > 45:
+                title = title[:42] + "..."
+
+            # Проверяем, выполнен ли вопрос
+            if q_id in completed_questions:
+                emoji = "✅"
+                button_text = f"{emoji} {idx}. {title}"
+            else:
+                emoji = "⬜"
+                button_text = f"{emoji} {idx}. {title}"
+
+            keyboard.append([
+                InlineKeyboardButton(
+                    button_text,
+                    callback_data=f"hw_question:{homework_id}:{q_id}"
+                )
+            ])
+
+    keyboard.append([InlineKeyboardButton("◀️ К списку заданий", callback_data="student_homework_list")])
+
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await query.message.edit_text(text, reply_markup=reply_markup, parse_mode='HTML')
+
+
+async def show_homework_question(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Показывает конкретный вопрос из домашнего задания"""
+    query = update.callback_query
+    await query.answer()
+
+    user_id = update.effective_user.id
+
+    # Парсим callback_data: hw_question:homework_id:question_id
+    _, homework_id_str, question_id_str = query.data.split(':')
+    homework_id = int(homework_id_str)
+    question_id = int(question_id_str)
+
+    # Получаем задание
+    homework = await assignment_service.get_homework_by_id(homework_id)
+    if not homework:
+        await query.message.edit_text(
+            "❌ Задание не найдено.",
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("◀️ Назад", callback_data="student_homework_list")
+            ]]),
+            parse_mode='HTML'
+        )
+        return ConversationHandler.END
+
+    task_module = homework.assignment_data.get('task_module')
+
+    # Проверяем, выполнен ли уже этот вопрос
+    progress = await assignment_service.get_question_progress(homework_id, user_id, question_id)
+
+    if progress:
+        # Показываем результат выполнения
+        text = (
+            f"✅ <b>Вопрос уже выполнен</b>\n\n"
+            f"<b>Ваш ответ:</b>\n{progress['user_answer']}\n\n"
+        )
+
+        if progress['ai_feedback']:
+            text += f"<b>Обратная связь:</b>\n{progress['ai_feedback']}\n\n"
+
+        if progress['is_correct']:
+            text += "✅ Ответ принят"
+        else:
+            text += "❌ Требуется доработка"
+
+        keyboard = [
+            [InlineKeyboardButton("◀️ К списку вопросов", callback_data=f"start_homework_{homework_id}")]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        await query.message.edit_text(text, reply_markup=reply_markup, parse_mode='HTML')
+        return ConversationHandler.END
+
+    # Загружаем вопрос
+    from ..services.question_loader import load_question_by_id, format_question_for_display
+
+    question_data = load_question_by_id(task_module, question_id)
+
+    if not question_data:
+        await query.message.edit_text(
+            "❌ Вопрос не найден в базе данных.",
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("◀️ К списку вопросов", callback_data=f"start_homework_{homework_id}")
+            ]]),
+            parse_mode='HTML'
+        )
+        return ConversationHandler.END
+
+    # Форматируем вопрос для отображения
+    question_text = format_question_for_display(task_module, question_data)
+
+    text = (
+        f"📝 <b>{homework.title}</b>\n\n"
+        f"{question_text}\n\n"
+        "💬 Отправьте свой ответ текстовым сообщением."
+    )
+
+    # Сохраняем контекст для обработки ответа
+    context.user_data['current_homework_id'] = homework_id
+    context.user_data['current_question_id'] = question_id
+    context.user_data['current_task_module'] = task_module
+
     keyboard = [
-        [InlineKeyboardButton(f"➡️ {task_name}", callback_data=module_callback)],
-        [InlineKeyboardButton("◀️ К списку заданий", callback_data="student_homework_list")],
+        [InlineKeyboardButton("◀️ К списку вопросов", callback_data=f"start_homework_{homework_id}")],
         [InlineKeyboardButton("🏠 Главное меню", callback_data="main_menu")]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
 
     await query.message.edit_text(text, reply_markup=reply_markup, parse_mode='HTML')
+
+    # Переводим в состояние ожидания ответа
+    from ..states import StudentStates
+    return StudentStates.DOING_HOMEWORK
+
+
+async def process_homework_answer(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Обрабатывает ответ ученика на вопрос"""
+    user_id = update.effective_user.id
+    answer = update.message.text
+
+    # Получаем контекст
+    homework_id = context.user_data.get('current_homework_id')
+    question_id = context.user_data.get('current_question_id')
+    task_module = context.user_data.get('current_task_module')
+
+    if not all([homework_id, question_id, task_module]):
+        await update.message.reply_text(
+            "❌ Ошибка: потерян контекст выполнения задания.\n"
+            "Пожалуйста, начните заново.",
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("🏠 Главное меню", callback_data="main_menu")
+            ]]),
+            parse_mode='HTML'
+        )
+        return ConversationHandler.END
+
+    # Отправляем сообщение о проверке
+    checking_msg = await update.message.reply_text(
+        "⏳ Проверяю ответ...",
+        parse_mode='HTML'
+    )
+
+    # TODO: Здесь будет интеграция с AI проверкой
+    # Пока используем заглушку
+    is_correct = True  # Заглушка
+    ai_feedback = "Ваш ответ принят и сохранен. Детальная проверка будет проведена учителем."  # Заглушка
+
+    # Сохраняем прогресс
+    success = await assignment_service.save_question_progress(
+        homework_id=homework_id,
+        student_id=user_id,
+        question_id=question_id,
+        user_answer=answer,
+        is_correct=is_correct,
+        ai_feedback=ai_feedback
+    )
+
+    if not success:
+        await checking_msg.edit_text(
+            "❌ Ошибка при сохранении ответа. Попробуйте еще раз.",
+            parse_mode='HTML'
+        )
+        return ConversationHandler.END
+
+    # Показываем результат
+    text = (
+        f"✅ <b>Ответ сохранен!</b>\n\n"
+        f"<b>Обратная связь:</b>\n{ai_feedback}\n\n"
+        "Вы можете продолжить выполнение других заданий."
+    )
+
+    # Очищаем контекст
+    context.user_data.pop('current_homework_id', None)
+    context.user_data.pop('current_question_id', None)
+    context.user_data.pop('current_task_module', None)
+
+    keyboard = [
+        [InlineKeyboardButton("➡️ К списку вопросов", callback_data=f"start_homework_{homework_id}")],
+        [InlineKeyboardButton("📋 Мои задания", callback_data="student_homework_list")],
+        [InlineKeyboardButton("🏠 Главное меню", callback_data="main_menu")]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
+    await checking_msg.edit_text(text, reply_markup=reply_markup, parse_mode='HTML')
+
+    return ConversationHandler.END

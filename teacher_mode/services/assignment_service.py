@@ -416,3 +416,109 @@ async def get_homework_statistics(homework_id: int) -> Dict[str, Any]:
     except Exception as e:
         logger.error(f"Ошибка при получении статистики задания: {e}")
         return {'total': 0, 'assigned': 0, 'in_progress': 0, 'completed': 0, 'checked': 0}
+
+
+async def get_completed_question_ids(homework_id: int, student_id: int) -> List[int]:
+    """
+    Получает список ID выполненных вопросов для конкретного задания и ученика.
+
+    Args:
+        homework_id: ID домашнего задания
+        student_id: ID ученика
+
+    Returns:
+        Список ID выполненных вопросов
+    """
+    try:
+        async with aiosqlite.connect(DATABASE_FILE) as db:
+            db.row_factory = aiosqlite.Row
+
+            cursor = await db.execute("""
+                SELECT question_id
+                FROM homework_progress
+                WHERE homework_id = ? AND student_id = ?
+            """, (homework_id, student_id))
+
+            rows = await cursor.fetchall()
+            return [int(row['question_id']) for row in rows]
+
+    except Exception as e:
+        logger.error(f"Ошибка при получении выполненных вопросов: {e}")
+        return []
+
+
+async def save_question_progress(homework_id: int, student_id: int, question_id: int,
+                                 user_answer: str, is_correct: bool,
+                                 ai_feedback: Optional[str] = None) -> bool:
+    """
+    Сохраняет прогресс выполнения конкретного вопроса.
+
+    Args:
+        homework_id: ID домашнего задания
+        student_id: ID ученика
+        question_id: ID вопроса
+        user_answer: Ответ ученика
+        is_correct: Правильность ответа
+        ai_feedback: Обратная связь от AI (опционально)
+
+    Returns:
+        True если успешно сохранено, False иначе
+    """
+    try:
+        async with aiosqlite.connect(DATABASE_FILE) as db:
+            # Сохраняем или обновляем прогресс
+            await db.execute("""
+                INSERT OR REPLACE INTO homework_progress
+                (homework_id, student_id, question_id, user_answer, is_correct, ai_feedback, completed_at)
+                VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+            """, (homework_id, student_id, str(question_id), user_answer, is_correct, ai_feedback))
+
+            await db.commit()
+            return True
+
+    except Exception as e:
+        logger.error(f"Ошибка при сохранении прогресса вопроса: {e}")
+        return False
+
+
+async def get_question_progress(homework_id: int, student_id: int, question_id: int) -> Optional[Dict]:
+    """
+    Получает прогресс выполнения конкретного вопроса.
+
+    Args:
+        homework_id: ID домашнего задания
+        student_id: ID ученика
+        question_id: ID вопроса
+
+    Returns:
+        Словарь с данными прогресса или None если не найдено
+    """
+    try:
+        async with aiosqlite.connect(DATABASE_FILE) as db:
+            db.row_factory = aiosqlite.Row
+
+            cursor = await db.execute("""
+                SELECT id, homework_id, student_id, question_id, user_answer,
+                       is_correct, ai_feedback, completed_at
+                FROM homework_progress
+                WHERE homework_id = ? AND student_id = ? AND question_id = ?
+            """, (homework_id, student_id, str(question_id)))
+
+            row = await cursor.fetchone()
+            if not row:
+                return None
+
+            return {
+                'id': row['id'],
+                'homework_id': row['homework_id'],
+                'student_id': row['student_id'],
+                'question_id': row['question_id'],
+                'user_answer': row['user_answer'],
+                'is_correct': bool(row['is_correct']),
+                'ai_feedback': row['ai_feedback'],
+                'completed_at': row['completed_at']
+            }
+
+    except Exception as e:
+        logger.error(f"Ошибка при получении прогресса вопроса: {e}")
+        return None

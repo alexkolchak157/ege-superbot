@@ -178,7 +178,32 @@ class TeacherModePlugin(BotPlugin):
             allow_reentry=True,
         )
 
-        # Обработчики для работы с ДЗ ученика
+        # ConversationHandler для выполнения домашних заданий
+        homework_execution_handler = ConversationHandler(
+            entry_points=[
+                CallbackQueryHandler(student_handlers.show_homework_question, pattern="^hw_question:"),
+            ],
+            states={
+                StudentStates.DOING_HOMEWORK: [
+                    # Прием ответа от ученика
+                    MessageHandler(filters.TEXT & ~filters.COMMAND, student_handlers.process_homework_answer),
+
+                    # Возврат к списку вопросов
+                    CallbackQueryHandler(student_handlers.start_homework, pattern="^start_homework_\\d+$"),
+
+                    # Возврат в главное меню
+                    CallbackQueryHandler(lambda u, c: ConversationHandler.END, pattern="^main_menu$"),
+                ],
+            },
+            fallbacks=[
+                CallbackQueryHandler(lambda u, c: ConversationHandler.END, pattern="^main_menu$"),
+            ],
+            name="homework_execution",
+            persistent=False,
+            allow_reentry=True,
+        )
+
+        # Обработчики для работы с ДЗ ученика (вне conversation)
         app.add_handler(CallbackQueryHandler(student_handlers.homework_list, pattern="^student_homework_list$"))
         app.add_handler(CallbackQueryHandler(student_handlers.view_homework, pattern="^homework_\\d+$"))
         app.add_handler(CallbackQueryHandler(student_handlers.start_homework, pattern="^start_homework_\\d+$"))
@@ -186,6 +211,7 @@ class TeacherModePlugin(BotPlugin):
         # Регистрация ConversationHandler'ов
         app.add_handler(teacher_conv_handler)
         app.add_handler(student_conv_handler)
+        app.add_handler(homework_execution_handler)
 
         logger.info("Teacher mode plugin handlers registered")
 
