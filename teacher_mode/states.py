@@ -19,8 +19,9 @@ class TeacherStates(IntEnum):
     CREATE_ASSIGNMENT = 20
     SELECT_ASSIGNMENT_TYPE = 21
     SELECT_SELECTION_MODE = 22  # Способ отбора заданий (все/темы/номера)
-    SELECT_TOPICS = 23  # Выбор тем из банка
-    ENTER_QUESTION_NUMBERS = 24  # Ввод конкретных номеров заданий
+    SELECT_TOPICS = 23  # Выбор тем/блоков из банка
+    SELECT_SPECIFIC_QUESTIONS = 24  # Выбор конкретных заданий из выбранных блоков
+    ENTER_QUESTION_NUMBERS = 25  # Ввод конкретных номеров заданий
 
     # Просмотр статистики
     VIEW_STATISTICS = 30

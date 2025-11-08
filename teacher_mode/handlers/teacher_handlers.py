@@ -714,7 +714,7 @@ async def toggle_block_selection(update: Update, context: ContextTypes.DEFAULT_T
 
 
 async def confirm_topic_blocks(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Подтверждение выбора блоков тем"""
+    """Подтверждение выбора блоков тем и переход к выбору конкретных заданий"""
     query = update.callback_query
     await query.answer()
 
@@ -725,18 +725,173 @@ async def confirm_topic_blocks(update: Update, context: ContextTypes.DEFAULT_TYP
         await query.answer("⚠️ Выберите хотя бы один блок", show_alert=True)
         return TeacherStates.SELECT_TOPICS
 
-    from ..services.topics_loader import get_topic_ids_by_blocks
+    # Переходим к выбору конкретных заданий из этих блоков
+    return await show_specific_questions_selection(update, context)
 
-    # Получаем ID всех тем из выбранных блоков
-    topic_ids = get_topic_ids_by_blocks(task_type, selected_blocks)
+
+async def show_specific_questions_selection(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Показать список конкретных заданий из выбранных блоков для выбора"""
+    query = update.callback_query
+
+    task_type = context.user_data.get('assignment_task_type')
+    selected_blocks = context.user_data.get('selected_blocks', [])
+
+    from ..services.topics_loader import load_topics_for_module
+
+    # Загружаем все темы
+    topics_data = load_topics_for_module(task_type)
+
+    # Инициализируем список выбранных заданий если его нет
+    if 'selected_question_ids' not in context.user_data:
+        context.user_data['selected_question_ids'] = []
+
+    # Собираем все задания из выбранных блоков
+    available_questions = []
+    for block_name in selected_blocks:
+        block_topics = topics_data['blocks'].get(block_name, [])
+        available_questions.extend(block_topics)
+
+    if not available_questions:
+        await query.answer("⚠️ В выбранных блоках нет заданий", show_alert=True)
+        return TeacherStates.SELECT_TOPICS
+
+    # Формируем текст
+    task_names = {
+        'task19': '💡 Задание 19',
+        'task20': '⚙️ Задание 20',
+        'task24': '📊 Задание 24',
+        'task25': '💻 Задание 25'
+    }
+    task_name = task_names.get(task_type, task_type)
+
+    selected_count = len(context.user_data['selected_question_ids'])
+    total_count = len(available_questions)
+
+    text = (
+        f"📝 <b>{task_name}: Выбор заданий</b>\n\n"
+        f"📚 Блоки: {', '.join(selected_blocks)}\n"
+        f"✅ Выбрано: {selected_count} из {total_count}\n\n"
+        "Выберите конкретные задания для домашней работы:\n"
+        "(отметьте нужные галочками)"
+    )
+
+    keyboard = []
+
+    # Добавляем кнопки для каждого задания
+    for question in available_questions:
+        q_id = question['id']
+        q_title = question['title']
+
+        # Обрезаем длинные названия
+        if len(q_title) > 50:
+            q_title = q_title[:47] + "..."
+
+        selected = q_id in context.user_data['selected_question_ids']
+        emoji = "✅" if selected else "⬜"
+
+        keyboard.append([
+            InlineKeyboardButton(
+                f"{emoji} {q_id}. {q_title}",
+                callback_data=f"toggle_question:{q_id}"
+            )
+        ])
+
+    # Кнопки управления
+    if selected_count > 0:
+        keyboard.append([
+            InlineKeyboardButton(f"✅ Подтвердить выбор ({selected_count})", callback_data="confirm_selected_questions")
+        ])
+
+    keyboard.append([
+        InlineKeyboardButton("🔄 Выбрать все", callback_data="select_all_questions"),
+        InlineKeyboardButton("❌ Снять все", callback_data="deselect_all_questions")
+    ])
+    keyboard.append([
+        InlineKeyboardButton("◀️ Назад к блокам", callback_data=f"assign_task_{task_type}")
+    ])
+
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await query.message.edit_text(text, reply_markup=reply_markup, parse_mode='HTML')
+
+    return TeacherStates.SELECT_SPECIFIC_QUESTIONS
+
+
+async def toggle_question_selection(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Переключение выбора конкретного задания"""
+    query = update.callback_query
+    await query.answer()
+
+    # Извлекаем ID задания из callback_data
+    question_id = int(query.data.split(':')[1])
+
+    # Переключаем выбор
+    if 'selected_question_ids' not in context.user_data:
+        context.user_data['selected_question_ids'] = []
+
+    if question_id in context.user_data['selected_question_ids']:
+        context.user_data['selected_question_ids'].remove(question_id)
+    else:
+        context.user_data['selected_question_ids'].append(question_id)
+
+    # Перерисовываем меню
+    return await show_specific_questions_selection(update, context)
+
+
+async def select_all_questions(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Выбрать все задания из текущих блоков"""
+    query = update.callback_query
+    await query.answer("✅ Все задания выбраны")
+
+    task_type = context.user_data.get('assignment_task_type')
+    selected_blocks = context.user_data.get('selected_blocks', [])
+
+    from ..services.topics_loader import load_topics_for_module
+
+    topics_data = load_topics_for_module(task_type)
+
+    # Собираем все ID заданий из выбранных блоков
+    all_ids = []
+    for block_name in selected_blocks:
+        block_topics = topics_data['blocks'].get(block_name, [])
+        all_ids.extend([q['id'] for q in block_topics])
+
+    context.user_data['selected_question_ids'] = all_ids
+
+    # Перерисовываем меню
+    return await show_specific_questions_selection(update, context)
+
+
+async def deselect_all_questions(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Снять выбор со всех заданий"""
+    query = update.callback_query
+    await query.answer("❌ Выбор снят")
+
+    context.user_data['selected_question_ids'] = []
+
+    # Перерисовываем меню
+    return await show_specific_questions_selection(update, context)
+
+
+async def confirm_selected_questions(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Подтверждение выбранных заданий и переход к выбору учеников"""
+    query = update.callback_query
+    await query.answer()
+
+    task_type = context.user_data.get('assignment_task_type')
+    selected_blocks = context.user_data.get('selected_blocks', [])
+    selected_question_ids = context.user_data.get('selected_question_ids', [])
+
+    if not selected_question_ids:
+        await query.answer("⚠️ Выберите хотя бы одно задание", show_alert=True)
+        return TeacherStates.SELECT_SPECIFIC_QUESTIONS
 
     # Сохраняем в assignment_data
     context.user_data['assignment_data'] = {
         'task_module': task_type,
         'selection_mode': 'topics',
         'selected_blocks': selected_blocks,
-        'topic_ids': topic_ids,
-        'questions_count': len(topic_ids)
+        'question_ids': selected_question_ids,
+        'questions_count': len(selected_question_ids)
     }
 
     # Переходим к выбору учеников

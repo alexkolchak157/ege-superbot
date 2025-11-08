@@ -104,6 +104,23 @@ class TeacherModePlugin(BotPlugin):
                     # Отмена
                     CallbackQueryHandler(teacher_handlers.teacher_menu, pattern="^teacher_menu$"),
                 ],
+                TeacherStates.SELECT_SPECIFIC_QUESTIONS: [
+                    # Переключение выбора конкретного задания
+                    CallbackQueryHandler(teacher_handlers.toggle_question_selection, pattern="^toggle_question:"),
+
+                    # Выбор/снятие всех заданий
+                    CallbackQueryHandler(teacher_handlers.select_all_questions, pattern="^select_all_questions$"),
+                    CallbackQueryHandler(teacher_handlers.deselect_all_questions, pattern="^deselect_all_questions$"),
+
+                    # Подтверждение выбора заданий
+                    CallbackQueryHandler(teacher_handlers.confirm_selected_questions, pattern="^confirm_selected_questions$"),
+
+                    # Назад к выбору типа задания
+                    CallbackQueryHandler(teacher_handlers.select_task_type, pattern="^assign_task_"),
+
+                    # Отмена
+                    CallbackQueryHandler(teacher_handlers.teacher_menu, pattern="^teacher_menu$"),
+                ],
                 TeacherStates.ENTER_QUESTION_NUMBERS: [
                     # Обработка текстового ввода номеров заданий
                     MessageHandler(filters.TEXT & ~filters.COMMAND, teacher_handlers.process_question_numbers_input),
