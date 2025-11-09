@@ -1485,7 +1485,66 @@ class SubscriptionManager:
                 
                 # Фиксируем транзакцию
                 await conn.commit()
-                
+
+            # ДОБАВЛЕНО: Обработка учительских подписок
+            if plan.get('type') == 'teacher':
+                logger.info(f"Processing teacher subscription for user {user_id}, plan: {plan_id}")
+
+                try:
+                    # Импортируем функции для работы с учителями
+                    from teacher_mode.services.teacher_service import (
+                        get_teacher_profile,
+                        create_teacher_profile
+                    )
+
+                    # Проверяем, существует ли профиль учителя
+                    teacher_profile = await get_teacher_profile(user_id)
+
+                    if not teacher_profile:
+                        # Профиль не существует - создаем новый
+                        # Получаем имя пользователя из таблицы users
+                        async with aiosqlite.connect(self.database_file) as db:
+                            cursor = await db.execute(
+                                "SELECT first_name, username FROM users WHERE user_id = ?",
+                                (user_id,)
+                            )
+                            user_data = await cursor.fetchone()
+
+                            if user_data:
+                                display_name = user_data[0] or user_data[1] or f"User {user_id}"
+                            else:
+                                display_name = f"User {user_id}"
+
+                        # Создаем профиль учителя
+                        teacher_profile = await create_teacher_profile(
+                            user_id=user_id,
+                            display_name=display_name,
+                            subscription_tier=plan_id
+                        )
+
+                        if teacher_profile:
+                            logger.info(f"✅ Created teacher profile for user {user_id}, code: {teacher_profile.teacher_code}")
+                        else:
+                            logger.error(f"❌ Failed to create teacher profile for user {user_id}")
+
+                    # Обновляем статус подписки в профиле учителя
+                    async with aiosqlite.connect(self.database_file) as db:
+                        await db.execute("""
+                            UPDATE teacher_profiles
+                            SET has_active_subscription = 1,
+                                subscription_expires = ?,
+                                subscription_tier = ?
+                            WHERE user_id = ?
+                        """, (expires_at, plan_id, user_id))
+                        await db.commit()
+                        logger.info(f"✅ Updated teacher subscription status for user {user_id}")
+
+                except Exception as e:
+                    logger.error(f"❌ Error processing teacher subscription for user {user_id}: {e}")
+                    import traceback
+                    traceback.print_exc()
+                    # Не прерываем выполнение - подписка уже активирована в module_subscriptions
+
             logger.info(
                 f"✅ SUCCESS: Plan {plan_id} activated for user {user_id} "
                 f"with {len(modules)} modules for {duration_months} month(s)"
@@ -2044,6 +2103,15 @@ class SubscriptionManager:
         try:
             async with aiosqlite.connect(self.database_file, timeout=30.0) as conn:
                 if self.subscription_mode == 'modular':
+                    # Сначала проверяем, какие модули истекли
+                    cursor = await conn.execute("""
+                        SELECT plan_id FROM module_subscriptions
+                        WHERE user_id = ?
+                        AND is_active = 1
+                        AND expires_at <= datetime('now')
+                    """, (user_id,))
+                    expired_plans = [row[0] for row in await cursor.fetchall()]
+
                     # Деактивируем все истекшие модули
                     await conn.execute("""
                         UPDATE module_subscriptions
@@ -2052,6 +2120,30 @@ class SubscriptionManager:
                         AND is_active = 1
                         AND expires_at <= datetime('now')
                     """, (user_id,))
+
+                    # ДОБАВЛЕНО: Проверяем, истекла ли учительская подписка
+                    from payment.config import is_teacher_plan
+                    teacher_plan_expired = any(is_teacher_plan(plan) for plan in expired_plans)
+
+                    if teacher_plan_expired:
+                        # Проверяем, остались ли активные учительские подписки
+                        cursor = await conn.execute("""
+                            SELECT plan_id FROM module_subscriptions
+                            WHERE user_id = ? AND is_active = 1
+                        """, (user_id,))
+                        active_plans = [row[0] for row in await cursor.fetchall()]
+
+                        # Проверяем, есть ли среди активных хотя бы один учительский план
+                        has_active_teacher_plan = any(is_teacher_plan(plan) for plan in active_plans)
+
+                        if not has_active_teacher_plan:
+                            # Нет активных учительских подписок - обновляем профиль
+                            await conn.execute("""
+                                UPDATE teacher_profiles
+                                SET has_active_subscription = 0
+                                WHERE user_id = ?
+                            """, (user_id,))
+                            logger.info(f"Deactivated teacher subscription for user {user_id}")
                 else:
                     # Деактивируем подписку в единой системе
                     await conn.execute("""

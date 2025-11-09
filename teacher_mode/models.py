@@ -64,12 +64,8 @@ class TeacherProfile:
     @property
     def max_students(self) -> int:
         """Максимальное количество учеников по тарифу"""
-        limits = {
-            'teacher_basic': 10,
-            'teacher_standard': 20,
-            'teacher_premium': -1  # Безлимит
-        }
-        return limits.get(self.subscription_tier, 0)
+        from payment.config import get_teacher_max_students
+        return get_teacher_max_students(self.subscription_tier)
 
 
 @dataclass

@@ -153,7 +153,7 @@ async def check_payment_status(update: Update, context: ContextTypes.DEFAULT_TYP
                 
                 # Активируем подписку если еще не активирована
                 if status != 'completed':
-                    await subscription_manager.activate_subscription_from_payment(order_id)
+                    await subscription_manager.activate_subscription(order_id)
                     
             elif payment_status in ['NEW', 'FORM_SHOWED', 'DEADLINE_EXPIRED']:
                 # Платеж еще не оплачен
