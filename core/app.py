@@ -496,20 +496,31 @@ async def show_main_menu_with_access(context, user_id):
     """
     ИСПРАВЛЕННАЯ ВЕРСИЯ
     Показывает главное меню с правильной индикацией доступа и системными кнопками.
-    
+
     Изменения:
     1. Исправлен callback_data для "Мои подписки": my_subscriptions → my_subscription
     2. Добавлено добавление системных кнопок в итоговый массив
+    3. Добавлен счетчик домашних заданий для учеников
     """
     from telegram import InlineKeyboardButton, InlineKeyboardMarkup
-    
+
     subscription_manager = context.bot_data.get('subscription_manager')
     buttons = []
-    
+
     # Получаем список плагинов
     from core import plugin_loader
     plugins = plugin_loader.PLUGINS
-    
+
+    # Получаем информацию о freemium лимитах для отображения счетчика
+    freemium_info = None
+    try:
+        from core.freemium_manager import get_freemium_manager
+        freemium_manager = get_freemium_manager(subscription_manager)
+        freemium_info = await freemium_manager.get_limit_info(user_id)
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).debug(f"Freemium manager not available: {e}")
+
     for plugin in plugins:
         if plugin.code == 'test_part':
             # Тестовая часть - всегда доступна бесплатно
@@ -536,7 +547,15 @@ async def show_main_menu_with_access(context, user_id):
                 text = f"{icon} {plugin.title}"
             else:
                 icon = "🔒"
-                text = f"{icon} {plugin.title}"
+                # Для закрытых модулей показываем счетчик бесплатных проверок
+                if freemium_info and not freemium_info['is_premium']:
+                    remaining = freemium_info['checks_remaining']
+                    if remaining > 0:
+                        text = f"{icon} {plugin.title} (🆓 {remaining}/3)"
+                    else:
+                        text = f"{icon} {plugin.title}"
+                else:
+                    text = f"{icon} {plugin.title}"
         else:
             # Если система подписок недоступна
             icon = "📚"
@@ -547,6 +566,32 @@ async def show_main_menu_with_access(context, user_id):
             callback_data=f"choose_{plugin.code}"
         )
         buttons.append([button])
+
+    # Добавляем кнопку домашних заданий для учеников с учителем
+    try:
+        from teacher_mode.services.teacher_service import get_student_teachers
+        from teacher_mode.services.assignment_service import count_new_homeworks
+
+        student_teachers = await get_student_teachers(user_id)
+        if len(student_teachers) > 0:
+            # Ученик привязан к учителю - показываем кнопку ДЗ
+            new_count = await count_new_homeworks(user_id)
+
+            if new_count > 0:
+                hw_text = f"📚 Домашние задания ({new_count} новых)"
+            else:
+                hw_text = "📚 Домашние задания"
+
+            homework_button = InlineKeyboardButton(
+                text=hw_text,
+                callback_data="student_homework_list"
+            )
+            # Вставляем после тестовой части (обычно 1-я кнопка)
+            buttons.insert(1, [homework_button])
+    except Exception as e:
+        # Если модуль учителя недоступен, просто не показываем кнопку
+        import logging
+        logging.getLogger(__name__).debug(f"Teacher module not available: {e}")
 
     return InlineKeyboardMarkup(buttons)
 

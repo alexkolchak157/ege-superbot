@@ -880,3 +880,29 @@ async def get_student_statistics(teacher_id: int, student_id: int) -> Optional[D
     except Exception as e:
         logger.error(f"Ошибка при получении статистики ученика: {e}")
         return None
+
+
+async def count_new_homeworks(student_id: int) -> int:
+    """
+    Подсчитывает количество новых (непросмотренных) домашних заданий ученика.
+
+    Args:
+        student_id: ID ученика
+
+    Returns:
+        Количество заданий со статусом ASSIGNED
+    """
+    try:
+        async with aiosqlite.connect(DATABASE_FILE) as db:
+            cursor = await db.execute("""
+                SELECT COUNT(*)
+                FROM homework_student_assignments
+                WHERE student_id = ? AND status = ?
+            """, (student_id, StudentAssignmentStatus.ASSIGNED.value))
+
+            count = (await cursor.fetchone())[0]
+            return count
+
+    except Exception as e:
+        logger.error(f"Ошибка при подсчете новых домашних заданий: {e}")
+        return 0
