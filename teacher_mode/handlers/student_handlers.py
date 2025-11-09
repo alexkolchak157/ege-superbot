@@ -629,6 +629,34 @@ async def process_homework_answer(update: Update, context: ContextTypes.DEFAULT_
         )
         return ConversationHandler.END
 
+    # ПРОВЕРКА ЛИМИТОВ: Проверяем доступность AI-проверок для ученика
+    from core.freemium_manager import get_freemium_manager
+
+    freemium_manager = get_freemium_manager(
+        context.bot_data.get('subscription_manager')
+    )
+
+    # Проверяем лимит для соответствующего модуля
+    can_use, remaining, limit_msg = await freemium_manager.check_ai_limit(user_id, task_module)
+
+    if not can_use:
+        # Лимит исчерпан - показываем сообщение
+        await update.message.reply_text(
+            f"{limit_msg}",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("🎁 Попробовать за 1₽", callback_data="subscribe_start")],
+                [InlineKeyboardButton("💎 Оформить подписку", callback_data="subscribe_start")],
+                [InlineKeyboardButton("📋 Мои задания", callback_data="student_homework_list")],
+                [InlineKeyboardButton("🏠 Главное меню", callback_data="main_menu")]
+            ]),
+            parse_mode='HTML'
+        )
+        # Очищаем контекст
+        context.user_data.pop('current_homework_id', None)
+        context.user_data.pop('current_question_id', None)
+        context.user_data.pop('current_task_module', None)
+        return ConversationHandler.END
+
     # Отправляем сообщение о проверке
     checking_msg = await update.message.reply_text(
         "⏳ Проверяю ответ через AI...",
@@ -656,6 +684,14 @@ async def process_homework_answer(update: Update, context: ContextTypes.DEFAULT_
         user_id=user_id
     )
 
+    # Регистрируем использование AI-проверки
+    from core import db
+    await db.increment_ai_check_usage(user_id)
+
+    # Получаем информацию об остатке проверок
+    limit_info = await freemium_manager.get_limit_info(user_id, task_module)
+    remaining_checks = limit_info.get('checks_remaining', 0)
+
     # Сохраняем прогресс
     success = await assignment_service.save_question_progress(
         homework_id=homework_id,
@@ -679,6 +715,13 @@ async def process_homework_answer(update: Update, context: ContextTypes.DEFAULT_
         f"<b>Обратная связь:</b>\n{ai_feedback}\n\n"
         "Вы можете продолжить выполнение других заданий."
     )
+
+    # Добавляем информацию о лимите если пользователь не Premium
+    if not limit_info.get('is_premium') and remaining_checks <= 3:
+        if remaining_checks > 0:
+            text += f"\n\n📊 Осталось проверок сегодня: <b>{remaining_checks}</b>"
+        else:
+            text += f"\n\n⏳ Бесплатные проверки на сегодня исчерпаны. Лимит обновится завтра."
 
     # Очищаем контекст
     context.user_data.pop('current_homework_id', None)
