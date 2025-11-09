@@ -340,13 +340,18 @@ async def show_modular_interface(update: Update, context: ContextTypes.DEFAULT_T
     """Показывает упрощенный интерфейс с двумя тарифами."""
     user_id = update.effective_user.id
     subscription_manager = context.bot_data.get('subscription_manager', SubscriptionManager())
-    
+
     # Проверяем пробный период
     has_trial = await subscription_manager.has_used_trial(user_id)
-    
+
     # Получаем активные модули
     modules_data = await subscription_manager.get_user_modules(user_id)
     active_modules = bool(modules_data)
+
+    # Проверяем, привязан ли ученик к учителю
+    from teacher_mode.services.teacher_service import get_student_teachers
+    student_teachers = await get_student_teachers(user_id)
+    has_teacher = len(student_teachers) > 0
     
     # Определяем метод редактирования
     query = update.callback_query
@@ -384,7 +389,13 @@ async def show_modular_interface(update: Update, context: ContextTypes.DEFAULT_T
         text += "   • Все задания с проверкой ИИ\n\n"
     
     # Полная подписка - УЛУЧШЕННЫЙ ТЕКСТ с акцентом на ценность
-    text += "👑 <b>Полная подписка</b> — от 249₽/мес\n\n"
+    if has_teacher:
+        # Скидочная цена для учеников с учителем
+        text += "👑 <b>Полная подписка</b> — от 149₽/мес\n"
+        text += "🎓 <i>Специальная цена для учеников от учителя!</i>\n\n"
+    else:
+        text += "👑 <b>Полная подписка</b> — от 249₽/мес\n\n"
+
     text += "✅ <b>Вторая часть ЕГЭ — под полным контролем:</b>\n"
     text += "   • Задание 19 — Примеры, которые впечатлят эксперта\n"
     text += "   • Задание 20 — Аргументы на максимум баллов\n"
@@ -406,9 +417,14 @@ async def show_modular_interface(update: Update, context: ContextTypes.DEFAULT_T
         ])
     
     # Кнопка полной подписки
+    if has_teacher:
+        button_text = "👑 Полная подписка - от 149₽/мес 🎓"
+    else:
+        button_text = "👑 Полная подписка - от 249₽/мес"
+
     keyboard.append([
         InlineKeyboardButton(
-            "👑 Полная подписка - от 249₽/мес",
+            button_text,
             callback_data="pay_package_full"
         )
     ])
@@ -560,7 +576,19 @@ async def handle_plan_selection(update: Update, context: ContextTypes.DEFAULT_TY
 
     # Обработка полной подписки
     elif plan_id == "package_full":
-        plan_id = "package_full"
+        # Проверяем, привязан ли ученик к учителю
+        from teacher_mode.services.teacher_service import get_student_teachers
+        user_id = update.effective_user.id
+        student_teachers = await get_student_teachers(user_id)
+        has_teacher = len(student_teachers) > 0
+
+        # Если ученик привязан к учителю, используем скидочный план
+        if has_teacher:
+            plan_id = "student_with_teacher"
+            logger.info(f"User {user_id} has teacher, using discount plan: {plan_id}")
+        else:
+            plan_id = "package_full"
+
         context.user_data['is_trial'] = False
         context.user_data['selected_plan'] = plan_id
 
