@@ -92,27 +92,39 @@ async def show_subscription_info(update: Update, context: ContextTypes.DEFAULT_T
         else:
             end_date_str = "неизвестно"
 
-        # Эмодзи для дней
+        # Эмодзи и статус для дней
         if days_left <= 3:
             days_emoji = "🔴"
+            status_line = f"⚠️ <b>Истекает через {days_left} дн.</b>"
         elif days_left <= 7:
             days_emoji = "🟡"
+            status_line = f"⚠️ <b>Истекает через {days_left} дн.</b>"
         else:
-            days_emoji = "🟢"
+            days_emoji = "✅"
+            status_line = f"✅ <b>Активна до {end_date_str}</b>"
+
+        # Визуальный прогресс-бар (30 дней = 100%)
+        progress_days = 30  # Базовый период
+        progress = min(days_left / progress_days, 1.0)
+        filled = int(progress * 10)
+        bar = "█" * filled + "░" * (10 - filled)
 
         # Статус автопродления
         auto_renew_status = "✅ Включено" if auto_renew else "❌ Отключено"
 
         text = (
             f"💳 <b>Моя подписка</b>\n\n"
+            f"{status_line}\n\n"
             f"<b>Текущий план:</b> {plan_name}\n"
-            f"<b>Действует до:</b> {end_date_str}\n"
-            f"<b>Осталось дней:</b> {days_emoji} {days_left}\n"
+            f"<b>Окончание:</b> {end_date_str} ({days_emoji} {days_left} дн.)\n"
+            f"<b>Прогресс:</b> {bar}\n"
             f"<b>Автопродление:</b> {auto_renew_status}\n\n"
         )
 
-        if days_left <= 7:
-            text += "⚠️ <i>Твоя подписка скоро истечёт! Не забудь продлить.</i>\n\n"
+        if days_left <= 7 and not auto_renew:
+            text += "⚠️ <i>Подписка скоро истечёт! Продли или включи автопродление.</i>\n\n"
+        elif days_left <= 7 and auto_renew:
+            text += "✅ <i>Автопродление включено — подписка обновится автоматически.</i>\n\n"
 
     else:
         # Нет активной подписки
