@@ -195,7 +195,7 @@ async def cancel_connection(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     context.user_data.pop('pending_teacher_code', None)
     context.user_data.pop('pending_teacher_name', None)
 
-    text = "❌ Подключение к учителю отменено."
+    text = "👌 Подключение к учителю отменено."
     keyboard = [[InlineKeyboardButton("◀️ Главное меню", callback_data="main_menu")]]
     reply_markup = InlineKeyboardMarkup(keyboard)
 
