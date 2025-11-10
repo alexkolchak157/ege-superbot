@@ -551,7 +551,12 @@ async def show_main_menu_with_access(context, user_id):
                 if freemium_info and not freemium_info['is_premium']:
                     remaining = freemium_info['checks_remaining']
                     if remaining > 0:
-                        text = f"{icon} {plugin.title} (🆓 {remaining}/3)"
+                        # Сокращаем длинные названия и выносим счетчик в начало
+                        display_title = plugin.title
+                        # Убираем длинные подзаголовки в скобках для экономии места
+                        if '(' in display_title and ')' in display_title:
+                            display_title = display_title[:display_title.find('(')].strip()
+                        text = f"🆓 {remaining}/3 {icon} {display_title}"
                     else:
                         text = f"{icon} {plugin.title}"
                 else:
