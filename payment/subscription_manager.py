@@ -1538,23 +1538,36 @@ class SubscriptionManager:
                                 logger.info(f"✅ Teacher profile already exists for user {user_id} (created by concurrent transaction)")
                                 teacher_profile = await get_teacher_profile(user_id)
 
-                        # Обновляем статус подписки в профиле учителя
+                        # КРИТИЧНО: Обновляем статус подписки в профиле учителя с откатом при ошибке
                         async with aiosqlite.connect(self.database_file) as db:
-                            await db.execute("""
-                                UPDATE teacher_profiles
-                                SET has_active_subscription = 1,
-                                    subscription_expires = ?,
-                                    subscription_tier = ?
-                                WHERE user_id = ?
-                            """, (expires_at, plan_id, user_id))
-                            await db.commit()
-                            logger.info(f"✅ Updated teacher subscription status for user {user_id}")
+                            try:
+                                await db.execute("""
+                                    UPDATE teacher_profiles
+                                    SET has_active_subscription = 1,
+                                        subscription_expires = ?,
+                                        subscription_tier = ?
+                                    WHERE user_id = ?
+                                """, (expires_at, plan_id, user_id))
+                                await db.commit()
+                                logger.info(f"✅ Updated teacher subscription status for user {user_id}")
+                            except Exception as update_error:
+                                await db.rollback()
+                                logger.error(f"❌ Failed to update teacher_profiles, rolling back: {update_error}")
+
+                                # Откатываем активацию module_subscriptions
+                                try:
+                                    await self._rollback_teacher_subscription(user_id, plan_id)
+                                    logger.info(f"✅ Rolled back module_subscriptions for user {user_id}")
+                                except Exception as rollback_error:
+                                    logger.error(f"❌ CRITICAL: Failed to rollback module_subscriptions: {rollback_error}")
+
+                                raise  # Пробрасываем исключение дальше
 
                 except Exception as e:
                     logger.error(f"❌ Error processing teacher subscription for user {user_id}: {e}")
                     import traceback
                     traceback.print_exc()
-                    # Не прерываем выполнение - подписка уже активирована в module_subscriptions
+                    # Примечание: Если произошла ошибка и откат не удался, может потребоваться ручное вмешательство
 
             logger.info(
                 f"✅ SUCCESS: Plan {plan_id} activated for user {user_id} "
@@ -1567,6 +1580,34 @@ class SubscriptionManager:
             import traceback
             traceback.print_exc()
             return False
+
+    async def _rollback_teacher_subscription(self, user_id: int, plan_id: str) -> None:
+        """
+        Откатывает активацию подписки учителя в случае ошибки обновления teacher_profiles.
+
+        Args:
+            user_id: ID пользователя
+            plan_id: ID плана подписки
+
+        Raises:
+            Exception: Если не удалось откатить изменения
+        """
+        try:
+            async with aiosqlite.connect(self.database_file) as conn:
+                # Деактивируем все модули для этого плана
+                await conn.execute(
+                    """
+                    UPDATE module_subscriptions
+                    SET is_active = 0
+                    WHERE user_id = ? AND plan_id = ?
+                    """,
+                    (user_id, plan_id)
+                )
+                await conn.commit()
+                logger.info(f"✅ Successfully rolled back module_subscriptions for user {user_id}, plan {plan_id}")
+        except Exception as e:
+            logger.error(f"❌ Failed to rollback module_subscriptions for user {user_id}: {e}")
+            raise
 
 
     # Дополнительная функция для исправления существующих неполных подписок

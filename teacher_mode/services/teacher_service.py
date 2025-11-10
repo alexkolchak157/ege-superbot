@@ -343,6 +343,117 @@ async def is_student_connected(teacher_id: int, student_id: int) -> bool:
         return False
 
 
+async def has_teacher_access(user_id: int) -> bool:
+    """
+    Единая функция проверки доступа учителя к функциям.
+
+    Проверяет:
+    1. Существование профиля учителя
+    2. Активность подписки
+    3. Дату истечения подписки
+
+    Args:
+        user_id: ID учителя
+
+    Returns:
+        True если учитель имеет доступ к функциям
+    """
+    profile = await get_teacher_profile(user_id)
+    if not profile:
+        return False
+
+    if not profile.has_active_subscription:
+        return False
+
+    # Проверяем дату истечения
+    if profile.subscription_expires and profile.subscription_expires < datetime.now():
+        return False
+
+    return True
+
+
+async def validate_teacher_subscription_integrity(teacher_id: int) -> tuple[bool, Optional[str]]:
+    """
+    Проверяет согласованность данных между teacher_profiles и module_subscriptions.
+
+    Проверяет:
+    1. Соответствие флага has_active_subscription между таблицами
+    2. Соответствие даты истечения подписки
+    3. Наличие активной подписки в module_subscriptions для учительского плана
+
+    Args:
+        teacher_id: ID учителя
+
+    Returns:
+        Кортеж (bool, Optional[str]): (данные согласованы, описание проблемы)
+    """
+    try:
+        async with aiosqlite.connect(DATABASE_FILE) as db:
+            db.row_factory = aiosqlite.Row
+
+            cursor = await db.execute("""
+                SELECT
+                    tp.has_active_subscription as tp_active,
+                    tp.subscription_expires as tp_expires,
+                    tp.subscription_tier,
+                    ms.is_active as ms_active,
+                    ms.expires_at as ms_expires,
+                    ms.plan_id
+                FROM teacher_profiles tp
+                LEFT JOIN module_subscriptions ms
+                    ON tp.user_id = ms.user_id
+                    AND ms.plan_id IN ('teacher_basic', 'teacher_standard', 'teacher_premium')
+                WHERE tp.user_id = ?
+                ORDER BY ms.expires_at DESC
+                LIMIT 1
+            """, (teacher_id,))
+
+            row = await cursor.fetchone()
+
+            if not row:
+                return False, f"Профиль учителя {teacher_id} не найден"
+
+            # Проверяем соответствие активности
+            tp_active = bool(row['tp_active'])
+            ms_active = bool(row['ms_active']) if row['ms_active'] is not None else False
+
+            if tp_active != ms_active:
+                return False, (
+                    f"Несоответствие активности: teacher_profiles.has_active_subscription={tp_active}, "
+                    f"module_subscriptions.is_active={ms_active}"
+                )
+
+            # Если обе таблицы указывают на активную подписку, проверяем даты
+            if tp_active and ms_active:
+                tp_expires = datetime.fromisoformat(row['tp_expires']) if row['tp_expires'] else None
+                ms_expires = datetime.fromisoformat(row['ms_expires']) if row['ms_expires'] else None
+
+                if tp_expires and ms_expires:
+                    # Допускаем разницу в 1 минуту из-за возможных задержек записи
+                    time_diff = abs((tp_expires - ms_expires).total_seconds())
+                    if time_diff > 60:
+                        return False, (
+                            f"Несоответствие дат истечения: "
+                            f"teacher_profiles={tp_expires.strftime('%Y-%m-%d %H:%M:%S')}, "
+                            f"module_subscriptions={ms_expires.strftime('%Y-%m-%d %H:%M:%S')}"
+                        )
+
+                # Проверяем, что plan_id соответствует subscription_tier
+                if row['plan_id'] and row['subscription_tier']:
+                    if row['plan_id'] != row['subscription_tier']:
+                        return False, (
+                            f"Несоответствие тарифов: "
+                            f"teacher_profiles.subscription_tier={row['subscription_tier']}, "
+                            f"module_subscriptions.plan_id={row['plan_id']}"
+                        )
+
+            return True, None
+
+    except Exception as e:
+        logger.error(f"Ошибка при проверке целостности данных учителя {teacher_id}: {e}")
+        return False, f"Ошибка проверки: {str(e)}"
+
+
 async def get_users_display_names(user_ids: List[int]) -> dict[int, str]:
     """
     Получает отображаемые имена пользователей по их ID.

@@ -259,6 +259,15 @@ async def post_init(application: Application) -> None:
     except Exception as e:
         logger.error(f"Failed to initialize deadline scheduler: {e}")
 
+    # Инициализация teacher subscription scheduler
+    try:
+        from teacher_mode.subscription_scheduler import register_teacher_subscription_jobs
+
+        register_teacher_subscription_jobs(application)
+        logger.info("Teacher subscription scheduler initialized")
+    except Exception as e:
+        logger.error(f"Failed to initialize teacher subscription scheduler: {e}")
+
     # Загрузка модулей-плагинов
     try:
         from core import plugin_loader
