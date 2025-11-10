@@ -195,7 +195,7 @@ async def cancel_connection(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     context.user_data.pop('pending_teacher_code', None)
     context.user_data.pop('pending_teacher_name', None)
 
-    text = "❌ Подключение к учителю отменено."
+    text = "👌 Подключение к учителю отменено."
     keyboard = [[InlineKeyboardButton("◀️ Главное меню", callback_data="main_menu")]]
     reply_markup = InlineKeyboardMarkup(keyboard)
 
@@ -223,7 +223,10 @@ async def homework_list(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
             "📚 <b>Мои домашние задания</b>\n\n"
             "У вас пока нет активных заданий."
         )
-        keyboard = [[InlineKeyboardButton("◀️ Главное меню", callback_data="main_menu")]]
+        keyboard = [
+            [InlineKeyboardButton("◀️ Назад", callback_data="back_to_cabinet")],
+            [InlineKeyboardButton("🏠 Главное меню", callback_data="main_menu")]
+        ]
         reply_markup = InlineKeyboardMarkup(keyboard)
     else:
         text = (
@@ -251,7 +254,8 @@ async def homework_list(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
                 InlineKeyboardButton(button_text, callback_data=f"homework_{hw.id}")
             ])
 
-        keyboard.append([InlineKeyboardButton("◀️ Главное меню", callback_data="main_menu")])
+        keyboard.append([InlineKeyboardButton("◀️ Назад", callback_data="back_to_cabinet")])
+        keyboard.append([InlineKeyboardButton("🏠 Главное меню", callback_data="main_menu")])
         reply_markup = InlineKeyboardMarkup(keyboard)
 
     if query:
