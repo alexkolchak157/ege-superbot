@@ -297,6 +297,10 @@ async def can_add_student(teacher_id: int) -> tuple[bool, str]:
     if not profile:
         return False, "Профиль учителя не найден"
 
+    # КРИТИЧНО: Проверяем дату истечения подписки
+    if profile.subscription_expires and profile.subscription_expires < datetime.now():
+        return False, "Подписка учителя истекла"
+
     if not profile.has_active_subscription:
         return False, "У учителя нет активной подписки"
 

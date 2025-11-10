@@ -1491,53 +1491,64 @@ class SubscriptionManager:
                 logger.info(f"Processing teacher subscription for user {user_id}, plan: {plan_id}")
 
                 try:
-                    # Импортируем функции для работы с учителями
-                    from teacher_mode.services.teacher_service import (
-                        get_teacher_profile,
-                        create_teacher_profile
-                    )
-
-                    # Проверяем, существует ли профиль учителя
-                    teacher_profile = await get_teacher_profile(user_id)
-
-                    if not teacher_profile:
-                        # Профиль не существует - создаем новый
-                        # Получаем имя пользователя из таблицы users
-                        async with aiosqlite.connect(self.database_file) as db:
-                            cursor = await db.execute(
-                                "SELECT first_name, username FROM users WHERE user_id = ?",
-                                (user_id,)
-                            )
-                            user_data = await cursor.fetchone()
-
-                            if user_data:
-                                display_name = user_data[0] or user_data[1] or f"User {user_id}"
-                            else:
-                                display_name = f"User {user_id}"
-
-                        # Создаем профиль учителя
-                        teacher_profile = await create_teacher_profile(
-                            user_id=user_id,
-                            display_name=display_name,
-                            subscription_tier=plan_id
+                    # КРИТИЧНО: Валидация plan_id перед созданием профиля
+                    from payment.config import is_teacher_plan
+                    if not is_teacher_plan(plan_id):
+                        logger.error(f"❌ Invalid teacher plan_id: {plan_id}. Skipping teacher profile creation.")
+                        # Не прерываем - подписка в module_subscriptions уже активирована
+                    else:
+                        # Импортируем функции для работы с учителями
+                        from teacher_mode.services.teacher_service import (
+                            get_teacher_profile,
+                            create_teacher_profile
                         )
 
-                        if teacher_profile:
-                            logger.info(f"✅ Created teacher profile for user {user_id}, code: {teacher_profile.teacher_code}")
-                        else:
-                            logger.error(f"❌ Failed to create teacher profile for user {user_id}")
+                        # Проверяем, существует ли профиль учителя
+                        teacher_profile = await get_teacher_profile(user_id)
 
-                    # Обновляем статус подписки в профиле учителя
-                    async with aiosqlite.connect(self.database_file) as db:
-                        await db.execute("""
-                            UPDATE teacher_profiles
-                            SET has_active_subscription = 1,
-                                subscription_expires = ?,
-                                subscription_tier = ?
-                            WHERE user_id = ?
-                        """, (expires_at, plan_id, user_id))
-                        await db.commit()
-                        logger.info(f"✅ Updated teacher subscription status for user {user_id}")
+                        if not teacher_profile:
+                            # Профиль не существует - создаем новый
+                            # Получаем имя пользователя из таблицы users
+                            async with aiosqlite.connect(self.database_file) as db:
+                                cursor = await db.execute(
+                                    "SELECT first_name, username FROM users WHERE user_id = ?",
+                                    (user_id,)
+                                )
+                                user_data = await cursor.fetchone()
+
+                                if user_data:
+                                    display_name = user_data[0] or user_data[1] or f"User {user_id}"
+                                else:
+                                    display_name = f"User {user_id}"
+
+                            # КРИТИЧНО: Обработка race condition
+                            try:
+                                teacher_profile = await create_teacher_profile(
+                                    user_id=user_id,
+                                    display_name=display_name,
+                                    subscription_tier=plan_id
+                                )
+
+                                if teacher_profile:
+                                    logger.info(f"✅ Created teacher profile for user {user_id}, code: {teacher_profile.teacher_code}")
+                                else:
+                                    logger.error(f"❌ Failed to create teacher profile for user {user_id}")
+                            except aiosqlite.IntegrityError:
+                                # Профиль уже создан другой транзакцией
+                                logger.info(f"✅ Teacher profile already exists for user {user_id} (created by concurrent transaction)")
+                                teacher_profile = await get_teacher_profile(user_id)
+
+                        # Обновляем статус подписки в профиле учителя
+                        async with aiosqlite.connect(self.database_file) as db:
+                            await db.execute("""
+                                UPDATE teacher_profiles
+                                SET has_active_subscription = 1,
+                                    subscription_expires = ?,
+                                    subscription_tier = ?
+                                WHERE user_id = ?
+                            """, (expires_at, plan_id, user_id))
+                            await db.commit()
+                            logger.info(f"✅ Updated teacher subscription status for user {user_id}")
 
                 except Exception as e:
                     logger.error(f"❌ Error processing teacher subscription for user {user_id}: {e}")
