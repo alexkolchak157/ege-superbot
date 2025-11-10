@@ -23,11 +23,13 @@ async def is_teacher(user_id: int) -> bool:
 
 
 async def has_active_teacher_subscription(user_id: int) -> bool:
-    """Проверяет, есть ли у учителя активная подписка"""
-    profile = await teacher_service.get_teacher_profile(user_id)
-    if not profile:
-        return False
-    return profile.has_active_subscription
+    """
+    Проверяет, есть ли у учителя активная подписка.
+
+    УНИФИЦИРОВАНО: Использует единую функцию has_teacher_access() из teacher_service.
+    Проверяет существование профиля, активность и дату истечения подписки.
+    """
+    return await teacher_service.has_teacher_access(user_id)
 
 
 async def teacher_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
