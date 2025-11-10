@@ -1294,79 +1294,95 @@ class SubscriptionManager:
             raise
     
     async def activate_subscription(self, order_id: str, payment_id: str = None) -> bool:
-        """Активирует подписку после успешной оплаты."""
+        """
+        Активирует подписку после успешной оплаты с защитой от race conditions.
+
+        ИСПРАВЛЕНИЕ: Использует эксклюзивные транзакции для предотвращения дублирования
+        при одновременных webhook от платежной системы.
+        """
         try:
-            # ПРОВЕРКА: Проверяем, не была ли подписка уже активирована
-            # Эта функция проверяет не только статус платежа, но и наличие активных подписок
-            if await self.is_payment_already_activated(order_id):
-                logger.info(f"Payment {order_id} already activated with active subscriptions, skipping")
-                return True
-
             async with aiosqlite.connect(self.database_file, timeout=30.0) as conn:
-                # Получаем информацию о платеже
-                cursor = await conn.execute(
-                    """
-                    SELECT user_id, plan_id, metadata, status
-                    FROM payments
-                    WHERE order_id = ?
-                    """,
-                    (order_id,)
-                )
+                # КРИТИЧЕСКИ ВАЖНО: Начинаем эксклюзивную транзакцию
+                # Это блокирует другие попытки активации этого же платежа
+                await conn.execute("BEGIN EXCLUSIVE TRANSACTION")
 
-                payment_info = await cursor.fetchone()
-
-                if not payment_info:
-                    logger.error(f"Payment not found for order {order_id}")
-                    return False
-
-                user_id, plan_id, metadata_str, current_status = payment_info
-
-                # ПРИМЕЧАНИЕ: Не проверяем статус здесь повторно, т.к. is_payment_already_activated()
-                # уже проверил и статус, и наличие подписок. Если мы дошли до этой точки,
-                # значит нужно (пере)создать подписки.
-                
-                # Парсим metadata
                 try:
-                    metadata = json.loads(metadata_str) if metadata_str else {}
-                except:
-                    metadata = {}
-                
-                duration_months = metadata.get('duration_months', 1)
-                
-                logger.info(f"Activating subscription: user={user_id}, plan={plan_id}, duration={duration_months}")
-                
-                # Активируем в зависимости от типа плана
-                if plan_id.startswith('custom_'):
-                    # Кастомный план с модулями
-                    success = await self._activate_custom_modules(
-                        user_id, plan_id, duration_months, metadata
-                    )
-                else:
-                    # Стандартный план
-                    success = await self._activate_standard_plan(
-                        user_id, plan_id, duration_months
-                    )
-                
-                if success:
-                    # Обновляем статус платежа
-                    await conn.execute(
+                    # Получаем информацию о платеже с блокировкой строки
+                    cursor = await conn.execute(
                         """
-                        UPDATE payments 
-                        SET status = 'completed', 
-                            completed_at = CURRENT_TIMESTAMP,
-                            payment_id = COALESCE(payment_id, ?)
+                        SELECT user_id, plan_id, metadata, status
+                        FROM payments
                         WHERE order_id = ?
                         """,
-                        (payment_id, order_id)
+                        (order_id,)
                     )
-                    await conn.commit()
-                    logger.info(f"Subscription activated successfully for order {order_id}")
-                    return True
-                else:
-                    logger.error(f"Failed to activate subscription for order {order_id}")
-                    return False
-                    
-        except Exception as e:  # ← ИСПРАВЛЕНО: except теперь на правильном уровне отступа
+                    payment_info = await cursor.fetchone()
+
+                    if not payment_info:
+                        logger.error(f"Payment not found for order {order_id}")
+                        await conn.rollback()
+                        return False
+
+                    user_id, plan_id, metadata_str, current_status = payment_info
+
+                    # КЛЮЧЕВАЯ ПРОВЕРКА: Если платеж уже обработан - выходим
+                    if current_status == 'completed':
+                        logger.info(f"Payment {order_id} already completed (status check inside transaction)")
+                        await conn.rollback()
+                        return True  # Возвращаем success, т.к. подписка уже активна
+
+                    # Парсим metadata
+                    try:
+                        metadata = json.loads(metadata_str) if metadata_str else {}
+                    except:
+                        metadata = {}
+
+                    duration_months = metadata.get('duration_months', 1)
+
+                    logger.info(f"Activating subscription: user={user_id}, plan={plan_id}, duration={duration_months}")
+
+                    # Активируем в зависимости от типа плана
+                    if plan_id.startswith('custom_'):
+                        # Кастомный план с модулями
+                        success = await self._activate_custom_modules(
+                            user_id, plan_id, duration_months, metadata
+                        )
+                    else:
+                        # Стандартный план
+                        success = await self._activate_standard_plan(
+                            user_id, plan_id, duration_months
+                        )
+
+                    if success:
+                        # Обновляем статус платежа на completed
+                        await conn.execute(
+                            """
+                            UPDATE payments
+                            SET status = 'completed',
+                                completed_at = CURRENT_TIMESTAMP,
+                                payment_id = COALESCE(payment_id, ?)
+                            WHERE order_id = ?
+                            """,
+                            (payment_id, order_id)
+                        )
+
+                        # Коммитим транзакцию - теперь изменения атомарны
+                        await conn.commit()
+                        logger.info(f"✅ Subscription activated successfully for order {order_id} (atomic transaction)")
+                        return True
+                    else:
+                        # Откатываем если активация не удалась
+                        logger.error(f"Failed to activate subscription for order {order_id}, rolling back")
+                        await conn.rollback()
+                        return False
+
+                except Exception as e:
+                    # При любой ошибке откатываем транзакцию
+                    logger.error(f"Error during activation transaction: {e}")
+                    await conn.rollback()
+                    raise
+
+        except Exception as e:
             logger.error(f"Error activating subscription: {e}")
             import traceback
             traceback.print_exc()

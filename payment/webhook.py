@@ -71,12 +71,47 @@ def verify_tinkoff_signature(data: dict, token: str, terminal_key: str, secret_k
     return is_valid
 
 
+def sanitize_webhook_data(data: dict) -> dict:
+    """
+    Маскирует чувствительные данные для безопасного логирования.
+
+    Args:
+        data: Данные webhook
+
+    Returns:
+        Словарь с замаскированными чувствительными полями
+    """
+    safe_data = data.copy()
+
+    # Маскируем токен (оставляем только первые 10 символов)
+    if 'Token' in safe_data and safe_data['Token']:
+        token = str(safe_data['Token'])
+        safe_data['Token'] = token[:10] + '...' if len(token) > 10 else '***'
+
+    # Маскируем данные карты если есть
+    if 'CardData' in safe_data:
+        safe_data['CardData'] = '***MASKED***'
+
+    # Маскируем RebillId (токен для рекуррентов)
+    if 'RebillId' in safe_data and safe_data['RebillId']:
+        rebill = str(safe_data['RebillId'])
+        safe_data['RebillId'] = rebill[:8] + '...' if len(rebill) > 8 else '***'
+
+    # Маскируем PAN (номер карты) если есть
+    if 'Pan' in safe_data and safe_data['Pan']:
+        safe_data['Pan'] = '****' + str(safe_data['Pan'])[-4:] if len(str(safe_data['Pan'])) > 4 else '****'
+
+    return safe_data
+
+
 async def handle_webhook(request: web.Request) -> web.Response:
     """Обработчик webhook от Tinkoff с полной защитой от дублирования."""
     try:
         # Получаем данные
         data = await request.json()
-        logger.info(f"Webhook received: {json.dumps(data, ensure_ascii=False)}")
+
+        # ИСПРАВЛЕНИЕ: Маскируем чувствительные данные перед логированием
+        logger.info(f"Webhook received: {json.dumps(sanitize_webhook_data(data), ensure_ascii=False)}")
 
         # Проверяем подпись
         if not verify_tinkoff_signature(
