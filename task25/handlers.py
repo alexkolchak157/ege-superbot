@@ -862,6 +862,8 @@ async def safe_handle_answer_task25(update: Update, context: ContextTypes.DEFAUL
     # Проверка лимитов AI-проверок
     freemium_manager = context.bot_data.get('freemium_manager')
     user_id = update.effective_user.id
+    is_premium = False
+
     if freemium_manager:
         can_use, remaining, limit_msg = await freemium_manager.check_ai_limit(user_id, 'task25')
 
@@ -879,6 +881,10 @@ async def safe_handle_answer_task25(update: Update, context: ContextTypes.DEFAUL
                 parse_mode=ParseMode.HTML
             )
             return states.ANSWERING
+
+        # Получаем информацию о подписке для дифференциации фидбека
+        limit_info = await freemium_manager.get_limit_info(user_id, 'task25')
+        is_premium = limit_info.get('is_premium', False)
 
     # Показываем анимацию обработки
     thinking_msg = await show_ai_evaluation_animation(
@@ -909,14 +915,28 @@ async def safe_handle_answer_task25(update: Update, context: ContextTypes.DEFAUL
                     topic=topic,
                     user_id=update.effective_user.id
                 )
-                
-                # Форматируем результат
+
+                # Форматируем результат с учетом подписки
                 if hasattr(result, 'format_feedback'):
-                    feedback_text = result.format_feedback()
+                    detailed_feedback = result.format_feedback()
                 else:
-                    feedback_text = _format_evaluation_result(result, topic)
-                
+                    detailed_feedback = _format_evaluation_result(result, topic)
+
                 score = result.total_score
+
+                # Дифференцируем фидбек для freemium vs premium
+                if is_premium:
+                    feedback_text = detailed_feedback
+                else:
+                    # Упрощенный фидбек для freemium пользователей
+                    if freemium_manager:
+                        feedback_text = freemium_manager.simplify_feedback_for_freemium(
+                            detailed_feedback,
+                            score,
+                            6  # max_score для task25
+                        )
+                    else:
+                        feedback_text = detailed_feedback
                 
             except Exception as e:
                 logger.error(f"Evaluation error: {e}")

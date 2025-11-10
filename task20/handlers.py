@@ -915,6 +915,10 @@ async def safe_handle_answer_task20(update: Update, context: ContextTypes.DEFAUL
         )
         return states.CHOOSING_MODE
 
+    # Получаем информацию о подписке для дифференциации фидбека
+    limit_info = await freemium_manager.get_limit_info(user_id, module_code)
+    is_premium = limit_info.get('is_premium', False)
+
     # Показываем анимацию обработки
     thinking_msg = await show_ai_evaluation_animation(
         update.message,
@@ -935,7 +939,18 @@ async def safe_handle_answer_task20(update: Update, context: ContextTypes.DEFAUL
                     user_id=update.effective_user.id
                 )
                 score = result.total_score
-                feedback_text = _format_evaluation_result(result, topic, user_answer)
+
+                # Формируем фидбек с учетом подписки
+                if is_premium:
+                    feedback_text = _format_evaluation_result(result, topic, user_answer)
+                else:
+                    # Упрощенный фидбек для freemium пользователей
+                    detailed_feedback = _format_evaluation_result(result, topic, user_answer)
+                    feedback_text = freemium_manager.simplify_feedback_for_freemium(
+                        detailed_feedback,
+                        score,
+                        result.max_score
+                    )
                 
             except Exception as e:
                 logger.error(f"Evaluation error: {e}")

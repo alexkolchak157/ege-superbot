@@ -1357,6 +1357,74 @@ async def get_ai_limit_stats(user_id: int, days: int = 7) -> Dict[str, Any]:
         }
 
 
+# ==================== Функции для недельных лимитов AI-проверок ====================
+
+async def get_weekly_ai_checks_used(user_id: int) -> int:
+    """
+    Получает количество использованных AI-проверок с начала текущей недели (понедельника).
+
+    Args:
+        user_id: ID пользователя
+
+    Returns:
+        Количество использованных проверок с понедельника этой недели
+    """
+    try:
+        today = date.today()
+
+        # Вычисляем понедельник текущей недели
+        # weekday(): 0=Monday, 1=Tuesday, ..., 6=Sunday
+        days_since_monday = today.weekday()
+        week_start = today - timedelta(days=days_since_monday)
+
+        async with aiosqlite.connect(DATABASE_FILE) as db:
+            cursor = await db.execute(
+                """SELECT SUM(checks_used) as total
+                   FROM user_ai_limits
+                   WHERE user_id = ? AND check_date >= ?""",
+                (user_id, week_start)
+            )
+            row = await cursor.fetchone()
+            total = row[0] if row and row[0] else 0
+
+            logger.debug(f"User {user_id} used {total} AI checks this week (since {week_start})")
+            return total
+
+    except Exception as e:
+        logger.error(f"Error getting weekly AI checks for user {user_id}: {e}")
+        return 0
+
+
+async def reset_weekly_ai_limits() -> int:
+    """
+    Удаляет старые записи лимитов (старше 4 недель) для очистки БД.
+    Актуальные недельные лимиты автоматически считаются при проверке.
+
+    Returns:
+        Количество удаленных записей
+    """
+    try:
+        # Удаляем записи старше 4 недель (28 дней)
+        cutoff_date = date.today() - timedelta(days=28)
+
+        async with aiosqlite.connect(DATABASE_FILE) as db:
+            cursor = await db.execute(
+                "DELETE FROM user_ai_limits WHERE check_date < ?",
+                (cutoff_date,)
+            )
+            await db.commit()
+            deleted_count = cursor.rowcount
+
+            if deleted_count > 0:
+                logger.info(f"Cleaned up {deleted_count} old weekly AI limit records (older than {cutoff_date})")
+
+            return deleted_count
+
+    except Exception as e:
+        logger.error(f"Error resetting weekly AI limits: {e}")
+        return 0
+
+
 async def apply_teacher_mode_migration(db: aiosqlite.Connection):
     """
     Применяет миграцию для режима учителя.
