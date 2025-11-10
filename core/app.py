@@ -435,17 +435,17 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 modules = subscription_info.get('modules', [])
 
                 module_names = {
-                    'test_part': '• 🆓 Тестовая часть',
                     'task19': '• ✅ Задание 19',
                     'task20': '• ✅ Задание 20',
                     'task24': '• ✅ Задание 24',
                     'task25': '• ✅ Задание 25'
                 }
 
-                # ИСПРАВЛЕНИЕ: Отображаем все модули из списка без дублирования
+                # ИСПРАВЛЕНИЕ: Отображаем только платные модули (test_part бесплатен для всех)
                 for module in modules:
-                    display_name = module_names.get(module, f'• ✅ {module}')
-                    welcome_text += f"{display_name}\n"
+                    if module != 'test_part':  # Исключаем бесплатный модуль
+                        display_name = module_names.get(module, f'• ✅ {module}')
+                        welcome_text += f"{display_name}\n"
             else:
                 welcome_text += "📚 <b>Все модули доступны!</b>\n"
             
