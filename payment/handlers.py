@@ -636,14 +636,64 @@ async def handle_plan_selection(update: Update, context: ContextTypes.DEFAULT_TY
 
         logger.info(f"Teacher plan info loaded: {plan['name']}, base price: {plan['price_rub']}₽")
 
-        # Показываем варианты длительности
-        return await show_duration_options(update, context)
+        # КРИТИЧНО: Подтверждаем, что пользователь действительно учитель
+        tier_names = {
+            'teacher_basic': 'Basic (до 10 учеников)',
+            'teacher_standard': 'Standard (до 20 учеников)',
+            'teacher_premium': 'Premium (безлимит учеников)'
+        }
+        tier_name = tier_names.get(plan_id, plan['name'])
+
+        confirmation_text = (
+            f"⚠️ <b>Подтверждение выбора учительского тарифа</b>\n\n"
+            f"Вы выбрали тариф: <b>{tier_name}</b>\n"
+            f"Цена: <b>{plan['price_rub']}₽/месяц</b>\n\n"
+            f"Этот тариф предназначен для репетиторов и учителей, которые хотят:\n"
+            f"• Создавать домашние задания для учеников\n"
+            f"• Отслеживать прогресс своих учеников\n"
+            f"• Получать аналитику по успеваемости\n"
+            f"• Управлять группами учеников\n\n"
+            f"<b>Вы действительно учитель/репетитор?</b>"
+        )
+
+        keyboard = [
+            [InlineKeyboardButton("✅ Да, я учитель", callback_data=f"confirm_teacher_plan:{plan_id}")],
+            [InlineKeyboardButton("❌ Нет, выбрать другой тариф", callback_data="subscribe_start")]
+        ]
+
+        await query.edit_message_text(
+            confirmation_text,
+            parse_mode=ParseMode.HTML,
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+        return CHOOSING_PLAN
 
     # Неизвестный план
     else:
         logger.error(f"Unknown plan_id: {plan_id}")
         await query.edit_message_text("❌ Ошибка: неизвестный план")
         return ConversationHandler.END
+
+
+@safe_handler()
+async def handle_teacher_plan_confirmation(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Обработчик подтверждения выбора учительского тарифа.
+
+    После того, как пользователь подтвердил, что он учитель,
+    продолжаем стандартный флоу выбора длительности подписки.
+    """
+    query = update.callback_query
+    await query.answer()
+
+    # Извлекаем plan_id из callback_data (формат: confirm_teacher_plan:teacher_basic)
+    plan_id = query.data.replace("confirm_teacher_plan:", "")
+
+    logger.info(f"✅ Teacher plan confirmed by user {update.effective_user.id}: {plan_id}")
+
+    # Все данные уже сохранены в context.user_data в handle_plan_selection
+    # Теперь просто продолжаем с выбором длительности
+    return await show_duration_options(update, context)
 
 
 # Также исправим request_email_for_trial:
@@ -2411,6 +2461,7 @@ def register_payment_handlers(app):
                 # Обработчики для подписок учителей
                 CallbackQueryHandler(show_teacher_plans_in_shop, pattern="^show_teacher_subscriptions$"),
                 CallbackQueryHandler(show_teacher_plan_details_in_shop, pattern="^view_teacher_plan_"),
+                CallbackQueryHandler(handle_teacher_plan_confirmation, pattern="^confirm_teacher_plan:"),
                 # УДАЛЕНО: show_individual_modules - больше нет отдельных модулей
                 CallbackQueryHandler(show_modular_interface, pattern="^(back_to_main|subscribe)$"),
                 CallbackQueryHandler(handle_my_subscriptions, pattern="^my_subscriptions$")

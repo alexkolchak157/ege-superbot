@@ -25,9 +25,9 @@ async def deactivate_expired_teacher_subscriptions(context: ContextTypes.DEFAULT
     """
     try:
         async with aiosqlite.connect(DATABASE_FILE) as db:
-            # Находим истекшие подписки
+            # Находим истекшие подписки с информацией о тарифе
             cursor = await db.execute("""
-                SELECT user_id, subscription_expires
+                SELECT user_id, subscription_expires, subscription_tier
                 FROM teacher_profiles
                 WHERE has_active_subscription = 1
                 AND subscription_expires IS NOT NULL
@@ -48,13 +48,24 @@ async def deactivate_expired_teacher_subscriptions(context: ContextTypes.DEFAULT
                 AND subscription_expires < datetime('now')
             """)
 
+            # Логируем истечение подписок в историю
+            for user_id, expires_at, subscription_tier in expired_teachers:
+                try:
+                    await db.execute("""
+                        INSERT INTO teacher_subscription_history
+                        (user_id, plan_id, action, previous_tier, new_tier, expires_at, created_at)
+                        VALUES (?, ?, 'expired', ?, NULL, ?, CURRENT_TIMESTAMP)
+                    """, (user_id, subscription_tier, subscription_tier, expires_at))
+                except Exception as log_error:
+                    logger.error(f"Failed to log expiration for teacher {user_id}: {log_error}")
+
             await db.commit()
 
             count = len(expired_teachers)
             logger.info(f"✅ Deactivated {count} expired teacher subscription(s)")
 
             # Отправляем уведомления учителям об истечении подписки
-            for user_id, expires_at in expired_teachers:
+            for user_id, expires_at, subscription_tier in expired_teachers:
                 try:
                     await context.bot.send_message(
                         user_id,

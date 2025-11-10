@@ -1538,6 +1538,10 @@ class SubscriptionManager:
                                 logger.info(f"✅ Teacher profile already exists for user {user_id} (created by concurrent transaction)")
                                 teacher_profile = await get_teacher_profile(user_id)
 
+                        # Определяем тип действия для логирования
+                        previous_tier = teacher_profile.subscription_tier if teacher_profile else None
+                        action = self._determine_subscription_action(previous_tier, plan_id)
+
                         # КРИТИЧНО: Обновляем статус подписки в профиле учителя с откатом при ошибке
                         async with aiosqlite.connect(self.database_file) as db:
                             try:
@@ -1550,6 +1554,16 @@ class SubscriptionManager:
                                 """, (expires_at, plan_id, user_id))
                                 await db.commit()
                                 logger.info(f"✅ Updated teacher subscription status for user {user_id}")
+
+                                # Логируем изменение подписки
+                                await self._log_teacher_subscription_change(
+                                    user_id=user_id,
+                                    plan_id=plan_id,
+                                    action=action,
+                                    previous_tier=previous_tier,
+                                    new_tier=plan_id,
+                                    expires_at=expires_at
+                                )
                             except Exception as update_error:
                                 await db.rollback()
                                 logger.error(f"❌ Failed to update teacher_profiles, rolling back: {update_error}")
@@ -1580,6 +1594,76 @@ class SubscriptionManager:
             import traceback
             traceback.print_exc()
             return False
+
+    def _determine_subscription_action(self, previous_tier: Optional[str], new_tier: str) -> str:
+        """
+        Определяет тип действия с подпиской на основе предыдущего и нового тарифа.
+
+        Args:
+            previous_tier: Предыдущий тариф (None если подписки не было)
+            new_tier: Новый тариф
+
+        Returns:
+            Тип действия: 'activated', 'renewed', 'upgraded', 'downgraded'
+        """
+        if previous_tier is None:
+            return 'activated'
+
+        if previous_tier == new_tier:
+            return 'renewed'
+
+        # Определяем уровни тарифов для сравнения
+        tier_levels = {
+            'teacher_basic': 1,
+            'teacher_standard': 2,
+            'teacher_premium': 3
+        }
+
+        prev_level = tier_levels.get(previous_tier, 0)
+        new_level = tier_levels.get(new_tier, 0)
+
+        if new_level > prev_level:
+            return 'upgraded'
+        elif new_level < prev_level:
+            return 'downgraded'
+        else:
+            return 'renewed'
+
+    async def _log_teacher_subscription_change(
+        self,
+        user_id: int,
+        plan_id: str,
+        action: str,
+        previous_tier: Optional[str],
+        new_tier: str,
+        expires_at: datetime
+    ) -> None:
+        """
+        Логирует изменение подписки учителя в таблицу teacher_subscription_history.
+
+        Args:
+            user_id: ID пользователя
+            plan_id: ID плана подписки
+            action: Тип действия ('activated', 'renewed', 'upgraded', 'downgraded', 'expired', 'cancelled')
+            previous_tier: Предыдущий тариф (None для новых подписок)
+            new_tier: Новый тариф
+            expires_at: Дата истечения подписки
+        """
+        try:
+            async with aiosqlite.connect(self.database_file) as conn:
+                await conn.execute("""
+                    INSERT INTO teacher_subscription_history
+                    (user_id, plan_id, action, previous_tier, new_tier, expires_at, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                """, (user_id, plan_id, action, previous_tier, new_tier, expires_at))
+                await conn.commit()
+                logger.info(
+                    f"✅ Logged teacher subscription change for user {user_id}: "
+                    f"{action} ({previous_tier} → {new_tier})"
+                )
+        except Exception as e:
+            # Не прерываем работу, если логирование не удалось
+            logger.error(f"❌ Failed to log teacher subscription change for user {user_id}: {e}")
 
     async def _rollback_teacher_subscription(self, user_id: int, plan_id: str) -> None:
         """

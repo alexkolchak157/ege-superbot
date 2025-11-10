@@ -1543,6 +1543,24 @@ async def apply_teacher_mode_migration(db: aiosqlite.Connection):
         """)
         logger.info("✓ Таблица deadline_reminders готова")
 
+        # 11. Таблица истории изменений подписок учителей
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS teacher_subscription_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                plan_id TEXT NOT NULL,
+                action TEXT NOT NULL CHECK(
+                    action IN ('activated', 'renewed', 'upgraded', 'downgraded', 'expired', 'cancelled')
+                ),
+                previous_tier TEXT,
+                new_tier TEXT,
+                expires_at DATETIME,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (user_id) REFERENCES users(user_id)
+            )
+        """)
+        logger.info("✓ Таблица teacher_subscription_history готова")
+
         # Создание индексов для оптимизации запросов
         indices = [
             ('idx_teacher_code', 'teacher_profiles', 'teacher_code'),
@@ -1561,6 +1579,8 @@ async def apply_teacher_mode_migration(db: aiosqlite.Connection):
             ('idx_deadline_reminders_student', 'deadline_reminders', 'student_id'),
             ('idx_deadline_reminders_homework', 'deadline_reminders', 'homework_id'),
             ('idx_deadline_reminders_sent', 'deadline_reminders', 'sent_at'),
+            ('idx_teacher_subscription_history_user', 'teacher_subscription_history', 'user_id'),
+            ('idx_teacher_subscription_history_created', 'teacher_subscription_history', 'created_at'),
         ]
 
         for idx_name, table_name, column_name in indices:
