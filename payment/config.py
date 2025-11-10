@@ -26,7 +26,17 @@ WEBHOOK_URL = f"{WEBHOOK_BASE_URL}{WEBHOOK_PATH}"
 
 # ==================== ADMIN SETTINGS ====================
 PAYMENT_ADMIN_CHAT_ID = int(os.getenv('PAYMENT_ADMIN_CHAT_ID', '0'))
-DATABASE_PATH = 'quiz_async.db'
+
+# ИСПРАВЛЕНИЕ: Импортируем централизованный DATABASE_FILE из core.config
+# вместо переопределения в каждом модуле
+try:
+    from core.config import DATABASE_FILE
+    DATABASE_PATH = DATABASE_FILE  # Алиас для обратной совместимости
+except ImportError:
+    # Fallback если core.config недоступен
+    DATABASE_PATH = os.getenv('DATABASE_FILE', 'quiz_async.db')
+    DATABASE_FILE = DATABASE_PATH
+    logger.warning("Could not import DATABASE_FILE from core.config, using fallback")
 
 # ==================== SUBSCRIPTION MODE ====================
 SUBSCRIPTION_MODE = 'modular'  # Режим работы
@@ -34,6 +44,90 @@ FREE_MODULES = ['test_part', 'personal_cabinet', 'teacher_mode']  # Модули
 
 # Модули с freemium доступом (3 бесплатных AI-проверки в день)
 FREEMIUM_MODULES = ['task19', 'task20', 'task24', 'task25']
+
+# ==================== CONFIG VALIDATION ====================
+
+class ConfigValidationError(Exception):
+    """Исключение при ошибке валидации конфигурации."""
+    pass
+
+
+def validate_config() -> None:
+    """
+    Проверяет обязательные переменные окружения при старте.
+
+    Raises:
+        ConfigValidationError: Если отсутствуют критические параметры
+    """
+    errors = []
+    warnings = []
+
+    # Проверяем КРИТИЧЕСКИЕ параметры Tinkoff
+    if not TINKOFF_TERMINAL_KEY:
+        errors.append("TINKOFF_TERMINAL_KEY не установлен")
+    elif len(TINKOFF_TERMINAL_KEY) < 10:
+        warnings.append("TINKOFF_TERMINAL_KEY выглядит подозрительно коротким")
+
+    if not TINKOFF_SECRET_KEY:
+        errors.append("TINKOFF_SECRET_KEY не установлен")
+    elif len(TINKOFF_SECRET_KEY) < 10:
+        warnings.append("TINKOFF_SECRET_KEY выглядит подозрительно коротким")
+
+    # Проверяем WEBHOOK_BASE_URL
+    if WEBHOOK_BASE_URL == 'https://your-domain.com':
+        errors.append("WEBHOOK_BASE_URL не настроен (используется дефолтное значение)")
+    elif not WEBHOOK_BASE_URL.startswith('https://'):
+        errors.append("WEBHOOK_BASE_URL должен использовать HTTPS для безопасности")
+
+    # Проверяем PAYMENT_ADMIN_CHAT_ID
+    if PAYMENT_ADMIN_CHAT_ID == 0:
+        warnings.append("PAYMENT_ADMIN_CHAT_ID не установлен - админ не будет получать алерты о платежах")
+
+    # Проверяем DATABASE_FILE
+    if not DATABASE_FILE:
+        errors.append("DATABASE_FILE не установлен")
+
+    # Логируем предупреждения
+    for warning in warnings:
+        logger.warning(f"⚠️  Config warning: {warning}")
+
+    # Если есть ошибки - выбрасываем исключение
+    if errors:
+        error_msg = "Ошибки конфигурации payment модуля:\n" + "\n".join(f"  ❌ {e}" for e in errors)
+        logger.error(error_msg)
+        raise ConfigValidationError(error_msg)
+
+    logger.info("✅ Payment config validation passed")
+
+
+def get_config_status() -> Dict[str, Any]:
+    """
+    Возвращает статус конфигурации для диагностики.
+
+    Returns:
+        Словарь с информацией о конфигурации (без чувствительных данных)
+    """
+    return {
+        'tinkoff_configured': bool(TINKOFF_TERMINAL_KEY and TINKOFF_SECRET_KEY),
+        'webhook_configured': WEBHOOK_BASE_URL != 'https://your-domain.com',
+        'webhook_https': WEBHOOK_BASE_URL.startswith('https://') if WEBHOOK_BASE_URL else False,
+        'admin_alerts_enabled': PAYMENT_ADMIN_CHAT_ID != 0,
+        'subscription_mode': SUBSCRIPTION_MODE,
+        'database_file': DATABASE_FILE,
+        'free_modules': FREE_MODULES,
+        'freemium_modules': FREEMIUM_MODULES
+    }
+
+
+# Валидируем конфигурацию при импорте модуля (можно отключить для тестов)
+if os.getenv('SKIP_PAYMENT_CONFIG_VALIDATION') != '1':
+    try:
+        validate_config()
+    except ConfigValidationError as e:
+        logger.error(f"Payment module configuration error: {e}")
+        logger.error("Payment features will be DISABLED. Fix config and restart.")
+        # НЕ падаем, чтобы бот мог запуститься без платежей для отладки
+        # но логируем критическую ошибку
 
 logger.info(f"Payment module loaded with SUBSCRIPTION_MODE = {SUBSCRIPTION_MODE}")
 logger.info(f"Free modules: {FREE_MODULES}")
@@ -557,7 +651,8 @@ __all__ = [
     'TINKOFF_API_URL',
     'WEBHOOK_URL',
     'PAYMENT_ADMIN_CHAT_ID',
-    'DATABASE_PATH',
+    'DATABASE_FILE',  # ИСПРАВЛЕНИЕ: Добавлен централизованный DATABASE_FILE
+    'DATABASE_PATH',  # Алиас для обратной совместимости
     'SUBSCRIPTION_MODE',
     'FREE_MODULES',
     'FREEMIUM_MODULES',
@@ -565,6 +660,9 @@ __all__ = [
     'SUBSCRIPTION_PLANS',
     'DURATION_DISCOUNTS',
     'MODULE_DESCRIPTIONS',
+    'ConfigValidationError',  # НОВОЕ: Класс исключения
+    'validate_config',  # НОВОЕ: Функция валидации
+    'get_config_status',  # НОВОЕ: Функция диагностики
     'get_plan_price_kopecks',
     'get_subscription_end_date',
     'calculate_subscription_price',

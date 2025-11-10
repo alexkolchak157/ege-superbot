@@ -826,9 +826,11 @@ async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
             feedback_text = _format_evaluation_result(result)
         else:
             # Упрощенный фидбек для бесплатных пользователей
-            feedback_text = format_basic_feedback_task19(result, topic)
-            feedback_text += (
-                "\n\n💎 <i>Оформите Premium для детального разбора!</i>"
+            detailed_feedback = _format_evaluation_result(result)
+            feedback_text = freemium_manager.simplify_feedback_for_freemium(
+                detailed_feedback,
+                score,
+                result.max_score
             )
 
         # Обновляем лимиты в сообщении
@@ -2005,9 +2007,11 @@ async def handle_confirm_ocr(update: Update, context: ContextTypes.DEFAULT_TYPE)
             feedback_text = _format_evaluation_result(result)
         else:
             # Упрощенный фидбек для бесплатных пользователей
-            feedback_text = format_basic_feedback_task19(result, topic)
-            feedback_text += (
-                "\n\n💎 <i>Оформите Premium для детального разбора!</i>"
+            detailed_feedback = _format_evaluation_result(result)
+            feedback_text = freemium_manager.simplify_feedback_for_freemium(
+                detailed_feedback,
+                score,
+                result.max_score
             )
 
         # Обновляем лимиты в сообщении

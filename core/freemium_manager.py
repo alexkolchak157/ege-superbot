@@ -2,9 +2,10 @@
 Freemium менеджер для управления лимитами AI-проверок.
 
 Логика:
-- Бесплатные пользователи: 3 AI-проверки в день
+- Бесплатные пользователи: 3 AI-проверки в неделю (вместо 3 в день)
 - Пользователи с подпиской: безлимитные проверки
-- Лимиты сбрасываются ежедневно автоматически
+- Лимиты сбрасываются еженедельно автоматически
+- Фидбэк для freemium пользователей менее детальный
 """
 
 import logging
@@ -14,7 +15,7 @@ from core import db
 logger = logging.getLogger(__name__)
 
 # Константы
-FREE_DAILY_LIMIT = 3  # Бесплатных проверок в день
+FREE_WEEKLY_LIMIT = 3  # Бесплатных проверок в неделю (изменено с дневного лимита)
 
 
 class FreemiumManager:
@@ -28,7 +29,7 @@ class FreemiumManager:
             subscription_manager: Менеджер подписок (опционально)
         """
         self.subscription_manager = subscription_manager
-        logger.info(f"FreemiumManager initialized with daily limit: {FREE_DAILY_LIMIT}")
+        logger.info(f"FreemiumManager initialized with weekly limit: {FREE_WEEKLY_LIMIT} checks")
 
     async def check_ai_limit(
         self,
@@ -62,25 +63,25 @@ class FreemiumManager:
             if has_subscription:
                 return (True, 999, "✨ У вас безлимитный доступ")
 
-            # Для бесплатных - проверяем дневной лимит
-            checks_used = await db.get_daily_ai_checks_used(user_id)
-            remaining = FREE_DAILY_LIMIT - checks_used
+            # Для бесплатных - проверяем недельный лимит
+            checks_used = await db.get_weekly_ai_checks_used(user_id)
+            remaining = FREE_WEEKLY_LIMIT - checks_used
 
             if remaining > 0:
-                msg = f"Осталось проверок сегодня: {remaining}/{FREE_DAILY_LIMIT}"
+                msg = f"Осталось проверок на этой неделе: {remaining}/{FREE_WEEKLY_LIMIT}"
                 return (True, remaining, msg)
             else:
                 msg = (
-                    f"⏰ <b>Вы использовали все {FREE_DAILY_LIMIT} бесплатных проверки сегодня</b>\n\n"
+                    f"⏰ <b>Вы использовали все {FREE_WEEKLY_LIMIT} бесплатных проверки на этой неделе</b>\n\n"
                     "💎 <b>Хотите продолжить прямо сейчас?</b>\n"
                     "Оформите подписку и получите:\n"
-                    "• Безлимитные AI-проверки\n"
-                    "• Детальный разбор каждого ответа\n"
-                    "• Персональные рекомендации по улучшению\n"
-                    "• Доступ ко всем заданиям второй части\n\n"
+                    "• ♾️ Безлимитные AI-проверки\n"
+                    "• 📊 Детальный анализ каждого ответа\n"
+                    "• 🎯 Персональные рекомендации по улучшению\n"
+                    "• 📚 Доступ ко всем заданиям второй части\n\n"
                     "🎁 <b>Пробный период:</b> 1₽ за 7 дней полного доступа\n"
                     "👑 <b>Полная подписка:</b> от 249₽/мес\n\n"
-                    "⏳ <i>Или ждите завтра — бесплатный лимит обновится</i>"
+                    "⏳ <i>Или ждите понедельника — бесплатный лимит обновится</i>"
                 )
                 return (False, 0, msg)
 
@@ -112,17 +113,17 @@ class FreemiumManager:
                     user_id, module_code or 'task24'
                 )
 
-            # Получаем использованные проверки
-            checks_used = await db.get_daily_ai_checks_used(user_id)
-            checks_remaining = max(0, FREE_DAILY_LIMIT - checks_used) if not has_subscription else 999
+            # Получаем использованные проверки за неделю
+            checks_used = await db.get_weekly_ai_checks_used(user_id)
+            checks_remaining = max(0, FREE_WEEKLY_LIMIT - checks_used) if not has_subscription else 999
 
             return {
                 'is_premium': has_subscription,
                 'has_subscription': has_subscription,
                 'checks_remaining': checks_remaining,
-                'checks_limit': FREE_DAILY_LIMIT if not has_subscription else 999,
-                'checks_used_today': checks_used,
-                'reset_date': None,  # Лимиты сбрасываются автоматически каждый день
+                'checks_limit': FREE_WEEKLY_LIMIT if not has_subscription else 999,
+                'checks_used_this_week': checks_used,
+                'reset_date': None,  # Лимиты сбрасываются автоматически каждый понедельник
                 'module_code': module_code
             }
 
@@ -131,9 +132,9 @@ class FreemiumManager:
             return {
                 'is_premium': False,
                 'has_subscription': False,
-                'checks_remaining': FREE_DAILY_LIMIT,
-                'checks_limit': FREE_DAILY_LIMIT,
-                'checks_used_today': 0,
+                'checks_remaining': FREE_WEEKLY_LIMIT,
+                'checks_limit': FREE_WEEKLY_LIMIT,
+                'checks_used_this_week': 0,
                 'reset_date': None,
                 'module_code': module_code
             }
@@ -152,12 +153,12 @@ class FreemiumManager:
             return "✨ <b>Безлимитный доступ активен</b>"
         else:
             remaining = limit_info.get('checks_remaining', 0)
-            limit = limit_info.get('checks_limit', FREE_DAILY_LIMIT)
+            limit = limit_info.get('checks_limit', FREE_WEEKLY_LIMIT)
 
             if remaining > 0:
-                return f"📊 Проверок сегодня: {remaining}/{limit}"
+                return f"📊 Проверок на этой неделе: {remaining}/{limit}"
             else:
-                return f"⏳ Лимит исчерпан. Завтра: {limit}/{limit}"
+                return f"⏳ Лимит исчерпан. В понедельник: {limit}/{limit}"
 
     async def use_ai_check(
         self,
@@ -194,20 +195,20 @@ class FreemiumManager:
             logger.error(f"Error using AI check for user {user_id}: {e}")
             return False
 
-    async def reset_daily_limits(self) -> int:
+    async def reset_weekly_limits(self) -> int:
         """
-        Сброс дневных лимитов для всех пользователей.
+        Сброс недельных лимитов для всех пользователей.
         (Фактически удаляет старые записи для очистки БД)
 
         Returns:
             Количество пользователей, для которых сброшены лимиты
         """
         try:
-            deleted = await db.reset_daily_ai_limits()
-            logger.info(f"Daily limits reset: {deleted} old records cleaned")
+            deleted = await db.reset_weekly_ai_limits()
+            logger.info(f"Weekly limits reset: {deleted} old records cleaned")
             return deleted
         except Exception as e:
-            logger.error(f"Error resetting daily limits: {e}")
+            logger.error(f"Error resetting weekly limits: {e}")
             return 0
 
     async def get_user_stats(self, user_id: int) -> Dict[str, Any]:
@@ -230,6 +231,52 @@ class FreemiumManager:
                 'checks_today': 0,
                 'modules_used': []
             }
+
+    def simplify_feedback_for_freemium(self, detailed_feedback: str, score: int, max_score: int) -> str:
+        """
+        Упрощает детальный фидбек для freemium пользователей.
+
+        Args:
+            detailed_feedback: Детальный фидбек от AI
+            score: Набранный балл
+            max_score: Максимальный балл
+
+        Returns:
+            Упрощенный фидбек с призывом к подписке
+        """
+        # Формируем базовый результат
+        text = f"📊 <b>Результат: {score}/{max_score} баллов</b>\n\n"
+
+        # Общая оценка
+        if score == max_score:
+            text += "✅ Отличный ответ!\n"
+        elif score >= max_score * 0.6:
+            text += "⚠️ Хороший ответ, но есть недочеты\n"
+        elif score > 0:
+            text += "⚠️ Ответ требует доработки\n"
+        else:
+            text += "❌ Ответ не соответствует требованиям\n"
+
+        # Базовые рекомендации (одинаковые для всех заданий)
+        text += "\n💡 <b>Общие рекомендации:</b>\n"
+        text += "• Приводите конкретные примеры с именами и названиями\n"
+        text += "• Избегайте общих фраз и абстрактных рассуждений\n"
+        text += "• Следите за фактической точностью\n"
+        text += "• Соблюдайте структуру ответа согласно заданию\n"
+
+        # Призыв к подписке
+        text += (
+            "\n\n💎 <b>Хотите получить детальный разбор?</b>\n"
+            "С Premium подпиской вы получите:\n"
+            "• 📋 Подробный анализ каждого примера\n"
+            "• ✅ Что засчитано и почему\n"
+            "• ❌ Конкретные ошибки и как их исправить\n"
+            "• 💡 Персональные рекомендации по улучшению\n"
+            "• ♾️ Безлимитные AI-проверки\n\n"
+            "🎁 <b>Попробуйте:</b> 1₽ за 7 дней полного доступа"
+        )
+
+        return text
 
 
 # Глобальный экземпляр менеджера

@@ -858,8 +858,10 @@ async def handle_plan_enhanced(update: Update, context: ContextTypes.DEFAULT_TYP
 
     # Проверка лимитов AI-проверок
     freemium_manager = context.bot_data.get('freemium_manager')
+    user_id = update.effective_user.id
+    is_premium = False
+
     if freemium_manager:
-        user_id = update.effective_user.id
         can_use, remaining, limit_msg = await freemium_manager.check_ai_limit(user_id, 'task24')
 
         if not can_use:
@@ -876,6 +878,10 @@ async def handle_plan_enhanced(update: Update, context: ContextTypes.DEFAULT_TYP
                 parse_mode=ParseMode.HTML
             )
             return states.AWAITING_FEEDBACK
+
+        # Получаем информацию о подписке для дифференциации фидбека
+        limit_info = await freemium_manager.get_limit_info(user_id, 'task24')
+        is_premium = limit_info.get('is_premium', False)
 
     # ИСПРАВЛЕНИЕ: Отправляем сообщение "Анализирую..." ДО блока try
     thinking_msg = await show_extended_thinking_animation(
@@ -897,7 +903,7 @@ async def handle_plan_enhanced(update: Update, context: ContextTypes.DEFAULT_TYP
         
         # Оцениваем план с AI (передаём user_id для логирования подсказок)
         if 'evaluate_plan_with_ai' in globals():
-            feedback = await evaluate_plan_with_ai(
+            detailed_feedback = await evaluate_plan_with_ai(
                 user_plan_text,
                 ideal_plan_data,
                 plan_bot_data,
@@ -907,21 +913,35 @@ async def handle_plan_enhanced(update: Update, context: ContextTypes.DEFAULT_TYP
             )
         else:
             # Fallback на обычную проверку
-            feedback = evaluate_plan(
+            detailed_feedback = evaluate_plan(
                 user_plan_text,
                 ideal_plan_data,
                 plan_bot_data,
                 topic_name
             )
-        
+
         # Извлекаем баллы из фидбека для статистики
-        k1_match = re.search(r'К1.*?(\d+)/3', feedback)
-        k2_match = re.search(r'К2.*?(\d+)/1', feedback)
+        k1_match = re.search(r'К1.*?(\d+)/3', detailed_feedback)
+        k2_match = re.search(r'К2.*?(\d+)/1', detailed_feedback)
         
         k1_score = int(k1_match.group(1)) if k1_match else 0
         k2_score = int(k2_match.group(1)) if k2_match else 0
         total_score = k1_score + k2_score
-        
+
+        # Формируем финальный фидбек с учетом подписки
+        if is_premium:
+            feedback = detailed_feedback
+        else:
+            # Упрощенный фидбек для freemium пользователей
+            if freemium_manager:
+                feedback = freemium_manager.simplify_feedback_for_freemium(
+                    detailed_feedback,
+                    total_score,
+                    4  # max_score для task24
+                )
+            else:
+                feedback = detailed_feedback
+
         # Сохраняем результат (включая данные для возможной жалобы)
         context.user_data['last_plan_result'] = {
             'topic': topic_name,
@@ -931,7 +951,7 @@ async def handle_plan_enhanced(update: Update, context: ContextTypes.DEFAULT_TYP
             'timestamp': datetime.now(),
             # Данные для системы жалоб
             'user_answer': user_plan_text,
-            'ai_feedback': feedback,
+            'ai_feedback': detailed_feedback,  # Сохраняем детальный фидбек для жалоб
             'task_type': 'task24'
         }
         
