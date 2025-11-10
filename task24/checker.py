@@ -1099,7 +1099,8 @@ async def evaluate_plan_with_ai(
     bot_data: PlanBotData,
     topic_name: str,
     use_ai: bool = True,
-    user_id: int = None
+    user_id: int = None,
+    is_premium: bool = False
 ) -> str:
     """
     Расширенная версия evaluate_plan с углубленной AI-проверкой
@@ -1111,6 +1112,7 @@ async def evaluate_plan_with_ai(
         topic_name: Название темы
         use_ai: Использовать ли AI-проверку
         user_id: ID пользователя (для логирования применения подсказок)
+        is_premium: Имеет ли пользователь премиум подписку
     """
     # Сначала выполняем обычную проверку для получения баллов
     basic_feedback = evaluate_plan(user_plan_text, ideal_plan_data, bot_data, topic_name)
@@ -1195,7 +1197,8 @@ async def evaluate_plan_with_ai(
             relevance_check=relevance_check if isinstance(relevance_check, dict) else None,
             factual_errors=factual_errors if isinstance(factual_errors, list) else None,
             comparison_result=comparison_result if isinstance(comparison_result, dict) else None,
-            personalized_feedback=personalized_feedback
+            personalized_feedback=personalized_feedback,
+            is_premium=is_premium
         )
             
     except Exception as e:
@@ -1240,7 +1243,8 @@ def _format_ai_feedback(
     relevance_check: Optional[Dict] = None,
     factual_errors: Optional[List] = None,
     comparison_result: Optional[Dict] = None,
-    personalized_feedback: Optional[str] = None
+    personalized_feedback: Optional[str] = None,
+    is_premium: bool = False
 ) -> str:
     """
     ОПТИМИЗИРОВАННЫЙ формат AI-фидбека.
@@ -1248,7 +1252,7 @@ def _format_ai_feedback(
     Изменения:
     - Компактная строка с баллами
     - Убраны дублирующиеся блоки
-    - Краткий отзыв эксперта (3-4 предложения)
+    - Краткий отзыв эксперта (3-4 предложения) - только для premium
     - Минимум эмодзи
     - Очистка Markdown-синтаксиса
     """
@@ -1261,12 +1265,22 @@ def _format_ai_feedback(
         f"📊 <b>Оценка:</b> К1: {k1}/3 | К2: {k2}/1 | <b>Итого: {total_score}/4</b>\n"
     ]
 
-    # Персонализированный отзыв эксперта (теперь короткий - 3-4 предложения)
-    if personalized_feedback:
-        # НОВОЕ: Очищаем Markdown-синтаксис перед выводом
+    # Персонализированный отзыв эксперта (только для premium пользователей)
+    if is_premium and personalized_feedback:
+        # Очищаем Markdown-синтаксис перед выводом
         cleaned_feedback = _clean_markdown_syntax(personalized_feedback)
         feedback_parts.append("💬 <b>Отзыв эксперта:</b>")
         feedback_parts.append(cleaned_feedback)
+        feedback_parts.append("")
+    elif not is_premium:
+        # Для freemium показываем призыв к подписке
+        feedback_parts.append("💎 <b>Хотите получить подробный разбор от эксперта?</b>")
+        feedback_parts.append("Оформите подписку и получите:")
+        feedback_parts.append("• Детальный анализ каждого пункта плана")
+        feedback_parts.append("• Персональные рекомендации по улучшению")
+        feedback_parts.append("• Разбор типичных ошибок")
+        feedback_parts.append("• Безлимитные AI-проверки\n")
+        feedback_parts.append("🎁 <b>Пробный период:</b> 1₽ за 7 дней полного доступа")
         feedback_parts.append("")
 
     # Краткая итоговая рекомендация (только одна строка)

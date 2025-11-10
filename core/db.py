@@ -1243,6 +1243,30 @@ async def get_daily_ai_checks_used(user_id: int) -> int:
         return 0
 
 
+async def get_weekly_ai_checks_used(user_id: int) -> int:
+    """
+    Получает количество использованных AI-проверок за последние 7 дней.
+
+    Args:
+        user_id: ID пользователя
+
+    Returns:
+        Количество использованных проверок за неделю
+    """
+    try:
+        week_ago = date.today() - timedelta(days=7)
+        async with aiosqlite.connect(DATABASE_FILE) as db:
+            cursor = await db.execute(
+                "SELECT SUM(checks_used) FROM user_ai_limits WHERE user_id = ? AND check_date >= ?",
+                (user_id, week_ago)
+            )
+            row = await cursor.fetchone()
+            return row[0] if row and row[0] else 0
+    except Exception as e:
+        logger.error(f"Error getting weekly AI checks for user {user_id}: {e}")
+        return 0
+
+
 async def increment_ai_check_usage(user_id: int) -> bool:
     """
     Увеличивает счетчик использованных AI-проверок на 1.

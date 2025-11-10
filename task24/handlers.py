@@ -894,8 +894,14 @@ async def handle_plan_enhanced(update: Update, context: ContextTypes.DEFAULT_TYP
         
         # Проверяем, включена ли AI-проверка
         use_ai = context.bot_data.get('use_ai_checking', True)
-        
-        # Оцениваем план с AI (передаём user_id для логирования подсказок)
+
+        # Получаем информацию о подписке для персонализации фидбэка
+        is_premium = False
+        if freemium_manager:
+            limit_info = await freemium_manager.get_limit_info(user_id, 'task24')
+            is_premium = limit_info.get('is_premium', False)
+
+        # Оцениваем план с AI (передаём user_id для логирования подсказок и is_premium)
         if 'evaluate_plan_with_ai' in globals():
             feedback = await evaluate_plan_with_ai(
                 user_plan_text,
@@ -903,7 +909,8 @@ async def handle_plan_enhanced(update: Update, context: ContextTypes.DEFAULT_TYP
                 plan_bot_data,
                 topic_name,
                 use_ai=use_ai,
-                user_id=update.effective_user.id
+                user_id=update.effective_user.id,
+                is_premium=is_premium
             )
         else:
             # Fallback на обычную проверку
