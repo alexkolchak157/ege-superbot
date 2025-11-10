@@ -433,20 +433,19 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if subscription_info.get('type') == 'modular':
                 welcome_text += "📚 <b>Твои модули:</b>\n"
                 modules = subscription_info.get('modules', [])
-                
-                # Всегда показываем тестовую часть
-                welcome_text += "• 🆓 Тестовая часть\n"
-                
+
                 module_names = {
                     'task19': '• ✅ Задание 19',
-                    'task20': '• ✅ Задание 20', 
+                    'task20': '• ✅ Задание 20',
                     'task24': '• ✅ Задание 24',
                     'task25': '• ✅ Задание 25'
                 }
-                
+
+                # ИСПРАВЛЕНИЕ: Отображаем только платные модули (test_part бесплатен для всех)
                 for module in modules:
-                    if module != 'test_part':
-                        welcome_text += f"{module_names.get(module, '• ✅ ' + module)}\n"
+                    if module != 'test_part':  # Исключаем бесплатный модуль
+                        display_name = module_names.get(module, f'• ✅ {module}')
+                        welcome_text += f"{display_name}\n"
             else:
                 welcome_text += "📚 <b>Все модули доступны!</b>\n"
             

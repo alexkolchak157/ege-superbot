@@ -1047,19 +1047,23 @@ class SubscriptionManager:
             min_expires = None
             
             for module in modules:
-                name = module_names.get(module['module_code'], module['module_code'])
-                active_modules.append(name)
-                
+                # ИСПРАВЛЕНИЕ: Возвращаем коды модулей, а не названия
+                active_modules.append(module['module_code'])
+
                 if min_expires is None or (module['expires_at'].replace(tzinfo=None) if hasattr(module['expires_at'], 'tzinfo') else module['expires_at']) < (min_expires.replace(tzinfo=None) if hasattr(min_expires, 'tzinfo') else min_expires):
                     min_expires = module['expires_at']
-            
-            # ИСПРАВЛЕНИЕ: Добавляем поле is_active
+
+            # ИСПРАВЛЕНИЕ: Исключаем test_part при проверке активности подписки
+            # test_part бесплатен и не должен считаться платной подпиской
+            paid_modules = [m for m in active_modules if m != 'test_part']
+
+            # ИСПРАВЛЕНИЕ: Добавляем поле is_active только если есть платные модули
             return {
                 'type': 'modular',
                 'modules': active_modules,
                 'expires_at': min_expires,
                 'modules_count': len(modules),
-                'is_active': True  # Если есть модули, значит подписка активна
+                'is_active': len(paid_modules) > 0  # Подписка активна только если есть платные модули
             }
         else:
             # Старая система
