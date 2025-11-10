@@ -10,6 +10,9 @@ import asyncio
 from datetime import datetime
 import aiosqlite
 from enum import Enum
+from collections import defaultdict
+import time
+from typing import Dict, List
 from core import config
 from .subscription_manager import SubscriptionManager
 from .tinkoff import TinkoffPayment
@@ -24,6 +27,79 @@ logger = logging.getLogger(__name__)
 webhook_app = None
 webhook_runner = None
 webhook_site = None
+
+# ==================== RATE LIMITING ====================
+# Защита webhook от DDoS атак и спама
+WEBHOOK_RATE_LIMIT_WINDOW = 60  # Окно в секундах (1 минута)
+WEBHOOK_MAX_REQUESTS_PER_WINDOW = 60  # Максимум запросов за окно
+_webhook_rate_limit_data: Dict[str, List[float]] = defaultdict(list)
+
+
+def check_webhook_rate_limit(client_ip: str) -> tuple[bool, str]:
+    """
+    Проверяет rate limit для webhook запросов с конкретного IP.
+
+    Args:
+        client_ip: IP адрес клиента
+
+    Returns:
+        (allowed, message): allowed=True если запрос разрешен,
+                           message содержит причину отказа если allowed=False
+    """
+    now = time.time()
+    cutoff = now - WEBHOOK_RATE_LIMIT_WINDOW
+
+    # Очищаем старые записи
+    _webhook_rate_limit_data[client_ip] = [
+        ts for ts in _webhook_rate_limit_data[client_ip]
+        if ts > cutoff
+    ]
+
+    # Проверяем лимит
+    request_count = len(_webhook_rate_limit_data[client_ip])
+
+    if request_count >= WEBHOOK_MAX_REQUESTS_PER_WINDOW:
+        logger.warning(
+            f"⚠️  Rate limit exceeded for IP {client_ip}: "
+            f"{request_count} requests in last {WEBHOOK_RATE_LIMIT_WINDOW}s"
+        )
+        return False, f"Rate limit exceeded: max {WEBHOOK_MAX_REQUESTS_PER_WINDOW} requests per minute"
+
+    # Записываем новый запрос
+    _webhook_rate_limit_data[client_ip].append(now)
+
+    return True, ""
+
+
+async def cleanup_rate_limit_data():
+    """Периодически очищает старые данные rate limit."""
+    while True:
+        try:
+            await asyncio.sleep(300)  # Каждые 5 минут
+            now = time.time()
+            cutoff = now - WEBHOOK_RATE_LIMIT_WINDOW
+
+            # Очищаем данные старше окна
+            ips_to_clean = []
+            for ip, timestamps in _webhook_rate_limit_data.items():
+                # Оставляем только свежие timestamp
+                fresh = [ts for ts in timestamps if ts > cutoff]
+                if fresh:
+                    _webhook_rate_limit_data[ip] = fresh
+                else:
+                    ips_to_clean.append(ip)
+
+            # Удаляем пустые записи
+            for ip in ips_to_clean:
+                del _webhook_rate_limit_data[ip]
+
+            if ips_to_clean:
+                logger.debug(f"Cleaned up rate limit data for {len(ips_to_clean)} IPs")
+
+        except asyncio.CancelledError:
+            break
+        except Exception as e:
+            logger.error(f"Error in rate limit cleanup: {e}")
 
 class TinkoffStatus(Enum):
     """Статусы платежей Tinkoff"""
@@ -107,6 +183,14 @@ def sanitize_webhook_data(data: dict) -> dict:
 async def handle_webhook(request: web.Request) -> web.Response:
     """Обработчик webhook от Tinkoff с полной защитой от дублирования."""
     try:
+        # НОВОЕ: Проверяем rate limit для защиты от DDoS
+        client_ip = request.remote or 'unknown'
+        allowed, error_msg = check_webhook_rate_limit(client_ip)
+
+        if not allowed:
+            logger.warning(f"🚫 Rate limit blocked request from {client_ip}")
+            return web.Response(text='RATE_LIMIT_EXCEEDED', status=429)
+
         # Получаем данные
         data = await request.json()
 
@@ -136,30 +220,9 @@ async def handle_webhook(request: web.Request) -> web.Response:
 
         # Проверяем, не обработали ли мы уже этот webhook
         async with aiosqlite.connect(config.DATABASE_PATH) as db:
-            # ИСПРАВЛЕНИЕ: Создаём таблицы если их нет
-            await db.execute("""
-                CREATE TABLE IF NOT EXISTS webhook_logs (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    order_id TEXT NOT NULL,
-                    status TEXT NOT NULL,
-                    payment_id TEXT,
-                    raw_data TEXT,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    UNIQUE(order_id, status, payment_id)
-                )
-            """)
-
-            await db.execute("""
-                CREATE TABLE IF NOT EXISTS notification_history (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    user_id INTEGER NOT NULL,
-                    order_id TEXT NOT NULL,
-                    notification_type TEXT NOT NULL,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    UNIQUE(user_id, order_id, notification_type)
-                )
-            """)
-            await db.commit()
+            # ИСПРАВЛЕНИЕ: Таблицы webhook_logs и notification_history создаются через миграции
+            # (см. payment/apply_payment_migrations.py)
+            # Это предотвращает создание таблиц при каждом webhook запросе
 
             # Флаг, указывающий, является ли это дубликатом webhook
             is_duplicate = False
@@ -342,18 +405,9 @@ async def log_webhook_event(data: dict):
     """Логирует webhook событие в БД."""
     try:
         async with aiosqlite.connect(config.DATABASE_PATH) as db:
-            # Создаем таблицу если не существует
-            await db.execute("""
-                CREATE TABLE IF NOT EXISTS webhook_logs (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    order_id TEXT,
-                    payment_id TEXT,
-                    status TEXT,
-                    data TEXT,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )
-            """)
-            
+            # ИСПРАВЛЕНИЕ: Таблица создается через миграции (apply_payment_migrations.py)
+            # а не при каждом логировании webhook
+
             await db.execute("""
                 INSERT INTO webhook_logs (order_id, payment_id, status, data)
                 VALUES (?, ?, ?, ?)
@@ -627,9 +681,9 @@ async def health_check(request: web.Request) -> web.Response:
     return web.Response(text='OK', status=200)
 
 async def start_webhook_server(bot: Bot = None, port: int = 8080):
-    """Запускает webhook сервер."""
+    """Запускает webhook сервер с rate limiting и cleanup."""
     global webhook_app, webhook_runner, webhook_site
-    
+
     try:
         # Проверяем конфигурацию
         if not all([
@@ -638,30 +692,35 @@ async def start_webhook_server(bot: Bot = None, port: int = 8080):
         ]):
             logger.warning("Tinkoff credentials not configured, webhook server not started")
             return
-        
+
         # Создаем приложение
         webhook_app = create_webhook_app(bot)
-        
+
+        # НОВОЕ: Запускаем фоновую задачу очистки rate limit данных
+        asyncio.create_task(cleanup_rate_limit_data())
+        logger.info("✅ Rate limit cleanup task started")
+
         # Создаем и запускаем runner
         webhook_runner = web.AppRunner(webhook_app)
         await webhook_runner.setup()
-        
+
         # Запускаем сайт
         webhook_site = web.TCPSite(webhook_runner, '0.0.0.0', port)
         await webhook_site.start()
-        
-        logger.info(f"Webhook server started on port {port}")
+
+        logger.info(f"🚀 Webhook server started on port {port}")
+        logger.info(f"🛡️  Rate limiting enabled: max {WEBHOOK_MAX_REQUESTS_PER_WINDOW} requests per {WEBHOOK_RATE_LIMIT_WINDOW}s")
         logger.info("Webhook paths registered:")
         logger.info("  - /payment/webhook (основной)")
         logger.info("  - /webhook (альтернативный)")
         logger.info("  - /payment-notification (legacy)")
-        
+
         # Логируем webhook URL для настройки в Tinkoff
         if hasattr(config, 'WEBHOOK_BASE_URL'):
             logger.info(f"Webhook URLs for Tinkoff:")
             logger.info(f"  Primary: {config.WEBHOOK_BASE_URL}/payment/webhook")
             logger.info(f"  Alternative: {config.WEBHOOK_BASE_URL}/webhook")
-        
+
     except Exception as e:
         logger.exception(f"Failed to start webhook server: {e}")
 

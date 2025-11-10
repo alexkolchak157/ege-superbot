@@ -240,8 +240,22 @@ def apply_migrations(db_path):
             )
         """)
         logger.info("  ✓ Таблица auto_renewal_history готова")
-        
-        # 7. Создаем индексы
+
+        # 7. НОВОЕ: Создаем таблицу notification_history
+        logger.info("\n📋 Создание таблицы notification_history...")
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS notification_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                order_id TEXT NOT NULL,
+                notification_type TEXT NOT NULL,
+                sent_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(user_id, order_id, notification_type)
+            )
+        """)
+        logger.info("  ✓ Таблица notification_history готова")
+
+        # 8. Создаем индексы
         logger.info("\n📋 Создание индексов...")
         
         indices = [

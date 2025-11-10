@@ -1256,21 +1256,78 @@ class SubscriptionManager:
         logger.info(f"User {user_id} has no access to module {module_code}")
         return False
     
-    async def create_payment(self, user_id: int, plan_id: str, amount_kopecks: int, 
+    async def create_payment(self, user_id: int, plan_id: str, amount_kopecks: int,
                             duration_months: int = 1, metadata: dict = None) -> Dict[str, Any]:
-        """Создает запись о платеже с сохранением метаданных."""
+        """
+        Создает запись о платеже с сохранением метаданных.
+
+        ИСПРАВЛЕНИЕ: Добавлена идемпотентность - если у пользователя уже есть
+        pending платеж для того же плана, созданный недавно, возвращается существующий.
+        Это защищает от дублирования при двойном клике кнопки "Оплатить".
+        """
         import uuid
         import json
-        order_id = f"ORD_{user_id}_{int(datetime.now().timestamp())}_{uuid.uuid4().hex[:8]}"
-        
-        # КРИТИЧЕСКИ ВАЖНО: Подготавливаем метаданные
-        payment_metadata = metadata or {}
-        payment_metadata['duration_months'] = duration_months
-        payment_metadata['plan_id'] = plan_id
-        payment_metadata['user_id'] = user_id
-        
+
         try:
             async with aiosqlite.connect(self.database_file, timeout=30.0) as conn:
+                # НОВОЕ: Проверяем существующие pending платежи за последние 5 минут
+                cursor = await conn.execute(
+                    """
+                    SELECT order_id, plan_id, amount_kopecks, metadata, created_at
+                    FROM payments
+                    WHERE user_id = ?
+                      AND plan_id = ?
+                      AND status = 'pending'
+                      AND created_at > datetime('now', '-5 minutes')
+                    ORDER BY created_at DESC
+                    LIMIT 1
+                    """,
+                    (user_id, plan_id)
+                )
+                existing_payment = await cursor.fetchone()
+
+                if existing_payment:
+                    order_id, plan_id_db, amount_db, metadata_str, created_at = existing_payment
+
+                    # Парсим метаданные
+                    try:
+                        existing_metadata = json.loads(metadata_str) if metadata_str else {}
+                    except:
+                        existing_metadata = {}
+
+                    existing_duration = existing_metadata.get('duration_months', 1)
+
+                    # Проверяем, совпадают ли параметры
+                    if amount_db == amount_kopecks and existing_duration == duration_months:
+                        logger.info(
+                            f"♻️  Reusing existing pending payment {order_id} for user {user_id} "
+                            f"(created {created_at}, idempotency check)"
+                        )
+                        return {
+                            'order_id': order_id,
+                            'user_id': user_id,
+                            'plan_id': plan_id,
+                            'amount_kopecks': amount_db,
+                            'duration_months': existing_duration,
+                            'reused': True  # Флаг что это переиспользованный платеж
+                        }
+                    else:
+                        # Параметры не совпадают - создаем новый платеж
+                        logger.info(
+                            f"Parameters mismatch for pending payment {order_id}: "
+                            f"amount {amount_db} vs {amount_kopecks}, duration {existing_duration} vs {duration_months}. "
+                            f"Creating new payment."
+                        )
+
+                # Создаем новый платеж
+                order_id = f"ORD_{user_id}_{int(datetime.now().timestamp())}_{uuid.uuid4().hex[:8]}"
+
+                # КРИТИЧЕСКИ ВАЖНО: Подготавливаем метаданные
+                payment_metadata = metadata or {}
+                payment_metadata['duration_months'] = duration_months
+                payment_metadata['plan_id'] = plan_id
+                payment_metadata['user_id'] = user_id
+
                 await conn.execute(
                     """
                     INSERT INTO payments (user_id, order_id, plan_id, amount_kopecks, status, metadata, created_at)
@@ -1279,16 +1336,18 @@ class SubscriptionManager:
                     (user_id, order_id, plan_id, amount_kopecks, json.dumps(payment_metadata))
                 )
                 await conn.commit()
-                
-            logger.info(f"Created payment {order_id} with duration_months={duration_months}")
-            
-            return {
-                'order_id': order_id,
-                'user_id': user_id,
-                'plan_id': plan_id,
-                'amount_kopecks': amount_kopecks,
-                'duration_months': duration_months
-            }
+
+                logger.info(f"✅ Created new payment {order_id} with duration_months={duration_months}")
+
+                return {
+                    'order_id': order_id,
+                    'user_id': user_id,
+                    'plan_id': plan_id,
+                    'amount_kopecks': amount_kopecks,
+                    'duration_months': duration_months,
+                    'reused': False
+                }
+
         except Exception as e:
             logger.error(f"Error creating payment: {e}")
             raise
