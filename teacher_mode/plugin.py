@@ -46,6 +46,12 @@ class TeacherModePlugin(BotPlugin):
                     CallbackQueryHandler(teacher_handlers.show_teacher_subscriptions, pattern="^teacher_subscriptions$"),
                     CallbackQueryHandler(teacher_handlers.show_teacher_plan_details, pattern="^buy_teacher_"),
 
+                    # Обработчики оплаты подписки (используем обработчики из payment)
+                    CallbackQueryHandler(teacher_handlers.handle_teacher_subscription_payment, pattern="^pay_teacher_"),
+                    CallbackQueryHandler(teacher_handlers.handle_payment_callback, pattern="^confirm_teacher_plan:"),
+                    CallbackQueryHandler(teacher_handlers.handle_payment_callback, pattern="^duration_"),
+                    CallbackQueryHandler(teacher_handlers.handle_payment_callback, pattern="^confirm_purchase$"),
+
                     # Ученики и статистика
                     CallbackQueryHandler(teacher_handlers.show_student_list, pattern="^teacher_students$"),
                     CallbackQueryHandler(teacher_handlers.show_teacher_statistics, pattern="^teacher_statistics$"),
@@ -200,6 +206,14 @@ class TeacherModePlugin(BotPlugin):
                     CallbackQueryHandler(teacher_handlers.create_assignment_start, pattern="^teacher_create_assignment$"),
                     CallbackQueryHandler(teacher_handlers.teacher_menu, pattern="^teacher_menu$"),
                 ],
+                TeacherStates.PAYMENT_ENTERING_EMAIL: [
+                    # Обработка ввода email для оплаты
+                    MessageHandler(filters.TEXT & ~filters.COMMAND, teacher_handlers.handle_payment_email_input),
+
+                    # Отмена платежа
+                    CallbackQueryHandler(teacher_handlers.teacher_menu, pattern="^cancel_payment$"),
+                    CallbackQueryHandler(teacher_handlers.teacher_menu, pattern="^teacher_menu$"),
+                ],
             },
             fallbacks=[
                 CallbackQueryHandler(teacher_handlers.teacher_menu, pattern="^teacher_menu$"),
@@ -263,11 +277,15 @@ class TeacherModePlugin(BotPlugin):
         app.add_handler(CallbackQueryHandler(student_handlers.start_homework, pattern="^start_homework_\\d+$"))
 
         # Регистрация ConversationHandler'ов
-        app.add_handler(teacher_conv_handler)
-        app.add_handler(student_conv_handler)
-        app.add_handler(homework_execution_handler)
+        # ВАЖНО: Используем group=-40 чтобы teacher conversation обрабатывался
+        # ПОСЛЕ payment conversation (group=-50), но с более высоким приоритетом чем обычные handlers (group=0)
+        # Это предотвращает конфликты: payment ConversationHandler проверяется первым,
+        # но если пользователь уже в teacher conversation, то teacher handlers будут обрабатывать callbacks
+        app.add_handler(teacher_conv_handler, group=-40)
+        app.add_handler(student_conv_handler, group=-40)
+        app.add_handler(homework_execution_handler, group=-40)
 
-        logger.info("Teacher mode plugin handlers registered")
+        logger.info("Teacher mode plugin handlers registered (group=-40)")
 
 
 # Экспорт экземпляра плагина

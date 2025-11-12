@@ -1,5 +1,45 @@
 """
 Обработчики для учителей.
+
+АРХИТЕКТУРА ИНТЕГРАЦИИ С PAYMENT МОДУЛЕМ:
+==========================================
+
+Этот модуль содержит обработчики для teacher ConversationHandler, включая
+интеграцию с payment модулем для оформления подписок учителей.
+
+ПРОБЛЕМА:
+---------
+У нас есть два ConversationHandler'а:
+1. payment ConversationHandler (group=-50) - обрабатывается ПЕРВЫМ
+2. teacher ConversationHandler (group=-40) - обрабатывается ВТОРЫМ
+
+Когда пользователь находится в режиме учителя и хочет оформить подписку,
+нам нужно обработать payment flow БЕЗ выхода из teacher conversation,
+иначе теряется контекст и состояние пользователя.
+
+РЕШЕНИЕ:
+--------
+Создан "мост" между teacher и payment модулями:
+- handle_teacher_subscription_payment() - начало оплаты (pay_teacher_)
+- handle_payment_callback() - обработка payment callbacks (confirm, duration, etc)
+- handle_payment_email_input() - ввод email для оплаты
+
+Эти функции делегируют вызовы в payment.handlers, но:
+1. Остаются в контексте teacher ConversationHandler
+2. Управляют переходами состояний (TEACHER_MENU ↔ PAYMENT_ENTERING_EMAIL)
+3. Обрабатывают ошибки и логируют действия
+
+МАСШТАБИРОВАНИЕ:
+----------------
+При добавлении новых типов подписок или изменении payment flow,
+нужно обновить только маршрутизацию в handle_payment_callback().
+Основная логика остается в payment модуле - это обеспечивает
+единую точку правды для всех платежных операций.
+
+ОТЛАДКА:
+--------
+Все payment-related операции логируются с префиксом [Teacher Payment]
+для упрощения отладки и мониторинга.
 """
 
 import logging
@@ -2801,6 +2841,134 @@ async def show_student_statistics(update: Update, context: ContextTypes.DEFAULT_
     await query.message.edit_text(text, reply_markup=reply_markup, parse_mode='HTML')
 
     return TeacherStates.TEACHER_MENU
+
+
+async def handle_teacher_subscription_payment(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Обработчик оплаты подписки для учителя.
+    Перенаправляет на основной обработчик оплаты из payment модуля.
+
+    АРХИТЕКТУРА:
+    Эта функция является мостом между teacher ConversationHandler и payment модулем.
+    Она позволяет обрабатывать payment flow внутри teacher conversation,
+    предотвращая потерю контекста и состояния пользователя.
+    """
+    query = update.callback_query
+    user_id = update.effective_user.id
+    callback_data = query.data
+
+    logger.info(f"[Teacher Payment] User {user_id} initiated payment: {callback_data}")
+
+    try:
+        from payment.handlers import handle_plan_selection
+
+        # Вызываем основной обработчик оплаты
+        result = await handle_plan_selection(update, context)
+
+        logger.info(f"[Teacher Payment] Payment handler returned state: {result}")
+
+        # Возвращаем текущее состояние, чтобы остаться в teacher conversation
+        return TeacherStates.TEACHER_MENU
+
+    except Exception as e:
+        logger.error(f"[Teacher Payment] Error in payment handler for user {user_id}: {e}", exc_info=True)
+        await query.answer("❌ Произошла ошибка. Попробуйте позже.", show_alert=True)
+        return TeacherStates.TEACHER_MENU
+
+
+async def handle_payment_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Универсальный обработчик для payment-related callbacks.
+    Перенаправляет на соответствующие обработчики из payment модуля.
+
+    МАРШРУТИЗАЦИЯ:
+    - confirm_teacher_plan: → подтверждение выбора тарифа
+    - duration_: → выбор длительности подписки
+    - confirm_purchase: → финальное подтверждение покупки
+    """
+    query = update.callback_query
+    callback_data = query.data
+    user_id = update.effective_user.id
+
+    logger.info(f"[Teacher Payment] User {user_id} payment callback: {callback_data}")
+
+    try:
+        # Импортируем нужные обработчики из payment
+        from payment.handlers import (
+            handle_teacher_plan_confirmation,
+            handle_duration_selection,
+            handle_purchase_confirmation,
+            ENTERING_EMAIL
+        )
+
+        # Маршрутизируем на соответствующий обработчик
+        if callback_data.startswith("confirm_teacher_plan:"):
+            result = await handle_teacher_plan_confirmation(update, context)
+            logger.info(f"[Teacher Payment] Teacher plan confirmation result: {result}")
+            # Если результат - запрос email, переключаемся в состояние ввода email
+            if result == ENTERING_EMAIL:
+                return TeacherStates.PAYMENT_ENTERING_EMAIL
+        elif callback_data.startswith("duration_"):
+            result = await handle_duration_selection(update, context)
+            logger.info(f"[Teacher Payment] Duration selection result: {result}")
+            # Если результат - запрос email, переключаемся в состояние ввода email
+            if result == ENTERING_EMAIL:
+                return TeacherStates.PAYMENT_ENTERING_EMAIL
+        elif callback_data == "confirm_purchase":
+            result = await handle_purchase_confirmation(update, context)
+            logger.info(f"[Teacher Payment] Purchase confirmation result: {result}")
+            # После подтверждения покупки возвращаемся в меню
+            return TeacherStates.TEACHER_MENU
+        else:
+            logger.warning(f"[Teacher Payment] Unknown callback: {callback_data}")
+            await query.answer("❌ Неизвестная команда")
+            return TeacherStates.TEACHER_MENU
+
+        # По умолчанию возвращаем текущее состояние
+        return TeacherStates.TEACHER_MENU
+
+    except Exception as e:
+        logger.error(f"[Teacher Payment] Error in payment callback for user {user_id}: {e}", exc_info=True)
+        await query.answer("❌ Произошла ошибка. Попробуйте позже.", show_alert=True)
+        return TeacherStates.TEACHER_MENU
+
+
+async def handle_payment_email_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Обработчик ввода email для оплаты подписки.
+    Перенаправляет на обработчик из payment модуля.
+
+    ВАЖНО:
+    После успешного ввода email payment обработчик создаст платеж и отправит ссылку.
+    ConversationHandler завершается (END), чтобы пользователь мог свободно
+    взаимодействовать с ботом после получения ссылки на оплату.
+    """
+    user_id = update.effective_user.id
+    email = update.message.text
+
+    logger.info(f"[Teacher Payment] User {user_id} entered email: {email}")
+
+    try:
+        from payment.handlers import handle_email_input
+
+        # Вызываем обработчик из payment модуля
+        result = await handle_email_input(update, context)
+
+        logger.info(f"[Teacher Payment] Email input result: {result}")
+
+        # После ввода email и обработки платежа завершаем conversation
+        # (payment обработчик отправит ссылку на оплату)
+        return ConversationHandler.END
+
+    except Exception as e:
+        logger.error(f"[Teacher Payment] Error processing email for user {user_id}: {e}", exc_info=True)
+        await update.message.reply_text(
+            "❌ Произошла ошибка при обработке email. Попробуйте позже.",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("◀️ Назад в меню учителя", callback_data="teacher_menu")]
+            ])
+        )
+        return ConversationHandler.END
 
 
 

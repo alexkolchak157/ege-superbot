@@ -46,6 +46,9 @@ class TeacherStates(IntEnum):
     ENTER_CUSTOM_QUESTION = 70  # Ввод текста кастомного вопроса
     REVIEW_CUSTOM_QUESTIONS = 71  # Просмотр и подтверждение всех вопросов
 
+    # Оплата подписки
+    PAYMENT_ENTERING_EMAIL = 80  # Ввод email для оплаты подписки
+
 
 class StudentStates(IntEnum):
     """Состояния для учеников (связь с учителем)"""
