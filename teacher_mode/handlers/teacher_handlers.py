@@ -346,7 +346,7 @@ async def show_teacher_plan_details(update: Update, context: ContextTypes.DEFAUL
             text += f"{feature}\n"
 
     keyboard = [
-        [InlineKeyboardButton("💳 Оформить подписку", callback_data=f"pay_teacher_{plan_id}")],
+        [InlineKeyboardButton("💳 Оформить подписку", callback_data=f"pay_{plan_id}")],
         [InlineKeyboardButton("◀️ Назад к тарифам", callback_data="teacher_subscriptions")],
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
