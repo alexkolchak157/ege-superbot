@@ -46,6 +46,12 @@ class TeacherModePlugin(BotPlugin):
                     CallbackQueryHandler(teacher_handlers.show_teacher_subscriptions, pattern="^teacher_subscriptions$"),
                     CallbackQueryHandler(teacher_handlers.show_teacher_plan_details, pattern="^buy_teacher_"),
 
+                    # Обработчики оплаты подписки (используем обработчики из payment)
+                    CallbackQueryHandler(teacher_handlers.handle_teacher_subscription_payment, pattern="^pay_teacher_"),
+                    CallbackQueryHandler(teacher_handlers.handle_payment_callback, pattern="^confirm_teacher_plan:"),
+                    CallbackQueryHandler(teacher_handlers.handle_payment_callback, pattern="^duration_"),
+                    CallbackQueryHandler(teacher_handlers.handle_payment_callback, pattern="^confirm_purchase$"),
+
                     # Ученики и статистика
                     CallbackQueryHandler(teacher_handlers.show_student_list, pattern="^teacher_students$"),
                     CallbackQueryHandler(teacher_handlers.show_teacher_statistics, pattern="^teacher_statistics$"),
@@ -198,6 +204,14 @@ class TeacherModePlugin(BotPlugin):
 
                     # Отмена
                     CallbackQueryHandler(teacher_handlers.create_assignment_start, pattern="^teacher_create_assignment$"),
+                    CallbackQueryHandler(teacher_handlers.teacher_menu, pattern="^teacher_menu$"),
+                ],
+                TeacherStates.PAYMENT_ENTERING_EMAIL: [
+                    # Обработка ввода email для оплаты
+                    MessageHandler(filters.TEXT & ~filters.COMMAND, teacher_handlers.handle_payment_email_input),
+
+                    # Отмена платежа
+                    CallbackQueryHandler(teacher_handlers.teacher_menu, pattern="^cancel_payment$"),
                     CallbackQueryHandler(teacher_handlers.teacher_menu, pattern="^teacher_menu$"),
                 ],
             },

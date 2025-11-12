@@ -2803,4 +2803,72 @@ async def show_student_statistics(update: Update, context: ContextTypes.DEFAULT_
     return TeacherStates.TEACHER_MENU
 
 
+async def handle_teacher_subscription_payment(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Обработчик оплаты подписки для учителя.
+    Перенаправляет на основной обработчик оплаты из payment модуля.
+    """
+    from payment.handlers import handle_plan_selection
+
+    # Вызываем основной обработчик оплаты
+    result = await handle_plan_selection(update, context)
+
+    # Возвращаем текущее состояние, чтобы остаться в teacher conversation
+    return TeacherStates.TEACHER_MENU
+
+
+async def handle_payment_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Универсальный обработчик для payment-related callbacks.
+    Перенаправляет на соответствующие обработчики из payment модуля.
+    """
+    query = update.callback_query
+    callback_data = query.data
+
+    # Импортируем нужные обработчики из payment
+    from payment.handlers import (
+        handle_teacher_plan_confirmation,
+        handle_duration_selection,
+        handle_purchase_confirmation,
+        ENTERING_EMAIL
+    )
+
+    # Маршрутизируем на соответствующий обработчик
+    if callback_data.startswith("confirm_teacher_plan:"):
+        result = await handle_teacher_plan_confirmation(update, context)
+        # Если результат - запрос email, переключаемся в состояние ввода email
+        if result == ENTERING_EMAIL:
+            return TeacherStates.PAYMENT_ENTERING_EMAIL
+    elif callback_data.startswith("duration_"):
+        result = await handle_duration_selection(update, context)
+        # Если результат - запрос email, переключаемся в состояние ввода email
+        if result == ENTERING_EMAIL:
+            return TeacherStates.PAYMENT_ENTERING_EMAIL
+    elif callback_data == "confirm_purchase":
+        result = await handle_purchase_confirmation(update, context)
+        # После подтверждения покупки возвращаемся в меню
+        return TeacherStates.TEACHER_MENU
+    else:
+        await query.answer("❌ Неизвестная команда")
+        return TeacherStates.TEACHER_MENU
+
+    # По умолчанию возвращаем текущее состояние
+    return TeacherStates.TEACHER_MENU
+
+
+async def handle_payment_email_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Обработчик ввода email для оплаты подписки.
+    Перенаправляет на обработчик из payment модуля.
+    """
+    from payment.handlers import handle_email_input
+
+    # Вызываем обработчик из payment модуля
+    result = await handle_email_input(update, context)
+
+    # После ввода email и обработки платежа возвращаемся в главное меню
+    # (payment обработчик отправит ссылку на оплату и завершит conversation)
+    return ConversationHandler.END
+
+
 
