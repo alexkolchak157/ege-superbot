@@ -218,6 +218,14 @@ async def post_init(application: Application) -> None:
     except Exception as e:
         logger.error(f"Failed to register notification handlers: {e}")
 
+    # Регистрация middleware для отслеживания кликов по retention уведомлениям
+    try:
+        from core.retention_click_middleware import register_retention_click_middleware
+        register_retention_click_middleware(application)
+        logger.info("Retention click middleware registered")
+    except Exception as e:
+        logger.error(f"Failed to register retention click middleware: {e}")
+
     # Инициализация retention scheduler
     try:
         from datetime import time as dt_time
