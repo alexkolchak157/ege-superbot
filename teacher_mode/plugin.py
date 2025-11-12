@@ -50,7 +50,6 @@ class TeacherModePlugin(BotPlugin):
                     CallbackQueryHandler(teacher_handlers.handle_teacher_subscription_payment, pattern="^pay_teacher_"),
                     CallbackQueryHandler(teacher_handlers.handle_payment_callback, pattern="^confirm_teacher_plan:"),
                     CallbackQueryHandler(teacher_handlers.handle_payment_callback, pattern="^duration_"),
-                    CallbackQueryHandler(teacher_handlers.handle_payment_callback, pattern="^confirm_purchase$"),
 
                     # Ученики и статистика
                     CallbackQueryHandler(teacher_handlers.show_student_list, pattern="^teacher_students$"),
