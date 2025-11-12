@@ -15,6 +15,7 @@ from telegram.error import Forbidden, BadRequest
 
 from core.db import DATABASE_FILE
 from core.user_segments import get_segment_classifier, UserSegment
+from core.user_segments_optimized import get_users_by_segment_optimized
 from core.notification_templates import (
     get_template,
     NotificationTrigger,
@@ -121,16 +122,17 @@ class RetentionScheduler:
                 return False, "user_disabled"
 
             # Проверка 2: Лимит уведомлений в день
-            # УЛУЧШЕНО: Для критичных сегментов (bounced) разрешаем 2 уведомления в день
+            # СМЯГЧЕНО: Увеличили лимиты для всех сегментов
             cursor = await db.execute("""
                 SELECT notification_count_today FROM notification_preferences
                 WHERE user_id = ?
             """, (user_id,))
             count_row = await cursor.fetchone()
 
-            # Bounced и Curious - более агрессивный retention (2 в день)
-            is_critical = trigger.value.startswith(('bounced', 'curious'))
-            daily_limit = 2 if is_critical else 1
+            # Bounced и Curious - агрессивный retention (3 в день)
+            # Остальные сегменты - 2 в день (было 1)
+            is_critical = trigger.value.startswith(('bounced', 'curious', 'late_bounced'))
+            daily_limit = 3 if is_critical else 2
 
             if count_row and count_row[0] >= daily_limit:
                 return False, "daily_limit_exceeded"
@@ -148,8 +150,8 @@ class RetentionScheduler:
                 return False, "trigger_cooldown"
 
             # Проверка 4: Уже отправляли это уведомление?
-            # УЛУЧШЕНО: Для bounced/curious проверяем только за 3 дня, для остальных - 7
-            days_check = 3 if is_critical else 7
+            # СМЯГЧЕНО: Уменьшили периоды проверки для повторных отправок
+            days_check = 2 if is_critical else 5  # Было: 3 и 7
 
             cursor = await db.execute(f"""
                 SELECT id FROM notification_log
@@ -184,10 +186,10 @@ class RetentionScheduler:
                 datetime.now(timezone.utc)
             ))
 
-            # УЛУЧШЕНО: Cooldown зависит от критичности
-            # Bounced/Curious - 12 часов, остальные - 24 часа
-            is_critical = trigger.value.startswith(('bounced', 'curious'))
-            cooldown_hours = 12 if is_critical else 24
+            # СМЯГЧЕНО: Уменьшили cooldown периоды для более частых отправок
+            # Bounced/Curious/Late_bounced - 8 часов, остальные - 16 часов (было 12 и 24)
+            is_critical = trigger.value.startswith(('bounced', 'curious', 'late_bounced'))
+            cooldown_hours = 8 if is_critical else 16
 
             await db.execute("""
                 INSERT OR REPLACE INTO notification_cooldown (
@@ -309,10 +311,11 @@ class RetentionScheduler:
         """Обрабатывает BOUNCED пользователей"""
         sent_count = 0
 
-        # УЛУЧШЕНО: Увеличили лимит до 100 пользователей (при 291 bounced это важно)
-        bounced_users = await self.classifier.get_users_by_segment(
+        # ОПТИМИЗИРОВАНО: Используем прямые SQL-запросы вместо N+1 проблемы
+        # УВЕЛИЧЕНО: Больше пользователей для обработки (было 100)
+        bounced_users = await get_users_by_segment_optimized(
             UserSegment.BOUNCED,
-            limit=100
+            limit=200
         )
 
         for user_id in bounced_users:
@@ -358,10 +361,11 @@ class RetentionScheduler:
         """
         sent_count = 0
 
-        # Получаем late bounced пользователей (7-60 дней, 0 ответов)
-        late_bounced_users = await self.classifier.get_users_by_segment(
+        # ОПТИМИЗИРОВАНО: Прямой SQL-запрос для late bounced пользователей
+        # УВЕЛИЧЕНО: Больше пользователей для resurrection кампании (было 50)
+        late_bounced_users = await get_users_by_segment_optimized(
             UserSegment.LATE_BOUNCED,
-            limit=50  # Ограничиваем чтобы не спамить всех 215 сразу
+            limit=100  # Увеличили для охвата большего количества упущенных пользователей
         )
 
         for user_id in late_bounced_users:
@@ -393,7 +397,8 @@ class RetentionScheduler:
         """Обрабатывает TRIAL пользователей"""
         sent_count = 0
 
-        trial_users = await self.classifier.get_users_by_segment(
+        # ОПТИМИЗИРОВАНО: Прямой SQL-запрос
+        trial_users = await get_users_by_segment_optimized(
             UserSegment.TRIAL_USER,
             limit=50
         )
@@ -441,7 +446,8 @@ class RetentionScheduler:
         """Обрабатывает CHURN_RISK пользователей"""
         sent_count = 0
 
-        churn_users = await self.classifier.get_users_by_segment(
+        # ОПТИМИЗИРОВАНО: Прямой SQL-запрос
+        churn_users = await get_users_by_segment_optimized(
             UserSegment.CHURN_RISK,
             limit=50
         )
@@ -486,9 +492,11 @@ class RetentionScheduler:
         """Обрабатывает CURIOUS пользователей"""
         sent_count = 0
 
-        curious_users = await self.classifier.get_users_by_segment(
+        # ОПТИМИЗИРОВАНО: Прямой SQL-запрос
+        # УВЕЛИЧЕНО: Больше curious пользователей (было 50)
+        curious_users = await get_users_by_segment_optimized(
             UserSegment.CURIOUS,
-            limit=50
+            limit=100
         )
 
         for user_id in curious_users:
@@ -527,7 +535,8 @@ class RetentionScheduler:
         """Обрабатывает ACTIVE_FREE пользователей"""
         sent_count = 0
 
-        active_free_users = await self.classifier.get_users_by_segment(
+        # ОПТИМИЗИРОВАНО: Прямой SQL-запрос
+        active_free_users = await get_users_by_segment_optimized(
             UserSegment.ACTIVE_FREE,
             limit=50
         )
@@ -571,7 +580,8 @@ class RetentionScheduler:
         """Обрабатывает PAYING_INACTIVE пользователей"""
         sent_count = 0
 
-        paying_inactive_users = await self.classifier.get_users_by_segment(
+        # ОПТИМИЗИРОВАНО: Прямой SQL-запрос
+        paying_inactive_users = await get_users_by_segment_optimized(
             UserSegment.PAYING_INACTIVE,
             limit=50
         )
@@ -616,7 +626,8 @@ class RetentionScheduler:
         """Обрабатывает CANCELLED пользователей"""
         sent_count = 0
 
-        cancelled_users = await self.classifier.get_users_by_segment(
+        # ОПТИМИЗИРОВАНО: Прямой SQL-запрос
+        cancelled_users = await get_users_by_segment_optimized(
             UserSegment.CANCELLED,
             limit=50
         )

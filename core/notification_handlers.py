@@ -147,6 +147,9 @@ async def track_notification_conversion(user_id: int, promo_code: str = None):
     """
     Отслеживает конверсию из уведомления (покупка подписки).
 
+    УЛУЧШЕНО: Теперь отслеживает конверсии в временном окне 14 дней,
+    даже если пользователь не использовал промокод.
+
     Вызывается из payment handlers после успешной оплаты.
 
     Args:
@@ -155,31 +158,73 @@ async def track_notification_conversion(user_id: int, promo_code: str = None):
     """
     try:
         async with aiosqlite.connect(DATABASE_FILE) as db:
-            # Находим последнее отправленное уведомление с этим промокодом
+            conversion_time = datetime.now(timezone.utc).isoformat()
+
+            # Приоритет 1: Если есть промокод, отмечаем уведомление с этим промокодом
             if promo_code:
-                await db.execute("""
+                cursor = await db.execute("""
                     UPDATE notification_log
                     SET converted = 1, converted_at = ?
                     WHERE user_id = ? AND promo_code = ?
+                      AND converted = 0
+                      AND sent_at > datetime('now', '-14 days')
                     ORDER BY sent_at DESC
                     LIMIT 1
-                """, (datetime.now(timezone.utc).isoformat(), user_id, promo_code))
+                """, (conversion_time, user_id, promo_code))
+
+                if cursor.rowcount > 0:
+                    await db.commit()
+                    logger.info(
+                        f"Tracked conversion for user {user_id} with promo_code {promo_code} "
+                        f"(matched by promo code)"
+                    )
+                    return
+
+            # Приоритет 2: Отмечаем последнее кликнутое уведомление (в окне 14 дней)
+            cursor = await db.execute("""
+                UPDATE notification_log
+                SET converted = 1, converted_at = ?
+                WHERE user_id = ?
+                  AND converted = 0
+                  AND clicked = 1
+                  AND sent_at > datetime('now', '-14 days')
+                ORDER BY clicked_at DESC
+                LIMIT 1
+            """, (conversion_time, user_id))
+
+            if cursor.rowcount > 0:
+                await db.commit()
+                logger.info(
+                    f"Tracked conversion for user {user_id} "
+                    f"(matched by clicked notification within 14 days)"
+                )
+                return
+
+            # Приоритет 3: Отмечаем последнее уведомление (в окне 7 дней)
+            # Даже если пользователь не кликал, но мог видеть и принять решение
+            cursor = await db.execute("""
+                UPDATE notification_log
+                SET converted = 1, converted_at = ?
+                WHERE user_id = ?
+                  AND converted = 0
+                  AND sent_at > datetime('now', '-7 days')
+                ORDER BY sent_at DESC
+                LIMIT 1
+            """, (conversion_time, user_id))
+
+            if cursor.rowcount > 0:
+                await db.commit()
+                logger.info(
+                    f"Tracked conversion for user {user_id} "
+                    f"(matched by recent notification within 7 days)"
+                )
             else:
-                # Если промокода нет, отмечаем последнее уведомление
-                await db.execute("""
-                    UPDATE notification_log
-                    SET converted = 1, converted_at = ?
-                    WHERE user_id = ? AND converted = 0
-                    ORDER BY sent_at DESC
-                    LIMIT 1
-                """, (datetime.now(timezone.utc).isoformat(), user_id))
-
-            await db.commit()
-
-        logger.info(f"Tracked conversion for user {user_id} with promo_code {promo_code}")
+                logger.debug(
+                    f"No suitable notification found for conversion tracking: user_id={user_id}"
+                )
 
     except Exception as e:
-        logger.error(f"Error tracking conversion for user {user_id}: {e}")
+        logger.error(f"Error tracking conversion for user {user_id}: {e}", exc_info=True)
 
 
 def register_notification_handlers(application):
