@@ -2883,8 +2883,7 @@ async def handle_payment_callback(update: Update, context: ContextTypes.DEFAULT_
 
     МАРШРУТИЗАЦИЯ:
     - confirm_teacher_plan: → подтверждение выбора тарифа
-    - duration_: → выбор длительности подписки
-    - confirm_purchase: → финальное подтверждение покупки
+    - duration_: → выбор длительности подписки (после этого переход к промокоду)
     """
     query = update.callback_query
     callback_data = query.data
@@ -2897,7 +2896,6 @@ async def handle_payment_callback(update: Update, context: ContextTypes.DEFAULT_
         from payment.handlers import (
             handle_teacher_plan_confirmation,
             handle_duration_selection,
-            handle_purchase_confirmation,
             ENTERING_EMAIL
         )
 
@@ -2911,13 +2909,8 @@ async def handle_payment_callback(update: Update, context: ContextTypes.DEFAULT_
         elif callback_data.startswith("duration_"):
             result = await handle_duration_selection(update, context)
             logger.info(f"[Teacher Payment] Duration selection result: {result}")
-            # Если результат - запрос email, переключаемся в состояние ввода email
-            if result == ENTERING_EMAIL:
-                return TeacherStates.PAYMENT_ENTERING_EMAIL
-        elif callback_data == "confirm_purchase":
-            result = await handle_purchase_confirmation(update, context)
-            logger.info(f"[Teacher Payment] Purchase confirmation result: {result}")
-            # После подтверждения покупки возвращаемся в меню
+            # После выбора длительности payment модуль переходит к вводу промокода
+            # Возвращаем текущее состояние, чтобы остаться в teacher conversation
             return TeacherStates.TEACHER_MENU
         else:
             logger.warning(f"[Teacher Payment] Unknown callback: {callback_data}")
