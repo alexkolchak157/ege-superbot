@@ -47,7 +47,8 @@ class TeacherStates(IntEnum):
     REVIEW_CUSTOM_QUESTIONS = 71  # Просмотр и подтверждение всех вопросов
 
     # Оплата подписки
-    PAYMENT_ENTERING_EMAIL = 80  # Ввод email для оплаты подписки
+    PAYMENT_ENTERING_PROMO = 80  # Ввод промокода для оплаты подписки
+    PAYMENT_ENTERING_EMAIL = 81  # Ввод email для оплаты подписки
 
 
 class StudentStates(IntEnum):
