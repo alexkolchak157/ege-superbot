@@ -117,7 +117,8 @@ async def check_payment_status(update: Update, context: ContextTypes.DEFAULT_TYP
     # Проверяем последний платеж пользователя
     try:
         # Получаем последний платеж из БД
-        async with aiosqlite.connect('bot_database.db') as conn:
+        from core.config import DATABASE_FILE
+        async with aiosqlite.connect(DATABASE_FILE) as conn:
             cursor = await conn.execute("""
                 SELECT order_id, status, plan_id, amount
                 FROM payments

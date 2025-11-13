@@ -309,6 +309,10 @@ class TeacherModePlugin(BotPlugin):
         app.add_handler(CallbackQueryHandler(student_handlers.view_homework, pattern="^homework_\\d+$"))
         app.add_handler(CallbackQueryHandler(student_handlers.start_homework, pattern="^start_homework_\\d+$"))
 
+        # Обработчики для работы с платежами (вне conversation)
+        app.add_handler(CallbackQueryHandler(teacher_handlers.handle_check_payment, pattern="^check_payment$"))
+        app.add_handler(CallbackQueryHandler(teacher_handlers.handle_cancel_payment, pattern="^cancel_payment$"))
+
         # Регистрация ConversationHandler'ов
         # ВАЖНО: Используем group=-40 чтобы teacher conversation обрабатывался
         # ПОСЛЕ payment conversation (group=-50), но с более высоким приоритетом чем обычные handlers (group=0)
