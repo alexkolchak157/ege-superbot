@@ -2981,9 +2981,14 @@ async def handle_auto_renewal_choice(update: Update, context: ContextTypes.DEFAU
         from payment.auto_renewal_consent import AutoRenewalConsent
         from payment.subscription_manager import SubscriptionManager
 
-        # Создаем экземпляр AutoRenewalConsent с subscription_manager
+        # ВАЖНО: Переиспользуем ОДИН экземпляр AutoRenewalConsent из bot_data
+        # чтобы сохранить состояние user_consents между вызовами
         subscription_manager = context.bot_data.get('subscription_manager', SubscriptionManager())
-        consent_handler = AutoRenewalConsent(subscription_manager)
+
+        if 'auto_renewal_consent' not in context.bot_data:
+            context.bot_data['auto_renewal_consent'] = AutoRenewalConsent(subscription_manager)
+
+        consent_handler = context.bot_data['auto_renewal_consent']
 
         # МАРШРУТИЗАЦИЯ callback_data на соответствующие методы
         if callback_data in ["choose_auto_renewal", "choose_no_auto_renewal", "show_auto_renewal_terms"]:
