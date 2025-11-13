@@ -1105,10 +1105,22 @@ class SubscriptionManager:
                 
                 if row:
                     plan_id, expires_at, activated_at = row
+
+                    # Парсим даты и добавляем timezone если необходимо
+                    expires_dt = datetime.fromisoformat(expires_at)
+                    if expires_dt.tzinfo is None:
+                        expires_dt = expires_dt.replace(tzinfo=timezone.utc)
+
+                    activated_dt = None
+                    if activated_at:
+                        activated_dt = datetime.fromisoformat(activated_at)
+                        if activated_dt.tzinfo is None:
+                            activated_dt = activated_dt.replace(tzinfo=timezone.utc)
+
                     return {
                         'plan_id': plan_id,
-                        'expires_at': datetime.fromisoformat(expires_at),
-                        'activated_at': datetime.fromisoformat(activated_at) if activated_at else None,
+                        'expires_at': expires_dt,
+                        'activated_at': activated_dt,
                         'active_modules': get_plan_modules(plan_id)  # Для совместимости
                     }
                 
@@ -1124,13 +1136,23 @@ class SubscriptionManager:
                     (user_id, datetime.now(timezone.utc))
                 )
                 row = await cursor.fetchone()
-                
+
                 if row:
                     plan_id, expires_at, created_at = row
+
+                    # Парсим даты и добавляем timezone если необходимо
+                    expires_dt = datetime.fromisoformat(expires_at)
+                    if expires_dt.tzinfo is None:
+                        expires_dt = expires_dt.replace(tzinfo=timezone.utc)
+
+                    created_dt = datetime.fromisoformat(created_at)
+                    if created_dt.tzinfo is None:
+                        created_dt = created_dt.replace(tzinfo=timezone.utc)
+
                     return {
                         'plan_id': plan_id,
-                        'expires_at': datetime.fromisoformat(expires_at),
-                        'created_at': datetime.fromisoformat(created_at),
+                        'expires_at': expires_dt,
+                        'created_at': created_dt,
                         'active_modules': get_plan_modules(plan_id)
                     }
                 
@@ -1170,13 +1192,27 @@ class SubscriptionManager:
                     plan_id = 'custom_modules'
                 
                 # Берем минимальную дату окончания
-                min_expires = min(datetime.fromisoformat(row[1]) for row in modules)
-                
+                # Парсим даты и добавляем timezone если необходимо
+                expires_dates = []
+                modules_info = {}
+                for row in modules:
+                    module_code, expires_str = row[0], row[1]
+                    expires_dt = datetime.fromisoformat(expires_str)
+
+                    # Если naive, добавляем UTC
+                    if expires_dt.tzinfo is None:
+                        expires_dt = expires_dt.replace(tzinfo=timezone.utc)
+
+                    expires_dates.append(expires_dt)
+                    modules_info[module_code] = expires_dt
+
+                min_expires = min(expires_dates)
+
                 return {
                     'plan_id': plan_id,
                     'expires_at': min_expires,
                     'active_modules': active_modules,
-                    'modules_info': {row[0]: datetime.fromisoformat(row[1]) for row in modules}
+                    'modules_info': modules_info
                 }
         except Exception as e:
             logger.error(f"Error checking modular subscriptions: {e}")
@@ -1491,9 +1527,13 @@ class SubscriptionManager:
                         
                         try:
                             existing_expires_dt = datetime.fromisoformat(existing_expires)
+
+                            # Если existing_expires_dt naive (без timezone), добавляем UTC
+                            if existing_expires_dt.tzinfo is None:
+                                existing_expires_dt = existing_expires_dt.replace(tzinfo=timezone.utc)
                         except:
                             existing_expires_dt = datetime.now(timezone.utc)
-                        
+
                         # Если подписка активна и не истекла - продлеваем от текущей даты окончания
                         if is_active and existing_expires_dt > datetime.now(timezone.utc):
                             new_expires = (existing_expires_dt + timedelta(days=duration_days)).isoformat()
@@ -2480,7 +2520,11 @@ class SubscriptionManager:
                 if existing:
                     existing_expires, is_active = existing
                     existing_expires_dt = datetime.fromisoformat(existing_expires)
-                    
+
+                    # Если existing_expires_dt naive (без timezone), добавляем UTC
+                    if existing_expires_dt.tzinfo is None:
+                        existing_expires_dt = existing_expires_dt.replace(tzinfo=timezone.utc)
+
                     # Если подписка активна и еще не истекла - продлеваем от нее
                     if is_active and existing_expires_dt > datetime.now(timezone.utc):
                         new_expires = existing_expires_dt + timedelta(days=duration_days)

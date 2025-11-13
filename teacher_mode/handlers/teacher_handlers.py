@@ -3127,3 +3127,58 @@ async def handle_promo_input(update: Update, context: ContextTypes.DEFAULT_TYPE)
             ])
         )
         return ConversationHandler.END
+
+
+async def handle_check_payment(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Обработчик проверки статуса платежа.
+    Перенаправляет на обработчик из payment модуля.
+    """
+    query = update.callback_query
+    user_id = update.effective_user.id
+
+    logger.info(f"[Teacher Payment] User {user_id} checking payment status")
+
+    try:
+        from payment.handlers import check_payment_status
+
+        # Вызываем обработчик из payment модуля
+        await check_payment_status(update, context)
+
+        logger.info(f"[Teacher Payment] Payment check completed for user {user_id}")
+
+        # Завершаем conversation после проверки
+        return ConversationHandler.END
+
+    except Exception as e:
+        logger.error(f"[Teacher Payment] Error checking payment for user {user_id}: {e}", exc_info=True)
+        await query.answer("❌ Произошла ошибка при проверке платежа.", show_alert=True)
+        return ConversationHandler.END
+
+
+async def handle_cancel_payment(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Обработчик отмены платежа.
+    Перенаправляет на обработчик из payment модуля.
+    """
+    query = update.callback_query
+    user_id = update.effective_user.id
+
+    logger.info(f"[Teacher Payment] User {user_id} cancelling payment")
+
+    try:
+        from payment.handlers import cancel_payment
+
+        # Вызываем обработчик из payment модуля
+        await cancel_payment(update, context)
+
+        logger.info(f"[Teacher Payment] Payment cancelled for user {user_id}")
+
+        # Возвращаемся в меню учителя
+        return TeacherStates.TEACHER_MENU
+
+    except Exception as e:
+        logger.error(f"[Teacher Payment] Error cancelling payment for user {user_id}: {e}", exc_info=True)
+        if query:
+            await query.answer("❌ Произошла ошибка при отмене.", show_alert=True)
+        return TeacherStates.TEACHER_MENU
