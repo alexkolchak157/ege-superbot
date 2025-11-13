@@ -212,6 +212,9 @@ class TeacherModePlugin(BotPlugin):
                     # Пропуск промокода
                     CallbackQueryHandler(teacher_handlers.handle_skip_promo, pattern="^skip_promo$"),
 
+                    # Навигация назад к выбору длительности
+                    CallbackQueryHandler(teacher_handlers.handle_back_to_duration, pattern="^back_to_duration_selection$"),
+
                     # Отмена платежа
                     CallbackQueryHandler(teacher_handlers.teacher_menu, pattern="^cancel_payment$"),
                     CallbackQueryHandler(teacher_handlers.teacher_menu, pattern="^teacher_menu$"),
@@ -236,6 +239,9 @@ class TeacherModePlugin(BotPlugin):
                     CallbackQueryHandler(teacher_handlers.handle_auto_renewal_choice, pattern="^need_consent_reminder$"),
                     CallbackQueryHandler(teacher_handlers.handle_auto_renewal_choice, pattern="^show_user_agreement$"),
                     CallbackQueryHandler(teacher_handlers.handle_auto_renewal_choice, pattern="^back_to_payment_choice$"),
+
+                    # Навигация назад к длительности
+                    CallbackQueryHandler(teacher_handlers.handle_back_to_duration, pattern="^back_to_duration$"),
 
                     # Отмена платежа
                     CallbackQueryHandler(teacher_handlers.teacher_menu, pattern="^cancel_payment$"),
