@@ -2969,7 +2969,7 @@ async def handle_payment_email_input(update: Update, context: ContextTypes.DEFAU
 async def handle_auto_renewal_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
     Обработчик выбора типа оплаты (с автопродлением или разовая).
-    Перенаправляет на обработчик из payment модуля.
+    Маршрутизирует все callback_data на соответствующие методы из payment модуля.
     """
     query = update.callback_query
     user_id = update.effective_user.id
@@ -2985,19 +2985,84 @@ async def handle_auto_renewal_choice(update: Update, context: ContextTypes.DEFAU
         subscription_manager = context.bot_data.get('subscription_manager', SubscriptionManager())
         consent_handler = AutoRenewalConsent(subscription_manager)
 
-        # Вызываем обработчик выбора из payment модуля
-        result = await consent_handler.handle_choice_selection(update, context)
+        # МАРШРУТИЗАЦИЯ callback_data на соответствующие методы
+        if callback_data in ["choose_auto_renewal", "choose_no_auto_renewal", "show_auto_renewal_terms"]:
+            # Основной выбор типа оплаты
+            result = await consent_handler.handle_choice_selection(update, context)
+            logger.info(f"[Teacher Payment] Choice selection result: {result}")
 
-        logger.info(f"[Teacher Payment] Auto renewal choice result: {result}")
+            # Если выбрано автопродление, остаемся в состоянии для обработки экрана согласия
+            if callback_data == "choose_auto_renewal":
+                return TeacherStates.PAYMENT_AUTO_RENEWAL_CHOICE
+            # Если выбрана разовая оплата или показаны условия, завершаем
+            return ConversationHandler.END
 
-        # После обработки выбора автопродления завершаем conversation
-        # (payment обработчик создаст платеж и отправит ссылку)
-        return ConversationHandler.END
+        elif callback_data == "toggle_consent_checkbox":
+            # Переключение чек-бокса согласия
+            result = await consent_handler.toggle_consent(update, context)
+            logger.info(f"[Teacher Payment] Toggle consent result: {result}")
+            return TeacherStates.PAYMENT_AUTO_RENEWAL_CHOICE  # Остаемся в этом состоянии
+
+        elif callback_data == "confirm_with_auto_renewal":
+            # Подтверждение с автопродлением
+            result = await consent_handler.confirm_with_auto_renewal(update, context)
+            logger.info(f"[Teacher Payment] Confirm with auto renewal result: {result}")
+            # После подтверждения завершаем conversation (платеж будет создан)
+            return ConversationHandler.END
+
+        elif callback_data == "need_consent_reminder":
+            # Показываем напоминание о необходимости согласия
+            await query.answer("⚠️ Необходимо отметить согласие с условиями", show_alert=True)
+            return TeacherStates.PAYMENT_AUTO_RENEWAL_CHOICE
+
+        elif callback_data == "show_user_agreement":
+            # Показываем подробные условия
+            result = await consent_handler.show_detailed_terms(update, context)
+            logger.info(f"[Teacher Payment] Show detailed terms result: {result}")
+            return TeacherStates.PAYMENT_AUTO_RENEWAL_CHOICE
+
+        elif callback_data == "back_to_payment_choice":
+            # Возврат к выбору типа оплаты
+            result = await consent_handler.handle_back_navigation(update, context)
+            logger.info(f"[Teacher Payment] Back navigation result: {result}")
+            return TeacherStates.PAYMENT_AUTO_RENEWAL_CHOICE
+
+        else:
+            logger.warning(f"[Teacher Payment] Unknown callback: {callback_data}")
+            await query.answer("❌ Неизвестная команда")
+            return TeacherStates.TEACHER_MENU
 
     except Exception as e:
         logger.error(f"[Teacher Payment] Error in auto renewal choice for user {user_id}: {e}", exc_info=True)
         await query.answer("❌ Произошла ошибка. Попробуйте позже.", show_alert=True)
         return ConversationHandler.END
+
+
+async def handle_back_to_duration(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Обработчик возврата к выбору длительности подписки.
+    Перенаправляет на обработчик из payment модуля.
+    """
+    query = update.callback_query
+    user_id = update.effective_user.id
+
+    logger.info(f"[Teacher Payment] User {user_id} going back to duration selection")
+
+    try:
+        from payment.handlers import show_duration_options
+
+        # Вызываем показ экрана выбора длительности
+        result = await show_duration_options(update, context)
+
+        logger.info(f"[Teacher Payment] Back to duration result: {result}")
+
+        # Возвращаемся в TEACHER_MENU (так как мы вернулись на шаг назад)
+        return TeacherStates.TEACHER_MENU
+
+    except Exception as e:
+        logger.error(f"[Teacher Payment] Error going back to duration for user {user_id}: {e}", exc_info=True)
+        await query.answer("❌ Произошла ошибка. Попробуйте позже.", show_alert=True)
+        return TeacherStates.TEACHER_MENU
 
 
 async def handle_skip_promo(update: Update, context: ContextTypes.DEFAULT_TYPE):
