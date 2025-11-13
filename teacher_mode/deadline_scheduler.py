@@ -159,7 +159,13 @@ class DeadlineScheduler:
     def format_time_remaining(self, deadline_str: str) -> str:
         """Форматирует оставшееся время до дедлайна"""
         try:
+            # Парсим deadline и убеждаемся что он timezone-aware
             deadline = datetime.fromisoformat(deadline_str.replace('Z', '+00:00'))
+
+            # Если deadline naive (без timezone), добавляем UTC
+            if deadline.tzinfo is None:
+                deadline = deadline.replace(tzinfo=timezone.utc)
+
             now = datetime.now(timezone.utc)
             delta = deadline - now
 
