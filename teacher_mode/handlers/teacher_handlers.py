@@ -2910,8 +2910,8 @@ async def handle_payment_callback(update: Update, context: ContextTypes.DEFAULT_
             result = await handle_duration_selection(update, context)
             logger.info(f"[Teacher Payment] Duration selection result: {result}")
             # После выбора длительности payment модуль переходит к вводу промокода
-            # Возвращаем текущее состояние, чтобы остаться в teacher conversation
-            return TeacherStates.TEACHER_MENU
+            # Переключаемся в состояние ввода промокода
+            return TeacherStates.PAYMENT_ENTERING_PROMO
         else:
             logger.warning(f"[Teacher Payment] Unknown callback: {callback_data}")
             await query.answer("❌ Неизвестная команда")
@@ -2965,3 +2965,62 @@ async def handle_payment_email_input(update: Update, context: ContextTypes.DEFAU
 
 
 
+
+
+async def handle_skip_promo(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Обработчик пропуска промокода.
+    Перенаправляет на обработчик из payment модуля и переходит к вводу email.
+    """
+    query = update.callback_query
+    user_id = update.effective_user.id
+
+    logger.info(f"[Teacher Payment] User {user_id} skipped promo code")
+
+    try:
+        from payment.promo_handler import skip_promo
+
+        # Вызываем обработчик пропуска промокода из payment модуля
+        result = await skip_promo(update, context)
+
+        logger.info(f"[Teacher Payment] Skip promo result: {result}")
+
+        # После пропуска промокода переходим к вводу email
+        return TeacherStates.PAYMENT_ENTERING_EMAIL
+
+    except Exception as e:
+        logger.error(f"[Teacher Payment] Error skipping promo for user {user_id}: {e}", exc_info=True)
+        await query.answer("❌ Произошла ошибка. Попробуйте позже.", show_alert=True)
+        return TeacherStates.TEACHER_MENU
+
+
+async def handle_promo_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Обработчик ввода промокода.
+    Перенаправляет на обработчик из payment модуля.
+    """
+    user_id = update.effective_user.id
+    promo_code = update.message.text
+
+    logger.info(f"[Teacher Payment] User {user_id} entered promo code: {promo_code}")
+
+    try:
+        from payment.promo_handler import handle_promo_input as payment_handle_promo
+
+        # Вызываем обработчик из payment модуля
+        result = await payment_handle_promo(update, context)
+
+        logger.info(f"[Teacher Payment] Promo input result: {result}")
+
+        # После обработки промокода переходим к вводу email
+        return TeacherStates.PAYMENT_ENTERING_EMAIL
+
+    except Exception as e:
+        logger.error(f"[Teacher Payment] Error processing promo for user {user_id}: {e}", exc_info=True)
+        await update.message.reply_text(
+            "❌ Произошла ошибка при обработке промокода. Попробуйте позже.",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("◀️ Назад в меню учителя", callback_data="teacher_menu")]
+            ])
+        )
+        return ConversationHandler.END

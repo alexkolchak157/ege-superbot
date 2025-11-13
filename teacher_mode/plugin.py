@@ -205,6 +205,17 @@ class TeacherModePlugin(BotPlugin):
                     CallbackQueryHandler(teacher_handlers.create_assignment_start, pattern="^teacher_create_assignment$"),
                     CallbackQueryHandler(teacher_handlers.teacher_menu, pattern="^teacher_menu$"),
                 ],
+                TeacherStates.PAYMENT_ENTERING_PROMO: [
+                    # Обработка ввода промокода
+                    MessageHandler(filters.TEXT & ~filters.COMMAND, teacher_handlers.handle_promo_input),
+
+                    # Пропуск промокода
+                    CallbackQueryHandler(teacher_handlers.handle_skip_promo, pattern="^skip_promo$"),
+
+                    # Отмена платежа
+                    CallbackQueryHandler(teacher_handlers.teacher_menu, pattern="^cancel_payment$"),
+                    CallbackQueryHandler(teacher_handlers.teacher_menu, pattern="^teacher_menu$"),
+                ],
                 TeacherStates.PAYMENT_ENTERING_EMAIL: [
                     # Обработка ввода email для оплаты
                     MessageHandler(filters.TEXT & ~filters.COMMAND, teacher_handlers.handle_payment_email_input),
