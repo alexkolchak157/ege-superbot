@@ -298,8 +298,16 @@ async def can_add_student(teacher_id: int) -> tuple[bool, str]:
         return False, "Профиль учителя не найден"
 
     # КРИТИЧНО: Проверяем дату истечения подписки
-    if profile.subscription_expires and profile.subscription_expires < datetime.now():
-        return False, "Подписка учителя истекла"
+    if profile.subscription_expires:
+        # Убедимся, что datetime timezone-aware
+        expires_dt = profile.subscription_expires
+        if expires_dt.tzinfo is None:
+            from datetime import timezone
+            expires_dt = expires_dt.replace(tzinfo=timezone.utc)
+
+        from datetime import timezone
+        if expires_dt < datetime.now(timezone.utc):
+            return False, "Подписка учителя истекла"
 
     if not profile.has_active_subscription:
         return False, "У учителя нет активной подписки"
@@ -366,8 +374,16 @@ async def has_teacher_access(user_id: int) -> bool:
         return False
 
     # Проверяем дату истечения
-    if profile.subscription_expires and profile.subscription_expires < datetime.now():
-        return False
+    if profile.subscription_expires:
+        # Убедимся, что datetime timezone-aware
+        expires_dt = profile.subscription_expires
+        if expires_dt.tzinfo is None:
+            from datetime import timezone
+            expires_dt = expires_dt.replace(tzinfo=timezone.utc)
+
+        from datetime import timezone
+        if expires_dt < datetime.now(timezone.utc):
+            return False
 
     return True
 
@@ -429,6 +445,13 @@ async def validate_teacher_subscription_integrity(teacher_id: int) -> tuple[bool
                 ms_expires = datetime.fromisoformat(row['ms_expires']) if row['ms_expires'] else None
 
                 if tp_expires and ms_expires:
+                    # Убедимся, что оба datetime timezone-aware
+                    from datetime import timezone
+                    if tp_expires.tzinfo is None:
+                        tp_expires = tp_expires.replace(tzinfo=timezone.utc)
+                    if ms_expires.tzinfo is None:
+                        ms_expires = ms_expires.replace(tzinfo=timezone.utc)
+
                     # Допускаем разницу в 1 минуту из-за возможных задержек записи
                     time_diff = abs((tp_expires - ms_expires).total_seconds())
                     if time_diff > 60:
