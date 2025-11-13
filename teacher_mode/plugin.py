@@ -224,6 +224,23 @@ class TeacherModePlugin(BotPlugin):
                     CallbackQueryHandler(teacher_handlers.teacher_menu, pattern="^cancel_payment$"),
                     CallbackQueryHandler(teacher_handlers.teacher_menu, pattern="^teacher_menu$"),
                 ],
+                TeacherStates.PAYMENT_AUTO_RENEWAL_CHOICE: [
+                    # Обработка выбора типа оплаты (автопродление или разовая)
+                    CallbackQueryHandler(teacher_handlers.handle_auto_renewal_choice, pattern="^choose_auto_renewal$"),
+                    CallbackQueryHandler(teacher_handlers.handle_auto_renewal_choice, pattern="^choose_no_auto_renewal$"),
+                    CallbackQueryHandler(teacher_handlers.handle_auto_renewal_choice, pattern="^show_auto_renewal_terms$"),
+
+                    # Дополнительные обработчики для экрана согласия
+                    CallbackQueryHandler(teacher_handlers.handle_auto_renewal_choice, pattern="^toggle_consent_checkbox$"),
+                    CallbackQueryHandler(teacher_handlers.handle_auto_renewal_choice, pattern="^confirm_with_auto_renewal$"),
+                    CallbackQueryHandler(teacher_handlers.handle_auto_renewal_choice, pattern="^need_consent_reminder$"),
+                    CallbackQueryHandler(teacher_handlers.handle_auto_renewal_choice, pattern="^show_user_agreement$"),
+                    CallbackQueryHandler(teacher_handlers.handle_auto_renewal_choice, pattern="^back_to_payment_choice$"),
+
+                    # Отмена платежа
+                    CallbackQueryHandler(teacher_handlers.teacher_menu, pattern="^cancel_payment$"),
+                    CallbackQueryHandler(teacher_handlers.teacher_menu, pattern="^teacher_menu$"),
+                ],
             },
             fallbacks=[
                 CallbackQueryHandler(teacher_handlers.teacher_menu, pattern="^teacher_menu$"),

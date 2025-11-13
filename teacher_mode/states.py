@@ -49,6 +49,7 @@ class TeacherStates(IntEnum):
     # Оплата подписки
     PAYMENT_ENTERING_PROMO = 80  # Ввод промокода для оплаты подписки
     PAYMENT_ENTERING_EMAIL = 81  # Ввод email для оплаты подписки
+    PAYMENT_AUTO_RENEWAL_CHOICE = 82  # Выбор типа оплаты (с автопродлением или разовая)
 
 
 class StudentStates(IntEnum):

@@ -2932,9 +2932,8 @@ async def handle_payment_email_input(update: Update, context: ContextTypes.DEFAU
     Перенаправляет на обработчик из payment модуля.
 
     ВАЖНО:
-    После успешного ввода email payment обработчик создаст платеж и отправит ссылку.
-    ConversationHandler завершается (END), чтобы пользователь мог свободно
-    взаимодействовать с ботом после получения ссылки на оплату.
+    После успешного ввода email payment обработчик показывает экран выбора автопродления.
+    Переходим в состояние PAYMENT_AUTO_RENEWAL_CHOICE для обработки выбора.
     """
     user_id = update.effective_user.id
     email = update.message.text
@@ -2945,13 +2944,13 @@ async def handle_payment_email_input(update: Update, context: ContextTypes.DEFAU
         from payment.handlers import handle_email_input
 
         # Вызываем обработчик из payment модуля
+        # Он показывает экран выбора автопродления (show_auto_renewal_choice)
         result = await handle_email_input(update, context)
 
         logger.info(f"[Teacher Payment] Email input result: {result}")
 
-        # После ввода email и обработки платежа завершаем conversation
-        # (payment обработчик отправит ссылку на оплату)
-        return ConversationHandler.END
+        # После ввода email переходим к выбору типа оплаты (автопродление)
+        return TeacherStates.PAYMENT_AUTO_RENEWAL_CHOICE
 
     except Exception as e:
         logger.error(f"[Teacher Payment] Error processing email for user {user_id}: {e}", exc_info=True)
@@ -2965,6 +2964,40 @@ async def handle_payment_email_input(update: Update, context: ContextTypes.DEFAU
 
 
 
+
+
+async def handle_auto_renewal_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Обработчик выбора типа оплаты (с автопродлением или разовая).
+    Перенаправляет на обработчик из payment модуля.
+    """
+    query = update.callback_query
+    user_id = update.effective_user.id
+    callback_data = query.data
+
+    logger.info(f"[Teacher Payment] User {user_id} auto renewal choice: {callback_data}")
+
+    try:
+        from payment.auto_renewal_consent import AutoRenewalConsent
+        from payment.subscription_manager import SubscriptionManager
+
+        # Создаем экземпляр AutoRenewalConsent с subscription_manager
+        subscription_manager = context.bot_data.get('subscription_manager', SubscriptionManager())
+        consent_handler = AutoRenewalConsent(subscription_manager)
+
+        # Вызываем обработчик выбора из payment модуля
+        result = await consent_handler.handle_choice_selection(update, context)
+
+        logger.info(f"[Teacher Payment] Auto renewal choice result: {result}")
+
+        # После обработки выбора автопродления завершаем conversation
+        # (payment обработчик создаст платеж и отправит ссылку)
+        return ConversationHandler.END
+
+    except Exception as e:
+        logger.error(f"[Teacher Payment] Error in auto renewal choice for user {user_id}: {e}", exc_info=True)
+        await query.answer("❌ Произошла ошибка. Попробуйте позже.", show_alert=True)
+        return ConversationHandler.END
 
 
 async def handle_skip_promo(update: Update, context: ContextTypes.DEFAULT_TYPE):
