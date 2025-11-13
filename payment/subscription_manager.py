@@ -2500,7 +2500,16 @@ class SubscriptionManager:
         plan = SUBSCRIPTION_PLANS.get(plan_id)
         if not plan:
             raise ValueError(f"Unknown plan: {plan_id}")
-        
+
+        # НОВОЕ: Проверяем тип плана
+        plan_type = plan.get('type', 'module')
+
+        # Если это plan учителя, активируем teacher подписку
+        if plan_type == 'teacher':
+            await self._activate_teacher_subscription(user_id, plan_id, duration_months)
+            logger.info(f"Teacher subscription activated for user {user_id}, plan {plan_id}")
+
+        # Активируем модули (для teacher планов это дает учителю доступ к заданиям для личной тренировки)
         modules = plan.get('modules', [])
         duration_days = 30 * duration_months
         expires_at = datetime.now(timezone.utc) + timedelta(days=duration_days)
@@ -2574,7 +2583,117 @@ class SubscriptionManager:
             
             await conn.commit()
             logger.info(f"Modular subscription activated for {duration_months} months for user {user_id}")
-    
+
+    async def _activate_teacher_subscription(self, user_id: int, plan_id: str, duration_months: int = 1):
+        """
+        Активирует подписку учителя в таблице teacher_profiles.
+
+        Args:
+            user_id: ID пользователя-учителя
+            plan_id: ID плана (teacher_basic, teacher_standard, teacher_premium)
+            duration_months: Длительность подписки в месяцах
+        """
+        duration_days = 30 * duration_months
+        expires_at = datetime.now(timezone.utc) + timedelta(days=duration_days)
+
+        async with aiosqlite.connect(self.database_file, timeout=30.0) as conn:
+            # Проверяем, существует ли teacher_profile
+            cursor = await conn.execute(
+                "SELECT user_id, subscription_expires FROM teacher_profiles WHERE user_id = ?",
+                (user_id,)
+            )
+            existing = await cursor.fetchone()
+
+            if existing:
+                # Teacher profile существует - обновляем подписку
+                existing_expires_str = existing[1]
+
+                # Если есть активная подписка, продлеваем от её даты окончания
+                if existing_expires_str:
+                    try:
+                        existing_expires_dt = datetime.fromisoformat(existing_expires_str)
+                        if existing_expires_dt.tzinfo is None:
+                            existing_expires_dt = existing_expires_dt.replace(tzinfo=timezone.utc)
+
+                        # Если подписка еще не истекла, продлеваем от нее
+                        if existing_expires_dt > datetime.now(timezone.utc):
+                            expires_at = existing_expires_dt + timedelta(days=duration_days)
+                            logger.info(f"Extending teacher subscription from {existing_expires_dt} to {expires_at}")
+                    except Exception as e:
+                        logger.warning(f"Error parsing existing expires_at: {e}, using new date")
+
+                # Обновляем подписку
+                await conn.execute(
+                    """
+                    UPDATE teacher_profiles
+                    SET has_active_subscription = 1,
+                        subscription_tier = ?,
+                        subscription_expires = ?
+                    WHERE user_id = ?
+                    """,
+                    (plan_id, expires_at.isoformat(), user_id)
+                )
+                logger.info(f"Updated teacher subscription for user {user_id}")
+                action = 'renewed'
+            else:
+                # Teacher profile не существует - нужно создать
+                # Генерируем уникальный teacher_code
+                import random
+                import string
+                teacher_code = ''.join(random.choices(string.ascii_uppercase + string.digits, k=8))
+
+                # Проверяем уникальность кода
+                while True:
+                    cursor = await conn.execute(
+                        "SELECT user_id FROM teacher_profiles WHERE teacher_code = ?",
+                        (teacher_code,)
+                    )
+                    if not await cursor.fetchone():
+                        break
+                    teacher_code = ''.join(random.choices(string.ascii_uppercase + string.digits, k=8))
+
+                # Получаем имя пользователя
+                cursor = await conn.execute(
+                    "SELECT first_name, last_name FROM users WHERE user_id = ?",
+                    (user_id,)
+                )
+                user_row = await cursor.fetchone()
+
+                if user_row:
+                    first_name, last_name = user_row
+                    display_name = f"{first_name or ''} {last_name or ''}".strip() or "Учитель"
+                else:
+                    display_name = "Учитель"
+
+                # Создаем teacher_profile
+                await conn.execute(
+                    """
+                    INSERT INTO teacher_profiles
+                    (user_id, teacher_code, display_name, has_active_subscription,
+                     subscription_tier, subscription_expires)
+                    VALUES (?, ?, ?, 1, ?, ?)
+                    """,
+                    (user_id, teacher_code, display_name, plan_id, expires_at.isoformat())
+                )
+                logger.info(f"Created teacher profile for user {user_id} with code {teacher_code}")
+                action = 'activated'
+
+            # Добавляем запись в историю
+            await conn.execute(
+                """
+                INSERT INTO teacher_subscription_history
+                (user_id, plan_id, action, new_tier, expires_at)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (user_id, plan_id, action, plan_id, expires_at.isoformat())
+            )
+
+            await conn.commit()
+            logger.info(
+                f"Teacher subscription {action} for user {user_id}: "
+                f"plan={plan_id}, expires={expires_at.isoformat()}"
+            )
+
     async def has_used_trial(self, user_id: int) -> bool:
         """Проверяет, использовал ли пользователь пробный период."""
         if SUBSCRIPTION_MODE != 'modular':
