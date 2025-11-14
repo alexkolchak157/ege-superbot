@@ -168,7 +168,14 @@ async def post_init(application: Application) -> None:
 
     # Регистрируем onboarding handler
     try:
-        from core.onboarding import get_onboarding_handler
+        from core.onboarding import get_onboarding_handler, skip_onboarding_before_start
+
+        # Добавляем обработчик для кнопки "Пропустить обучение" вне conversation
+        application.add_handler(
+            CallbackQueryHandler(skip_onboarding_before_start, pattern="^start_onboarding_skip$"),
+            group=0
+        )
+
         onboarding_handler = get_onboarding_handler()
         application.add_handler(onboarding_handler, group=0)
         logger.info("Onboarding handler registered")
@@ -345,13 +352,38 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # Проверяем, нужен ли onboarding
     try:
-        from core.onboarding import should_start_onboarding, start_onboarding
+        from core.onboarding import should_start_onboarding
+        from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
         if await should_start_onboarding(user_id):
-            # Запускаем onboarding для новых пользователей
-            logger.info(f"Starting onboarding for new user {user_id}")
+            # Показываем приветственное сообщение с кнопкой для запуска onboarding
+            logger.info(f"Showing onboarding invitation for new user {user_id}")
             await db.track_funnel_event(user_id, 'onboarding_started')
-            return await start_onboarding(update, context)
+
+            user_name = user.first_name or "друг"
+            welcome_text = f"""👋 <b>Привет, {user_name}!</b>
+
+🎓 Я — твой ИИ-репетитор по обществознанию.
+
+<b>За 2 минуты я покажу тебе как:</b>
+✅ Решать тестовую часть ЕГЭ
+✅ Получать проверку от ИИ как от эксперта ФИПИ
+✅ Готовиться эффективно и бесплатно
+
+<i>Нажми "Начать обучение" когда будешь готов</i>
+"""
+
+            keyboard = InlineKeyboardMarkup([
+                [InlineKeyboardButton("🚀 Начать обучение", callback_data="start_onboarding")],
+                [InlineKeyboardButton("Пропустить обучение", callback_data="start_onboarding_skip")]
+            ])
+
+            await update.message.reply_text(
+                welcome_text,
+                reply_markup=keyboard,
+                parse_mode=ParseMode.HTML
+            )
+            return
 
     except Exception as e:
         logger.error(f"Error checking onboarding for user {user_id}: {e}")

@@ -481,6 +481,49 @@ async def skip_onboarding(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return ConversationHandler.END
 
 
+async def skip_onboarding_before_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Пропуск onboarding до начала ConversationHandler."""
+    query = update.callback_query
+    await query.answer()
+
+    user_id = update.effective_user.id
+
+    # Отмечаем, что пользователь пропустил
+    try:
+        conn = await db.get_connection()
+        await conn.execute(
+            """UPDATE users
+               SET onboarding_completed = 1,
+                   onboarding_skipped = 1,
+                   onboarding_completed_at = datetime('now')
+               WHERE user_id = ?""",
+            (user_id,)
+        )
+        await conn.commit()
+
+        # Трекинг
+        await db.track_funnel_event(user_id, 'onboarding_skipped')
+
+    except Exception as e:
+        logger.error(f"Error skipping onboarding for user {user_id}: {e}")
+
+    skip_text = """⏭️ <b>Обучение пропущено</b>
+
+Ничего страшного! Ты всегда можешь вернуться к нему через /start
+
+👇 <b>Выбери раздел для подготовки:</b>
+"""
+
+    from core.app import show_main_menu_with_access
+    keyboard = await show_main_menu_with_access(context, user_id)
+
+    await query.edit_message_text(
+        skip_text,
+        reply_markup=keyboard,
+        parse_mode=ParseMode.HTML
+    )
+
+
 def get_onboarding_handler():
     """Возвращает ConversationHandler для onboarding."""
     return ConversationHandler(
