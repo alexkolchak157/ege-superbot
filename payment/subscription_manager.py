@@ -1601,7 +1601,18 @@ class SubscriptionManager:
                         (user_id,)
                     )
                     logger.info(f"✅ Marked trial as used for user {user_id}")
-                
+
+                # Сохраняем историю пробного периода учителей
+                if plan_id == 'teacher_trial_7days':
+                    await conn.execute(
+                        """
+                        INSERT OR REPLACE INTO teacher_trial_history (user_id, used_at, trial_plan)
+                        VALUES (?, CURRENT_TIMESTAMP, ?)
+                        """,
+                        (user_id, plan_id)
+                    )
+                    logger.info(f"✅ Marked teacher trial as used for user {user_id}")
+
                 # Фиксируем транзакцию
                 await conn.commit()
 
@@ -2810,7 +2821,34 @@ class SubscriptionManager:
             except Exception as e:
                 logger.error(f"Error getting payment by order_id: {e}")
                 return None
-    
+
+    async def has_used_teacher_trial(self, user_id: int) -> bool:
+        """
+        Проверяет, использовал ли пользователь пробный период учителя.
+
+        Args:
+            user_id: ID пользователя
+
+        Returns:
+            bool: True если пробный период уже использован
+        """
+        try:
+            async with aiosqlite.connect(self.database_file, timeout=30.0) as conn:
+                cursor = await conn.execute(
+                    """
+                    SELECT COUNT(*) FROM teacher_trial_history
+                    WHERE user_id = ?
+                    """,
+                    (user_id,)
+                )
+                result = await cursor.fetchone()
+                return result[0] > 0 if result else False
+
+        except Exception as e:
+            logger.error(f"Error checking teacher trial usage: {e}")
+            # При ошибке считаем, что триал использован (безопасная стратегия)
+            return True
+
     async def update_payment_status(self, order_id: str, status: str) -> bool:
         """Обновляет статус платежа.
 
