@@ -240,7 +240,7 @@ MODULE_PLANS = {
     'teacher_basic': {
         'name': '👨‍🏫 Учитель Basic',
         'description': 'Для репетиторов до 10 учеников',
-        'price_rub': 349,
+        'price_rub': 249,
         'duration_days': 30,
         'modules': ['test_part', 'task19', 'task20', 'task24', 'task25'],
         'type': 'teacher',
@@ -267,7 +267,7 @@ MODULE_PLANS = {
     'teacher_standard': {
         'name': '👨‍🏫 Учитель Standard',
         'description': 'Для опытных репетиторов до 20 учеников',
-        'price_rub': 599,
+        'price_rub': 449,
         'duration_days': 30,
         'modules': ['test_part', 'task19', 'task20', 'task24', 'task25'],
         'type': 'teacher',
@@ -296,7 +296,7 @@ MODULE_PLANS = {
     'teacher_premium': {
         'name': '👨‍🏫 Учитель Premium',
         'description': 'Безлимитный тариф для школ и курсов',
-        'price_rub': 899,
+        'price_rub': 699,
         'duration_days': 30,
         'modules': ['test_part', 'task19', 'task20', 'task24', 'task25'],
         'type': 'teacher',
