@@ -180,10 +180,22 @@ async def teacher_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
         [InlineKeyboardButton("📋 Мои задания", callback_data="teacher_my_assignments")],
         [InlineKeyboardButton("➕ Создать задание", callback_data="teacher_create_assignment")],
         [InlineKeyboardButton("📊 Статистика", callback_data="teacher_statistics")],
-        [InlineKeyboardButton("🎁 Подарить подписку", callback_data="teacher_gift_menu")],
+    ]
+
+    # Кнопка "Подарить подписку" доступна только для Premium-учителей
+    if is_admin:
+        # Админы имеют полный доступ
+        keyboard.append([InlineKeyboardButton("🎁 Подарить подписку", callback_data="teacher_gift_menu")])
+    else:
+        # Для обычных учителей проверяем тариф
+        profile = await teacher_service.get_teacher_profile(user_id)
+        if profile and profile.subscription_tier == 'teacher_premium':
+            keyboard.append([InlineKeyboardButton("🎁 Подарить подписку", callback_data="teacher_gift_menu")])
+
+    keyboard.extend([
         [InlineKeyboardButton("👤 Мой профиль", callback_data="teacher_profile")],
         [InlineKeyboardButton("◀️ Назад в главное меню", callback_data="main_menu")],
-    ]
+    ])
     reply_markup = InlineKeyboardMarkup(keyboard)
 
     text = "👨‍🏫 <b>Режим учителя</b>\n\nВыберите действие:"
@@ -1738,6 +1750,29 @@ async def show_gift_subscription_menu(update: Update, context: ContextTypes.DEFA
     query = update.callback_query
     await query.answer()
 
+    user_id = update.effective_user.id
+    is_admin = user_id in ADMIN_IDS
+
+    # Проверяем доступ: только Premium-учителя и админы
+    if not is_admin:
+        profile = await teacher_service.get_teacher_profile(user_id)
+        if not profile or profile.subscription_tier != 'teacher_premium':
+            await query.message.edit_text(
+                "❌ <b>Доступ ограничен</b>\n\n"
+                "Функция дарения подписок доступна только на тарифе <b>Teacher Premium</b>.\n\n"
+                "💎 Преимущества Premium:\n"
+                "• Безлимит учеников\n"
+                "• Дарение подписок и создание промокодов\n"
+                "• Продвинутая аналитика\n\n"
+                "Перейдите на Premium для доступа к этой функции.",
+                parse_mode='HTML',
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("💳 Перейти на Premium", callback_data="teacher_subscriptions")],
+                    [InlineKeyboardButton("◀️ Назад", callback_data="teacher_menu")]
+                ])
+            )
+            return TeacherStates.TEACHER_MENU
+
     text = (
         "🎁 <b>Подарить подписку</b>\n\n"
         "Выберите способ подарка:"
@@ -1800,6 +1835,24 @@ async def start_create_promo_code(update: Update, context: ContextTypes.DEFAULT_
     """Начало создания промокода"""
     query = update.callback_query
     await query.answer()
+
+    user_id = update.effective_user.id
+    is_admin = user_id in ADMIN_IDS
+
+    # Проверяем доступ: только Premium-учителя и админы
+    if not is_admin:
+        profile = await teacher_service.get_teacher_profile(user_id)
+        if not profile or profile.subscription_tier != 'teacher_premium':
+            await query.message.edit_text(
+                "❌ <b>Доступ ограничен</b>\n\n"
+                "Создание промокодов доступно только на тарифе <b>Teacher Premium</b>.",
+                parse_mode='HTML',
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("💳 Перейти на Premium", callback_data="teacher_subscriptions")],
+                    [InlineKeyboardButton("◀️ Назад", callback_data="teacher_gift_menu")]
+                ])
+            )
+            return TeacherStates.TEACHER_MENU
 
     text = (
         "🎟️ <b>Создание промокода</b>\n\n"
