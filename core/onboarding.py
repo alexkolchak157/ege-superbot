@@ -1,13 +1,12 @@
 """
-Интерактивный onboarding для новых пользователей.
+Интерактивный onboarding для новых пользователей с A/B тестированием.
 
 Цель: Превратить 77% bounced пользователей в активных.
 
-Сценарий:
-1. Приветствие + объяснение что такое бот
-2. 3 простых вопроса из тестовой части (принудительно)
-3. Демо AI-проверки задания 24/25
-4. Предложение trial за 1₽
+Варианты онбординга (A/B тест):
+- control: AI-демо → 1 вопрос → trial (текущий)
+- no_question: AI-демо → сразу trial (без вопроса)
+- instant_value: Бесплатный вопрос → AI-демо → trial
 """
 
 import logging
@@ -23,6 +22,7 @@ from telegram.ext import (
 from telegram.constants import ParseMode
 from datetime import datetime
 from core import db
+from analytics.ab_testing import assign_user_to_variant, get_user_variant, track_ab_conversion
 
 logger = logging.getLogger(__name__)
 
@@ -262,9 +262,24 @@ async def show_next_question(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
 
 async def show_ai_demo(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Показывает демо AI-проверки."""
+    """
+    Показывает демо AI-проверки с A/B тестированием разных флоу.
+
+    Варианты:
+    - control: AI-демо → 1 вопрос → trial (стандартный)
+    - no_question: AI-демо → сразу trial (без вопроса)
+    - instant_value: уже показали вопрос, теперь AI-демо → trial
+    """
     query = update.callback_query
     await query.answer()
+
+    user_id = update.effective_user.id
+
+    # Назначаем пользователя на вариант A/B теста
+    variant = await assign_user_to_variant(user_id, 'onboarding_flow')
+    context.user_data['ab_variant'] = variant
+
+    logger.info(f"User {user_id} assigned to onboarding variant: {variant}")
 
     demo_text = """🤖 <b>ИИ-проверка — твой секретный инструмент</b>
 
@@ -295,16 +310,31 @@ async def show_ai_demo(update: Update, context: ContextTypes.DEFAULT_TYPE):
    в) Экономическая поддержка
 
 💎 <b>Результат: +2 балла на ЕГЭ!</b>
-
-<b>Теперь твоя очередь:</b>
-Попробуй решить один простой вопрос, чтобы я показал тебе остальные возможности 👇
 """
 
-    keyboard = InlineKeyboardMarkup([
-        [InlineKeyboardButton("🎯 Попробовать прямо сейчас!", callback_data="onboarding_start")],
-        [InlineKeyboardButton("🎁 Сразу к пробному периоду (1₽)", callback_data="onboarding_trial")],
-        [InlineKeyboardButton("🆓 Продолжить с бесплатным доступом", callback_data="onboarding_complete")]
-    ])
+    # Разные кнопки в зависимости от варианта A/B теста
+    if variant == 'no_question':
+        # Вариант B: сразу к trial без вопроса
+        demo_text += "\n\n<b>Готов попробовать на своих заданиях?</b>"
+        keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton("🎁 Активировать trial (1₽)", callback_data="onboarding_trial")],
+            [InlineKeyboardButton("🆓 Продолжить бесплатно", callback_data="onboarding_complete")]
+        ])
+    elif variant == 'instant_value':
+        # Вариант C: уже показали вопрос, теперь сразу trial
+        demo_text += "\n\n<b>Понравилось? Теперь можешь получить безлимитный доступ!</b>"
+        keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton("🎁 Попробовать за 1₽ (7 дней)", callback_data="onboarding_trial")],
+            [InlineKeyboardButton("🆓 Остаться на бесплатном", callback_data="onboarding_complete")]
+        ])
+    else:
+        # Вариант A (control): стандартный флоу с вопросом
+        demo_text += "\n\n<b>Теперь твоя очередь:</b>\nПопробуй решить один простой вопрос, чтобы я показал тебе остальные возможности 👇"
+        keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton("🎯 Попробовать прямо сейчас!", callback_data="onboarding_start")],
+            [InlineKeyboardButton("🎁 Сразу к trial (1₽)", callback_data="onboarding_trial")],
+            [InlineKeyboardButton("🆓 Бесплатный доступ", callback_data="onboarding_complete")]
+        ])
 
     await query.edit_message_text(
         demo_text,
@@ -371,12 +401,23 @@ async def complete_onboarding(update: Update, context: ContextTypes.DEFAULT_TYPE
         )
         await conn.commit()
 
+        # A/B test tracking: onboarding completed
+        ab_variant = context.user_data.get('ab_variant', 'unknown')
+        await track_ab_conversion(
+            user_id=user_id,
+            test_name='onboarding_flow',
+            conversion_type='onboarding_completed',
+            value=0
+        )
+        logger.info(f"User {user_id} completed onboarding (variant: {ab_variant})")
+
         # Трекинг для аналитики
         await db.track_funnel_event(user_id, 'onboarding_completed', {
             'correct_answers': context.user_data.get('onboarding_correct_answers', 0),
             'duration_seconds': (
                 datetime.now() - datetime.fromisoformat(context.user_data.get('onboarding_started', datetime.now().isoformat()))
-            ).seconds
+            ).seconds,
+            'ab_variant': ab_variant
         })
 
     except Exception as e:
