@@ -374,6 +374,24 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         last_name=user.last_name
     )
 
+    # Парсим и сохраняем UTM-метки из deep link (для аналитики рекламы)
+    try:
+        if context.args and len(context.args) > 0:
+            start_param = context.args[0]
+
+            # Пропускаем служебные параметры (payment_success, payment_fail)
+            if not start_param.startswith('payment_'):
+                from analytics.utm_tracker import parse_utm_from_deeplink, save_user_source
+
+                utm_data = parse_utm_from_deeplink(start_param)
+
+                if utm_data:
+                    await save_user_source(user_id, utm_data)
+                    logger.info(f"User {user_id} came from {utm_data.get('source', 'unknown')} / {utm_data.get('campaign', 'unknown')}")
+    except Exception as e:
+        logger.error(f"Error processing UTM for user {user_id}: {e}")
+        # Не прерываем работу бота если ошибка в аналитике
+
     # Проверяем, нужен ли onboarding
     try:
         from core.onboarding import should_start_onboarding

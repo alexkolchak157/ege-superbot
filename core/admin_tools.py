@@ -533,6 +533,13 @@ class AdminKeyboards:
             [
                 InlineKeyboardButton("💰 Финансы", callback_data="admin:financial_analytics")
             ],
+            [
+                InlineKeyboardButton("📊 Источники трафика", callback_data="admin:traffic_sources"),
+                InlineKeyboardButton("📈 Кампании", callback_data="admin:campaign_stats")
+            ],
+            [
+                InlineKeyboardButton("📉 Когортный анализ", callback_data="admin:cohort_analysis")
+            ],
             [InlineKeyboardButton("⬅️ Назад", callback_data="admin:main")]
         ])
     
@@ -5120,6 +5127,12 @@ def register_admin_handlers(app):
     app.add_handler(CallbackQueryHandler(retention_stats, pattern="^admin:retention_stats$"))
     app.add_handler(CallbackQueryHandler(conversion_stats, pattern="^admin:conversion_stats$"))
     app.add_handler(CallbackQueryHandler(financial_analytics, pattern="^admin:financial_analytics$"))
+
+    # UTM-аналитика и источники трафика
+    from analytics.admin_stats import traffic_sources_stats, campaign_stats, cohort_analysis
+    app.add_handler(CallbackQueryHandler(traffic_sources_stats, pattern="^admin:traffic_sources$"))
+    app.add_handler(CallbackQueryHandler(campaign_stats, pattern="^admin:campaign_stats$"))
+    app.add_handler(CallbackQueryHandler(cohort_analysis, pattern="^admin:cohort_analysis$"))
 
     # Управление пользователями (новые функции)
     app.add_handler(CallbackQueryHandler(message_user_start, pattern="^admin:message_user:"))
