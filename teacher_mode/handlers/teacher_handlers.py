@@ -543,20 +543,39 @@ async def select_selection_mode(update: Update, context: ContextTypes.DEFAULT_TY
         topics_data = load_topics_for_module(task_type)
         total_count = topics_data['total_count']
 
-        await query.message.edit_text(
-            f"🔢 <b>{task_name}: Ввод номеров заданий</b>\n\n"
-            f"📚 В банке доступно: {total_count} заданий (ID: 1-{total_count})\n\n"
-            "Введите ID заданий одним сообщением:\n\n"
-            "<b>Примеры форматов:</b>\n"
-            "• Отдельные номера: <code>1,5,10,23</code>\n"
-            "• Диапазоны: <code>1-5,10-15,20</code>\n"
-            "• Комбинированно: <code>1,3,5-10,15,20-25</code>\n\n"
-            "💡 Можно использовать пробелы для читаемости",
-            reply_markup=InlineKeyboardMarkup([[
-                InlineKeyboardButton("◀️ Отмена", callback_data=f"assign_task_{task_type}")
-            ]]),
-            parse_mode='HTML'
-        )
+        # Для test_part показываем выбор по номерам ЕГЭ (1-16)
+        if task_type == 'test_part':
+            await query.message.edit_text(
+                f"🔢 <b>{task_name}: Выбор по номерам заданий ЕГЭ</b>\n\n"
+                f"📚 Доступны задания: 1-16 (тестовая часть)\n"
+                f"📊 Всего вопросов в базе: {total_count}\n\n"
+                "Введите номера заданий ЕГЭ одним сообщением:\n\n"
+                "<b>Примеры форматов:</b>\n"
+                "• Отдельные номера: <code>1,5,10</code>\n"
+                "• Диапазоны: <code>1-5,10-13</code>\n"
+                "• Комбинированно: <code>1,3,5-10,15</code>\n\n"
+                "💡 Можно использовать пробелы для читаемости",
+                reply_markup=InlineKeyboardMarkup([[
+                    InlineKeyboardButton("◀️ Отмена", callback_data=f"assign_task_{task_type}")
+                ]]),
+                parse_mode='HTML'
+            )
+        else:
+            # Для остальных модулей показываем выбор по ID из банка тем
+            await query.message.edit_text(
+                f"🔢 <b>{task_name}: Ввод номеров заданий</b>\n\n"
+                f"📚 В банке доступно: {total_count} заданий (ID: 1-{total_count})\n\n"
+                "Введите ID заданий одним сообщением:\n\n"
+                "<b>Примеры форматов:</b>\n"
+                "• Отдельные номера: <code>1,5,10,23</code>\n"
+                "• Диапазоны: <code>1-5,10-15,20</code>\n"
+                "• Комбинированно: <code>1,3,5-10,15,20-25</code>\n\n"
+                "💡 Можно использовать пробелы для читаемости",
+                reply_markup=InlineKeyboardMarkup([[
+                    InlineKeyboardButton("◀️ Отмена", callback_data=f"assign_task_{task_type}")
+                ]]),
+                parse_mode='HTML'
+            )
         return TeacherStates.ENTER_QUESTION_NUMBERS
 
     return TeacherStates.CREATE_ASSIGNMENT
@@ -620,6 +639,7 @@ async def process_question_numbers_input(update: Update, context: ContextTypes.D
     task_type = context.user_data.get('assignment_task_type')
 
     task_names = {
+        'test_part': '📝 Тестовая часть (1-16)',
         'task19': '💡 Задание 19',
         'task20': '⚙️ Задание 20',
         'task24': '📊 Задание 24',
@@ -629,9 +649,9 @@ async def process_question_numbers_input(update: Update, context: ContextTypes.D
 
     try:
         # Парсим введенные номера
-        question_ids = parse_question_numbers(user_input)
+        entered_numbers = parse_question_numbers(user_input)
 
-        if not question_ids:
+        if not entered_numbers:
             await update.message.reply_text(
                 "❌ Не удалось распознать номера заданий.\n\n"
                 "Попробуйте еще раз, например: <code>1,5,10-15</code>",
@@ -639,31 +659,72 @@ async def process_question_numbers_input(update: Update, context: ContextTypes.D
             )
             return TeacherStates.ENTER_QUESTION_NUMBERS
 
-        # Проверяем валидность номеров
-        from ..services.topics_loader import load_topics_for_module
+        # Для test_part обрабатываем номера ЕГЭ (1-16)
+        if task_type == 'test_part':
+            # Проверяем диапазон 1-16
+            invalid_nums = [n for n in entered_numbers if n < 1 or n > 16]
 
-        topics_data = load_topics_for_module(task_type)
-        valid_ids = set(topics_data['topics_by_id'].keys())
+            if invalid_nums:
+                await update.message.reply_text(
+                    f"❌ Некоторые номера вне допустимого диапазона:\n"
+                    f"<code>{', '.join(map(str, invalid_nums[:10]))}</code>\n\n"
+                    f"Для тестовой части доступны номера: 1-16\n\n"
+                    "Попробуйте еще раз:",
+                    parse_mode='HTML'
+                )
+                return TeacherStates.ENTER_QUESTION_NUMBERS
 
-        invalid_ids = [qid for qid in question_ids if qid not in valid_ids]
+            # Загружаем все вопросы и фильтруем по exam_number
+            from test_part.loader import get_questions_list_flat
 
-        if invalid_ids:
-            await update.message.reply_text(
-                f"❌ Некоторые ID не найдены в банке заданий:\n"
-                f"<code>{', '.join(map(str, invalid_ids[:10]))}</code>"
-                f"{' и другие...' if len(invalid_ids) > 10 else ''}\n\n"
-                f"Доступны ID: 1-{topics_data['total_count']}\n\n"
-                "Попробуйте еще раз:",
-                parse_mode='HTML'
-            )
-            return TeacherStates.ENTER_QUESTION_NUMBERS
+            all_questions = get_questions_list_flat()
+            if not all_questions:
+                await update.message.reply_text(
+                    "❌ Ошибка загрузки вопросов. Попробуйте позже.",
+                    parse_mode='HTML'
+                )
+                return TeacherStates.ENTER_QUESTION_NUMBERS
 
-        # Сохраняем выбранные ID
-        context.user_data['selected_question_ids'] = question_ids
-        context.user_data['selected_blocks'] = []  # Для режима "номера" блоки не используются
+            # Собираем все ID вопросов для выбранных номеров ЕГЭ
+            question_ids_by_exam = {}
+            for exam_num in entered_numbers:
+                matching_questions = [q for q in all_questions if q.get('exam_number') == exam_num]
+                question_ids_by_exam[exam_num] = [q['id'] for q in matching_questions]
 
-        # Показываем список заданий для подтверждения
-        return await show_numbers_confirmation(update, context, question_ids, task_type, topics_data)
+            # Сохраняем данные для подтверждения
+            context.user_data['selected_exam_numbers'] = entered_numbers
+            context.user_data['question_ids_by_exam'] = question_ids_by_exam
+            context.user_data['selected_blocks'] = []
+
+            # Показываем подтверждение
+            return await show_exam_numbers_confirmation(update, context, entered_numbers, question_ids_by_exam)
+
+        else:
+            # Для остальных модулей работаем с ID тем как раньше
+            from ..services.topics_loader import load_topics_for_module
+
+            topics_data = load_topics_for_module(task_type)
+            valid_ids = set(topics_data['topics_by_id'].keys())
+
+            invalid_ids = [qid for qid in entered_numbers if qid not in valid_ids]
+
+            if invalid_ids:
+                await update.message.reply_text(
+                    f"❌ Некоторые ID не найдены в банке заданий:\n"
+                    f"<code>{', '.join(map(str, invalid_ids[:10]))}</code>"
+                    f"{' и другие...' if len(invalid_ids) > 10 else ''}\n\n"
+                    f"Доступны ID: 1-{topics_data['total_count']}\n\n"
+                    "Попробуйте еще раз:",
+                    parse_mode='HTML'
+                )
+                return TeacherStates.ENTER_QUESTION_NUMBERS
+
+            # Сохраняем выбранные ID
+            context.user_data['selected_question_ids'] = entered_numbers
+            context.user_data['selected_blocks'] = []  # Для режима "номера" блоки не используются
+
+            # Показываем список заданий для подтверждения
+            return await show_numbers_confirmation(update, context, entered_numbers, task_type, topics_data)
 
     except ValueError as e:
         await update.message.reply_text(
@@ -721,6 +782,71 @@ async def show_numbers_confirmation(update: Update, context: ContextTypes.DEFAUL
     await update.message.reply_text(text, reply_markup=reply_markup, parse_mode='HTML')
 
     return TeacherStates.ENTER_QUESTION_NUMBERS
+
+
+async def show_exam_numbers_confirmation(update: Update, context: ContextTypes.DEFAULT_TYPE,
+                                         exam_numbers: List[int], question_ids_by_exam: Dict) -> int:
+    """Показать подтверждение выбранных номеров ЕГЭ для test_part"""
+
+    # Подсчитываем общее количество вопросов
+    total_questions = sum(len(qids) for qids in question_ids_by_exam.values())
+
+    text = (
+        f"📝 <b>Тестовая часть: Подтверждение заданий</b>\n\n"
+        f"✅ Выбрано номеров ЕГЭ: {len(exam_numbers)}\n"
+        f"📊 Всего вопросов в базе: {total_questions}\n\n"
+        "Список выбранных заданий:\n\n"
+    )
+
+    # Добавляем информацию о каждом номере
+    for exam_num in sorted(exam_numbers):
+        question_count = len(question_ids_by_exam.get(exam_num, []))
+        text += f"• <b>Задание {exam_num}</b> — {question_count} вопросов\n"
+
+    text += "\n<i>Подтвердите выбор или введите номера заново</i>"
+
+    keyboard = [
+        [InlineKeyboardButton("✅ Подтвердить выбор", callback_data="confirm_exam_numbers_selection")],
+        [InlineKeyboardButton("🔄 Ввести заново", callback_data="assign_task_test_part:numbers")],
+        [InlineKeyboardButton("◀️ Назад", callback_data="assign_task_test_part")]
+    ]
+
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
+    # Отправляем новое сообщение
+    await update.message.reply_text(text, reply_markup=reply_markup, parse_mode='HTML')
+
+    return TeacherStates.ENTER_QUESTION_NUMBERS
+
+
+async def confirm_exam_numbers_selection(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Подтверждение выбранных номеров ЕГЭ для test_part"""
+    query = update.callback_query
+    await query.answer()
+
+    question_ids_by_exam = context.user_data.get('question_ids_by_exam', {})
+
+    if not question_ids_by_exam:
+        await query.answer("⚠️ Список заданий пуст", show_alert=True)
+        return TeacherStates.ENTER_QUESTION_NUMBERS
+
+    # Собираем все question_ids из всех номеров экзамена
+    all_question_ids = []
+    for exam_num in sorted(question_ids_by_exam.keys()):
+        all_question_ids.extend(question_ids_by_exam[exam_num])
+
+    # Сохраняем в assignment_data
+    context.user_data['assignment_data'] = {
+        'task_module': 'test_part',
+        'selection_mode': 'exam_numbers',
+        'selected_blocks': [],
+        'question_ids': all_question_ids,
+        'questions_count': len(all_question_ids),
+        'exam_numbers': list(question_ids_by_exam.keys())
+    }
+
+    # Переходим к выбору учеников
+    return await proceed_to_student_selection(update, context)
 
 
 async def confirm_numbers_selection(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:

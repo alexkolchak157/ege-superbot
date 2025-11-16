@@ -15,7 +15,7 @@ def load_topics_for_module(task_module: str) -> Dict:
     Загружает темы для указанного модуля задания.
 
     Args:
-        task_module: Название модуля ('task19', 'task20', 'task24', 'task25')
+        task_module: Название модуля ('test_part', 'task19', 'task20', 'task24', 'task25')
 
     Returns:
         Словарь с темами в формате:
@@ -31,6 +31,10 @@ def load_topics_for_module(task_module: str) -> Dict:
     """
     try:
         base_dir = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
+
+        # Специальная обработка для test_part
+        if task_module == 'test_part':
+            return _load_test_part_topics(base_dir)
 
         # Специальная обработка для task24
         if task_module == 'task24':
@@ -74,6 +78,86 @@ def load_topics_for_module(task_module: str) -> Dict:
 
     except Exception as e:
         logger.error(f"Error loading topics for {task_module}: {e}")
+        return {'blocks': {}, 'topics_by_id': {}, 'total_count': 0}
+
+
+def _load_test_part_topics(base_dir: str) -> Dict:
+    """
+    Загружает темы для тестовой части (задания 1-16) из questions.json.
+
+    Args:
+        base_dir: Базовая директория проекта
+
+    Returns:
+        Словарь в формате, совместимом с load_topics_for_module
+    """
+    try:
+        # Импортируем loader из test_part модуля
+        import sys
+        test_part_dir = os.path.join(base_dir, 'test_part')
+        if test_part_dir not in sys.path:
+            sys.path.insert(0, test_part_dir)
+
+        from test_part.loader import get_questions_list_flat
+
+        questions = get_questions_list_flat()
+        if not questions:
+            logger.info("No questions found for test_part")
+            return {'blocks': {}, 'topics_by_id': {}, 'total_count': 0}
+
+        # Группируем вопросы по exam_number (только 1-16 для тестовой части)
+        blocks = {}
+        topics_by_id = {}
+        topic_id_counter = 1
+
+        # Фильтруем вопросы с exam_number от 1 до 16
+        test_part_questions = [q for q in questions if q.get('exam_number') and 1 <= q.get('exam_number') <= 16]
+
+        # Группируем по exam_number и по блоку
+        from collections import defaultdict
+        exam_groups = defaultdict(lambda: defaultdict(list))
+
+        for question in test_part_questions:
+            exam_num = question.get('exam_number')
+            block = question.get('block', 'Без категории')
+            exam_groups[exam_num][block].append(question)
+
+        # Создаем структуру для каждого номера задания
+        for exam_num in sorted(exam_groups.keys()):
+            block_name = f"Задание {exam_num}"
+            blocks[block_name] = []
+
+            # Внутри каждого номера группируем по предметным блокам (Экономика, Политика и т.д.)
+            for subject_block, block_questions in sorted(exam_groups[exam_num].items()):
+                # Создаем "тему" для каждого предметного блока внутри номера задания
+                topic_obj = {
+                    'id': topic_id_counter,
+                    'exam_number': exam_num,
+                    'block': subject_block,
+                    'title': f"{subject_block}",
+                    'questions_count': len(block_questions),
+                    'question_ids': [q['id'] for q in block_questions]
+                }
+
+                topics_by_id[topic_id_counter] = topic_obj
+
+                blocks[block_name].append({
+                    'id': topic_id_counter,
+                    'title': f"{subject_block} ({len(block_questions)} вопросов)"
+                })
+
+                topic_id_counter += 1
+
+        return {
+            'blocks': blocks,
+            'topics_by_id': topics_by_id,
+            'total_count': len(test_part_questions)
+        }
+
+    except Exception as e:
+        logger.error(f"Error loading test_part topics: {e}")
+        import traceback
+        traceback.print_exc()
         return {'blocks': {}, 'topics_by_id': {}, 'total_count': 0}
 
 
@@ -215,12 +299,17 @@ def module_supports_topics(task_module: str) -> bool:
     Проверяет, поддерживает ли модуль систему тем.
 
     Args:
-        task_module: Название модуля ('task19', 'task20', 'task24', 'task25')
+        task_module: Название модуля ('test_part', 'task19', 'task20', 'task24', 'task25')
 
     Returns:
         True если модуль имеет файл с темами
     """
     base_dir = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
+
+    # test_part поддерживает темы через questions.json
+    if task_module == 'test_part':
+        questions_file = os.path.join(base_dir, 'data', 'questions.json')
+        return os.path.exists(questions_file)
 
     # Специальная проверка для task24
     if task_module == 'task24':

@@ -146,6 +146,7 @@ class TeacherModePlugin(BotPlugin):
 
                     # Подтверждение выбранных номеров
                     CallbackQueryHandler(teacher_handlers.confirm_numbers_selection, pattern="^confirm_numbers_selection$"),
+                    CallbackQueryHandler(teacher_handlers.confirm_exam_numbers_selection, pattern="^confirm_exam_numbers_selection$"),
 
                     # Отмена
                     CallbackQueryHandler(teacher_handlers.select_task_type, pattern="^assign_task_"),
