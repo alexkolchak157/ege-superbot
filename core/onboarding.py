@@ -124,33 +124,89 @@ async def should_start_onboarding(user_id: int) -> bool:
 
 
 async def start_onboarding(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Начало onboarding процесса."""
+    """
+    Начало onboarding процесса (вызывается из retention-нотификаций).
+    ВАЖНО: Использует новый флоу с A/B тестами!
+    """
+    query = update.callback_query
+    if query:
+        await query.answer()
+
     user = update.effective_user
+    user_id = user.id
     user_name = user.first_name or "друг"
+
+    # Назначаем пользователя на вариант A/B теста если ещё не назначен
+    variant = context.user_data.get('ab_variant')
+    if not variant:
+        from analytics.ab_testing import assign_user_to_variant
+        variant = await assign_user_to_variant(user_id, 'onboarding_flow')
+        context.user_data['ab_variant'] = variant
+        logger.info(f"Assigning A/B variant to returning user {user_id}: {variant}")
 
     # Сохраняем метку начала onboarding
     context.user_data['onboarding_started'] = datetime.now().isoformat()
     context.user_data['onboarding_correct_answers'] = 0
 
-    welcome_text = f"""👋 <b>Привет, {user_name}!</b>
+    # Вариант C: INSTANT VALUE - сразу даём попробовать вопрос
+    if variant == 'instant_value':
+        welcome_text = f"""👋 <b>С возвращением, {user_name}!</b>
 
-🎓 Я — твой ИИ-репетитор по обществознанию.
+🎓 Попробуй прямо сейчас!
+Вот простой вопрос из ЕГЭ. Выбери ответ и получи мгновенную проверку 👇
+"""
+        question_data = DEMO_QUESTIONS[0]
+        context.user_data['current_question'] = 0
 
-<b>За 2 минуты я покажу тебе как:</b>
-✅ Решать тестовую часть ЕГЭ
-✅ Получать проверку от ИИ как от эксперта ФИПИ
-✅ Готовиться эффективно и бесплатно
+        # Прогресс-бар
+        progress = "●○○"  # 1 из 3 шагов
+        progress_text = f"<i>{progress} Шаг 1 из 3</i>\n\n"
 
-📊 <b>Прямо сейчас решим 3 простых вопроса</b>
-Не переживай — это займет меньше минуты!
+        text = welcome_text + "\n" + progress_text + question_data['question'] + "\n\n"
 
-<i>Нажми "Поехали!" когда будешь готов</i>
+        # Кнопки для ответов
+        keyboard_buttons = []
+        for i, option in enumerate(question_data['options']):
+            keyboard_buttons.append([
+                InlineKeyboardButton(
+                    option,
+                    callback_data=f"onboarding_answer_0_{i}"
+                )
+            ])
+
+        if query:
+            await query.edit_message_text(
+                text,
+                reply_markup=InlineKeyboardMarkup(keyboard_buttons),
+                parse_mode=ParseMode.HTML
+            )
+        else:
+            await update.message.reply_text(
+                text,
+                reply_markup=InlineKeyboardMarkup(keyboard_buttons),
+                parse_mode=ParseMode.HTML
+            )
+
+        return ONBOARDING_QUESTION_1
+
+    # Варианты A и B: показываем AI-демо первым
+    else:
+        welcome_text = f"""👋 <b>С возвращением, {user_name}!</b>
+
+🎓 Я — твой ИИ-репетитор по обществознанию с искусственным интеллектом.
+
+<b>Сейчас покажу тебе секретный инструмент,</b> из-за которого сюда приходят:
+
+🤖 <b>ИИ-проверка заданий 19-25</b>
+Проверяю как эксперт ФИПИ, только мгновенно.
+
+⏱ <b>Это займёт 30 секунд</b>
+Готов посмотреть?
 """
 
-    keyboard = InlineKeyboardMarkup([
-        [InlineKeyboardButton("🚀 Поехали!", callback_data="onboarding_start")],
-        [InlineKeyboardButton("Пропустить обучение", callback_data="onboarding_skip")]
-    ])
+        keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton("🚀 Показывай!", callback_data="onboarding_ai_demo")]
+        ])
 
     if update.callback_query:
         await update.callback_query.edit_message_text(
@@ -595,37 +651,51 @@ async def skip_onboarding_before_start(update: Update, context: ContextTypes.DEF
 
 
 def get_onboarding_handler():
-    """Возвращает ConversationHandler для onboarding."""
+    """
+    Возвращает ConversationHandler для onboarding с A/B тестами.
+
+    Поддерживаемые флоу:
+    - Control: AI-демо → вопрос → trial
+    - No question: AI-демо → trial
+    - Instant value: вопрос → AI-демо → trial
+    """
     return ConversationHandler(
         entry_points=[
             CallbackQueryHandler(start_onboarding, pattern="^start_onboarding$")
         ],
         states={
+            # ONBOARDING_WELCOME: Начальное состояние после start_onboarding
+            # Переход к AI-демо (для вариантов A и B)
             ONBOARDING_WELCOME: [
-                CallbackQueryHandler(start_first_question, pattern="^onboarding_start$"),
-                CallbackQueryHandler(skip_onboarding, pattern="^onboarding_skip$")
+                CallbackQueryHandler(show_ai_demo, pattern="^onboarding_ai_demo$")
+                # Кнопка "Пропустить" удалена - онбординг обязательный!
             ],
+
+            # ONBOARDING_QUESTION_1: Ответ на первый вопрос
+            # Для вариантов A (control) и C (instant_value)
             ONBOARDING_QUESTION_1: [
-                CallbackQueryHandler(handle_answer, pattern="^onboarding_answer_"),
-                CallbackQueryHandler(show_next_question, pattern="^onboarding_next_")
-            ],
-            ONBOARDING_QUESTION_2: [
-                CallbackQueryHandler(handle_answer, pattern="^onboarding_answer_"),
-                CallbackQueryHandler(show_next_question, pattern="^onboarding_next_")
-            ],
-            ONBOARDING_QUESTION_3: [
                 CallbackQueryHandler(handle_answer, pattern="^onboarding_answer_")
             ],
+
+            # ONBOARDING_AI_DEMO: Показ AI-демо
+            # Переходы в зависимости от варианта:
+            # - Control: к вопросу (onboarding_start)
+            # - No question: к trial
+            # - Instant value: к trial
             ONBOARDING_AI_DEMO: [
-                CallbackQueryHandler(show_ai_demo, pattern="^onboarding_ai_demo$"),
+                CallbackQueryHandler(start_first_question, pattern="^onboarding_start$"),
+                CallbackQueryHandler(handle_trial_offer, pattern="^onboarding_trial$"),
                 CallbackQueryHandler(complete_onboarding, pattern="^onboarding_complete$")
             ],
+
+            # ONBOARDING_TRIAL_OFFER: Предложение trial
             ONBOARDING_TRIAL_OFFER: [
                 CallbackQueryHandler(handle_trial_offer, pattern="^onboarding_trial$"),
                 CallbackQueryHandler(complete_onboarding, pattern="^onboarding_complete$")
             ]
         },
         fallbacks=[
+            # Fallback только для отмены через команду
             CommandHandler("cancel", skip_onboarding)
         ],
         name="onboarding",
