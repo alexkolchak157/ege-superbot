@@ -397,7 +397,7 @@ async def show_modular_interface(update: Update, context: ContextTypes.DEFAULT_T
         text += "   <i>(Обычная цена: 249₽/мес)</i>\n\n"
         text += "💰 <b>Вы экономите 1200₽ в год!</b>\n\n"
     else:
-        text += "👑 <b>Полная подписка</b> — от 249₽/мес\n\n"
+        text += "👑 <b>Полная подписка</b> — 249₽/мес\n\n"
 
     text += "✅ <b>Вторая часть ЕГЭ — под полным контролем:</b>\n"
     text += "   • Задание 19 — Примеры, которые впечатлят эксперта\n"
@@ -423,7 +423,7 @@ async def show_modular_interface(update: Update, context: ContextTypes.DEFAULT_T
     if has_teacher:
         button_text = "👑 Полная подписка - от 149₽/мес 🎓"
     else:
-        button_text = "👑 Полная подписка - от 249₽/мес"
+        button_text = "👑 Полная подписка - 249₽/мес"
 
     keyboard.append([
         InlineKeyboardButton(
@@ -432,13 +432,7 @@ async def show_modular_interface(update: Update, context: ContextTypes.DEFAULT_T
         )
     ])
 
-    # Кнопка подписок для учителей
-    keyboard.append([
-        InlineKeyboardButton(
-            "👨‍🏫 Подписки для учителей - от 349₽/мес",
-            callback_data="show_teacher_subscriptions"
-        )
-    ])
+    # УДАЛЕНО: Кнопка подписок для учителей (скрыта по запросу)
 
     # Кнопка "Мои подписки" (если есть активные)
     if active_modules:

@@ -481,7 +481,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not subscription_info or not subscription_info.get('is_active'):
             welcome_text += "🚀 <b>Попробуй прямо сейчас:</b>\n"
             welcome_text += "• Пробный период: 1₽ за 7 дней полного доступа\n"
-            welcome_text += "• Полная подписка: от 249₽/мес\n\n"
+            welcome_text += "• Полная подписка: 249₽/мес\n\n"
 
         welcome_text += "👇 <b>Начни с бесплатной тестовой части или попробуй AI-проверку!</b>"
         
