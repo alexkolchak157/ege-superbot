@@ -1397,7 +1397,7 @@ async def proceed_to_student_selection(update: Update, context: ContextTypes.DEF
             "Вы можете создать задание сейчас, и назначить его ученикам позже, "
             "когда они подключатся к вам."
         )
-        keyboard.append([InlineKeyboardButton("➡️ Создать задание", callback_data="assignment_set_deadline")])
+        keyboard.append([InlineKeyboardButton("➡️ Создать задание", callback_data="assignment_enter_title")])
         keyboard.append([InlineKeyboardButton("🔑 Мой код учителя", callback_data="teacher_profile")])
     else:
         # Если есть ученики - показываем список для выбора
@@ -1423,9 +1423,9 @@ async def proceed_to_student_selection(update: Update, context: ContextTypes.DEF
 
         # Всегда показываем кнопку "Далее", даже если ученики не выбраны
         if context.user_data['selected_students']:
-            keyboard.append([InlineKeyboardButton("➡️ Назначить выбранным", callback_data="assignment_set_deadline")])
+            keyboard.append([InlineKeyboardButton("➡️ Далее", callback_data="assignment_enter_title")])
         else:
-            keyboard.append([InlineKeyboardButton("➡️ Создать без назначения", callback_data="assignment_set_deadline")])
+            keyboard.append([InlineKeyboardButton("➡️ Создать без назначения", callback_data="assignment_enter_title")])
 
     keyboard.append([InlineKeyboardButton("◀️ Отмена", callback_data="teacher_menu")])
     reply_markup = InlineKeyboardMarkup(keyboard)
@@ -1454,6 +1454,143 @@ async def toggle_student_selection(update: Update, context: ContextTypes.DEFAULT
 
     # Перерисовываем меню выбора учеников
     return await proceed_to_student_selection(update, context)
+
+
+async def prompt_assignment_title(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Запрос названия для домашнего задания"""
+    query = update.callback_query
+    await query.answer()
+
+    task_type = context.user_data.get('assignment_task_type', '')
+    selected_count = len(context.user_data.get('selected_students', []))
+
+    task_names = {
+        'test_part': '📝 Тестовая часть (1-16)',
+        'task19': '💡 Задание 19',
+        'task20': '⚙️ Задание 20',
+        'task24': '📊 Задание 24',
+        'task25': '💻 Задание 25',
+        'mixed': '🔀 Смешанное задание',
+        'custom': '📝 Кастомное задание'
+    }
+    default_title = task_names.get(task_type, f"Задание {task_type}")
+
+    if selected_count > 0:
+        text = (
+            f"📝 <b>Создание задания</b>\n\n"
+            f"👥 Будет назначено ученикам: {selected_count}\n\n"
+            "✏️ <b>Введите название для задания</b>\n\n"
+            f"Например:\n"
+            f"• ДЗ по темам 1-5\n"
+            f"• Контрольная работа №1\n"
+            f"• Подготовка к пробному ЕГЭ\n\n"
+            f"Или отправьте /skip чтобы использовать название по умолчанию:\n"
+            f"<code>{default_title}</code>"
+        )
+    else:
+        text = (
+            f"📝 <b>Создание задания</b>\n\n"
+            "✏️ <b>Введите название для задания</b>\n\n"
+            f"Например:\n"
+            f"• ДЗ по темам 1-5\n"
+            f"• Контрольная работа №1\n"
+            f"• Подготовка к пробному ЕГЭ\n\n"
+            f"Или отправьте /skip чтобы использовать название по умолчанию:\n"
+            f"<code>{default_title}</code>"
+        )
+
+    keyboard = [[InlineKeyboardButton("◀️ Назад", callback_data="teacher_menu")]]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
+    await query.message.edit_text(text, reply_markup=reply_markup, parse_mode='HTML')
+
+    return TeacherStates.ENTER_ASSIGNMENT_TITLE
+
+
+async def process_assignment_title_input(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Обработка введенного названия задания"""
+    user_input = update.message.text.strip()
+
+    # Проверка на команду skip
+    if user_input == '/skip':
+        task_type = context.user_data.get('assignment_task_type', '')
+        task_names = {
+            'test_part': '📝 Тестовая часть (1-16)',
+            'task19': '💡 Задание 19',
+            'task20': '⚙️ Задание 20',
+            'task24': '📊 Задание 24',
+            'task25': '💻 Задание 25',
+            'mixed': '🔀 Смешанное задание',
+            'custom': '📝 Кастомное задание'
+        }
+        assignment_title = task_names.get(task_type, f"Задание {task_type}")
+    else:
+        # Валидация длины названия
+        if len(user_input) > 100:
+            await update.message.reply_text(
+                "❌ <b>Название слишком длинное</b>\n\n"
+                "Максимальная длина: 100 символов\n"
+                "Попробуйте еще раз или отправьте /skip:",
+                parse_mode='HTML'
+            )
+            return TeacherStates.ENTER_ASSIGNMENT_TITLE
+
+        if len(user_input) < 3:
+            await update.message.reply_text(
+                "❌ <b>Название слишком короткое</b>\n\n"
+                "Минимальная длина: 3 символа\n"
+                "Попробуйте еще раз или отправьте /skip:",
+                parse_mode='HTML'
+            )
+            return TeacherStates.ENTER_ASSIGNMENT_TITLE
+
+        assignment_title = user_input
+
+    # Сохраняем название в контексте
+    context.user_data['assignment_title'] = assignment_title
+
+    # Переходим к установке дедлайна
+    # Создаем фейковый query для вызова set_assignment_deadline
+    from telegram import CallbackQuery
+
+    # Создаем новое сообщение с кнопками для дедлайна
+    task_type = context.user_data.get('assignment_task_type', '')
+    selected_count = len(context.user_data.get('selected_students', []))
+
+    if selected_count > 0:
+        text = (
+            f"📝 <b>Создание задания: {assignment_title}</b>\n\n"
+            f"👥 Выбрано учеников: {selected_count}\n\n"
+            "Установите дедлайн для выполнения задания:"
+        )
+    else:
+        text = (
+            f"📝 <b>Создание задания: {assignment_title}</b>\n\n"
+            "📋 Задание будет создано без назначения конкретным ученикам\n\n"
+            "Установите дедлайн для выполнения задания:"
+        )
+
+    keyboard = []
+
+    # Предлагаем варианты дедлайнов
+    today = datetime.now()
+    for days in [1, 3, 7, 14]:
+        deadline_date = today + timedelta(days=days)
+        date_str = deadline_date.strftime("%d.%m.%Y")
+        keyboard.append([
+            InlineKeyboardButton(
+                f"Через {days} дн. ({date_str})",
+                callback_data=f"deadline_{days}"
+            )
+        ])
+
+    keyboard.append([InlineKeyboardButton("⏰ Без дедлайна", callback_data="deadline_none")])
+    keyboard.append([InlineKeyboardButton("◀️ Назад", callback_data="teacher_menu")])
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
+    await update.message.reply_text(text, reply_markup=reply_markup, parse_mode='HTML')
+
+    return TeacherStates.CREATE_ASSIGNMENT
 
 
 async def set_assignment_deadline(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -1530,13 +1667,19 @@ async def confirm_and_create_assignment(update: Update, context: ContextTypes.DE
     from ..services import assignment_service
     from ..models import AssignmentType, TargetType
 
-    task_names = {
-        'task19': 'Задание 19',
-        'task20': 'Задание 20',
-        'task24': 'Задание 24',
-        'task25': 'Задание 25'
-    }
-    title = task_names.get(task_type, f"Задание {task_type}")
+    # Используем сохраненное название или генерируем по умолчанию
+    title = context.user_data.get('assignment_title')
+    if not title:
+        task_names = {
+            'test_part': 'Тестовая часть (1-16)',
+            'task19': 'Задание 19',
+            'task20': 'Задание 20',
+            'task24': 'Задание 24',
+            'task25': 'Задание 25',
+            'mixed': 'Смешанное задание',
+            'custom': 'Кастомное задание'
+        }
+        title = task_names.get(task_type, f"Задание {task_type}")
 
     # Используем assignment_data из контекста если он установлен, иначе создаем по умолчанию
     assignment_data = context.user_data.get('assignment_data', {
@@ -1565,14 +1708,40 @@ async def confirm_and_create_assignment(update: Update, context: ContextTypes.DE
     if homework:
         deadline_text = deadline.strftime("%d.%m.%Y") if deadline else "не установлен"
 
+        # Отправляем уведомления ученикам
         if selected_students:
+            from ..services import notification_service
+
+            # Получаем имя учителя
+            teacher_profile = await teacher_service.get_teacher_profile(user_id)
+            teacher_name = teacher_profile.display_name if teacher_profile else "Ваш учитель"
+
+            # Отправляем уведомления асинхронно (не блокируя UI)
+            questions_count = assignment_data.get('questions_count', 0)
+
+            notification_result = await notification_service.notify_students_about_homework(
+                bot=context.bot,
+                student_ids=selected_students,
+                homework_title=title,
+                teacher_name=teacher_name,
+                deadline=deadline,
+                questions_count=questions_count
+            )
+
+            # Формируем текст с учетом результатов отправки
+            notification_info = ""
+            if notification_result['success'] > 0:
+                notification_info = f"✅ Уведомления отправлены: {notification_result['success']}/{len(selected_students)}"
+            if notification_result['failed'] > 0:
+                notification_info += f"\n⚠️ Не удалось отправить: {notification_result['failed']}"
+
             # Задание назначено ученикам
             text = (
                 "✅ <b>Задание успешно создано!</b>\n\n"
-                f"📝 <b>Тип:</b> {title}\n"
+                f"📝 <b>Название:</b> {title}\n"
                 f"👥 <b>Назначено учеников:</b> {len(selected_students)}\n"
                 f"⏰ <b>Дедлайн:</b> {deadline_text}\n\n"
-                "Ученики получат уведомление о новом задании."
+                f"{notification_info}"
             )
         else:
             # Задание создано без назначения
@@ -1602,6 +1771,7 @@ async def confirm_and_create_assignment(update: Update, context: ContextTypes.DE
 
     # Очищаем контекст
     context.user_data.pop('assignment_task_type', None)
+    context.user_data.pop('assignment_title', None)
     context.user_data.pop('selected_students', None)
     context.user_data.pop('assignment_data', None)
     context.user_data.pop('selection_mode', None)
@@ -2539,6 +2709,7 @@ async def show_mixed_modules_selection(update: Update, context: ContextTypes.DEF
 
     # Показываем какие модули выбраны
     module_names = {
+        'test_part': '📝 Тестовая часть (1-16)',
         'task19': '💡 Задание 19',
         'task20': '⚙️ Задание 20',
         'task24': '📊 Задание 24',
@@ -2601,6 +2772,7 @@ async def proceed_with_mixed_selection(update: Update, context: ContextTypes.DEF
         return TeacherStates.SELECT_SELECTION_MODE
 
     module_names = {
+        'test_part': '📝 Тестовая часть (1-16)',
         'task19': '💡 Задание 19',
         'task20': '⚙️ Задание 20',
         'task24': '📊 Задание 24',

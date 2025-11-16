@@ -23,6 +23,7 @@ class TeacherStates(IntEnum):
     SELECT_SPECIFIC_QUESTIONS = 24  # Выбор конкретных заданий из выбранных блоков
     ENTER_QUESTION_NUMBERS = 25  # Ввод конкретных номеров заданий
     ENTER_QUESTION_COUNT = 26  # Ввод количества случайных заданий для режима "все"
+    ENTER_ASSIGNMENT_TITLE = 27  # Ввод названия домашнего задания
 
     # Просмотр статистики
     VIEW_STATISTICS = 30

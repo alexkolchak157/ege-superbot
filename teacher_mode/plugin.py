@@ -87,11 +87,21 @@ class TeacherModePlugin(BotPlugin):
                     # Выбор учеников
                     CallbackQueryHandler(teacher_handlers.toggle_student_selection, pattern="^toggle_student_"),
 
+                    # Ввод названия задания
+                    CallbackQueryHandler(teacher_handlers.prompt_assignment_title, pattern="^assignment_enter_title$"),
+
                     # Установка дедлайна
                     CallbackQueryHandler(teacher_handlers.set_assignment_deadline, pattern="^assignment_set_deadline$"),
 
                     # Создание задания
                     CallbackQueryHandler(teacher_handlers.confirm_and_create_assignment, pattern="^deadline_"),
+
+                    # Отмена
+                    CallbackQueryHandler(teacher_handlers.teacher_menu, pattern="^teacher_menu$"),
+                ],
+                TeacherStates.ENTER_ASSIGNMENT_TITLE: [
+                    # Обработка текстового ввода названия задания
+                    MessageHandler(filters.TEXT & ~filters.COMMAND, teacher_handlers.process_assignment_title_input),
 
                     # Отмена
                     CallbackQueryHandler(teacher_handlers.teacher_menu, pattern="^teacher_menu$"),
