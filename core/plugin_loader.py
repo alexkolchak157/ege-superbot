@@ -19,7 +19,8 @@ def discover_plugins() -> None:
     
     for mod in pkgutil.iter_modules():
         # Добавляем все модули плагинов
-        if mod.name in ("test_part", "task24", "task19", "task20", "task25", "personal_cabinet", "teacher_mode"):
+        # ВРЕМЕННО СКРЫТО: teacher_mode - режим находится в разработке
+        if mod.name in ("test_part", "task24", "task19", "task20", "task25", "personal_cabinet"):
             try:
                 logger.info(f"Loading plugin: {mod.name}")
                 plugin_module = importlib.import_module(f"{mod.name}.plugin")
