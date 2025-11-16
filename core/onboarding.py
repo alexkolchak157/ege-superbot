@@ -176,8 +176,14 @@ async def show_question(update: Update, context: ContextTypes.DEFAULT_TYPE, ques
     question_data = DEMO_QUESTIONS[question_num]
     context.user_data['current_question'] = question_num
 
+    # Gamification: прогресс-бар
+    # Для варианта "control" это шаг 2 из 3 (AI-демо уже был)
+    # AI-демо (1) → Вопрос (2) → Trial (3)
+    progress = "●●○"  # 2 из 3 шагов
+    progress_text = f"<i>{progress} Шаг 2 из 3</i>\n\n"
+
     # Формируем текст с вариантами
-    text = question_data['question'] + "\n\n"
+    text = progress_text + question_data['question'] + "\n\n"
 
     # Создаем кнопки для ответов
     keyboard = []
@@ -281,7 +287,12 @@ async def show_ai_demo(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     logger.info(f"User {user_id} assigned to onboarding variant: {variant}")
 
-    demo_text = """🤖 <b>ИИ-проверка — твой секретный инструмент</b>
+    # Gamification: прогресс-бар
+    # Это первый шаг для всех вариантов
+    progress = "●○○"  # 1 из 3 шагов
+    progress_text = f"<i>{progress} Шаг 1 из 3</i>\n\n"
+
+    demo_text = progress_text + """🤖 <b>ИИ-проверка — твой секретный инструмент</b>
 
 Задания второй части (19-25) проверяет не просто программа, а <b>искусственный интеллект</b> обученный на критериях ФИПИ.
 
@@ -350,7 +361,11 @@ async def handle_trial_offer(update: Update, context: ContextTypes.DEFAULT_TYPE)
     query = update.callback_query
     await query.answer()
 
-    trial_text = """🎁 <b>Пробный период за 1 рубль</b>
+    # Gamification: последний шаг!
+    progress = "●●●"  # 3 из 3 шагов - завершение!
+    progress_text = f"<i>{progress} Финальный шаг!</i>\n\n"
+
+    trial_text = progress_text + """🎁 <b>Пробный период за 1 рубль</b>
 
 <b>Что получишь на 7 дней:</b>
 ✅ Безлимитные ИИ-проверки заданий 19-25
