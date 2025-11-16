@@ -741,44 +741,8 @@ async def request_email_for_trial(update: Update, context: ContextTypes.DEFAULT_
     
     return ENTERING_EMAIL
 
-@safe_handler()
-async def request_email_for_trial(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Запрашивает email для пробной подписки."""
-    query = update.callback_query
-    
-    text = """🎁 <b>Оформление пробного периода</b>
-
-Вы получите:
-✅ Полный доступ ко всем материалам
-✅ 7 дней бесплатного использования
-✅ Возможность оценить все функции
-
-💰 Стоимость: <b>1 ₽</b>
-
-📧 Введите ваш email для отправки чека:"""
-    
-    keyboard = [[InlineKeyboardButton("❌ Отмена", callback_data="cancel_payment")]]
-    
-    try:
-        await query.edit_message_text(
-            text,
-            parse_mode=ParseMode.HTML,
-            reply_markup=InlineKeyboardMarkup(keyboard)
-        )
-    except BadRequest as e:
-        if "Message is not modified" in str(e):
-            logger.debug("Message already showing trial email request")
-            await query.answer("Введите ваш email в чат", show_alert=False)
-        else:
-            logger.error(f"Error in request_email_for_trial: {e}")
-            # Отправляем новое сообщение
-            await query.message.reply_text(
-                text,
-                parse_mode=ParseMode.HTML,
-                reply_markup=InlineKeyboardMarkup(keyboard)
-            )
-    
-    return ENTERING_EMAIL
+# ИСПРАВЛЕНО: Удален дубликат функции request_email_for_trial (строка 745-781)
+# Правильная версия находится выше (строка 702-742)
 
 @safe_handler()
 async def cmd_debug_subscription(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -2397,9 +2361,9 @@ async def standalone_pay_handler(update: Update, context: ContextTypes.DEFAULT_T
     
     # Устанавливаем флаг процесса оплаты
     context.user_data['in_payment_process'] = True
-    
+
     # Проверяем какая кнопка нажата
-    if query.data == "pay_trial":
+    if query.data == "pay_trial" or query.data == "subscribe_trial_7days":
         plan_id = "trial_7days"
         context.user_data['is_trial'] = True
         context.user_data['selected_plan'] = plan_id
@@ -2407,7 +2371,7 @@ async def standalone_pay_handler(update: Update, context: ContextTypes.DEFAULT_T
         context.user_data['total_price'] = 1
         context.user_data['base_price'] = 1
         context.user_data['plan_name'] = "🎁 Пробный период 7 дней"
-        
+
         # Для триала сразу запрашиваем email
         return await request_email_for_trial(update, context)
     
@@ -2453,6 +2417,7 @@ def register_payment_handlers(app):
             CallbackQueryHandler(show_modular_interface, pattern="^subscribe_start$"),
             # ОБНОВЛЕНО: Только trial и package_full
             CallbackQueryHandler(standalone_pay_handler, pattern="^pay_trial$"),
+            CallbackQueryHandler(standalone_pay_handler, pattern="^subscribe_trial_7days$"),  # ДОБАВЛЕНО: для onboarding
             CallbackQueryHandler(standalone_pay_handler, pattern="^pay_package_full$"),
             # УДАЛЕНО: pay_package_second, pay_individual_modules
         ],

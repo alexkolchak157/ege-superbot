@@ -214,6 +214,30 @@ async def post_init(application: Application) -> None:
         freemium_manager = get_freemium_manager(subscription_manager)
         application.bot_data['freemium_manager'] = freemium_manager
         logger.info("FreemiumManager initialized and added to bot_data")
+
+        # ДОБАВЛЕНО: Автоматическая очистка старых AI лимитов каждую неделю (понедельник в 3:00 МСК)
+        from datetime import time as dt_time
+        from zoneinfo import ZoneInfo
+        msk_tz = ZoneInfo("Europe/Moscow")
+
+        async def cleanup_old_limits(context):
+            """Очищает старые записи AI лимитов из БД."""
+            try:
+                fm = context.bot_data.get('freemium_manager')
+                if fm:
+                    deleted = await fm.reset_weekly_limits()
+                    logger.info(f"Weekly AI limits cleanup: {deleted} old records deleted")
+            except Exception as e:
+                logger.error(f"Error during weekly limits cleanup: {e}")
+
+        application.job_queue.run_daily(
+            cleanup_old_limits,
+            time=dt_time(hour=3, minute=0, second=0, tzinfo=msk_tz),
+            days=(0,),  # 0 = Понедельник
+            name='weekly_ai_limits_cleanup'
+        )
+        logger.info("Weekly AI limits cleanup scheduled for Mondays at 3:00 MSK")
+
     except Exception as e:
         logger.error(f"Failed to initialize FreemiumManager: {e}")
 
