@@ -1,13 +1,12 @@
 """
-Интерактивный onboarding для новых пользователей.
+Интерактивный onboarding для новых пользователей с A/B тестированием.
 
 Цель: Превратить 77% bounced пользователей в активных.
 
-Сценарий:
-1. Приветствие + объяснение что такое бот
-2. 3 простых вопроса из тестовой части (принудительно)
-3. Демо AI-проверки задания 24/25
-4. Предложение trial за 1₽
+Варианты онбординга (A/B тест):
+- control: AI-демо → 1 вопрос → trial (текущий)
+- no_question: AI-демо → сразу trial (без вопроса)
+- instant_value: Бесплатный вопрос → AI-демо → trial
 """
 
 import logging
@@ -23,6 +22,7 @@ from telegram.ext import (
 from telegram.constants import ParseMode
 from datetime import datetime
 from core import db
+from analytics.ab_testing import assign_user_to_variant, get_user_variant, track_ab_conversion
 
 logger = logging.getLogger(__name__)
 
@@ -176,8 +176,14 @@ async def show_question(update: Update, context: ContextTypes.DEFAULT_TYPE, ques
     question_data = DEMO_QUESTIONS[question_num]
     context.user_data['current_question'] = question_num
 
+    # Gamification: прогресс-бар
+    # Для варианта "control" это шаг 2 из 3 (AI-демо уже был)
+    # AI-демо (1) → Вопрос (2) → Trial (3)
+    progress = "●●○"  # 2 из 3 шагов
+    progress_text = f"<i>{progress} Шаг 2 из 3</i>\n\n"
+
     # Формируем текст с вариантами
-    text = question_data['question'] + "\n\n"
+    text = progress_text + question_data['question'] + "\n\n"
 
     # Создаем кнопки для ответов
     keyboard = []
@@ -219,37 +225,22 @@ async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Показываем объяснение
     text = question_data['explanation']
 
-    if question_num < 2:
-        # Еще есть вопросы
-        text += f"\n\n📊 <b>Правильных ответов: {context.user_data['onboarding_correct_answers']}/{question_num + 1}</b>"
+    # Проверяем вариант A/B теста
+    variant = context.user_data.get('ab_variant', 'control')
 
-        keyboard = InlineKeyboardMarkup([
-            [InlineKeyboardButton("➡️ Следующий вопрос", callback_data=f"onboarding_next_{question_num + 1}")]
-        ])
+    # Вариант C (instant_value): после вопроса показываем AI-демо
+    if variant == 'instant_value':
+        text += f"\n\n🎉 <b>Отлично!</b>"
 
-        await query.edit_message_text(
-            text,
-            reply_markup=keyboard,
-            parse_mode=ParseMode.HTML
-        )
-
-        return ONBOARDING_QUESTION_1 + question_num
-    else:
-        # Все вопросы решены - переходим к AI demo
-        correct_count = context.user_data.get('onboarding_correct_answers', 0)
-
-        text += f"\n\n🎉 <b>Отлично! Ты решил все 3 вопроса!</b>"
-        text += f"\n📊 Правильных: {correct_count}/3"
-
-        if correct_count == 3:
-            text += "\n\n⭐ <b>Идеальный результат!</b> У тебя отличный потенциал!"
-        elif correct_count >= 2:
-            text += "\n\n👍 <b>Хорошо!</b> Ещё немного практики — и будешь профи!"
+        if is_correct:
+            text += " Правильный ответ!"
         else:
-            text += "\n\n💪 <b>Неплохо для начала!</b> Практика поможет улучшить результат!"
+            text += " Ничего страшного, практика поможет!"
+
+        text += "\n\n<b>Теперь покажу тебе секретный инструмент,</b> из-за которого сюда приходят 👇"
 
         keyboard = InlineKeyboardMarkup([
-            [InlineKeyboardButton("🤖 Покажи что умеет ИИ", callback_data="onboarding_ai_demo")]
+            [InlineKeyboardButton("🤖 Показать AI-проверку", callback_data="onboarding_ai_demo")]
         ])
 
         await query.edit_message_text(
@@ -259,6 +250,34 @@ async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
         return ONBOARDING_AI_DEMO
+
+    # Варианты A и B (control, no_question): после вопроса сразу trial
+    else:
+        text += f"\n\n🎉 <b>Отлично! Теперь ты знаешь, как работает бот!</b>"
+
+        if is_correct:
+            text += "\n\n⭐ <b>Правильный ответ!</b> У тебя хорошие шансы сдать ЕГЭ на высокий балл!"
+        else:
+            text += "\n\n💪 <b>Ничего страшного!</b> Практика поможет улучшить результат. Здесь есть 1000+ вопросов для тренировки!"
+
+        text += "\n\n<b>Что дальше?</b>\n"
+        text += "✅ 1000+ вопросов тестовой части (бесплатно)\n"
+        text += "✅ 3 AI-проверки в неделю (бесплатно)\n"
+        text += "💎 Безлимитные AI-проверки (trial 1₽)\n\n"
+        text += "👇 Выбери, что тебе интересно:"
+
+        keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton("🎁 Активировать trial (1₽)", callback_data="onboarding_trial")],
+            [InlineKeyboardButton("🆓 Начать бесплатную подготовку", callback_data="onboarding_complete")]
+        ])
+
+        await query.edit_message_text(
+            text,
+            reply_markup=keyboard,
+            parse_mode=ParseMode.HTML
+        )
+
+        return ONBOARDING_TRIAL_OFFER
 
 
 async def start_first_question(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -275,11 +294,38 @@ async def show_next_question(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
 
 async def show_ai_demo(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Показывает демо AI-проверки."""
+    """
+    Показывает демо AI-проверки с A/B тестированием разных флоу.
+
+    Варианты:
+    - control: AI-демо → 1 вопрос → trial (стандартный)
+    - no_question: AI-демо → сразу trial (без вопроса)
+    - instant_value: уже показали вопрос, теперь AI-демо → trial
+    """
     query = update.callback_query
     await query.answer()
 
-    demo_text = """🤖 <b>ИИ-проверка — твой секретный инструмент</b>
+    user_id = update.effective_user.id
+
+    # Проверяем, уже назначен ли вариант (для instant_value назначается в /start)
+    variant = context.user_data.get('ab_variant')
+    if not variant:
+        # Назначаем вариант только если ещё не назначен
+        variant = await assign_user_to_variant(user_id, 'onboarding_flow')
+        context.user_data['ab_variant'] = variant
+        logger.info(f"User {user_id} assigned to onboarding variant: {variant}")
+
+    # Gamification: прогресс-бар
+    # Для instant_value это шаг 2 (вопрос был первым)
+    # Для остальных это шаг 1
+    if variant == 'instant_value':
+        progress = "●●○"  # 2 из 3 шагов
+        progress_text = f"<i>{progress} Шаг 2 из 3</i>\n\n"
+    else:
+        progress = "●○○"  # 1 из 3 шагов
+        progress_text = f"<i>{progress} Шаг 1 из 3</i>\n\n"
+
+    demo_text = progress_text + """🤖 <b>ИИ-проверка — твой секретный инструмент</b>
 
 Задания второй части (19-25) проверяет не просто программа, а <b>искусственный интеллект</b> обученный на критериях ФИПИ.
 
@@ -308,14 +354,31 @@ async def show_ai_demo(update: Update, context: ContextTypes.DEFAULT_TYPE):
    в) Экономическая поддержка
 
 💎 <b>Результат: +2 балла на ЕГЭ!</b>
-
-<b>Попробуй прямо сейчас:</b>
 """
 
-    keyboard = InlineKeyboardMarkup([
-        [InlineKeyboardButton("🎁 Активировать пробный период (1₽)", callback_data="onboarding_trial")],
-        [InlineKeyboardButton("🆓 Продолжить с бесплатным доступом", callback_data="onboarding_complete")]
-    ])
+    # Разные кнопки в зависимости от варианта A/B теста
+    if variant == 'no_question':
+        # Вариант B: сразу к trial без вопроса
+        demo_text += "\n\n<b>Готов попробовать на своих заданиях?</b>"
+        keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton("🎁 Активировать trial (1₽)", callback_data="onboarding_trial")],
+            [InlineKeyboardButton("🆓 Продолжить бесплатно", callback_data="onboarding_complete")]
+        ])
+    elif variant == 'instant_value':
+        # Вариант C: уже показали вопрос, теперь сразу trial
+        demo_text += "\n\n<b>Понравилось? Теперь можешь получить безлимитный доступ!</b>"
+        keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton("🎁 Попробовать за 1₽ (7 дней)", callback_data="onboarding_trial")],
+            [InlineKeyboardButton("🆓 Остаться на бесплатном", callback_data="onboarding_complete")]
+        ])
+    else:
+        # Вариант A (control): стандартный флоу с вопросом
+        demo_text += "\n\n<b>Теперь твоя очередь:</b>\nПопробуй решить один простой вопрос, чтобы я показал тебе остальные возможности 👇"
+        keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton("🎯 Попробовать прямо сейчас!", callback_data="onboarding_start")],
+            [InlineKeyboardButton("🎁 Сразу к trial (1₽)", callback_data="onboarding_trial")],
+            [InlineKeyboardButton("🆓 Бесплатный доступ", callback_data="onboarding_complete")]
+        ])
 
     await query.edit_message_text(
         demo_text,
@@ -331,7 +394,11 @@ async def handle_trial_offer(update: Update, context: ContextTypes.DEFAULT_TYPE)
     query = update.callback_query
     await query.answer()
 
-    trial_text = """🎁 <b>Пробный период за 1 рубль</b>
+    # Gamification: последний шаг!
+    progress = "●●●"  # 3 из 3 шагов - завершение!
+    progress_text = f"<i>{progress} Финальный шаг!</i>\n\n"
+
+    trial_text = progress_text + """🎁 <b>Пробный период за 1 рубль</b>
 
 <b>Что получишь на 7 дней:</b>
 ✅ Безлимитные ИИ-проверки заданий 19-25
@@ -382,12 +449,23 @@ async def complete_onboarding(update: Update, context: ContextTypes.DEFAULT_TYPE
         )
         await conn.commit()
 
+        # A/B test tracking: onboarding completed
+        ab_variant = context.user_data.get('ab_variant', 'unknown')
+        await track_ab_conversion(
+            user_id=user_id,
+            test_name='onboarding_flow',
+            conversion_type='onboarding_completed',
+            value=0
+        )
+        logger.info(f"User {user_id} completed onboarding (variant: {ab_variant})")
+
         # Трекинг для аналитики
         await db.track_funnel_event(user_id, 'onboarding_completed', {
             'correct_answers': context.user_data.get('onboarding_correct_answers', 0),
             'duration_seconds': (
                 datetime.now() - datetime.fromisoformat(context.user_data.get('onboarding_started', datetime.now().isoformat()))
-            ).seconds
+            ).seconds,
+            'ab_variant': ab_variant
         })
 
     except Exception as e:

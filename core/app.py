@@ -374,40 +374,104 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         last_name=user.last_name
     )
 
+    # Парсим и сохраняем UTM-метки из deep link (для аналитики рекламы)
+    try:
+        if context.args and len(context.args) > 0:
+            start_param = context.args[0]
+
+            # Пропускаем служебные параметры (payment_success, payment_fail)
+            if not start_param.startswith('payment_'):
+                from analytics.utm_tracker import parse_utm_from_deeplink, save_user_source
+
+                utm_data = parse_utm_from_deeplink(start_param)
+
+                if utm_data:
+                    await save_user_source(user_id, utm_data)
+                    logger.info(f"User {user_id} came from {utm_data.get('source', 'unknown')} / {utm_data.get('campaign', 'unknown')}")
+    except Exception as e:
+        logger.error(f"Error processing UTM for user {user_id}: {e}")
+        # Не прерываем работу бота если ошибка в аналитике
+
     # Проверяем, нужен ли onboarding
     try:
         from core.onboarding import should_start_onboarding
         from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
         if await should_start_onboarding(user_id):
-            # Показываем приветственное сообщение с кнопкой для запуска onboarding
-            logger.info(f"Showing onboarding invitation for new user {user_id}")
-            await db.track_funnel_event(user_id, 'onboarding_started')
+            # Назначаем пользователя на вариант A/B теста СРАЗУ
+            from analytics.ab_testing import assign_user_to_variant
+            variant = await assign_user_to_variant(user_id, 'onboarding_flow')
+            context.user_data['ab_variant'] = variant
+            context.user_data['onboarding_started'] = datetime.now().isoformat()
+            context.user_data['onboarding_correct_answers'] = 0
+
+            logger.info(f"Starting onboarding for user {user_id}, variant: {variant}")
+            await db.track_funnel_event(user_id, 'onboarding_started', {'ab_variant': variant})
 
             user_name = user.first_name or "друг"
-            welcome_text = f"""👋 <b>Привет, {user_name}!</b>
 
-🎓 Я — твой ИИ-репетитор по обществознанию.
+            # Вариант C: INSTANT VALUE - сразу даём попробовать вопрос
+            if variant == 'instant_value':
+                welcome_text = f"""👋 <b>Привет, {user_name}!</b>
 
-<b>За 2 минуты я покажу тебе как:</b>
-✅ Решать тестовую часть ЕГЭ
-✅ Получать проверку от ИИ как от эксперта ФИПИ
-✅ Готовиться эффективно и бесплатно
+🎓 Я — твой ИИ-репетитор по обществознанию с искусственным интеллектом.
 
-<i>Нажми "Начать обучение" когда будешь готов</i>
+<b>Попробуй прямо сейчас!</b>
+Вот простой вопрос из ЕГЭ. Выбери ответ и получи мгновенную проверку 👇
+"""
+                # Показываем первый вопрос СРАЗУ
+                from core.onboarding import DEMO_QUESTIONS
+                question_data = DEMO_QUESTIONS[0]
+                context.user_data['current_question'] = 0
+
+                # Прогресс-бар для instant_value
+                progress = "●○○"  # 1 из 3 шагов
+                progress_text = f"<i>{progress} Шаг 1 из 3</i>\n\n"
+
+                text = welcome_text + "\n" + progress_text + question_data['question'] + "\n\n"
+
+                # Создаем кнопки для ответов
+                keyboard_buttons = []
+                for i, option in enumerate(question_data['options']):
+                    keyboard_buttons.append([
+                        InlineKeyboardButton(
+                            option,
+                            callback_data=f"onboarding_answer_0_{i}"
+                        )
+                    ])
+
+                await update.message.reply_text(
+                    text,
+                    reply_markup=InlineKeyboardMarkup(keyboard_buttons),
+                    parse_mode=ParseMode.HTML
+                )
+                return
+
+            # Варианты A и B: показываем AI-демо первым
+            else:
+                welcome_text = f"""👋 <b>Привет, {user_name}!</b>
+
+🎓 Я — твой ИИ-репетитор по обществознанию с искусственным интеллектом.
+
+<b>Сейчас покажу тебе секретный инструмент,</b> из-за которого сюда приходят:
+
+🤖 <b>ИИ-проверка заданий 19-25</b>
+Проверяю как эксперт ФИПИ, только мгновенно.
+
+⏱ <b>Это займёт 30 секунд</b>
+Готов посмотреть?
 """
 
-            keyboard = InlineKeyboardMarkup([
-                [InlineKeyboardButton("🚀 Начать обучение", callback_data="start_onboarding")],
-                [InlineKeyboardButton("Пропустить обучение", callback_data="start_onboarding_skip")]
-            ])
+                keyboard = InlineKeyboardMarkup([
+                    [InlineKeyboardButton("🚀 Показывай!", callback_data="onboarding_ai_demo")]
+                ])
 
-            await update.message.reply_text(
-                welcome_text,
-                reply_markup=keyboard,
-                parse_mode=ParseMode.HTML
-            )
-            return
+                await update.message.reply_text(
+                    welcome_text,
+                    reply_markup=keyboard,
+                    parse_mode=ParseMode.HTML
+                )
+                return
 
     except Exception as e:
         logger.error(f"Error checking onboarding for user {user_id}: {e}")

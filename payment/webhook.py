@@ -272,11 +272,11 @@ async def handle_webhook(request: web.Request) -> web.Response:
 
                 # Трекинг конверсии из retention уведомлений
                 try:
-                    # Получаем user_id и promo_code из платежа
+                    # Получаем user_id, metadata и amount из платежа
                     import aiosqlite
                     async with aiosqlite.connect(subscription_manager.database_file) as db:
                         cursor = await db.execute("""
-                            SELECT user_id, metadata FROM payments
+                            SELECT user_id, metadata, amount_kopecks FROM payments
                             WHERE order_id = ?
                         """, (order_id,))
                         payment_row = await cursor.fetchone()
@@ -284,6 +284,7 @@ async def handle_webhook(request: web.Request) -> web.Response:
                         if payment_row:
                             user_id = payment_row[0]
                             metadata_str = payment_row[1]
+                            amount_kopecks = payment_row[2]
 
                             # Извлекаем promo_code из metadata (JSON string)
                             promo_code = None
@@ -295,10 +296,32 @@ async def handle_webhook(request: web.Request) -> web.Response:
                                 except:
                                     pass
 
-                            # Трекинг конверсии
+                            # Трекинг конверсии (retention notifications)
                             from core.notification_handlers import track_notification_conversion
                             await track_notification_conversion(user_id, promo_code)
                             logger.info(f"Tracked conversion for user {user_id} with promo {promo_code}")
+
+                            # Трекинг конверсии для UTM-аналитики (реклама)
+                            try:
+                                # Определяем тип конверсии и сумму
+                                plan_id = metadata.get('plan_id', '') if metadata_str else ''
+                                amount_rub = amount_kopecks / 100 if amount_kopecks else 0
+
+                                conversion_type = 'subscription_purchase'
+                                if 'trial' in plan_id.lower():
+                                    conversion_type = 'trial_purchase'
+
+                                from analytics.utm_tracker import track_conversion
+                                await track_conversion(
+                                    user_id=user_id,
+                                    conversion_type=conversion_type,
+                                    value=amount_rub,
+                                    metadata={'order_id': order_id, 'plan_id': plan_id}
+                                )
+                                logger.info(f"Tracked {conversion_type} conversion for user {user_id}, amount: {amount_rub}₽")
+                            except Exception as utm_err:
+                                logger.error(f"Failed to track UTM conversion: {utm_err}")
+
                 except Exception as e:
                     # Не падаем если трекинг не сработал
                     logger.error(f"Failed to track conversion for {order_id}: {e}")
