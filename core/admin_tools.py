@@ -1229,11 +1229,11 @@ async def show_user_details(update: Update, context: ContextTypes.DEFAULT_TYPE, 
     
     # Получаем данные пользователя
     cursor = await conn.execute(
-        "SELECT * FROM users WHERE user_id = ?",
+        "SELECT user_id, username, first_name, last_name, created_at, last_activity_date FROM users WHERE user_id = ?",
         (user_id,)
     )
     user = await cursor.fetchone()
-    
+
     if not user:
         text = "❌ Пользователь не найден"
         kb = InlineKeyboardMarkup([
@@ -1241,7 +1241,7 @@ async def show_user_details(update: Update, context: ContextTypes.DEFAULT_TYPE, 
         ])
         await update.message.reply_text(text, reply_markup=kb)
         return
-    
+
     # Распаковываем данные
     _, username, first_name, last_name, created_at, last_activity = user
     
