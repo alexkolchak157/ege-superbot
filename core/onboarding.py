@@ -219,46 +219,33 @@ async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Показываем объяснение
     text = question_data['explanation']
 
-    if question_num < 2:
-        # Еще есть вопросы
-        text += f"\n\n📊 <b>Правильных ответов: {context.user_data['onboarding_correct_answers']}/{question_num + 1}</b>"
+    # ИЗМЕНЕНО: После первого вопроса сразу завершаем онбординг
+    # (AI-демо уже было показано ранее)
+    text += f"\n\n🎉 <b>Отлично! Теперь ты знаешь, как работает бот!</b>"
 
-        keyboard = InlineKeyboardMarkup([
-            [InlineKeyboardButton("➡️ Следующий вопрос", callback_data=f"onboarding_next_{question_num + 1}")]
-        ])
-
-        await query.edit_message_text(
-            text,
-            reply_markup=keyboard,
-            parse_mode=ParseMode.HTML
-        )
-
-        return ONBOARDING_QUESTION_1 + question_num
+    if is_correct:
+        text += "\n\n⭐ <b>Правильный ответ!</b> У тебя хорошие шансы сдать ЕГЭ на высокий балл!"
     else:
-        # Все вопросы решены - переходим к AI demo
-        correct_count = context.user_data.get('onboarding_correct_answers', 0)
+        text += "\n\n💪 <b>Ничего страшного!</b> Практика поможет улучшить результат. Здесь есть 1000+ вопросов для тренировки!"
 
-        text += f"\n\n🎉 <b>Отлично! Ты решил все 3 вопроса!</b>"
-        text += f"\n📊 Правильных: {correct_count}/3"
+    text += "\n\n<b>Что дальше?</b>\n"
+    text += "✅ 1000+ вопросов тестовой части (бесплатно)\n"
+    text += "✅ 3 AI-проверки в неделю (бесплатно)\n"
+    text += "💎 Безлимитные AI-проверки (trial 1₽)\n\n"
+    text += "👇 Выбери, что тебе интересно:"
 
-        if correct_count == 3:
-            text += "\n\n⭐ <b>Идеальный результат!</b> У тебя отличный потенциал!"
-        elif correct_count >= 2:
-            text += "\n\n👍 <b>Хорошо!</b> Ещё немного практики — и будешь профи!"
-        else:
-            text += "\n\n💪 <b>Неплохо для начала!</b> Практика поможет улучшить результат!"
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("🎁 Активировать trial (1₽)", callback_data="onboarding_trial")],
+        [InlineKeyboardButton("🆓 Начать бесплатную подготовку", callback_data="onboarding_complete")]
+    ])
 
-        keyboard = InlineKeyboardMarkup([
-            [InlineKeyboardButton("🤖 Покажи что умеет ИИ", callback_data="onboarding_ai_demo")]
-        ])
+    await query.edit_message_text(
+        text,
+        reply_markup=keyboard,
+        parse_mode=ParseMode.HTML
+    )
 
-        await query.edit_message_text(
-            text,
-            reply_markup=keyboard,
-            parse_mode=ParseMode.HTML
-        )
-
-        return ONBOARDING_AI_DEMO
+    return ONBOARDING_TRIAL_OFFER
 
 
 async def start_first_question(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -309,11 +296,13 @@ async def show_ai_demo(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 💎 <b>Результат: +2 балла на ЕГЭ!</b>
 
-<b>Попробуй прямо сейчас:</b>
+<b>Теперь твоя очередь:</b>
+Попробуй решить один простой вопрос, чтобы я показал тебе остальные возможности 👇
 """
 
     keyboard = InlineKeyboardMarkup([
-        [InlineKeyboardButton("🎁 Активировать пробный период (1₽)", callback_data="onboarding_trial")],
+        [InlineKeyboardButton("🎯 Попробовать прямо сейчас!", callback_data="onboarding_start")],
+        [InlineKeyboardButton("🎁 Сразу к пробному периоду (1₽)", callback_data="onboarding_trial")],
         [InlineKeyboardButton("🆓 Продолжить с бесплатным доступом", callback_data="onboarding_complete")]
     ])
 
