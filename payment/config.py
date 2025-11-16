@@ -42,7 +42,7 @@ except ImportError:
 SUBSCRIPTION_MODE = 'modular'  # Режим работы
 FREE_MODULES = ['test_part', 'personal_cabinet', 'teacher_mode']  # Модули ВСЕГДА бесплатны
 
-# Модули с freemium доступом (3 бесплатных AI-проверки в день)
+# Модули с freemium доступом (3 бесплатных AI-проверки в неделю)
 FREEMIUM_MODULES = ['task19', 'task20', 'task24', 'task25']
 
 # ==================== CONFIG VALIDATION ====================

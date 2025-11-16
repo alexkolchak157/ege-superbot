@@ -476,7 +476,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         welcome_text += "🆓 <b>Тестовая часть:</b> 1000+ вопросов с разборами\n"
         welcome_text += "💎 <b>Вторая часть:</b> ИИ проверяет задания 19-25 как эксперт ФИПИ\n"
-        welcome_text += "🎁 <b>Бонус:</b> 3 бесплатных AI-проверки каждый день\n\n"
+        welcome_text += "🎁 <b>Бонус:</b> 3 бесплатных AI-проверки в неделю\n\n"
 
         if not subscription_info or not subscription_info.get('is_active'):
             welcome_text += "🚀 <b>Попробуй прямо сейчас:</b>\n"
