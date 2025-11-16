@@ -69,7 +69,7 @@ class RetentionScheduler:
         answered_total = activity.get('answered_total', 0)
         variables['questions_to_milestone'] = max(0, 10 - answered_total)
 
-        # Оставшиеся бесплатные проверки (3 в день для free users)
+        # Оставшиеся бесплатные проверки (3 в неделю для free users)
         ai_checks_today = activity.get('ai_checks_today', 0)
         variables['checks_remaining'] = max(0, 3 - ai_checks_today)
 

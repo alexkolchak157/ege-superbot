@@ -214,6 +214,30 @@ async def post_init(application: Application) -> None:
         freemium_manager = get_freemium_manager(subscription_manager)
         application.bot_data['freemium_manager'] = freemium_manager
         logger.info("FreemiumManager initialized and added to bot_data")
+
+        # ДОБАВЛЕНО: Автоматическая очистка старых AI лимитов каждую неделю (понедельник в 3:00 МСК)
+        from datetime import time as dt_time
+        from zoneinfo import ZoneInfo
+        msk_tz = ZoneInfo("Europe/Moscow")
+
+        async def cleanup_old_limits(context):
+            """Очищает старые записи AI лимитов из БД."""
+            try:
+                fm = context.bot_data.get('freemium_manager')
+                if fm:
+                    deleted = await fm.reset_weekly_limits()
+                    logger.info(f"Weekly AI limits cleanup: {deleted} old records deleted")
+            except Exception as e:
+                logger.error(f"Error during weekly limits cleanup: {e}")
+
+        application.job_queue.run_daily(
+            cleanup_old_limits,
+            time=dt_time(hour=3, minute=0, second=0, tzinfo=msk_tz),
+            days=(0,),  # 0 = Понедельник
+            name='weekly_ai_limits_cleanup'
+        )
+        logger.info("Weekly AI limits cleanup scheduled for Mondays at 3:00 MSK")
+
     except Exception as e:
         logger.error(f"Failed to initialize FreemiumManager: {e}")
 
@@ -452,12 +476,12 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         welcome_text += "🆓 <b>Тестовая часть:</b> 1000+ вопросов с разборами\n"
         welcome_text += "💎 <b>Вторая часть:</b> ИИ проверяет задания 19-25 как эксперт ФИПИ\n"
-        welcome_text += "🎁 <b>Бонус:</b> 3 бесплатных AI-проверки каждый день\n\n"
+        welcome_text += "🎁 <b>Бонус:</b> 3 бесплатных AI-проверки в неделю\n\n"
 
         if not subscription_info or not subscription_info.get('is_active'):
             welcome_text += "🚀 <b>Попробуй прямо сейчас:</b>\n"
             welcome_text += "• Пробный период: 1₽ за 7 дней полного доступа\n"
-            welcome_text += "• Полная подписка: от 249₽/мес\n\n"
+            welcome_text += "• Полная подписка: 249₽/мес\n\n"
 
         welcome_text += "👇 <b>Начни с бесплатной тестовой части или попробуй AI-проверку!</b>"
         

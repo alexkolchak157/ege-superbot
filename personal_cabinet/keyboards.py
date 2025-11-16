@@ -20,6 +20,7 @@ def get_main_cabinet_keyboard() -> InlineKeyboardMarkup:
         # [InlineKeyboardButton("👨‍🏫 Для репетиторов: Режим учителя", callback_data="teacher_menu")],
         # [InlineKeyboardButton("🎓 Для учеников: Подключиться к учителю", callback_data="connect_to_teacher")],
         [InlineKeyboardButton("⚙️ Настройки", callback_data="cabinet_settings")],
+        [InlineKeyboardButton("❓ Помощь и поддержка", url="https://t.me/obshestvonapalcahsupport")],
         [InlineKeyboardButton("🏠 Главное меню", callback_data="to_main_menu")]
     ]
     return InlineKeyboardMarkup(keyboard)
