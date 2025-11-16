@@ -398,12 +398,58 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
         if await should_start_onboarding(user_id):
-            # Показываем приветственное сообщение с кнопкой для запуска onboarding
-            logger.info(f"Showing onboarding invitation for new user {user_id}")
-            await db.track_funnel_event(user_id, 'onboarding_started')
+            # Назначаем пользователя на вариант A/B теста СРАЗУ
+            from analytics.ab_testing import assign_user_to_variant
+            variant = await assign_user_to_variant(user_id, 'onboarding_flow')
+            context.user_data['ab_variant'] = variant
+            context.user_data['onboarding_started'] = datetime.now().isoformat()
+            context.user_data['onboarding_correct_answers'] = 0
+
+            logger.info(f"Starting onboarding for user {user_id}, variant: {variant}")
+            await db.track_funnel_event(user_id, 'onboarding_started', {'ab_variant': variant})
 
             user_name = user.first_name or "друг"
-            welcome_text = f"""👋 <b>Привет, {user_name}!</b>
+
+            # Вариант C: INSTANT VALUE - сразу даём попробовать вопрос
+            if variant == 'instant_value':
+                welcome_text = f"""👋 <b>Привет, {user_name}!</b>
+
+🎓 Я — твой ИИ-репетитор по обществознанию с искусственным интеллектом.
+
+<b>Попробуй прямо сейчас!</b>
+Вот простой вопрос из ЕГЭ. Выбери ответ и получи мгновенную проверку 👇
+"""
+                # Показываем первый вопрос СРАЗУ
+                from core.onboarding import DEMO_QUESTIONS
+                question_data = DEMO_QUESTIONS[0]
+                context.user_data['current_question'] = 0
+
+                # Прогресс-бар для instant_value
+                progress = "●○○"  # 1 из 3 шагов
+                progress_text = f"<i>{progress} Шаг 1 из 3</i>\n\n"
+
+                text = welcome_text + "\n" + progress_text + question_data['question'] + "\n\n"
+
+                # Создаем кнопки для ответов
+                keyboard_buttons = []
+                for i, option in enumerate(question_data['options']):
+                    keyboard_buttons.append([
+                        InlineKeyboardButton(
+                            option,
+                            callback_data=f"onboarding_answer_0_{i}"
+                        )
+                    ])
+
+                await update.message.reply_text(
+                    text,
+                    reply_markup=InlineKeyboardMarkup(keyboard_buttons),
+                    parse_mode=ParseMode.HTML
+                )
+                return
+
+            # Варианты A и B: показываем AI-демо первым
+            else:
+                welcome_text = f"""👋 <b>Привет, {user_name}!</b>
 
 🎓 Я — твой ИИ-репетитор по обществознанию с искусственным интеллектом.
 
@@ -416,16 +462,16 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 Готов посмотреть?
 """
 
-            keyboard = InlineKeyboardMarkup([
-                [InlineKeyboardButton("🚀 Показывай!", callback_data="onboarding_ai_demo")]
-            ])
+                keyboard = InlineKeyboardMarkup([
+                    [InlineKeyboardButton("🚀 Показывай!", callback_data="onboarding_ai_demo")]
+                ])
 
-            await update.message.reply_text(
-                welcome_text,
-                reply_markup=keyboard,
-                parse_mode=ParseMode.HTML
-            )
-            return
+                await update.message.reply_text(
+                    welcome_text,
+                    reply_markup=keyboard,
+                    parse_mode=ParseMode.HTML
+                )
+                return
 
     except Exception as e:
         logger.error(f"Error checking onboarding for user {user_id}: {e}")
