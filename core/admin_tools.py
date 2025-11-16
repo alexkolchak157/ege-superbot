@@ -1809,8 +1809,8 @@ async def activity_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("🔄 Обновить", callback_data="admin:activity_stats")],
         [InlineKeyboardButton("⬅️ Назад", callback_data="admin:stats_menu")]
     ])
-    
-    await query.edit_message_text(text, reply_markup=kb, parse_mode=ParseMode.HTML)
+
+    await safe_edit_message(query, text, reply_markup=kb, parse_mode=ParseMode.HTML)
 
 
 @admin_only
@@ -1933,8 +1933,8 @@ async def top_users(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("🔄 Обновить", callback_data="admin:top_users")],
         [InlineKeyboardButton("⬅️ Назад", callback_data="admin:stats_menu")]
     ])
-    
-    await query.edit_message_text(text, reply_markup=kb, parse_mode=ParseMode.HTML)
+
+    await safe_edit_message(query, text, reply_markup=kb, parse_mode=ParseMode.HTML)
 
 
 @admin_only
@@ -2017,7 +2017,7 @@ async def retention_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("⬅️ Назад", callback_data="admin:stats_menu")]
     ])
 
-    await query.edit_message_text(text, reply_markup=kb, parse_mode=ParseMode.HTML)
+    await safe_edit_message(query, text, reply_markup=kb, parse_mode=ParseMode.HTML)
 
 
 @admin_only
@@ -2102,7 +2102,7 @@ async def conversion_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("⬅️ Назад", callback_data="admin:stats_menu")]
     ])
 
-    await query.edit_message_text(text, reply_markup=kb, parse_mode=ParseMode.HTML)
+    await safe_edit_message(query, text, reply_markup=kb, parse_mode=ParseMode.HTML)
 
 
 @admin_only
@@ -2229,7 +2229,7 @@ async def financial_analytics(update: Update, context: ContextTypes.DEFAULT_TYPE
         [InlineKeyboardButton("⬅️ Назад", callback_data="admin:stats_menu")]
     ])
 
-    await query.edit_message_text(text, reply_markup=kb, parse_mode=ParseMode.HTML)
+    await safe_edit_message(query, text, reply_markup=kb, parse_mode=ParseMode.HTML)
 
 
 @admin_only
@@ -2458,7 +2458,7 @@ async def content_difficult(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("⬅️ Назад", callback_data="admin:content_analysis")]
     ])
 
-    await query.edit_message_text(text, reply_markup=kb, parse_mode=ParseMode.HTML)
+    await safe_edit_message(query, text, reply_markup=kb, parse_mode=ParseMode.HTML)
 
 
 @admin_only
@@ -2523,7 +2523,7 @@ async def content_easy(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("⬅️ Назад", callback_data="admin:content_analysis")]
     ])
 
-    await query.edit_message_text(text, reply_markup=kb, parse_mode=ParseMode.HTML)
+    await safe_edit_message(query, text, reply_markup=kb, parse_mode=ParseMode.HTML)
 
 
 @admin_only
@@ -2566,7 +2566,7 @@ async def view_logs(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("⬅️ Назад", callback_data="admin:system_monitor")]
     ])
 
-    await query.edit_message_text(text, reply_markup=kb, parse_mode=ParseMode.HTML)
+    await safe_edit_message(query, text, reply_markup=kb, parse_mode=ParseMode.HTML)
 
 
 @admin_only
@@ -2669,7 +2669,7 @@ async def users_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("⬅️ Назад", callback_data="admin:users")]
     ])
 
-    await query.edit_message_text(text, reply_markup=kb, parse_mode=ParseMode.HTML)
+    await safe_edit_message(query, text, reply_markup=kb, parse_mode=ParseMode.HTML)
 
 
 @admin_only
@@ -2782,7 +2782,7 @@ async def user_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("⬅️ Назад", callback_data="admin:users")]
     ])
 
-    await query.edit_message_text(text, reply_markup=kb, parse_mode=ParseMode.HTML)
+    await safe_edit_message(query, text, reply_markup=kb, parse_mode=ParseMode.HTML)
 
 
 @admin_only
@@ -2810,8 +2810,8 @@ async def security_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("🔄 Обновить", callback_data="admin:security")],
         [InlineKeyboardButton("⬅️ Назад", callback_data="admin:main")]
     ])
-    
-    await query.edit_message_text(text, reply_markup=kb, parse_mode=ParseMode.HTML)
+
+    await safe_edit_message(query, text, reply_markup=kb, parse_mode=ParseMode.HTML)
 
 
 @admin_only
@@ -3168,15 +3168,17 @@ async def generate_charts(update: Update, context: ContextTypes.DEFAULT_TYPE):
             [InlineKeyboardButton("🔄 Обновить", callback_data="admin:generate_charts")],
             [InlineKeyboardButton("⬅️ Назад", callback_data="admin:stats")]
         ])
-        
-        await query.edit_message_text(
+
+        await safe_edit_message(
+            query,
             "✅ Графики успешно сгенерированы!",
             reply_markup=kb
         )
-        
+
     except Exception as e:
         logger.error(f"Error generating charts: {e}")
-        await query.edit_message_text(
+        await safe_edit_message(
+            query,
             f"❌ Ошибка при генерации графиков: {str(e)}",
             reply_markup=InlineKeyboardMarkup([
                 [InlineKeyboardButton("⬅️ Назад", callback_data="admin:stats")]
@@ -3318,8 +3320,8 @@ async def modules_usage(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("🔄 Обновить", callback_data="admin:modules_usage")],
         [InlineKeyboardButton("⬅️ Назад", callback_data="admin:settings_modules")]
     ])
-    
-    await query.edit_message_text(text, reply_markup=kb, parse_mode=ParseMode.HTML)
+
+    await safe_edit_message(query, text, reply_markup=kb, parse_mode=ParseMode.HTML)
 
 # ============================================
 # 3. УПРАВЛЕНИЕ УВЕДОМЛЕНИЯМИ
@@ -4816,8 +4818,8 @@ async def sales_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("🔄 Обновить", callback_data="admin:sales_stats")],
         [InlineKeyboardButton("⬅️ Назад", callback_data="admin:settings_prices")]
     ])
-    
-    await query.edit_message_text(text, reply_markup=kb, parse_mode=ParseMode.HTML)
+
+    await safe_edit_message(query, text, reply_markup=kb, parse_mode=ParseMode.HTML)
 
 @admin_only
 async def payment_history(update: Update, context: ContextTypes.DEFAULT_TYPE):
