@@ -1660,12 +1660,33 @@ async def send_exam_question(message, context: ContextTypes.DEFAULT_TYPE, index:
         
         if image_url:
             # Отправляем с изображением
-            await message.reply_photo(
-                photo=image_url,
-                caption=text,
-                reply_markup=kb,
-                parse_mode=ParseMode.HTML
-            )
+            # Проверяем длину caption (Telegram ограничивает до 1024 символов)
+            MAX_CAPTION_LENGTH = 1024
+
+            if len(text) <= MAX_CAPTION_LENGTH:
+                # Текст помещается в caption
+                await message.reply_photo(
+                    photo=image_url,
+                    caption=text,
+                    reply_markup=kb,
+                    parse_mode=ParseMode.HTML
+                )
+            else:
+                # Текст слишком длинный, отправляем отдельно
+                logger.info(f"Exam question text too long ({len(text)} chars), sending separately")
+
+                # Сначала фото с коротким caption
+                await message.reply_photo(
+                    photo=image_url,
+                    caption="📊 График к заданию"
+                )
+
+                # Затем текст отдельным сообщением
+                await message.reply_text(
+                    text,
+                    reply_markup=kb,
+                    parse_mode=ParseMode.HTML
+                )
         else:
             # Отправляем только текст
             # Пытаемся безопасно отредактировать сообщение
