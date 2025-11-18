@@ -15,9 +15,7 @@ from telegram.ext import (
     ContextTypes,
     ConversationHandler,
     CommandHandler,
-    CallbackQueryHandler,
-    MessageHandler,
-    filters
+    CallbackQueryHandler
 )
 from telegram.constants import ParseMode
 from datetime import datetime
@@ -137,7 +135,6 @@ async def start_onboarding(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Назначаем пользователя на вариант A/B теста если ещё не назначен
     variant = context.user_data.get('ab_variant')
     if not variant:
-        from analytics.ab_testing import assign_user_to_variant
         variant = await assign_user_to_variant(user_id, 'onboarding_flow')
         context.user_data['ab_variant'] = variant
         logger.info(f"Assigning A/B variant to returning user {user_id}: {variant}")
@@ -498,7 +495,7 @@ async def handle_trial_offer(update: Update, context: ContextTypes.DEFAULT_TYPE)
 async def handle_payment_redirect(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
     Обработка перехода к оплате из онбординга.
-    Завершаем онбординг и передаем управление payment handler.
+    Завершаем онбординг и напрямую вызываем payment handler.
     """
     user_id = update.effective_user.id
 
@@ -529,8 +526,17 @@ async def handle_payment_redirect(update: Update, context: ContextTypes.DEFAULT_
     context.user_data.pop('onboarding_correct_answers', None)
     context.user_data.pop('current_question', None)
 
-    # Завершаем ConversationHandler, чтобы payment handler мог обработать callback
-    # НЕ вызываем query.answer() - payment handler сделает это
+    # Вызываем payment handler напрямую, чтобы обработать подписку
+    try:
+        from payment.handlers import standalone_pay_handler
+        await standalone_pay_handler(update, context)
+    except Exception as e:
+        logger.error(f"Error calling payment handler from onboarding: {e}")
+        # Fallback: показываем сообщение об ошибке
+        query = update.callback_query
+        if query:
+            await query.answer("Произошла ошибка. Попробуйте через /subscribe", show_alert=True)
+
     return ConversationHandler.END
 
 
@@ -696,6 +702,8 @@ async def skip_onboarding_before_start(update: Update, context: ContextTypes.DEF
         reply_markup=keyboard,
         parse_mode=ParseMode.HTML
     )
+
+    return None  # Standalone handler, не в ConversationHandler
 
 
 def get_onboarding_handler():
