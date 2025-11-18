@@ -289,7 +289,6 @@ async def handle_webhook(request: web.Request) -> web.Response:
                             # Извлекаем promo_code из metadata (JSON string)
                             promo_code = None
                             if metadata_str:
-                                import json
                                 try:
                                     metadata = json.loads(metadata_str)
                                     promo_code = metadata.get('promo_code')
