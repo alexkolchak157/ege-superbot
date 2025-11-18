@@ -2528,6 +2528,38 @@ def register_payment_handlers(app):
                     pattern="^cancel_payment$"
                 )
             ],
+
+            CONSENT_CHECKBOX: [
+                # Переключение чекбокса согласия
+                CallbackQueryHandler(
+                    consent_handler.toggle_consent,
+                    pattern="^toggle_consent_checkbox$"
+                ),
+                # Подтверждение с согласием
+                CallbackQueryHandler(
+                    consent_handler.confirm_with_auto_renewal,
+                    pattern="^confirm_with_auto_renewal$"
+                ),
+                # Напоминание о необходимости согласия
+                CallbackQueryHandler(
+                    lambda u, c: u.callback_query.answer("⚠️ Пожалуйста, отметьте согласие", show_alert=True),
+                    pattern="^need_consent_reminder$"
+                ),
+                # Показ подробных условий
+                CallbackQueryHandler(
+                    consent_handler.show_detailed_terms,
+                    pattern="^show_user_agreement$"
+                ),
+                # Навигация назад
+                CallbackQueryHandler(
+                    consent_handler.handle_back_navigation,
+                    pattern="^back_to_payment_choice$"
+                ),
+                CallbackQueryHandler(
+                    cancel_payment,
+                    pattern="^cancel_payment$"
+                )
+            ],
         },
         fallbacks=[
             CommandHandler("cancel", cancel_payment),
