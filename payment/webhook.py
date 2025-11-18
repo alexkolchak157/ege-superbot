@@ -12,7 +12,7 @@ import aiosqlite
 from enum import Enum
 from collections import defaultdict
 import time
-from typing import Dict, List
+from typing import Dict, List, Tuple
 from core import config
 from .subscription_manager import SubscriptionManager
 from .tinkoff import TinkoffPayment
@@ -35,7 +35,7 @@ WEBHOOK_MAX_REQUESTS_PER_WINDOW = 60  # Максимум запросов за �
 _webhook_rate_limit_data: Dict[str, List[float]] = defaultdict(list)
 
 
-def check_webhook_rate_limit(client_ip: str) -> tuple[bool, str]:
+def check_webhook_rate_limit(client_ip: str) -> Tuple[bool, str]:
     """
     Проверяет rate limit для webhook запросов с конкретного IP.
 
