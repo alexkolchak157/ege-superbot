@@ -1601,10 +1601,10 @@ class SubscriptionManager:
             if plan_id == 'trial_7days':
                 await conn.execute(
                     """
-                    INSERT OR REPLACE INTO trial_history (user_id, used_at)
-                    VALUES (?, CURRENT_TIMESTAMP)
+                    INSERT OR REPLACE INTO trial_history (user_id, trial_activated_at, trial_expires_at)
+                    VALUES (?, CURRENT_TIMESTAMP, ?)
                     """,
-                    (user_id,)
+                    (user_id, expires_at)
                 )
                 logger.info(f"✅ Marked trial as used for user {user_id}")
 
