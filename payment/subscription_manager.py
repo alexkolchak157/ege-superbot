@@ -813,20 +813,38 @@ class SubscriptionManager:
                 cursor = await conn.execute("PRAGMA table_info(payments)")
                 columns = await cursor.fetchall()
                 column_names = [col[1] for col in columns]
-                
+
+                # МИГРАЦИЯ: Переименование amount в amount_kopecks (проблема #5)
+                if 'amount' in column_names and 'amount_kopecks' not in column_names:
+                    logger.info("Migrating 'amount' column to 'amount_kopecks' in payments table...")
+                    # SQLite не поддерживает RENAME COLUMN напрямую в старых версиях
+                    # Используем подход: создаем новую колонку, копируем данные, удаляем старую
+                    try:
+                        # Создаем новую колонку
+                        await conn.execute("ALTER TABLE payments ADD COLUMN amount_kopecks INTEGER")
+
+                        # Копируем данные из amount в amount_kopecks
+                        await conn.execute("UPDATE payments SET amount_kopecks = amount WHERE amount_kopecks IS NULL")
+
+                        # Делаем amount_kopecks NOT NULL через UPDATE (удалить старую колонку нельзя в SQLite)
+                        # Просто оставляем обе колонки, но используем amount_kopecks
+                        logger.info("✅ Migrated amount to amount_kopecks (old column preserved for compatibility)")
+                    except Exception as migration_error:
+                        logger.warning(f"Migration warning for amount_kopecks: {migration_error}")
+
                 # Добавляем недостающие колонки если таблица уже существовала
                 if 'metadata' not in column_names:
                     await conn.execute("ALTER TABLE payments ADD COLUMN metadata TEXT")
                     logger.info("Added metadata column to payments table")
-                
+
                 if 'email' not in column_names:
                     await conn.execute("ALTER TABLE payments ADD COLUMN email TEXT")
                     logger.info("Added email column to payments table")
-                    
+
                 if 'completed_at' not in column_names:
                     await conn.execute("ALTER TABLE payments ADD COLUMN completed_at TIMESTAMP")
                     logger.info("Added completed_at column to payments table")
-                
+
                 await conn.commit()
                     
                 # Индексы для payments
@@ -2265,13 +2283,17 @@ class SubscriptionManager:
                     )
                     
                     if success:
-                        # Записываем успешное продление
+                        # Генерируем уникальный ID для этой транзакции
+                        auto_transaction_id = f"AUTO_{user_id}_{datetime.now().timestamp()}"
+
+                        # Записываем успешное продление (ИСПРАВЛЕНО: добавлен order_id)
                         await conn.execute("""
-                            INSERT INTO auto_renewal_history 
-                            (user_id, plan_id, payment_id, status, amount)
-                            VALUES (?, ?, ?, 'success', ?)
-                        """, (user_id, subscription['plan_id'], 
-                              f"AUTO_{datetime.now().timestamp()}", 
+                            INSERT INTO auto_renewal_history
+                            (user_id, plan_id, payment_id, order_id, status, amount)
+                            VALUES (?, ?, ?, ?, 'success', ?)
+                        """, (user_id, subscription['plan_id'],
+                              auto_transaction_id,  # payment_id
+                              auto_transaction_id,  # order_id (тот же ID)
                               subscription['amount']))
                         
                         # Обновляем дату следующего продления

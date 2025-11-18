@@ -407,10 +407,10 @@ class SubscriptionNotificationManager:
             renewals = cursor.fetchall()
             
             for user_id, plan_id, amount, token in renewals:
-                success = await self.process_single_renewal(
+                success, order_id, payment_id = await self.process_single_renewal(
                     user_id, plan_id, amount, token
                 )
-                
+
                 if success:
                     # Обновляем дату следующего продления
                     next_date = datetime.now() + timedelta(days=30)
@@ -419,14 +419,14 @@ class SubscriptionNotificationManager:
                         SET next_renewal_date = ?, failures_count = 0
                         WHERE user_id = ?
                     """, (next_date, user_id))
-                    
-                    # Записываем в историю
+
+                    # Записываем в историю (ИСПРАВЛЕНО: добавлены order_id и payment_id)
                     cursor.execute("""
                         INSERT INTO auto_renewal_history
-                        (user_id, plan_id, status, amount, created_at)
-                        VALUES (?, ?, 'success', ?, ?)
-                    """, (user_id, plan_id, amount, datetime.now()))
-                    
+                        (user_id, plan_id, payment_id, order_id, status, amount, created_at)
+                        VALUES (?, ?, ?, ?, 'success', ?, ?)
+                    """, (user_id, plan_id, payment_id, order_id, amount, datetime.now()))
+
                 else:
                     # Увеличиваем счетчик неудач
                     cursor.execute("""
@@ -434,13 +434,13 @@ class SubscriptionNotificationManager:
                         SET failures_count = failures_count + 1
                         WHERE user_id = ?
                     """, (user_id,))
-                    
-                    # Записываем неудачу в историю
+
+                    # Записываем неудачу в историю (ИСПРАВЛЕНО: добавлены order_id и payment_id)
                     cursor.execute("""
                         INSERT INTO auto_renewal_history
-                        (user_id, plan_id, status, amount, error_message, created_at)
-                        VALUES (?, ?, 'failed', ?, 'Payment failed', ?)
-                    """, (user_id, plan_id, amount, datetime.now()))
+                        (user_id, plan_id, payment_id, order_id, status, amount, error_message, created_at)
+                        VALUES (?, ?, ?, ?, 'failed', ?, 'Payment failed', ?)
+                    """, (user_id, plan_id, payment_id, order_id, amount, datetime.now()))
             
             conn.commit()
             conn.close()
@@ -448,21 +448,29 @@ class SubscriptionNotificationManager:
         except Exception as e:
             logger.error(f"Error processing auto renewals: {e}")
     
-    async def process_single_renewal(self, user_id: int, plan_id: str, amount: int, token: str) -> bool:
-        """Обработать одно автопродление."""
-        
+    async def process_single_renewal(self, user_id: int, plan_id: str, amount: int, token: str) -> tuple:
+        """
+        Обработать одно автопродление.
+
+        Returns:
+            tuple: (success: bool, order_id: str, payment_id: str)
+        """
+
         # Здесь должна быть интеграция с платежной системой
         # Пример для Тинькофф:
         try:
             from payment.tinkoff import TinkoffPayment
-            
+
+            order_id = f"AUTO_{user_id}_{datetime.now().timestamp()}"
             tinkoff = TinkoffPayment()
             result = await tinkoff.charge_recurrent(
                 rebill_id=token,
                 amount=amount * 100,  # В копейках
-                order_id=f"AUTO_{user_id}_{datetime.now().timestamp()}"
+                order_id=order_id
             )
-            
+
+            payment_id = result.get('PaymentId', '')
+
             if result.get('Success'):
                 # Отправляем уведомление об успешном продлении
                 await self.bot.send_message(
@@ -471,7 +479,7 @@ class SubscriptionNotificationManager:
                     f"Списано: {amount} ₽\n"
                     f"Следующее продление: {(datetime.now() + timedelta(days=30)).strftime('%d.%m.%Y')}"
                 )
-                return True
+                return (True, order_id, str(payment_id))
             else:
                 # Отправляем уведомление о проблеме
                 await self.bot.send_message(
@@ -480,11 +488,11 @@ class SubscriptionNotificationManager:
                     f"Проверьте баланс карты или обновите платежные данные.\n"
                     f"Используйте /my_subscriptions для управления подпиской."
                 )
-                return False
-                
+                return (False, order_id, str(payment_id) if payment_id else None)
+
         except Exception as e:
             logger.error(f"Error charging recurrent payment for user {user_id}: {e}")
-            return False
+            return (False, None, None)
 
 async def show_auto_renewal_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Показывает выбор типа оплаты."""
