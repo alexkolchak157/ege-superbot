@@ -22,7 +22,15 @@ async def retention_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     Команда: /retention_stats
     """
-    await update.message.reply_text("📊 Загружаю статистику retention...")
+    # Определяем источник вызова (команда или callback)
+    query = update.callback_query
+    if query:
+        await query.answer()
+        message = query.message
+    else:
+        message = update.message
+
+    await message.reply_text("📊 Загружаю статистику retention...")
 
     try:
         async with aiosqlite.connect(DATABASE_FILE) as db:
@@ -37,7 +45,7 @@ async def retention_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
             overall = await cursor.fetchone()
 
             if not overall or overall[0] == 0:
-                await update.message.reply_text(
+                await message.reply_text(
                     "ℹ️ <b>Уведомления ещё не отправлялись</b>\n\n"
                     "Первая отправка запланирована на 17:00.\n"
                     "Проверьте статистику после первой отправки.",
@@ -135,7 +143,7 @@ async def retention_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 [InlineKeyboardButton("❌ Закрыть", callback_data="retention:close")]
             ]
 
-            await update.message.reply_text(
+            await message.reply_text(
                 msg,
                 parse_mode=ParseMode.HTML,
                 reply_markup=InlineKeyboardMarkup(keyboard)
@@ -143,7 +151,7 @@ async def retention_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     except Exception as e:
         logger.error(f"Error in retention_stats: {e}", exc_info=True)
-        await update.message.reply_text(
+        await message.reply_text(
             f"❌ Ошибка при загрузке статистики:\n{e}"
         )
 
