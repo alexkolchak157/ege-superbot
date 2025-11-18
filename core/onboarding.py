@@ -129,8 +129,6 @@ async def start_onboarding(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ВАЖНО: Использует новый флоу с A/B тестами!
     """
     query = update.callback_query
-    if query:
-        await query.answer()
 
     user = update.effective_user
     user_id = user.id
@@ -150,6 +148,10 @@ async def start_onboarding(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # Вариант C: INSTANT VALUE - сразу даём попробовать вопрос
     if variant == 'instant_value':
+        # Отвечаем на callback перед редактированием сообщения
+        if query:
+            await query.answer()
+
         welcome_text = f"""👋 <b>С возвращением, {user_name}!</b>
 
 🎓 Попробуй прямо сейчас!
@@ -192,6 +194,7 @@ async def start_onboarding(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Варианты A и B: показываем AI-демо первым
     else:
         # Если вызвано через callback (из /start), сразу показываем AI-демо
+        # НЕ вызываем query.answer() здесь - show_ai_demo сделает это
         if query:
             return await show_ai_demo(update, context)
 
