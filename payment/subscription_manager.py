@@ -945,13 +945,37 @@ class SubscriptionManager:
                             id INTEGER PRIMARY KEY AUTOINCREMENT,
                             user_id INTEGER NOT NULL,
                             plan_id TEXT NOT NULL,
+                            payment_id TEXT,
+                            status TEXT DEFAULT 'active',
                             expires_at TIMESTAMP NOT NULL,
+                            activated_at TIMESTAMP,
                             is_active BOOLEAN DEFAULT 1,
                             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                             UNIQUE(user_id)
                         )
                     """)
-                    
+
+                    # МИГРАЦИЯ: Добавляем недостающие колонки в существующие таблицы
+                    try:
+                        # Проверяем, существует ли колонка payment_id
+                        cursor = await conn.execute("PRAGMA table_info(user_subscriptions)")
+                        columns = await cursor.fetchall()
+                        column_names = [col[1] for col in columns]
+
+                        if 'payment_id' not in column_names:
+                            await conn.execute("ALTER TABLE user_subscriptions ADD COLUMN payment_id TEXT")
+                            logger.info("Added payment_id column to user_subscriptions")
+
+                        if 'status' not in column_names:
+                            await conn.execute("ALTER TABLE user_subscriptions ADD COLUMN status TEXT DEFAULT 'active'")
+                            logger.info("Added status column to user_subscriptions")
+
+                        if 'activated_at' not in column_names:
+                            await conn.execute("ALTER TABLE user_subscriptions ADD COLUMN activated_at TIMESTAMP")
+                            logger.info("Added activated_at column to user_subscriptions")
+                    except Exception as migration_error:
+                        logger.warning(f"Migration warning for user_subscriptions: {migration_error}")
+
                     logger.info("Standard subscription tables created")
                 
                 await conn.commit()
