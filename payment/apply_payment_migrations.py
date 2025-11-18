@@ -126,7 +126,7 @@ def apply_migrations(db_path):
                     order_id TEXT UNIQUE NOT NULL,
                     user_id INTEGER NOT NULL,
                     plan_id TEXT NOT NULL,
-                    amount INTEGER NOT NULL,
+                    amount_kopecks INTEGER NOT NULL,
                     status TEXT DEFAULT 'pending',
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     completed_at TIMESTAMP,
@@ -139,6 +139,16 @@ def apply_migrations(db_path):
             """)
             logger.info("  ✓ Таблица payments создана")
         else:
+            # МИГРАЦИЯ: Переименование amount в amount_kopecks
+            if check_column_exists(conn, 'payments', 'amount') and not check_column_exists(conn, 'payments', 'amount_kopecks'):
+                logger.info("  → Миграция колонки amount -> amount_kopecks...")
+                try:
+                    cursor.execute("ALTER TABLE payments ADD COLUMN amount_kopecks INTEGER")
+                    cursor.execute("UPDATE payments SET amount_kopecks = amount WHERE amount_kopecks IS NULL")
+                    logger.info("  ✓ Колонка amount_kopecks создана и данные скопированы")
+                except sqlite3.OperationalError as e:
+                    logger.warning(f"  ! Предупреждение миграции amount_kopecks: {e}")
+
             # Добавляем недостающие колонки
             columns_to_add = [
                 ('metadata', "TEXT DEFAULT '{}'"),
@@ -148,7 +158,7 @@ def apply_migrations(db_path):
                 ('email', 'TEXT'),
                 ('completed_at', 'TIMESTAMP')
             ]
-            
+
             for column_name, column_def in columns_to_add:
                 if not check_column_exists(conn, 'payments', column_name):
                     logger.info(f"  → Добавление колонки {column_name}...")

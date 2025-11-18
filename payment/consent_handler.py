@@ -178,32 +178,42 @@ class AutoRenewalConsent:
             subscription_manager = context.bot_data.get('subscription_manager', SubscriptionManager())
             
             async with aiosqlite.connect(subscription_manager.database_file) as conn:
-                # Создаем таблицу для хранения согласий если её нет
+                # Создаем таблицу для хранения согласий если её нет (полная схема)
                 await conn.execute("""
                     CREATE TABLE IF NOT EXISTS auto_renewal_consents (
                         id INTEGER PRIMARY KEY AUTOINCREMENT,
                         user_id INTEGER NOT NULL,
                         plan_id TEXT,
                         amount INTEGER,
-                        consent_text TEXT,
+                        period_days INTEGER DEFAULT 30,
+                        consent_text TEXT NOT NULL,
+                        consent_checkbox_state BOOLEAN DEFAULT 1,
                         ip_address TEXT,
                         user_agent TEXT,
+                        telegram_chat_id INTEGER,
+                        message_id INTEGER,
                         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                         FOREIGN KEY (user_id) REFERENCES users(user_id)
                     )
                 """)
-                
-                # Сохраняем согласие
+
+                # Сохраняем согласие (используем полную схему)
                 plan_data = context.user_data.get('selected_plan_data', {})
+                consent_text = f"Согласие на автопродление подписки {plan_data.get('name')} за {plan_data.get('price_rub')} руб. ежемесячно"
+
                 await conn.execute("""
-                    INSERT INTO auto_renewal_consents 
-                    (user_id, plan_id, amount, consent_text, created_at)
-                    VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+                    INSERT INTO auto_renewal_consents
+                    (user_id, plan_id, amount, period_days, consent_text, consent_checkbox_state,
+                     telegram_chat_id, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
                 """, (
                     user_id,
                     context.user_data.get('selected_plan'),
                     plan_data.get('price_rub', 0) * 100,  # В копейках
-                    f"Согласие на автопродление подписки {plan_data.get('name')} за {plan_data.get('price_rub')} руб. ежемесячно"
+                    30,  # период в днях
+                    consent_text,
+                    True,  # чекбокс активен
+                    user_id  # telegram_chat_id совпадает с user_id
                 ))
                 
                 await conn.commit()

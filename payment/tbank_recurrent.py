@@ -346,11 +346,12 @@ class RecurrentPaymentManager:
             from datetime import datetime
             
             async with aiosqlite.connect(self.subscription_manager.database_file) as conn:
+                # ИСПРАВЛЕНО: добавлен order_id в INSERT запрос
                 await conn.execute("""
-                    INSERT INTO auto_renewal_history 
-                    (user_id, plan_id, payment_id, status, amount, created_at)
-                    VALUES (?, ?, ?, 'success', ?, CURRENT_TIMESTAMP)
-                """, (user_id, plan_id, order_id, amount))
+                    INSERT INTO auto_renewal_history
+                    (user_id, plan_id, payment_id, order_id, status, amount, created_at)
+                    VALUES (?, ?, ?, ?, 'success', ?, CURRENT_TIMESTAMP)
+                """, (user_id, plan_id, order_id, order_id, amount))
                 
                 # Сбрасываем счетчик неудач
                 await conn.execute("""

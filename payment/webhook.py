@@ -231,7 +231,7 @@ async def handle_webhook(request: web.Request) -> web.Response:
             try:
                 await db.execute(
                     """
-                    INSERT INTO webhook_logs (order_id, status, payment_id, raw_data)
+                    INSERT INTO webhook_logs (order_id, status, payment_id, data)
                     VALUES (?, ?, ?, ?)
                     """,
                     (order_id, status, payment_id, json.dumps(data))
