@@ -273,7 +273,6 @@ async def handle_webhook(request: web.Request) -> web.Response:
                 # Трекинг конверсии из retention уведомлений
                 try:
                     # Получаем user_id, metadata и amount из платежа
-                    import aiosqlite
                     async with aiosqlite.connect(subscription_manager.database_file) as db:
                         cursor = await db.execute("""
                             SELECT user_id, metadata, amount_kopecks FROM payments
