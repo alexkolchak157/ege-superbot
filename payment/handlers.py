@@ -125,7 +125,7 @@ async def check_payment_status(update: Update, context: ContextTypes.DEFAULT_TYP
                 WHERE user_id = ?
                 ORDER BY created_at DESC
                 LIMIT 1
-            """, (user_id))
+            """, (user_id,))
             
             payment = await cursor.fetchone()
             
