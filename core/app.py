@@ -447,7 +447,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 """
 
                 keyboard = InlineKeyboardMarkup([
-                    [InlineKeyboardButton("🚀 Показывай!", callback_data="onboarding_ai_demo")]
+                    [InlineKeyboardButton("🚀 Показывай!", callback_data="start_onboarding")]
                 ])
 
                 await update.message.reply_text(

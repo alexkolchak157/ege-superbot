@@ -191,6 +191,11 @@ async def start_onboarding(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # Варианты A и B: показываем AI-демо первым
     else:
+        # Если вызвано через callback (из /start), сразу показываем AI-демо
+        if query:
+            return await show_ai_demo(update, context)
+
+        # Если вызвано не через callback (из retention), показываем приветствие
         welcome_text = f"""👋 <b>С возвращением, {user_name}!</b>
 
 🎓 Я — твой ИИ-репетитор по обществознанию с искусственным интеллектом.
@@ -208,20 +213,13 @@ async def start_onboarding(update: Update, context: ContextTypes.DEFAULT_TYPE):
             [InlineKeyboardButton("🚀 Показывай!", callback_data="onboarding_ai_demo")]
         ])
 
-    if update.callback_query:
-        await update.callback_query.edit_message_text(
-            welcome_text,
-            reply_markup=keyboard,
-            parse_mode=ParseMode.HTML
-        )
-    else:
         await update.message.reply_text(
             welcome_text,
             reply_markup=keyboard,
             parse_mode=ParseMode.HTML
         )
 
-    return ONBOARDING_WELCOME
+        return ONBOARDING_WELCOME
 
 
 async def show_question(update: Update, context: ContextTypes.DEFAULT_TYPE, question_num: int):
