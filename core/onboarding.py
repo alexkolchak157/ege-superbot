@@ -15,9 +15,7 @@ from telegram.ext import (
     ContextTypes,
     ConversationHandler,
     CommandHandler,
-    CallbackQueryHandler,
-    MessageHandler,
-    filters
+    CallbackQueryHandler
 )
 from telegram.constants import ParseMode
 from datetime import datetime
@@ -137,7 +135,6 @@ async def start_onboarding(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Назначаем пользователя на вариант A/B теста если ещё не назначен
     variant = context.user_data.get('ab_variant')
     if not variant:
-        from analytics.ab_testing import assign_user_to_variant
         variant = await assign_user_to_variant(user_id, 'onboarding_flow')
         context.user_data['ab_variant'] = variant
         logger.info(f"Assigning A/B variant to returning user {user_id}: {variant}")
@@ -495,6 +492,54 @@ async def handle_trial_offer(update: Update, context: ContextTypes.DEFAULT_TYPE)
     return ONBOARDING_TRIAL_OFFER
 
 
+async def handle_payment_redirect(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Обработка перехода к оплате из онбординга.
+    Завершаем онбординг и напрямую вызываем payment handler.
+    """
+    user_id = update.effective_user.id
+
+    # Помечаем онбординг как завершенный (пользователь перешел к оплате)
+    try:
+        conn = await db.get_connection()
+        await conn.execute(
+            """UPDATE users
+               SET onboarding_completed = 1,
+                   onboarding_completed_at = datetime('now')
+               WHERE user_id = ?""",
+            (user_id,)
+        )
+        await conn.commit()
+
+        # Трекинг: пользователь перешел к оплате из онбординга
+        ab_variant = context.user_data.get('ab_variant', 'unknown')
+        await db.track_funnel_event(user_id, 'onboarding_payment_redirect', {
+            'ab_variant': ab_variant
+        })
+        logger.info(f"User {user_id} redirected to payment from onboarding (variant: {ab_variant})")
+
+    except Exception as e:
+        logger.error(f"Error marking onboarding as completed for user {user_id}: {e}")
+
+    # Очищаем данные onboarding
+    context.user_data.pop('onboarding_started', None)
+    context.user_data.pop('onboarding_correct_answers', None)
+    context.user_data.pop('current_question', None)
+
+    # Вызываем payment handler напрямую, чтобы обработать подписку
+    try:
+        from payment.handlers import standalone_pay_handler
+        await standalone_pay_handler(update, context)
+    except Exception as e:
+        logger.error(f"Error calling payment handler from onboarding: {e}")
+        # Fallback: показываем сообщение об ошибке
+        query = update.callback_query
+        if query:
+            await query.answer("Произошла ошибка. Попробуйте через /subscribe", show_alert=True)
+
+    return ConversationHandler.END
+
+
 async def complete_onboarding(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Завершение onboarding."""
     query = update.callback_query
@@ -658,6 +703,8 @@ async def skip_onboarding_before_start(update: Update, context: ContextTypes.DEF
         parse_mode=ParseMode.HTML
     )
 
+    return None  # Standalone handler, не в ConversationHandler
+
 
 def get_onboarding_handler():
     """
@@ -695,13 +742,15 @@ def get_onboarding_handler():
                 CallbackQueryHandler(show_ai_demo, pattern="^onboarding_ai_demo$"),
                 CallbackQueryHandler(start_first_question, pattern="^onboarding_start$"),
                 CallbackQueryHandler(handle_trial_offer, pattern="^onboarding_trial$"),
-                CallbackQueryHandler(complete_onboarding, pattern="^onboarding_complete$")
+                CallbackQueryHandler(complete_onboarding, pattern="^onboarding_complete$"),
+                CallbackQueryHandler(handle_payment_redirect, pattern="^subscribe_trial_7days$")
             ],
 
             # ONBOARDING_TRIAL_OFFER: Предложение trial
             ONBOARDING_TRIAL_OFFER: [
                 CallbackQueryHandler(handle_trial_offer, pattern="^onboarding_trial$"),
-                CallbackQueryHandler(complete_onboarding, pattern="^onboarding_complete$")
+                CallbackQueryHandler(complete_onboarding, pattern="^onboarding_complete$"),
+                CallbackQueryHandler(handle_payment_redirect, pattern="^subscribe_trial_7days$")
             ]
         },
         fallbacks=[
@@ -709,5 +758,6 @@ def get_onboarding_handler():
             CommandHandler("cancel", skip_onboarding)
         ],
         name="onboarding",
-        persistent=True
+        persistent=True,
+        allow_reentry=True  # Разрешаем перезапуск онбординга если пользователь вернулся через /start
     )
