@@ -418,6 +418,7 @@ async def show_ai_demo(update: Update, context: ContextTypes.DEFAULT_TYPE):
             [InlineKeyboardButton("🎁 Активировать trial (1₽)", callback_data="onboarding_trial")],
             [InlineKeyboardButton("🆓 Продолжить бесплатно", callback_data="onboarding_complete")]
         ])
+        next_state = ONBOARDING_TRIAL_OFFER
     elif variant == 'instant_value':
         # Вариант C: уже показали вопрос, теперь сразу trial
         demo_text += "\n\n<b>Понравилось? Теперь можешь получить безлимитный доступ!</b>"
@@ -425,6 +426,7 @@ async def show_ai_demo(update: Update, context: ContextTypes.DEFAULT_TYPE):
             [InlineKeyboardButton("🎁 Попробовать за 1₽ (7 дней)", callback_data="onboarding_trial")],
             [InlineKeyboardButton("🆓 Остаться на бесплатном", callback_data="onboarding_complete")]
         ])
+        next_state = ONBOARDING_TRIAL_OFFER
     else:
         # Вариант A (control): стандартный флоу с вопросом
         demo_text += "\n\n<b>Теперь твоя очередь:</b>\nПопробуй решить один простой вопрос, чтобы я показал тебе остальные возможности 👇"
@@ -433,6 +435,7 @@ async def show_ai_demo(update: Update, context: ContextTypes.DEFAULT_TYPE):
             [InlineKeyboardButton("🎁 Сразу к trial (1₽)", callback_data="onboarding_trial")],
             [InlineKeyboardButton("🆓 Бесплатный доступ", callback_data="onboarding_complete")]
         ])
+        next_state = ONBOARDING_AI_DEMO
 
     await query.edit_message_text(
         demo_text,
@@ -440,7 +443,7 @@ async def show_ai_demo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode=ParseMode.HTML
     )
 
-    return ONBOARDING_TRIAL_OFFER
+    return next_state
 
 
 async def handle_trial_offer(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -679,8 +682,9 @@ def get_onboarding_handler():
             # Переходы в зависимости от варианта:
             # - Control: к вопросу (onboarding_start)
             # - No question: к trial
-            # - Instant value: к trial
+            # - Instant value: показываем AI-демо после вопроса (onboarding_ai_demo)
             ONBOARDING_AI_DEMO: [
+                CallbackQueryHandler(show_ai_demo, pattern="^onboarding_ai_demo$"),
                 CallbackQueryHandler(start_first_question, pattern="^onboarding_start$"),
                 CallbackQueryHandler(handle_trial_offer, pattern="^onboarding_trial$"),
                 CallbackQueryHandler(complete_onboarding, pattern="^onboarding_complete$")
