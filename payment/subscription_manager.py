@@ -1556,6 +1556,12 @@ class SubscriptionManager:
             # Она корректно обрабатывает trial_7days (7 дней) и обычные планы (30 * months)
             expires_at = get_subscription_end_date(plan_id, duration_months).isoformat()
 
+            # КРИТИЧНО: Вычисляем длительность в днях для логики продления
+            if plan_id == 'trial_7days':
+                duration_days = 7
+            else:
+                duration_days = 30 * duration_months
+
             # ИСПРАВЛЕНО: Используем переданное соединение вместо создания нового
             # Обрабатываем каждый модуль
             for module_code in modules:
@@ -1584,25 +1590,55 @@ class SubscriptionManager:
 
                     # Если подписка активна и не истекла - продлеваем от текущей даты окончания
                     if is_active and existing_expires_dt > datetime.now(timezone.utc):
-                        new_expires = (existing_expires_dt + timedelta(days=duration_days)).isoformat()
-                        logger.info(f"Extending active subscription for user {user_id}, module {module_code}")
+                        # Вычисляем новую дату: существующая + новая длительность
+                        new_expires_dt = existing_expires_dt + timedelta(days=duration_days)
+
+                        # КРИТИЧНО: Защита от "понижения" подписки
+                        # Если новая дата истечения РАНЬШЕ существующей, не меняем подписку
+                        # (например, trial НЕ должен перезаписывать package_full)
+                        expires_at_dt = datetime.fromisoformat(expires_at)
+                        if expires_at_dt.tzinfo is None:
+                            expires_at_dt = expires_at_dt.replace(tzinfo=timezone.utc)
+
+                        # Берем максимальную дату из двух
+                        final_expires_dt = max(new_expires_dt, expires_at_dt, existing_expires_dt)
+                        new_expires = final_expires_dt.isoformat()
+
+                        # Определяем, нужно ли обновлять plan_id
+                        # Обновляем только если новая подписка расширяет существующую
+                        update_plan_id = (expires_at_dt > existing_expires_dt)
+
+                        logger.info(f"Extending subscription for user {user_id}, module {module_code}: {existing_expires_dt} -> {final_expires_dt}, update_plan={update_plan_id}")
                     else:
                         # Иначе - устанавливаем новую дату от текущего момента
                         new_expires = expires_at
+                        update_plan_id = True  # Для истекших подписок обновляем plan_id
                         logger.info(f"Reactivating expired subscription for user {user_id}, module {module_code}")
 
                     # Обновляем существующую запись
-                    await conn.execute(
-                        """
-                        UPDATE module_subscriptions
-                        SET expires_at = ?,
-                            plan_id = ?,
-                            is_active = 1,
-                            created_at = CURRENT_TIMESTAMP
-                        WHERE user_id = ? AND module_code = ?
-                        """,
-                        (new_expires, plan_id, user_id, module_code)
-                    )
+                    if update_plan_id:
+                        await conn.execute(
+                            """
+                            UPDATE module_subscriptions
+                            SET expires_at = ?,
+                                plan_id = ?,
+                                is_active = 1,
+                                created_at = CURRENT_TIMESTAMP
+                            WHERE user_id = ? AND module_code = ?
+                            """,
+                            (new_expires, plan_id, user_id, module_code)
+                        )
+                    else:
+                        # Обновляем только дату, но НЕ plan_id (защита от понижения)
+                        await conn.execute(
+                            """
+                            UPDATE module_subscriptions
+                            SET expires_at = ?,
+                                is_active = 1
+                            WHERE user_id = ? AND module_code = ?
+                            """,
+                            (new_expires, user_id, module_code)
+                        )
                     logger.info(f"✅ Updated subscription for user {user_id}, module {module_code}")
 
                 else:
