@@ -4,21 +4,22 @@
 
 ПРОБЛЕМА:
 Пользователь оплатил подписку 24.10.2025, получил доступ вовремя.
-Но 19.11.2025 активировался старый webhook, который перезаписал дату окончания.
+Но 19.11.2025 активировался старый webhook (79-й раз!), который перезаписал дату окончания.
 
-Должна истечь: 24.11.2025 (вчера)
-Фактически:    19.12.2025 (через месяц)
+Должна истечь: 23.11.2025 (через 4 дня от 19.11)
+Фактически:    19.12.2025 (через месяц от 19.11)
 
 РЕШЕНИЕ:
-Установить правильную дату окончания: 24.11.2025
+Установить правильную дату окончания: 23.11.2025
+Статус: активна (еще 4 дня)
 """
 import asyncio
 import aiosqlite
 from datetime import datetime, timezone
 
 USER_ID = 1216829039
-CORRECT_EXPIRES_DATE = '2025-11-24T07:53:22+00:00'  # 24.10 + 30 дней
-PAYMENT_DATE = '2025-10-24T07:53:22'  # Дата создания платежа
+CORRECT_EXPIRES_DATE = '2025-11-23T07:53:22+00:00'  # 24.10 + 30 дней
+PAYMENT_DATE = '2025-10-24T07:53:22+00:00'  # Дата создания платежа
 
 async def fix_subscription():
     """Исправляет подписку пользователя."""
@@ -53,6 +54,8 @@ async def fix_subscription():
             print(f"   Правильная дата создания: {PAYMENT_DATE}")
             print(f"   Правильная дата окончания: {CORRECT_EXPIRES_DATE}")
             print(f"   Длительность: 30 дней")
+            print(f"   Сегодня: 19.11.2025")
+            print(f"   Осталось дней: 4")
             print()
 
             # Обновляем все подписки
@@ -62,14 +65,14 @@ async def fix_subscription():
                     UPDATE module_subscriptions
                     SET created_at = ?,
                         expires_at = ?,
-                        is_active = 0
+                        is_active = 1
                     WHERE user_id = ? AND module_code = ?
                 """, (PAYMENT_DATE, CORRECT_EXPIRES_DATE, USER_ID, module_code))
 
                 print(f"   ✅ Обновлен модуль {module_code}")
                 print(f"      Было: created={created_at}, expires={expires_at}")
                 print(f"      Стало: created={PAYMENT_DATE}, expires={CORRECT_EXPIRES_DATE}")
-                print(f"      Статус: is_active=0 (подписка истекла 24.11)")
+                print(f"      Статус: is_active=1 (подписка активна еще 4 дня)")
                 print()
 
                 updated_count += 1
@@ -79,8 +82,8 @@ async def fix_subscription():
             print("=" * 80)
             print(f"✅ ИСПРАВЛЕНИЕ ЗАВЕРШЕНО")
             print(f"   Обновлено модулей: {updated_count}")
-            print(f"   Подписка истекла: 24.11.2025 (вчера)")
-            print(f"   Статус: неактивна")
+            print(f"   Подписка истекает: 23.11.2025 (через 4 дня)")
+            print(f"   Статус: активна")
             print("=" * 80)
 
     except Exception as e:
@@ -92,7 +95,8 @@ async def fix_subscription():
 if __name__ == '__main__':
     print()
     print("⚠️  ВНИМАНИЕ: Этот скрипт исправит подписку пользователя 1216829039")
-    print("   Установит правильную дату окончания: 24.11.2025 (истекла)")
+    print("   Установит правильную дату окончания: 23.11.2025 (через 4 дня)")
+    print("   Подписка будет активна")
     print()
     response = input("Продолжить? (yes/no): ")
 
