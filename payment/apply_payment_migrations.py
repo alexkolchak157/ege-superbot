@@ -225,14 +225,15 @@ def apply_migrations(db_path):
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS webhook_logs (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                order_id TEXT,
-                status TEXT,
+                order_id TEXT NOT NULL,
+                status TEXT NOT NULL,
                 payment_id TEXT,
                 data TEXT,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(order_id, status)
             )
         """)
-        logger.info("  ✓ Таблица webhook_logs готова")
+        logger.info("  ✓ Таблица webhook_logs готова (с UNIQUE constraint для предотвращения дубликатов)")
         
         # 6. Создаем таблицу auto_renewal_history
         logger.info("\n📋 Создание таблицы auto_renewal_history...")
