@@ -1552,9 +1552,9 @@ class SubscriptionManager:
 
             logger.info(f"Activating plan {plan_id} for user {user_id} with modules: {modules}")
 
-            # Вычисляем дату окончания
-            duration_days = 30 * duration_months
-            expires_at = (datetime.now(timezone.utc) + timedelta(days=duration_days)).isoformat()
+            # ИСПРАВЛЕНИЕ: Используем функцию get_subscription_end_date для правильного расчета
+            # Она корректно обрабатывает trial_7days (7 дней) и обычные планы (30 * months)
+            expires_at = get_subscription_end_date(plan_id, duration_months).isoformat()
 
             # ИСПРАВЛЕНО: Используем переданное соединение вместо создания нового
             # Обрабатываем каждый модуль
@@ -2030,9 +2030,11 @@ class SubscriptionManager:
                 return False
             
             logger.info(f"Final normalized modules: {normalized_modules}")
-            
-            # Рассчитываем дату истечения
-            expires_at = datetime.now() + timedelta(days=30 * duration_months)
+
+            # ИСПРАВЛЕНИЕ: Рассчитываем дату истечения правильно
+            # Для кастомных планов используем стандартный расчет (30 дней * месяцы)
+            # Добавляем timezone для консистентности
+            expires_at = datetime.now(timezone.utc) + timedelta(days=30 * duration_months)
 
             # ИСПРАВЛЕНО: Используем переданное соединение вместо создания нового
             for module_code in normalized_modules:
