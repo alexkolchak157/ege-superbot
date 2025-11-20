@@ -447,14 +447,14 @@ async def get_or_create_user_status(user_id: int) -> Dict[str, Any]:
             
             # Преобразуем Row в словарь
             row_dict = dict(row)
-            
+
             # Обновляем last_activity_date
             if row_dict.get('last_activity_date') != str(today):
                 await db.execute(
                     f"UPDATE {TABLE_USERS} SET last_activity_date = ? WHERE user_id = ?",
                     (today, user_id)
                 )
-            
+
             # Сброс месячного счетчика если новый месяц
             month_start = row_dict.get('current_month_start')
             if month_start:
@@ -915,9 +915,17 @@ async def update_daily_streak(user_id: int) -> tuple[int, int]:
                     logger.debug(f"User {user_id}: last activity was {days_diff} days ago")
                     
                     if days_diff == 0:
-                        # Уже были сегодня - не меняем стрик
-                        logger.debug(f"User {user_id} already active today, keeping streak at {current_streak}")
-                        return (current_streak, max_streak)
+                        # Уже были сегодня
+                        # ИСПРАВЛЕНИЕ: Если streak == 0, значит это первая активность
+                        # (например, пользователь открыл бота, обновился last_activity_date,
+                        # но не отвечал на вопросы). Устанавливаем streak = 1.
+                        if current_streak == 0:
+                            logger.info(f"User {user_id} first question today, initializing streak to 1")
+                            current_streak = 1
+                            max_streak = max(max_streak, 1)
+                        else:
+                            logger.debug(f"User {user_id} already active today, keeping streak at {current_streak}")
+                            return (current_streak, max_streak)
                         
                     elif days_diff == 1:
                         # Вчера были - увеличиваем стрик
