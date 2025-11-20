@@ -140,7 +140,7 @@ class Task20Plugin(BotPlugin):
                 CallbackQueryHandler(handlers.back_to_main_menu, pattern="^to_main_menu$"),
             ],
             name="task20_conversation",
-            persistent=False,
+            persistent=True,
             allow_reentry=True,
             per_message=False,
             per_chat=True,

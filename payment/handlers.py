@@ -2566,6 +2566,8 @@ def register_payment_handlers(app):
             CallbackQueryHandler(cancel_payment, pattern="^pay_cancel$"),
             CallbackQueryHandler(handle_my_subscriptions, pattern="^my_subscriptions$")
         ],
+        name="payment_conversation",
+        persistent=True,
         allow_reentry=True,
         per_message=False
     )

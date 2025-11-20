@@ -165,7 +165,7 @@ class Task19Plugin(BotPlugin):
                 CallbackQueryHandler(handle_processing, pattern="^t19_"),
             ],
             name="task19_conversation",
-            persistent=False,
+            persistent=True,
             per_chat=True,
             per_user=True,
             per_message=False
