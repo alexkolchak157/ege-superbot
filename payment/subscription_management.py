@@ -470,7 +470,9 @@ def get_subscription_management_handlers():
         },
         fallbacks=[
             CommandHandler("cancel", lambda u, c: ConversationHandler.END)
-        ]
+        ],
+        name="subscription_feedback_conversation",
+        persistent=True
     )
     
     return [

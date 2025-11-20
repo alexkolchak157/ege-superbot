@@ -150,7 +150,7 @@ class Task25Plugin(BotPlugin):
                 CallbackQueryHandler(handlers.return_to_menu, pattern="^t25_menu$"),
             ],
             name="task25_conversation",
-            persistent=False,
+            persistent=True,
         )
         
         # Регистрируем обработчики в приложении

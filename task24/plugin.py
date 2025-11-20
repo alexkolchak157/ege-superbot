@@ -105,6 +105,8 @@ class Task24Plugin(BotPlugin):
                 CallbackQueryHandler(handlers.return_to_menu, pattern="^t24_menu$"),
                 CallbackQueryHandler(handlers.back_to_main_menu, pattern="^to_main_menu$"),
             ],
+            name="task24_conversation",
+            persistent=True,
             allow_reentry=True,
         )
         

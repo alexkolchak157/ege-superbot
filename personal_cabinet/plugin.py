@@ -61,7 +61,7 @@ class PersonalCabinetPlugin(BotPlugin):
                 CallbackQueryHandler(show_personal_cabinet, pattern="^back_to_cabinet$"),
             ],
             name="personal_cabinet_conversation",
-            persistent=False,
+            persistent=True,
             allow_reentry=True
         )
 

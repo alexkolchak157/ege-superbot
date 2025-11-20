@@ -291,7 +291,7 @@ class TestPartPlugin(BotPlugin):
             ],
             allow_reentry=True,
             name=f"{self.code}_main_conversation",
-            persistent=False,
+            persistent=True,
         )
         
         # Отдельные команды вне ConversationHandler

@@ -263,7 +263,7 @@ class TeacherModePlugin(BotPlugin):
                 CallbackQueryHandler(teacher_handlers.teacher_menu, pattern="^teacher_menu$"),
             ],
             name="teacher_conversation",
-            persistent=False,
+            persistent=True,
             allow_reentry=True,
         )
 
@@ -286,7 +286,7 @@ class TeacherModePlugin(BotPlugin):
                 CallbackQueryHandler(student_handlers.cancel_connection, pattern="^main_menu$"),
             ],
             name="student_connect_conversation",
-            persistent=False,
+            persistent=True,
             allow_reentry=True,
         )
 
@@ -311,7 +311,7 @@ class TeacherModePlugin(BotPlugin):
                 CallbackQueryHandler(student_handlers.cancel_homework_execution, pattern="^main_menu$"),
             ],
             name="homework_execution",
-            persistent=False,
+            persistent=True,
             allow_reentry=True,
         )
 
