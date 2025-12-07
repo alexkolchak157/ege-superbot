@@ -28,7 +28,7 @@ def generate_teacher_code() -> str:
 async def create_teacher_profile(
     user_id: int,
     display_name: str,
-    subscription_tier: str = 'teacher_basic'
+    subscription_tier: str = 'teacher_free'
 ) -> TeacherProfile:
     """
     Создает профиль учителя.
@@ -36,12 +36,14 @@ async def create_teacher_profile(
     Args:
         user_id: ID пользователя Telegram
         display_name: Отображаемое имя учителя
-        subscription_tier: Уровень подписки
+        subscription_tier: Уровень подписки (по умолчанию teacher_free)
 
     Returns:
         TeacherProfile
     """
     try:
+        from datetime import timedelta
+
         async with aiosqlite.connect(DATABASE_FILE) as db:
             # Генерируем уникальный код
             teacher_code = generate_teacher_code()
@@ -66,11 +68,21 @@ async def create_teacher_profile(
             now = datetime.now()
             feedback_settings_json = json.dumps({})
 
+            # Для teacher_free автоматически активируем подписку на 100 лет
+            if subscription_tier == 'teacher_free':
+                has_active = True
+                expires = now + timedelta(days=36500)  # ~100 лет
+            else:
+                has_active = False
+                expires = None
+
             await db.execute("""
                 INSERT INTO teacher_profiles
-                (user_id, teacher_code, display_name, subscription_tier, created_at, feedback_settings)
-                VALUES (?, ?, ?, ?, ?, ?)
-            """, (user_id, teacher_code, display_name, subscription_tier, now, feedback_settings_json))
+                (user_id, teacher_code, display_name, subscription_tier,
+                 has_active_subscription, subscription_expires, created_at, feedback_settings)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """, (user_id, teacher_code, display_name, subscription_tier,
+                  has_active, expires, now, feedback_settings_json))
 
             await db.commit()
 
@@ -78,14 +90,14 @@ async def create_teacher_profile(
                 user_id=user_id,
                 teacher_code=teacher_code,
                 display_name=display_name,
-                has_active_subscription=False,
-                subscription_expires=None,
+                has_active_subscription=has_active,
+                subscription_expires=expires,
                 subscription_tier=subscription_tier,
                 created_at=now,
                 feedback_settings={}
             )
 
-            logger.info(f"Создан профиль учителя для user_id={user_id}, код={teacher_code}")
+            logger.info(f"Создан профиль учителя для user_id={user_id}, код={teacher_code}, тариф={subscription_tier}")
             return profile
 
     except Exception as e:
@@ -348,6 +360,64 @@ async def is_student_connected(teacher_id: int, student_id: int) -> bool:
 
     except Exception as e:
         logger.error(f"Ошибка при проверке связи учитель-ученик: {e}")
+        return False
+
+
+async def remove_student(teacher_id: int, student_id: int) -> bool:
+    """
+    Удаляет ученика от учителя (меняет статус на 'inactive').
+    Слот ученика освобождается и может быть использован для другого ученика.
+
+    Args:
+        teacher_id: ID учителя
+        student_id: ID ученика
+
+    Returns:
+        True если успешно удалено
+    """
+    try:
+        async with aiosqlite.connect(DATABASE_FILE) as db:
+            await db.execute("""
+                UPDATE teacher_student_relationships
+                SET status = 'inactive'
+                WHERE teacher_id = ? AND student_id = ?
+            """, (teacher_id, student_id))
+            await db.commit()
+
+            logger.info(f"Ученик {student_id} удалён от учителя {teacher_id}")
+            return True
+
+    except Exception as e:
+        logger.error(f"Ошибка при удалении ученика: {e}")
+        return False
+
+
+async def block_student(teacher_id: int, student_id: int) -> bool:
+    """
+    Блокирует ученика (меняет статус на 'blocked').
+    Ученик не сможет повторно подключиться к учителю.
+
+    Args:
+        teacher_id: ID учителя
+        student_id: ID ученика
+
+    Returns:
+        True если успешно заблокирован
+    """
+    try:
+        async with aiosqlite.connect(DATABASE_FILE) as db:
+            await db.execute("""
+                UPDATE teacher_student_relationships
+                SET status = 'blocked'
+                WHERE teacher_id = ? AND student_id = ?
+            """, (teacher_id, student_id))
+            await db.commit()
+
+            logger.info(f"Ученик {student_id} заблокирован учителем {teacher_id}")
+            return True
+
+    except Exception as e:
+        logger.error(f"Ошибка при блокировке ученика: {e}")
         return False
 
 

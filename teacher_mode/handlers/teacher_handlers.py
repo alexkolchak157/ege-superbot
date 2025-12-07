@@ -251,6 +251,7 @@ async def teacher_profile(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
     # Формируем текст с информацией о подписке
     tier_names = {
+        'teacher_free': '🆓 Бесплатный',
         'teacher_basic': '👨‍🏫 Basic',
         'teacher_standard': '👨‍🏫 Standard',
         'teacher_premium': '👨‍🏫 Premium'
@@ -272,10 +273,25 @@ async def teacher_profile(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         "чтобы они могли подключиться к вам.".format(profile.teacher_code)
     )
 
+    # Добавляем предупреждение для teacher_free если достигнут лимит
+    if profile.subscription_tier == 'teacher_free' and student_count >= max_students:
+        text += (
+            "\n\n"
+            "⚠️ <b>Достигнут лимит учеников</b>\n\n"
+            "💡 Обновите тариф, чтобы подключить больше учеников и получить "
+            "доступ к расширенным функциям!"
+        )
+
     keyboard = [
-        [InlineKeyboardButton("📋 Список учеников", callback_data="teacher_students")],
-        [InlineKeyboardButton("◀️ Назад", callback_data="teacher_menu")]
+        [InlineKeyboardButton("📋 Список учеников", callback_data="teacher_students")]
     ]
+
+    # Добавляем кнопку обновления тарифа для teacher_free
+    if profile.subscription_tier == 'teacher_free':
+        keyboard.insert(0, [InlineKeyboardButton("💎 Обновить тариф", callback_data="teacher_subscriptions")])
+
+    keyboard.append([InlineKeyboardButton("◀️ Назад", callback_data="teacher_menu")])
+
     reply_markup = InlineKeyboardMarkup(keyboard)
 
     await query.message.edit_text(text, reply_markup=reply_markup, parse_mode='HTML')

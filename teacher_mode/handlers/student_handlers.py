@@ -146,7 +146,18 @@ async def confirm_teacher_connection(update: Update, context: ContextTypes.DEFAU
     # Проверяем лимит учеников
     can_add, reason = await teacher_service.can_add_student(teacher.user_id)
     if not can_add:
-        text = f"❌ Не удалось подключиться к учителю.\n\n{reason}"
+        # Если лимит превышен - показываем специальное сообщение
+        if "Достигнут лимит учеников" in reason:
+            text = (
+                f"❌ <b>Не удалось подключиться к учителю {teacher_name}</b>\n\n"
+                f"📊 {reason}\n\n"
+                "💡 Попросите вашего учителя обновить тариф подписки, "
+                "чтобы подключить больше учеников.\n\n"
+                "Учитель сможет выбрать тариф в разделе <i>«Режим учителя» → «Мой профиль»</i>."
+            )
+        else:
+            text = f"❌ Не удалось подключиться к учителю.\n\n{reason}"
+
         keyboard = [[InlineKeyboardButton("◀️ Главное меню", callback_data="main_menu")]]
         reply_markup = InlineKeyboardMarkup(keyboard)
         await query.message.edit_text(text, reply_markup=reply_markup, parse_mode='HTML')
