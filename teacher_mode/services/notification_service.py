@@ -1,11 +1,11 @@
 """
-Сервис для отправки уведомлений ученикам о домашних заданиях.
+Сервис для отправки уведомлений ученикам и учителям о домашних заданиях.
 """
 
 import logging
 from datetime import datetime
 from typing import List, Optional
-from telegram import Bot
+from telegram import Bot, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.error import TelegramError
 
 logger = logging.getLogger(__name__)
@@ -143,4 +143,69 @@ async def send_deadline_reminder(
 
     except Exception as e:
         logger.error(f"❌ Failed to send deadline reminder to student {student_id}: {e}")
+        return False
+
+
+async def notify_teacher_about_completion(
+    bot: Bot,
+    teacher_id: int,
+    student_id: int,
+    student_name: str,
+    homework_id: int,
+    homework_title: str,
+    correct_count: int,
+    total_count: int
+) -> bool:
+    """
+    Отправляет уведомление учителю о завершении задания учеником.
+
+    Args:
+        bot: Telegram Bot instance
+        teacher_id: ID учителя
+        student_id: ID ученика
+        student_name: Имя ученика
+        homework_id: ID домашнего задания
+        homework_title: Название задания
+        correct_count: Количество правильных ответов
+        total_count: Общее количество вопросов
+
+    Returns:
+        True если отправлено успешно
+    """
+    try:
+        # Вычисляем процент правильных ответов
+        percentage = int((correct_count / total_count * 100)) if total_count > 0 else 0
+
+        text = (
+            f"✅ <b>Ученик завершил задание!</b>\n\n"
+            f"👤 <b>Ученик:</b> {student_name}\n"
+            f"📋 <b>Задание:</b> {homework_title}\n"
+            f"📊 <b>Результат:</b> {correct_count}/{total_count} правильных ({percentage}%)\n"
+        )
+
+        # Добавляем кнопку "Посмотреть детали"
+        keyboard = [
+            [InlineKeyboardButton(
+                "📝 Посмотреть детали",
+                callback_data=f"view_student_progress:{homework_id}:{student_id}"
+            )]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+
+        await bot.send_message(
+            chat_id=teacher_id,
+            text=text,
+            reply_markup=reply_markup,
+            parse_mode='HTML'
+        )
+
+        logger.info(f"✅ Completion notification sent to teacher {teacher_id} about student {student_id}, homework {homework_id}")
+        return True
+
+    except TelegramError as e:
+        logger.warning(f"❌ Failed to send completion notification to teacher {teacher_id}: {e}")
+        return False
+
+    except Exception as e:
+        logger.error(f"❌ Unexpected error sending completion notification to teacher {teacher_id}: {e}")
         return False
