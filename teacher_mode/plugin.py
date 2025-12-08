@@ -6,7 +6,7 @@ import logging
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, filters, ConversationHandler
 
 from core.plugin_base import BotPlugin
-from .handlers import teacher_handlers, student_handlers
+from .handlers import teacher_handlers, student_handlers, analytics_handlers
 from .states import TeacherStates, StudentStates
 
 logger = logging.getLogger(__name__)
@@ -53,9 +53,14 @@ class TeacherModePlugin(BotPlugin):
 
                     # Ученики и статистика
                     CallbackQueryHandler(teacher_handlers.show_student_list, pattern="^teacher_students$"),
-                    CallbackQueryHandler(teacher_handlers.show_teacher_statistics, pattern="^teacher_statistics$"),
+                    CallbackQueryHandler(analytics_handlers.show_statistics, pattern="^teacher_statistics$"),
                     CallbackQueryHandler(teacher_handlers.show_teacher_assignments, pattern="^teacher_my_assignments$"),
                     CallbackQueryHandler(teacher_handlers.show_homework_stats, pattern="^homework_stats_"),
+
+                    # Аналитика
+                    CallbackQueryHandler(analytics_handlers.show_students_analytics, pattern="^analytics_students$"),
+                    CallbackQueryHandler(analytics_handlers.show_student_detailed_analytics, pattern="^analytics_student:"),
+                    CallbackQueryHandler(analytics_handlers.show_group_analytics, pattern="^analytics_group$"),
 
                     # Просмотр ответов учеников
                     CallbackQueryHandler(teacher_handlers.view_homework_submissions, pattern="^homework_submissions:"),
