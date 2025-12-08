@@ -221,6 +221,31 @@ class TeacherModePlugin(BotPlugin):
                     CallbackQueryHandler(teacher_handlers.create_assignment_start, pattern="^teacher_create_assignment$"),
                     CallbackQueryHandler(teacher_handlers.teacher_menu, pattern="^teacher_menu$"),
                 ],
+                TeacherStates.SELECT_CUSTOM_QUESTION_TYPE: [
+                    # Выбор типа задания для кастомного вопроса
+                    CallbackQueryHandler(teacher_handlers.select_custom_question_type, pattern="^custom_type_"),
+
+                    # Выбор ввода ответа или пропуск
+                    CallbackQueryHandler(teacher_handlers.prompt_custom_question_answer, pattern="^enter_custom_answer_"),
+
+                    # Отмена текущего вопроса
+                    CallbackQueryHandler(teacher_handlers.cancel_current_custom_question, pattern="^cancel_current_custom_question$"),
+
+                    # Отмена создания задания
+                    CallbackQueryHandler(teacher_handlers.create_assignment_start, pattern="^teacher_create_assignment$"),
+                    CallbackQueryHandler(teacher_handlers.teacher_menu, pattern="^teacher_menu$"),
+                ],
+                TeacherStates.ENTER_CUSTOM_QUESTION_ANSWER: [
+                    # Обработка текстового ввода правильного ответа/критериев
+                    MessageHandler(filters.TEXT & ~filters.COMMAND, teacher_handlers.process_custom_question_answer),
+
+                    # Отмена текущего вопроса
+                    CallbackQueryHandler(teacher_handlers.cancel_current_custom_question, pattern="^cancel_current_custom_question$"),
+
+                    # Отмена создания задания
+                    CallbackQueryHandler(teacher_handlers.create_assignment_start, pattern="^teacher_create_assignment$"),
+                    CallbackQueryHandler(teacher_handlers.teacher_menu, pattern="^teacher_menu$"),
+                ],
                 TeacherStates.PAYMENT_ENTERING_PROMO: [
                     # Обработка ввода промокода
                     MessageHandler(filters.TEXT & ~filters.COMMAND, teacher_handlers.handle_promo_input),

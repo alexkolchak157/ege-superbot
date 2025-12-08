@@ -3003,21 +3003,248 @@ async def process_custom_question(update: Update, context: ContextTypes.DEFAULT_
         )
         return TeacherStates.ENTER_CUSTOM_QUESTION
 
+    # Сохраняем текст вопроса во временное хранилище
+    context.user_data['current_custom_question'] = {
+        'text': question_text
+    }
+
+    # Просим выбрать тип задания
+    text = f"✅ <b>Текст вопроса сохранен!</b>\n\n"
+    text += f"<i>{question_text[:150]}{'...' if len(question_text) > 150 else ''}</i>\n\n"
+    text += "📚 <b>Выберите тип задания:</b>\n\n"
+    text += "Это определит, как будет проверяться ответ ученика."
+
+    keyboard = [
+        [InlineKeyboardButton("📝 Тестовая часть (короткий ответ)", callback_data="custom_type_test_part")],
+        [InlineKeyboardButton("💡 Задание 19 (примеры)", callback_data="custom_type_task19")],
+        [InlineKeyboardButton("⚙️ Задание 20 (слова)", callback_data="custom_type_task20")],
+        [InlineKeyboardButton("📊 Задание 24 (пропуски)", callback_data="custom_type_task24")],
+        [InlineKeyboardButton("💻 Задание 25 (сочинение)", callback_data="custom_type_task25")],
+        [InlineKeyboardButton("◀️ Отменить вопрос", callback_data="cancel_current_custom_question")]
+    ]
+
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await update.message.reply_text(text, reply_markup=reply_markup, parse_mode='HTML')
+
+    return TeacherStates.SELECT_CUSTOM_QUESTION_TYPE
+
+
+async def select_custom_question_type(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """
+    Обрабатывает выбор типа задания для кастомного вопроса.
+    """
+    query = update.callback_query
+    await query.answer()
+
+    # Извлекаем тип из callback_data
+    question_type = query.data.replace("custom_type_", "")
+
+    current_question = context.user_data.get('current_custom_question', {})
+    current_question['type'] = question_type
+
+    context.user_data['current_custom_question'] = current_question
+
+    type_names = {
+        'test_part': '📝 Тестовая часть',
+        'task19': '💡 Задание 19',
+        'task20': '⚙️ Задание 20',
+        'task24': '📊 Задание 24',
+        'task25': '💻 Задание 25'
+    }
+    type_name = type_names.get(question_type, question_type)
+
+    # Спрашиваем, хочет ли учитель указать правильный ответ/критерии
+    text = f"✅ <b>Тип задания: {type_name}</b>\n\n"
+    text += "❓ <b>Хотите указать правильный ответ или критерии оценки?</b>\n\n"
+    text += "Это поможет AI более точно проверять ответы учеников.\n\n"
+    text += "• <b>Для тестовой части:</b> точный правильный ответ\n"
+    text += "• <b>Для заданий 19-25:</b> критерии оценки или примеры правильного ответа"
+
+    keyboard = [
+        [InlineKeyboardButton("✍️ Да, указать ответ/критерии", callback_data="enter_custom_answer_yes")],
+        [InlineKeyboardButton("⏭ Нет, пропустить", callback_data="enter_custom_answer_skip")],
+        [InlineKeyboardButton("◀️ Отменить вопрос", callback_data="cancel_current_custom_question")]
+    ]
+
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await query.message.edit_text(text, reply_markup=reply_markup, parse_mode='HTML')
+
+    return TeacherStates.SELECT_CUSTOM_QUESTION_TYPE
+
+
+async def prompt_custom_question_answer(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """
+    Запрашивает ввод правильного ответа или критериев оценки.
+    """
+    query = update.callback_query
+    await query.answer()
+
+    choice = query.data
+
+    if choice == "enter_custom_answer_skip":
+        # Пропускаем ввод ответа, сохраняем вопрос
+        return await finalize_custom_question(update, context, skip_answer=True)
+
+    # Запрашиваем ввод ответа/критериев
+    current_question = context.user_data.get('current_custom_question', {})
+    question_type = current_question.get('type', '')
+
+    type_names = {
+        'test_part': '📝 Тестовая часть',
+        'task19': '💡 Задание 19',
+        'task20': '⚙️ Задание 20',
+        'task24': '📊 Задание 24',
+        'task25': '💻 Задание 25'
+    }
+    type_name = type_names.get(question_type, question_type)
+
+    text = f"✍️ <b>{type_name}</b>\n\n"
+
+    if question_type == 'test_part':
+        text += "📝 <b>Введите правильный ответ:</b>\n\n"
+        text += "Например: <code>125</code> или <code>программирование</code>\n\n"
+        text += "Это поможет AI точнее проверять короткие ответы."
+    else:
+        text += "📝 <b>Введите критерии оценки или пример правильного ответа:</b>\n\n"
+        text += "Например:\n"
+        text += "• Ключевые пункты, которые должны быть в ответе\n"
+        text += "• Примеры правильных формулировок\n"
+        text += "• Критерии для оценки качества ответа"
+
+    keyboard = [[InlineKeyboardButton("◀️ Отменить вопрос", callback_data="cancel_current_custom_question")]]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
+    await query.message.edit_text(text, reply_markup=reply_markup, parse_mode='HTML')
+
+    return TeacherStates.ENTER_CUSTOM_QUESTION_ANSWER
+
+
+async def process_custom_question_answer(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """
+    Обрабатывает ввод правильного ответа/критериев оценки.
+    """
+    answer_text = update.message.text.strip()
+
+    if len(answer_text) < 3:
+        await update.message.reply_text(
+            "❌ <b>Ответ слишком короткий</b>\n\n"
+            "Минимальная длина: 3 символа.\n"
+            "Попробуйте еще раз:",
+            parse_mode='HTML'
+        )
+        return TeacherStates.ENTER_CUSTOM_QUESTION_ANSWER
+
+    if len(answer_text) > 1000:
+        await update.message.reply_text(
+            "❌ <b>Ответ слишком длинный</b>\n\n"
+            "Максимальная длина: 1000 символов.\n"
+            "Попробуйте еще раз:",
+            parse_mode='HTML'
+        )
+        return TeacherStates.ENTER_CUSTOM_QUESTION_ANSWER
+
+    # Сохраняем ответ
+    current_question = context.user_data.get('current_custom_question', {})
+    current_question['correct_answer'] = answer_text
+    context.user_data['current_custom_question'] = current_question
+
+    # Финализируем вопрос
+    return await finalize_custom_question_direct(update, context, skip_answer=False)
+
+
+async def finalize_custom_question(update: Update, context: ContextTypes.DEFAULT_TYPE, skip_answer: bool = False) -> int:
+    """
+    Финализирует кастомный вопрос и добавляет его в список.
+    """
+    query = update.callback_query
+
+    current_question = context.user_data.get('current_custom_question', {})
+
+    if not current_question:
+        await query.answer("⚠️ Ошибка: вопрос не найден", show_alert=True)
+        return TeacherStates.ENTER_CUSTOM_QUESTION
+
     # Добавляем вопрос в список
     custom_questions = context.user_data.get('custom_questions', [])
     question_id = len(custom_questions) + 1
 
-    custom_questions.append({
+    question_data = {
         'id': question_id,
-        'text': question_text
-    })
+        'text': current_question['text'],
+        'type': current_question.get('type', 'test_part'),
+        'correct_answer': current_question.get('correct_answer', None)
+    }
 
+    custom_questions.append(question_data)
     context.user_data['custom_questions'] = custom_questions
+    context.user_data.pop('current_custom_question', None)
+
+    type_names = {
+        'test_part': '📝 Тестовая часть',
+        'task19': '💡 Задание 19',
+        'task20': '⚙️ Задание 20',
+        'task24': '📊 Задание 24',
+        'task25': '💻 Задание 25'
+    }
+    type_name = type_names.get(question_data['type'], question_data['type'])
 
     text = f"✅ <b>Вопрос #{question_id} добавлен!</b>\n\n"
-    text += f"<i>{question_text[:100]}{'...' if len(question_text) > 100 else ''}</i>\n\n"
-    text += f"📊 Всего вопросов: {len(custom_questions)}\n\n"
-    text += "💬 Отправьте следующий вопрос или завершите создание:"
+    text += f"📚 <b>Тип:</b> {type_name}\n"
+    text += f"📝 <b>Текст:</b> <i>{question_data['text'][:100]}{'...' if len(question_data['text']) > 100 else ''}</i>\n"
+    if question_data['correct_answer']:
+        text += f"✅ <b>Ответ/Критерии:</b> указаны\n"
+    text += f"\n📊 <b>Всего вопросов:</b> {len(custom_questions)}\n\n"
+    text += "💬 Отправьте текст следующего вопроса или завершите создание:"
+
+    keyboard = [
+        [InlineKeyboardButton(f"✅ Завершить ({len(custom_questions)} вопросов)", callback_data="finish_custom_questions")],
+        [InlineKeyboardButton("👀 Просмотреть все вопросы", callback_data="review_custom_questions")],
+        [InlineKeyboardButton("❌ Отменить", callback_data="teacher_create_assignment")]
+    ]
+
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await query.message.edit_text(text, reply_markup=reply_markup, parse_mode='HTML')
+
+    return TeacherStates.ENTER_CUSTOM_QUESTION
+
+
+async def finalize_custom_question_direct(update: Update, context: ContextTypes.DEFAULT_TYPE, skip_answer: bool = False) -> int:
+    """
+    Финализирует кастомный вопрос после текстового ввода (без callback query).
+    """
+    current_question = context.user_data.get('current_custom_question', {})
+
+    # Добавляем вопрос в список
+    custom_questions = context.user_data.get('custom_questions', [])
+    question_id = len(custom_questions) + 1
+
+    question_data = {
+        'id': question_id,
+        'text': current_question['text'],
+        'type': current_question.get('type', 'test_part'),
+        'correct_answer': current_question.get('correct_answer', None)
+    }
+
+    custom_questions.append(question_data)
+    context.user_data['custom_questions'] = custom_questions
+    context.user_data.pop('current_custom_question', None)
+
+    type_names = {
+        'test_part': '📝 Тестовая часть',
+        'task19': '💡 Задание 19',
+        'task20': '⚙️ Задание 20',
+        'task24': '📊 Задание 24',
+        'task25': '💻 Задание 25'
+    }
+    type_name = type_names.get(question_data['type'], question_data['type'])
+
+    text = f"✅ <b>Вопрос #{question_id} добавлен!</b>\n\n"
+    text += f"📚 <b>Тип:</b> {type_name}\n"
+    text += f"📝 <b>Текст:</b> <i>{question_data['text'][:100]}{'...' if len(question_data['text']) > 100 else ''}</i>\n"
+    if question_data['correct_answer']:
+        text += f"✅ <b>Ответ/Критерии:</b> указаны\n"
+    text += f"\n📊 <b>Всего вопросов:</b> {len(custom_questions)}\n\n"
+    text += "💬 Отправьте текст следующего вопроса или завершите создание:"
 
     keyboard = [
         [InlineKeyboardButton(f"✅ Завершить ({len(custom_questions)} вопросов)", callback_data="finish_custom_questions")],
@@ -3029,6 +3256,18 @@ async def process_custom_question(update: Update, context: ContextTypes.DEFAULT_
     await update.message.reply_text(text, reply_markup=reply_markup, parse_mode='HTML')
 
     return TeacherStates.ENTER_CUSTOM_QUESTION
+
+
+async def cancel_current_custom_question(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """
+    Отменяет добавление текущего кастомного вопроса.
+    """
+    query = update.callback_query
+    await query.answer("❌ Вопрос отменен")
+
+    context.user_data.pop('current_custom_question', None)
+
+    return await start_custom_question_entry(update, context)
 
 
 async def review_custom_questions(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -3047,9 +3286,21 @@ async def review_custom_questions(update: Update, context: ContextTypes.DEFAULT_
     text = f"📝 <b>Кастомное задание</b>\n\n"
     text += f"📊 Всего вопросов: {len(custom_questions)}\n\n"
 
+    type_names = {
+        'test_part': '📝 Тестовая часть',
+        'task19': '💡 Задание 19',
+        'task20': '⚙️ Задание 20',
+        'task24': '📊 Задание 24',
+        'task25': '💻 Задание 25'
+    }
+
     for q in custom_questions:
-        question_preview = q['text'][:80] + ('...' if len(q['text']) > 80 else '')
-        text += f"<b>{q['id']}.</b> {question_preview}\n\n"
+        question_preview = q['text'][:60] + ('...' if len(q['text']) > 60 else '')
+        question_type = type_names.get(q.get('type', 'test_part'), 'Не указан')
+        has_answer = "✅" if q.get('correct_answer') else "⚪"
+
+        text += f"<b>{q['id']}.</b> {question_type} {has_answer}\n"
+        text += f"<i>{question_preview}</i>\n\n"
 
     if len(text) > 3900:
         text = text[:3900] + "\n\n<i>(список обрезан)</i>"
