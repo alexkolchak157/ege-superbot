@@ -18,8 +18,8 @@ async def evaluate_homework_answer(
     Проверяет ответ ученика через AI evaluator соответствующего модуля.
 
     Args:
-        task_module: Название модуля ('task19', 'task20', 'task24', 'task25')
-        question_data: Данные вопроса из question_loader
+        task_module: Название модуля ('task19', 'task20', 'task24', 'task25', 'test_part', 'custom')
+        question_data: Данные вопроса из question_loader или custom_questions
         user_answer: Ответ ученика
         user_id: ID ученика
 
@@ -29,7 +29,14 @@ async def evaluate_homework_answer(
         - feedback_text: Текст обратной связи для ученика
     """
     try:
-        if task_module == 'task19':
+        # Для кастомных вопросов используем указанный тип
+        if task_module == 'custom':
+            custom_type = question_data.get('type', 'test_part')
+            return await _evaluate_custom_question(custom_type, question_data, user_answer, user_id)
+
+        if task_module == 'test_part':
+            return await _evaluate_test_part(question_data, user_answer, user_id)
+        elif task_module == 'task19':
             return await _evaluate_task19(question_data, user_answer, user_id)
         elif task_module == 'task20':
             return await _evaluate_task20(question_data, user_answer, user_id)
@@ -234,3 +241,151 @@ async def _evaluate_task25(question_data: Dict, user_answer: str, user_id: int) 
     except Exception as e:
         logger.error(f"Error in task25 evaluation: {e}", exc_info=True)
         return False, f"❌ Ошибка при проверке: {str(e)}"
+
+
+async def _evaluate_test_part(question_data: Dict, user_answer: str, user_id: int) -> Tuple[bool, str]:
+    """Проверка ответа для тестовой части (короткий ответ)"""
+    try:
+        # Для тестовой части используем точное сравнение
+        correct_answer = question_data.get('answer', question_data.get('correct_answer', ''))
+
+        # Нормализуем ответы (убираем пробелы, приводим к нижнему регистру)
+        user_answer_normalized = user_answer.strip().lower().replace(' ', '')
+        correct_answer_normalized = str(correct_answer).strip().lower().replace(' ', '')
+
+        is_correct = user_answer_normalized == correct_answer_normalized
+
+        if is_correct:
+            feedback = (
+                "✅ <b>Ответ правильный!</b>\n\n"
+                f"Ваш ответ: <code>{user_answer}</code>\n"
+                f"Правильный ответ: <code>{correct_answer}</code>"
+            )
+        else:
+            feedback = (
+                "❌ <b>Ответ неправильный</b>\n\n"
+                f"Ваш ответ: <code>{user_answer}</code>\n"
+                f"Правильный ответ: <code>{correct_answer}</code>"
+            )
+
+        return is_correct, feedback
+
+    except Exception as e:
+        logger.error(f"Error in test_part evaluation: {e}", exc_info=True)
+        return False, f"❌ Ошибка при проверке: {str(e)}"
+
+
+async def _evaluate_custom_question(
+    custom_type: str,
+    question_data: Dict,
+    user_answer: str,
+    user_id: int
+) -> Tuple[bool, str]:
+    """
+    Проверка кастомного вопроса с использованием evaluator соответствующего типа.
+
+    Args:
+        custom_type: Тип кастомного вопроса ('test_part', 'task19', 'task20', 'task24', 'task25')
+        question_data: Данные кастомного вопроса (включая text, type, correct_answer)
+        user_answer: Ответ ученика
+        user_id: ID ученика
+
+    Returns:
+        Tuple[bool, str]: (is_correct, feedback_text)
+    """
+    try:
+        # Получаем текст вопроса и правильный ответ/критерии из кастомного вопроса
+        question_text = question_data.get('text', '')
+        correct_answer = question_data.get('correct_answer')
+
+        # Для test_part используем простую проверку
+        if custom_type == 'test_part':
+            if correct_answer:
+                # Если учитель указал правильный ответ, сравниваем
+                user_answer_normalized = user_answer.strip().lower().replace(' ', '')
+                correct_answer_normalized = str(correct_answer).strip().lower().replace(' ', '')
+
+                is_correct = user_answer_normalized == correct_answer_normalized
+
+                if is_correct:
+                    feedback = (
+                        "✅ <b>Ответ правильный!</b>\n\n"
+                        f"Ваш ответ: <code>{user_answer}</code>\n"
+                        f"Правильный ответ: <code>{correct_answer}</code>"
+                    )
+                else:
+                    feedback = (
+                        "❌ <b>Ответ неправильный</b>\n\n"
+                        f"Ваш ответ: <code>{user_answer}</code>\n"
+                        f"Правильный ответ: <code>{correct_answer}</code>"
+                    )
+
+                return is_correct, feedback
+            else:
+                # Если правильный ответ не указан, принимаем ответ без проверки
+                feedback = (
+                    "✅ <b>Ответ принят</b>\n\n"
+                    f"Ваш ответ: <code>{user_answer}</code>\n\n"
+                    "💡 Учитель не указал правильный ответ, поэтому ваш ответ принят автоматически."
+                )
+                return True, feedback
+
+        # Для заданий 19, 20, 24, 25 используем соответствующие AI evaluators
+        elif custom_type == 'task19':
+            # Формируем question_data для evaluator
+            eval_question_data = {
+                'title': 'Кастомный вопрос',
+                'task_text': question_text
+            }
+
+            # Если указаны критерии, добавляем их в feedback
+            if correct_answer:
+                eval_question_data['criteria'] = correct_answer
+
+            return await _evaluate_task19(eval_question_data, user_answer, user_id)
+
+        elif custom_type == 'task20':
+            eval_question_data = {
+                'title': 'Кастомный вопрос',
+                'task_text': question_text
+            }
+
+            if correct_answer:
+                eval_question_data['criteria'] = correct_answer
+
+            return await _evaluate_task20(eval_question_data, user_answer, user_id)
+
+        elif custom_type == 'task24':
+            eval_question_data = {
+                'topic': 'Кастомный план',
+                'full_plan': [],
+                'points_data': [],
+                'min_points': 3,
+                'min_detailed_points': 2,
+                'min_subpoints': 3
+            }
+
+            if correct_answer:
+                # Если учитель указал критерии, можем использовать их
+                eval_question_data['description'] = f"Критерии: {correct_answer}"
+
+            return await _evaluate_task24(eval_question_data, user_answer, user_id)
+
+        elif custom_type == 'task25':
+            eval_question_data = {
+                'title': 'Кастомное эссе',
+                'task_text': question_text
+            }
+
+            if correct_answer:
+                eval_question_data['criteria'] = correct_answer
+
+            return await _evaluate_task25(eval_question_data, user_answer, user_id)
+
+        else:
+            logger.warning(f"Unknown custom question type: {custom_type}")
+            return True, f"✅ Ответ принят (неизвестный тип задания: {custom_type})"
+
+    except Exception as e:
+        logger.error(f"Error evaluating custom question: {e}", exc_info=True)
+        return False, f"❌ Ошибка при проверке кастомного вопроса: {str(e)}"
