@@ -2734,12 +2734,11 @@ class SubscriptionManager:
                 action = 'renewed'
             else:
                 # Teacher profile не существует - нужно создать
-                # Генерируем уникальный teacher_code
-                import random
-                import string
-                teacher_code = ''.join(random.choices(string.ascii_uppercase + string.digits, k=8))
+                # Генерируем уникальный teacher_code через безопасную функцию
+                from teacher_mode.services.teacher_service import generate_teacher_code
 
                 # Проверяем уникальность кода
+                teacher_code = generate_teacher_code()
                 while True:
                     cursor = await conn.execute(
                         "SELECT user_id FROM teacher_profiles WHERE teacher_code = ?",
@@ -2747,7 +2746,7 @@ class SubscriptionManager:
                     )
                     if not await cursor.fetchone():
                         break
-                    teacher_code = ''.join(random.choices(string.ascii_uppercase + string.digits, k=8))
+                    teacher_code = generate_teacher_code()
 
                 # Получаем имя пользователя
                 cursor = await conn.execute(
