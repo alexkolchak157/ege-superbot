@@ -138,7 +138,7 @@ async def _evaluate_task24(question_data: Dict, user_answer: str, user_id: int) 
     """Проверка ответа для task24 (развернутый план)"""
     try:
         from task24.checker import evaluate_plan_with_ai
-        from task24.handlers import bot_data  # Глобальный объект с данными планов
+        from task24.handlers import plan_bot_data  # Глобальный объект с данными планов
 
         # Получаем данные эталонного плана
         topic_name = question_data.get('title', 'Неизвестная тема')
@@ -156,7 +156,7 @@ async def _evaluate_task24(question_data: Dict, user_answer: str, user_id: int) 
         feedback_text = await evaluate_plan_with_ai(
             user_plan_text=user_answer,
             ideal_plan_data=ideal_plan_data,
-            bot_data=bot_data,
+            bot_data=plan_bot_data,
             topic_name=topic_name,
             use_ai=True,
             user_id=user_id
