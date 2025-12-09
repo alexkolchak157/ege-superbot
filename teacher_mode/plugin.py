@@ -163,8 +163,30 @@ class TeacherModePlugin(BotPlugin):
                     CallbackQueryHandler(teacher_handlers.confirm_numbers_selection, pattern="^confirm_numbers_selection$"),
                     CallbackQueryHandler(teacher_handlers.confirm_exam_numbers_selection, pattern="^confirm_exam_numbers_selection$"),
 
+                    # Браузер заданий - выбор способа ввода
+                    CallbackQueryHandler(teacher_handlers.show_manual_numbers_input, pattern="^numbers_manual_"),
+                    CallbackQueryHandler(teacher_handlers.show_question_browser, pattern="^numbers_browser_"),
+
+                    # Браузер заданий - навигация и выбор
+                    CallbackQueryHandler(teacher_handlers.toggle_question_browser, pattern="^browser_toggle_"),
+                    CallbackQueryHandler(teacher_handlers.navigate_question_browser, pattern="^browser_(next|prev)_page$"),
+                    CallbackQueryHandler(teacher_handlers.start_browser_search, pattern="^browser_search$"),
+                    CallbackQueryHandler(teacher_handlers.clear_browser_search, pattern="^browser_clear_search$"),
+                    CallbackQueryHandler(teacher_handlers.cancel_browser_search, pattern="^browser_cancel_search$"),
+                    CallbackQueryHandler(teacher_handlers.confirm_browser_selection, pattern="^browser_confirm$"),
+
                     # Отмена
                     CallbackQueryHandler(teacher_handlers.select_task_type, pattern="^assign_task_"),
+                    CallbackQueryHandler(teacher_handlers.teacher_menu, pattern="^teacher_menu$"),
+                ],
+                TeacherStates.BROWSER_SEARCH: [
+                    # Обработка текстового ввода поискового запроса
+                    MessageHandler(filters.TEXT & ~filters.COMMAND, teacher_handlers.process_browser_search),
+
+                    # Отмена поиска
+                    CallbackQueryHandler(teacher_handlers.cancel_browser_search, pattern="^browser_cancel_search$"),
+
+                    # Общая отмена
                     CallbackQueryHandler(teacher_handlers.teacher_menu, pattern="^teacher_menu$"),
                 ],
                 TeacherStates.ENTER_QUESTION_COUNT: [
