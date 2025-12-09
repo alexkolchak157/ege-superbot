@@ -175,6 +175,9 @@ class TeacherModePlugin(BotPlugin):
                     CallbackQueryHandler(teacher_handlers.cancel_browser_search, pattern="^browser_cancel_search$"),
                     CallbackQueryHandler(teacher_handlers.confirm_browser_selection, pattern="^browser_confirm$"),
 
+                    # Возврат к выбору способа ввода
+                    CallbackQueryHandler(teacher_handlers.select_selection_mode, pattern="^selection_mode_"),
+
                     # Отмена
                     CallbackQueryHandler(teacher_handlers.select_task_type, pattern="^assign_task_"),
                     CallbackQueryHandler(teacher_handlers.teacher_menu, pattern="^teacher_menu$"),

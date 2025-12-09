@@ -772,10 +772,15 @@ async def show_question_browser(update: Update, context: ContextTypes.DEFAULT_TY
     if query.data.startswith("numbers_browser_"):
         task_type = query.data.replace("numbers_browser_", "")
         context.user_data['assignment_task_type'] = task_type
-        # Инициализируем список выбранных заданий
-        context.user_data['browser_selected_ids'] = []
-        context.user_data['browser_page'] = 0
-        context.user_data['browser_search_query'] = None
+        # Инициализируем список выбранных заданий ТОЛЬКО если его еще нет
+        # Это позволяет сохранить выбор при возврате из подтверждения
+        if 'browser_selected_ids' not in context.user_data:
+            context.user_data['browser_selected_ids'] = []
+            context.user_data['browser_page'] = 0
+            context.user_data['browser_search_query'] = None
+        # При возврате из подтверждения восстанавливаем выбор из selected_question_ids
+        elif 'selected_question_ids' in context.user_data:
+            context.user_data['browser_selected_ids'] = context.user_data['selected_question_ids']
     else:
         task_type = context.user_data.get('assignment_task_type')
 
@@ -967,23 +972,92 @@ async def process_browser_search(update: Update, context: ContextTypes.DEFAULT_T
     context.user_data['browser_search_query'] = search_query
     context.user_data['browser_page'] = 0
 
-    # Создаем фиктивный query объект для show_question_browser
-    class FakeQuery:
-        def __init__(self, message, data):
-            self.message = message
-            self.data = data
+    # Загружаем данные и генерируем браузер вручную
+    task_type = context.user_data.get('assignment_task_type')
 
-        async def answer(self):
-            pass
+    from ..services.topics_loader import load_topics_for_module
 
-    fake_query = FakeQuery(update.message, "browser_search_results")
+    topics_data = load_topics_for_module(task_type)
+    all_questions = list(topics_data['topics_by_id'].items())
 
-    # Создаем новый Update объект с фиктивным query
-    fake_update = update
-    fake_update.callback_query = fake_query
+    # Применяем поиск
+    filtered_questions = []
+    for q_id, q_data in all_questions:
+        title = q_data.get('title', '').lower()
+        if search_query.lower() in title:
+            filtered_questions.append((q_id, q_data))
 
-    # Показываем результаты
-    return await show_question_browser(fake_update, context)
+    task_names = {
+        'test_part': '📝 Тестовая часть',
+        'task19': '💡 Задание 19',
+        'task20': '⚙️ Задание 20',
+        'task24': '📊 Задание 24',
+        'task25': '💻 Задание 25'
+    }
+    task_name = task_names.get(task_type, task_type)
+
+    # Получаем список выбранных ID
+    selected_ids = set(context.user_data.get('browser_selected_ids', []))
+
+    # Пагинация
+    page = 0
+    items_per_page = 5
+    total_pages = (len(filtered_questions) + items_per_page - 1) // items_per_page if filtered_questions else 1
+    page_questions = filtered_questions[0:items_per_page]
+
+    # Формируем текст
+    text = f"📋 <b>{task_name}: Выбор заданий</b>\n\n"
+    text += f"✅ Выбрано: {len(selected_ids)} заданий\n"
+    text += f"🔍 Поиск: <code>{search_query}</code>\n"
+    text += f"📊 Найдено: {len(filtered_questions)} заданий\n\n"
+    text += f"<b>Страница 1 из {total_pages}</b>\n\n"
+
+    if not page_questions:
+        text += "<i>Ничего не найдено</i>\n\n"
+
+    # Формируем клавиатуру
+    keyboard = []
+
+    for q_id, q_data in page_questions:
+        title = q_data.get('title', f'Вопрос {q_id}')
+        if len(title) > 50:
+            title = title[:47] + "..."
+
+        emoji = "✅" if q_id in selected_ids else "⬜"
+        button_text = f"{emoji} №{q_id}: {title}"
+        keyboard.append([
+            InlineKeyboardButton(button_text, callback_data=f"browser_toggle_{q_id}")
+        ])
+
+    # Навигация
+    if total_pages > 1:
+        nav_row = []
+        if page < total_pages - 1:
+            nav_row.append(InlineKeyboardButton("➡️ Далее", callback_data="browser_next_page"))
+        if nav_row:
+            keyboard.append(nav_row)
+
+    # Дополнительные кнопки
+    keyboard.append([
+        InlineKeyboardButton("🔍 Новый поиск", callback_data="browser_search"),
+        InlineKeyboardButton("🔄 Сбросить поиск", callback_data="browser_clear_search")
+    ])
+
+    keyboard.append([
+        InlineKeyboardButton(f"✅ Подтвердить ({len(selected_ids)})", callback_data="browser_confirm") if selected_ids else InlineKeyboardButton("◀️ Назад", callback_data="selection_mode_numbers")
+    ])
+
+    if selected_ids:
+        keyboard.append([
+            InlineKeyboardButton("◀️ Назад", callback_data="selection_mode_numbers")
+        ])
+
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
+    # Отправляем новое сообщение с результатами поиска
+    await update.message.reply_text(text, reply_markup=reply_markup, parse_mode='HTML')
+
+    return TeacherStates.ENTER_QUESTION_NUMBERS
 
 
 async def clear_browser_search(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
