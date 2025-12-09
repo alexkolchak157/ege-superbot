@@ -1623,7 +1623,8 @@ async def prompt_assignment_title(update: Update, context: ContextTypes.DEFAULT_
         'task24': '📊 Задание 24',
         'task25': '💻 Задание 25',
         'mixed': '🔀 Смешанное задание',
-        'custom': '📝 Кастомное задание'
+        'custom': '📝 Кастомное задание',
+        'full_exam': '🎯 Полный вариант ЕГЭ'
     }
     default_title = task_names.get(task_type, f"Задание {task_type}")
 
@@ -1673,7 +1674,8 @@ async def process_assignment_title_input(update: Update, context: ContextTypes.D
             'task24': '📊 Задание 24',
             'task25': '💻 Задание 25',
             'mixed': '🔀 Смешанное задание',
-            'custom': '📝 Кастомное задание'
+            'custom': '📝 Кастомное задание',
+            'full_exam': '🎯 Полный вариант ЕГЭ'
         }
         assignment_title = task_names.get(task_type, f"Задание {task_type}")
     else:
@@ -1829,7 +1831,8 @@ async def confirm_and_create_assignment(update: Update, context: ContextTypes.DE
             'task24': 'Задание 24',
             'task25': 'Задание 25',
             'mixed': 'Смешанное задание',
-            'custom': 'Кастомное задание'
+            'custom': 'Кастомное задание',
+            'full_exam': 'Полный вариант ЕГЭ'
         }
         title = task_names.get(task_type, f"Задание {task_type}")
 
