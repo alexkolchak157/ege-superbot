@@ -437,6 +437,7 @@ async def create_assignment_start(update: Update, context: ContextTypes.DEFAULT_
     )
 
     keyboard = [
+        [InlineKeyboardButton("🎯 Полный вариант ЕГЭ", callback_data="assign_task_full_exam")],
         [InlineKeyboardButton("📝 Тестовая часть (1-16)", callback_data="assign_task_test_part")],
         [InlineKeyboardButton("💡 Задание 19", callback_data="assign_task_task19")],
         [InlineKeyboardButton("⚙️ Задание 20", callback_data="assign_task_task20")],
@@ -474,6 +475,11 @@ async def select_task_type(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         context.user_data['custom_questions'] = []  # Список кастомных вопросов
         return await start_custom_question_entry(update, context)
 
+    # Обрабатываем полный вариант ЕГЭ отдельно
+    if task_type == "full_exam":
+        context.user_data['assignment_task_type'] = 'full_exam'
+        return await create_full_exam_variant(update, context)
+
     # Сохраняем выбранный тип задания
     context.user_data['assignment_task_type'] = task_type
 
@@ -507,6 +513,136 @@ async def select_task_type(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     await query.message.edit_text(text, reply_markup=reply_markup, parse_mode='HTML')
 
     return TeacherStates.SELECT_SELECTION_MODE
+
+
+async def create_full_exam_variant(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Создание полного варианта ЕГЭ (20 заданий)"""
+    import random
+    from ..services.topics_loader import load_topics_for_module
+
+    query = update.callback_query
+
+    # Показываем сообщение о создании
+    await query.message.edit_text(
+        "🎯 <b>Создание полного варианта ЕГЭ</b>\n\n"
+        "⏳ Генерирую задания...",
+        parse_mode='HTML'
+    )
+
+    try:
+        # Структура для хранения всех заданий
+        full_exam_questions = []
+
+        # 1. Генерируем тестовую часть (1-16)
+        test_part_data = load_topics_for_module('test_part')
+        all_test_questions = test_part_data.get('questions', [])
+
+        # Группируем вопросы по номерам экзамена
+        questions_by_exam_num = {}
+        for q in all_test_questions:
+            exam_num = q.get('exam_number')
+            if exam_num and 1 <= exam_num <= 16:
+                if exam_num not in questions_by_exam_num:
+                    questions_by_exam_num[exam_num] = []
+                questions_by_exam_num[exam_num].append(q)
+
+        # Выбираем по одному случайному вопросу для каждого номера 1-16
+        test_part_questions = []
+        for exam_num in range(1, 17):
+            if exam_num in questions_by_exam_num and questions_by_exam_num[exam_num]:
+                selected_q = random.choice(questions_by_exam_num[exam_num])
+                test_part_questions.append({
+                    'module': 'test_part',
+                    'question_id': selected_q['id'],
+                    'exam_number': exam_num,
+                    'title': selected_q.get('title', f'Задание {exam_num}')
+                })
+
+        full_exam_questions.extend(test_part_questions)
+
+        # 2. Генерируем задания 19, 20, 24, 25 (по 1 заданию каждое)
+        advanced_modules = ['task19', 'task20', 'task24', 'task25']
+        module_names = {
+            'task19': '💡 Задание 19',
+            'task20': '⚙️ Задание 20',
+            'task24': '📊 Задание 24',
+            'task25': '💻 Задание 25'
+        }
+
+        for module in advanced_modules:
+            module_data = load_topics_for_module(module)
+            all_questions_ids = list(module_data['topics_by_id'].keys())
+
+            if all_questions_ids:
+                selected_id = random.choice(all_questions_ids)
+                topic = module_data['topics_by_id'].get(selected_id)
+                full_exam_questions.append({
+                    'module': module,
+                    'question_id': selected_id,
+                    'title': topic.get('title', f'{module_names[module]}') if topic else module_names[module]
+                })
+
+        # Сохраняем в assignment_data
+        context.user_data['assignment_data'] = {
+            'task_module': 'full_exam',
+            'selection_mode': 'full_exam',
+            'full_exam_questions': full_exam_questions,
+            'questions_count': len(full_exam_questions)
+        }
+
+        # Формируем сообщение с подтверждением
+        text = (
+            "🎯 <b>Полный вариант ЕГЭ сгенерирован</b>\n\n"
+            f"✅ Всего заданий: {len(full_exam_questions)}\n\n"
+            "<b>Состав варианта:</b>\n"
+            f"📝 Тестовая часть (1-16): {len(test_part_questions)} заданий\n"
+            f"💡 Задание 19: 1 задание\n"
+            f"⚙️ Задание 20: 1 задание\n"
+            f"📊 Задание 24: 1 задание\n"
+            f"💻 Задание 25: 1 задание\n\n"
+            "<i>Нажмите 'Продолжить' для выбора студентов</i>"
+        )
+
+        keyboard = [
+            [InlineKeyboardButton("✅ Продолжить", callback_data="confirm_full_exam")],
+            [InlineKeyboardButton("🔄 Генерировать заново", callback_data="regenerate_full_exam")],
+            [InlineKeyboardButton("◀️ Отмена", callback_data="teacher_create_assignment")]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+
+        await query.message.edit_text(text, reply_markup=reply_markup, parse_mode='HTML')
+
+        return TeacherStates.SELECT_SELECTION_MODE
+
+    except Exception as e:
+        await query.message.edit_text(
+            f"❌ <b>Ошибка при создании варианта</b>\n\n"
+            f"Произошла ошибка: {str(e)}\n\n"
+            "Попробуйте снова или выберите другой тип задания.",
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("◀️ Назад", callback_data="teacher_create_assignment")
+            ]]),
+            parse_mode='HTML'
+        )
+        return TeacherStates.CREATE_ASSIGNMENT
+
+
+async def regenerate_full_exam(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Перегенерирует полный вариант ЕГЭ"""
+    query = update.callback_query
+    await query.answer()
+
+    # Просто вызываем создание заново
+    return await create_full_exam_variant(update, context)
+
+
+async def confirm_full_exam(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Подтверждение полного варианта ЕГЭ и переход к выбору студентов"""
+    query = update.callback_query
+    await query.answer()
+
+    # Переходим к выбору студентов
+    return await proceed_to_student_selection(update, context)
 
 
 async def select_selection_mode(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:

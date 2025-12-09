@@ -174,9 +174,11 @@ class TeacherModePlugin(BotPlugin):
                     # Подтверждение сгенерированных заданий
                     CallbackQueryHandler(teacher_handlers.confirm_all_tasks_selection, pattern="^confirm_all_tasks_selection$"),
                     CallbackQueryHandler(teacher_handlers.confirm_mixed_selection, pattern="^confirm_mixed_selection$"),
+                    CallbackQueryHandler(teacher_handlers.confirm_full_exam, pattern="^confirm_full_exam$"),
 
                     # Перегенерация
                     CallbackQueryHandler(teacher_handlers.regenerate_all_tasks, pattern="^regenerate_all_tasks$"),
+                    CallbackQueryHandler(teacher_handlers.regenerate_full_exam, pattern="^regenerate_full_exam$"),
 
                     # Отмена
                     CallbackQueryHandler(teacher_handlers.select_task_type, pattern="^assign_task_"),
