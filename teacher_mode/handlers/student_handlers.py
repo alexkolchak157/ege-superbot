@@ -306,11 +306,19 @@ async def view_homework(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         'task19': '💡 Задание 19 (Примеры с обществознанием)',
         'task20': '⚙️ Задание 20 (Логические задачи)',
         'task24': '📊 Задание 24 (Развернутый план)',
-        'task25': '💻 Задание 25 (Эссе)'
+        'task25': '💻 Задание 25 (Эссе)',
+        'custom': '📝 Кастомное задание'
     }
 
     task_module = homework.assignment_data.get('task_module', 'unknown')
-    task_type_name = task_type_names.get(task_module, task_module)
+
+    # Для кастомных заданий пытаемся определить тип по первому вопросу
+    if homework.assignment_data.get('is_custom') and homework.assignment_data.get('custom_questions'):
+        first_question = homework.assignment_data['custom_questions'][0]
+        question_type = first_question.get('type', 'test_part')
+        task_type_name = task_type_names.get(question_type, 'Кастомное задание')
+    else:
+        task_type_name = task_type_names.get(task_module, task_module)
     questions_count = homework.assignment_data.get('questions_count', 0)
     selection_mode = homework.assignment_data.get('selection_mode', 'all')
 
