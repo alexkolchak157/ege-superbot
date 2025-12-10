@@ -46,6 +46,11 @@ class TeacherStates(IntEnum):
     # Кастомные задания
     ENTER_CUSTOM_QUESTION = 70  # Ввод текста кастомного вопроса
     REVIEW_CUSTOM_QUESTIONS = 71  # Просмотр и подтверждение всех вопросов
+    SELECT_CUSTOM_QUESTION_TYPE = 72  # Выбор типа задания для кастомного вопроса
+    ENTER_CUSTOM_QUESTION_ANSWER = 73  # Ввод правильного ответа/критериев оценки
+
+    # Браузер заданий
+    BROWSER_SEARCH = 74  # Поиск заданий в браузере
 
     # Оплата подписки
     PAYMENT_ENTERING_PROMO = 80  # Ввод промокода для оплаты подписки

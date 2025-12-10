@@ -77,10 +77,13 @@ async def save_homework_answer(
     question_id: str,
     answer: str,
     is_correct: bool,
-    ai_feedback: Optional[str] = None
+    ai_feedback: Optional[str] = None,
+    total_questions: int = None,
+    bot=None
 ) -> bool:
     """
     Сохраняет ответ ученика на вопрос домашнего задания.
+    Автоматически проверяет и завершает задание, если все вопросы выполнены.
 
     Args:
         homework_id: ID задания
@@ -89,6 +92,8 @@ async def save_homework_answer(
         answer: Ответ ученика
         is_correct: Правильный ли ответ
         ai_feedback: Фидбэк от AI
+        total_questions: Общее количество вопросов (для проверки завершения)
+        bot: Telegram Bot instance для отправки уведомлений
 
     Returns:
         True при успехе
@@ -106,21 +111,34 @@ async def save_homework_answer(
         return False
 
     logger.info(f"Saved answer for homework {homework_id}, student {student_id}, question {question_id}")
+
+    # Проверяем и автоматически завершаем задание, если все вопросы выполнены
+    if total_questions is not None:
+        await check_and_complete_homework(
+            homework_id=homework_id,
+            student_id=student_id,
+            total_questions=total_questions,
+            bot=bot
+        )
+
     return True
 
 
 async def check_and_complete_homework(
     homework_id: int,
     student_id: int,
-    total_questions: int
+    total_questions: int,
+    bot=None
 ) -> bool:
     """
     Проверяет и автоматически завершает задание если все вопросы выполнены.
+    Отправляет уведомление учителю при завершении.
 
     Args:
         homework_id: ID задания
         student_id: ID ученика
         total_questions: Общее количество вопросов
+        bot: Telegram Bot instance для отправки уведомлений (опционально)
 
     Returns:
         True если задание было завершено
@@ -128,7 +146,8 @@ async def check_and_complete_homework(
     return await progress_tracker.auto_complete_homework(
         homework_id,
         student_id,
-        total_questions
+        total_questions,
+        bot
     )
 
 
