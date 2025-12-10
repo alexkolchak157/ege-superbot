@@ -1717,7 +1717,8 @@ class SubscriptionManager:
                         )
 
                         # Проверяем, существует ли профиль учителя
-                        teacher_profile = await get_teacher_profile(user_id)
+                        # ИСПРАВЛЕНИЕ: Передаем соединение для предотвращения database lock
+                        teacher_profile = await get_teacher_profile(user_id, conn=conn)
 
                         if not teacher_profile:
                             # Профиль не существует - создаем новый
@@ -1736,10 +1737,12 @@ class SubscriptionManager:
 
                             # КРИТИЧНО: Обработка race condition
                             try:
+                                # ИСПРАВЛЕНИЕ: Передаем соединение для предотвращения database lock
                                 teacher_profile = await create_teacher_profile(
                                     user_id=user_id,
                                     display_name=display_name,
-                                    subscription_tier=plan_id
+                                    subscription_tier=plan_id,
+                                    conn=conn
                                 )
 
                                 if teacher_profile:
@@ -1749,7 +1752,8 @@ class SubscriptionManager:
                             except aiosqlite.IntegrityError:
                                 # Профиль уже создан другой транзакцией
                                 logger.info(f"✅ Teacher profile already exists for user {user_id} (created by concurrent transaction)")
-                                teacher_profile = await get_teacher_profile(user_id)
+                                # ИСПРАВЛЕНИЕ: Передаем соединение для предотвращения database lock
+                                teacher_profile = await get_teacher_profile(user_id, conn=conn)
 
                         # Определяем тип действия для логирования
                         previous_tier = teacher_profile.subscription_tier if teacher_profile else None

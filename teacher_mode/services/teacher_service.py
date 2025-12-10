@@ -28,7 +28,8 @@ def generate_teacher_code() -> str:
 async def create_teacher_profile(
     user_id: int,
     display_name: str,
-    subscription_tier: str = 'teacher_free'
+    subscription_tier: str = 'teacher_free',
+    conn=None
 ) -> TeacherProfile:
     """
     Создает профиль учителя.
@@ -37,6 +38,7 @@ async def create_teacher_profile(
         user_id: ID пользователя Telegram
         display_name: Отображаемое имя учителя
         subscription_tier: Уровень подписки (по умолчанию teacher_free)
+        conn: Опциональное существующее соединение с БД (для использования внутри транзакций)
 
     Returns:
         TeacherProfile
@@ -44,7 +46,8 @@ async def create_teacher_profile(
     try:
         from datetime import timedelta
 
-        async with aiosqlite.connect(DATABASE_FILE) as db:
+        # ИСПРАВЛЕНИЕ: Используем переданное соединение или создаем новое
+        async def _create_profile(db):
             # Генерируем уникальный код
             teacher_code = generate_teacher_code()
 
@@ -84,7 +87,9 @@ async def create_teacher_profile(
             """, (user_id, teacher_code, display_name, subscription_tier,
                   has_active, expires, now, feedback_settings_json))
 
-            await db.commit()
+            # ВАЖНО: Коммитим только если создали свое соединение
+            if not conn:
+                await db.commit()
 
             profile = TeacherProfile(
                 user_id=user_id,
@@ -100,23 +105,32 @@ async def create_teacher_profile(
             logger.info(f"Создан профиль учителя для user_id={user_id}, код={teacher_code}, тариф={subscription_tier}")
             return profile
 
+        if conn:
+            return await _create_profile(conn)
+        else:
+            async with aiosqlite.connect(DATABASE_FILE) as db:
+                return await _create_profile(db)
+
     except Exception as e:
         logger.error(f"Ошибка при создании профиля учителя: {e}")
         raise
 
 
-async def get_teacher_profile(user_id: int) -> Optional[TeacherProfile]:
+async def get_teacher_profile(user_id: int, conn=None) -> Optional[TeacherProfile]:
     """
     Получает профиль учителя по user_id.
 
     Args:
         user_id: ID пользователя Telegram
+        conn: Опциональное существующее соединение с БД (для использования внутри транзакций)
 
     Returns:
         TeacherProfile или None
     """
     try:
-        async with aiosqlite.connect(DATABASE_FILE) as db:
+        # ИСПРАВЛЕНИЕ: Используем переданное соединение или создаем новое
+        if conn:
+            db = conn
             db.row_factory = aiosqlite.Row
             cursor = await db.execute("""
                 SELECT user_id, teacher_code, display_name, has_active_subscription,
@@ -139,6 +153,30 @@ async def get_teacher_profile(user_id: int) -> Optional[TeacherProfile]:
                 created_at=datetime.fromisoformat(row['created_at']),
                 feedback_settings=json.loads(row['feedback_settings']) if row['feedback_settings'] else {}
             )
+        else:
+            async with aiosqlite.connect(DATABASE_FILE) as db:
+                db.row_factory = aiosqlite.Row
+                cursor = await db.execute("""
+                    SELECT user_id, teacher_code, display_name, has_active_subscription,
+                           subscription_expires, subscription_tier, created_at, feedback_settings
+                    FROM teacher_profiles
+                    WHERE user_id = ?
+                """, (user_id,))
+
+                row = await cursor.fetchone()
+                if not row:
+                    return None
+
+                return TeacherProfile(
+                    user_id=row['user_id'],
+                    teacher_code=row['teacher_code'],
+                    display_name=row['display_name'],
+                    has_active_subscription=bool(row['has_active_subscription']),
+                    subscription_expires=datetime.fromisoformat(row['subscription_expires']) if row['subscription_expires'] else None,
+                    subscription_tier=row['subscription_tier'],
+                    created_at=datetime.fromisoformat(row['created_at']),
+                    feedback_settings=json.loads(row['feedback_settings']) if row['feedback_settings'] else {}
+                )
 
     except Exception as e:
         logger.error(f"Ошибка при получении профиля учителя: {e}")
