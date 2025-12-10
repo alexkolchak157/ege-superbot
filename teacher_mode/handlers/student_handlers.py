@@ -744,18 +744,43 @@ async def process_homework_answer(update: Update, context: ContextTypes.DEFAULT_
     from ..services.question_loader import load_question_by_id
     from ..services.ai_homework_evaluator import evaluate_homework_answer
 
-    question_data = load_question_by_id(task_module, question_id)
+    # Специальная обработка для кастомных заданий
+    if task_module == 'custom':
+        # Загружаем homework чтобы получить custom_questions
+        homework = await assignment_service.get_homework_by_id(homework_id)
+        if not homework:
+            await checking_msg.edit_text(
+                "❌ Ошибка: задание не найдено.",
+                parse_mode='HTML'
+            )
+            return ConversationHandler.END
 
-    if not question_data:
-        await checking_msg.edit_text(
-            "❌ Ошибка: не удалось загрузить данные вопроса для проверки.",
-            parse_mode='HTML'
-        )
-        return ConversationHandler.END
+        custom_questions = homework.assignment_data.get('custom_questions', [])
+        question_data = next((q for q in custom_questions if q['id'] == question_id), None)
+
+        if not question_data:
+            await checking_msg.edit_text(
+                "❌ Ошибка: вопрос не найден в задании.",
+                parse_mode='HTML'
+            )
+            return ConversationHandler.END
+    else:
+        # Для стандартных заданий используем question_loader
+        question_data = load_question_by_id(task_module, question_id)
+
+        if not question_data:
+            await checking_msg.edit_text(
+                "❌ Ошибка: не удалось загрузить данные вопроса для проверки.",
+                parse_mode='HTML'
+            )
+            return ConversationHandler.END
 
     # Выполняем AI проверку
+    # Для кастомных вопросов используем реальный тип задания из question_data
+    actual_task_module = question_data.get('type', task_module) if task_module == 'custom' else task_module
+
     is_correct, ai_feedback = await evaluate_homework_answer(
-        task_module=task_module,
+        task_module=actual_task_module,
         question_data=question_data,
         user_answer=answer,
         user_id=user_id
