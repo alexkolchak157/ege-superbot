@@ -146,7 +146,18 @@ async def confirm_teacher_connection(update: Update, context: ContextTypes.DEFAU
     # Проверяем лимит учеников
     can_add, reason = await teacher_service.can_add_student(teacher.user_id)
     if not can_add:
-        text = f"❌ Не удалось подключиться к учителю.\n\n{reason}"
+        # Если лимит превышен - показываем специальное сообщение
+        if "Достигнут лимит учеников" in reason:
+            text = (
+                f"❌ <b>Не удалось подключиться к учителю {teacher_name}</b>\n\n"
+                f"📊 {reason}\n\n"
+                "💡 Попросите вашего учителя обновить тариф подписки, "
+                "чтобы подключить больше учеников.\n\n"
+                "Учитель сможет выбрать тариф в разделе <i>«Режим учителя» → «Мой профиль»</i>."
+            )
+        else:
+            text = f"❌ Не удалось подключиться к учителю.\n\n{reason}"
+
         keyboard = [[InlineKeyboardButton("◀️ Главное меню", callback_data="main_menu")]]
         reply_markup = InlineKeyboardMarkup(keyboard)
         await query.message.edit_text(text, reply_markup=reply_markup, parse_mode='HTML')
@@ -403,6 +414,40 @@ async def start_homework(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
         topics_data = {'topics_by_id': combined_topics}
         task_module = 'mixed'
+    elif assignment_data.get('task_module') == 'full_exam' or assignment_data.get('full_exam_questions'):
+        # Для полного варианта ЕГЭ собираем все вопросы из всех модулей
+        full_exam_questions = assignment_data.get('full_exam_questions', [])
+        question_ids = [q['question_id'] for q in full_exam_questions]
+        combined_topics = {}
+
+        from ..services.topics_loader import load_topics_for_module
+
+        for q in full_exam_questions:
+            module_code = q['module']
+            q_id = q['question_id']
+
+            # Для test_part используем exam_number
+            if module_code == 'test_part':
+                exam_num = q.get('exam_number', q_id)
+                combined_topics[q_id] = {
+                    'title': f"Задание {exam_num}",
+                    'exam_number': exam_num
+                }
+            else:
+                # Загружаем данные для остальных модулей
+                if module_code not in ['task19', 'task20', 'task24', 'task25']:
+                    continue
+
+                topics_data_temp = load_topics_for_module(module_code)
+                topic_data = topics_data_temp['topics_by_id'].get(q_id)
+                if topic_data:
+                    combined_topics[q_id] = topic_data
+                else:
+                    # Fallback если не нашли
+                    combined_topics[q_id] = {'title': q.get('title', f'Вопрос {q_id}')}
+
+        topics_data = {'topics_by_id': combined_topics}
+        task_module = 'full_exam'
     else:
         # Для обычных заданий
         question_ids = assignment_data.get('question_ids', [])
@@ -433,7 +478,8 @@ async def start_homework(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         'task24': '📊 Задание 24',
         'task25': '💻 Задание 25',
         'mixed': '🔀 Смешанное задание',
-        'custom': '📝 Кастомное задание'
+        'custom': '📝 Кастомное задание',
+        'full_exam': '🎯 Полный вариант ЕГЭ'
     }
     task_name = task_names.get(task_module, task_module)
 
@@ -515,6 +561,23 @@ async def show_homework_question(update: Update, context: ContextTypes.DEFAULT_T
         for module_data in assignment_data.get('modules', []):
             if question_id in module_data.get('question_ids', []):
                 task_module = module_data['task_module']
+                break
+        if not task_module:
+            await query.message.edit_text(
+                "❌ Вопрос не найден в задании.",
+                reply_markup=InlineKeyboardMarkup([[
+                    InlineKeyboardButton("◀️ Назад", callback_data="student_homework_list")
+                ]]),
+                parse_mode='HTML'
+            )
+            return ConversationHandler.END
+    elif assignment_data.get('task_module') == 'full_exam' or assignment_data.get('full_exam_questions'):
+        # Для полного экзамена ищем модуль вопроса
+        task_module = None
+        full_exam_questions = assignment_data.get('full_exam_questions', [])
+        for q in full_exam_questions:
+            if q['question_id'] == question_id:
+                task_module = q['module']
                 break
         if not task_module:
             await query.message.edit_text(

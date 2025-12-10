@@ -6,7 +6,7 @@ import logging
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, filters, ConversationHandler
 
 from core.plugin_base import BotPlugin
-from .handlers import teacher_handlers, student_handlers
+from .handlers import teacher_handlers, student_handlers, analytics_handlers
 from .states import TeacherStates, StudentStates
 
 logger = logging.getLogger(__name__)
@@ -53,9 +53,14 @@ class TeacherModePlugin(BotPlugin):
 
                     # Ученики и статистика
                     CallbackQueryHandler(teacher_handlers.show_student_list, pattern="^teacher_students$"),
-                    CallbackQueryHandler(teacher_handlers.show_teacher_statistics, pattern="^teacher_statistics$"),
+                    CallbackQueryHandler(analytics_handlers.show_statistics, pattern="^teacher_statistics$"),
                     CallbackQueryHandler(teacher_handlers.show_teacher_assignments, pattern="^teacher_my_assignments$"),
                     CallbackQueryHandler(teacher_handlers.show_homework_stats, pattern="^homework_stats_"),
+
+                    # Аналитика
+                    CallbackQueryHandler(analytics_handlers.show_students_analytics, pattern="^analytics_students$"),
+                    CallbackQueryHandler(analytics_handlers.show_student_detailed_analytics, pattern="^analytics_student:"),
+                    CallbackQueryHandler(analytics_handlers.show_group_analytics, pattern="^analytics_group$"),
 
                     # Просмотр ответов учеников
                     CallbackQueryHandler(teacher_handlers.view_homework_submissions, pattern="^homework_submissions:"),
@@ -158,8 +163,33 @@ class TeacherModePlugin(BotPlugin):
                     CallbackQueryHandler(teacher_handlers.confirm_numbers_selection, pattern="^confirm_numbers_selection$"),
                     CallbackQueryHandler(teacher_handlers.confirm_exam_numbers_selection, pattern="^confirm_exam_numbers_selection$"),
 
+                    # Браузер заданий - выбор способа ввода
+                    CallbackQueryHandler(teacher_handlers.show_manual_numbers_input, pattern="^numbers_manual_"),
+                    CallbackQueryHandler(teacher_handlers.show_question_browser, pattern="^numbers_browser_"),
+
+                    # Браузер заданий - навигация и выбор
+                    CallbackQueryHandler(teacher_handlers.toggle_question_browser, pattern="^browser_toggle_"),
+                    CallbackQueryHandler(teacher_handlers.navigate_question_browser, pattern="^browser_(next|prev)_page$"),
+                    CallbackQueryHandler(teacher_handlers.start_browser_search, pattern="^browser_search$"),
+                    CallbackQueryHandler(teacher_handlers.clear_browser_search, pattern="^browser_clear_search$"),
+                    CallbackQueryHandler(teacher_handlers.cancel_browser_search, pattern="^browser_cancel_search$"),
+                    CallbackQueryHandler(teacher_handlers.confirm_browser_selection, pattern="^browser_confirm$"),
+
+                    # Возврат к выбору способа ввода
+                    CallbackQueryHandler(teacher_handlers.select_selection_mode, pattern="^selection_mode_"),
+
                     # Отмена
                     CallbackQueryHandler(teacher_handlers.select_task_type, pattern="^assign_task_"),
+                    CallbackQueryHandler(teacher_handlers.teacher_menu, pattern="^teacher_menu$"),
+                ],
+                TeacherStates.BROWSER_SEARCH: [
+                    # Обработка текстового ввода поискового запроса
+                    MessageHandler(filters.TEXT & ~filters.COMMAND, teacher_handlers.process_browser_search),
+
+                    # Отмена поиска
+                    CallbackQueryHandler(teacher_handlers.cancel_browser_search, pattern="^browser_cancel_search$"),
+
+                    # Общая отмена
                     CallbackQueryHandler(teacher_handlers.teacher_menu, pattern="^teacher_menu$"),
                 ],
                 TeacherStates.ENTER_QUESTION_COUNT: [
@@ -169,9 +199,11 @@ class TeacherModePlugin(BotPlugin):
                     # Подтверждение сгенерированных заданий
                     CallbackQueryHandler(teacher_handlers.confirm_all_tasks_selection, pattern="^confirm_all_tasks_selection$"),
                     CallbackQueryHandler(teacher_handlers.confirm_mixed_selection, pattern="^confirm_mixed_selection$"),
+                    CallbackQueryHandler(teacher_handlers.confirm_full_exam, pattern="^confirm_full_exam$"),
 
                     # Перегенерация
                     CallbackQueryHandler(teacher_handlers.regenerate_all_tasks, pattern="^regenerate_all_tasks$"),
+                    CallbackQueryHandler(teacher_handlers.regenerate_full_exam, pattern="^regenerate_full_exam$"),
 
                     # Отмена
                     CallbackQueryHandler(teacher_handlers.select_task_type, pattern="^assign_task_"),
@@ -213,6 +245,31 @@ class TeacherModePlugin(BotPlugin):
                     CallbackQueryHandler(teacher_handlers.delete_last_custom_question, pattern="^delete_last_custom_question$"),
 
                     # Отмена
+                    CallbackQueryHandler(teacher_handlers.create_assignment_start, pattern="^teacher_create_assignment$"),
+                    CallbackQueryHandler(teacher_handlers.teacher_menu, pattern="^teacher_menu$"),
+                ],
+                TeacherStates.SELECT_CUSTOM_QUESTION_TYPE: [
+                    # Выбор типа задания для кастомного вопроса
+                    CallbackQueryHandler(teacher_handlers.select_custom_question_type, pattern="^custom_type_"),
+
+                    # Выбор ввода ответа или пропуск
+                    CallbackQueryHandler(teacher_handlers.prompt_custom_question_answer, pattern="^enter_custom_answer_"),
+
+                    # Отмена текущего вопроса
+                    CallbackQueryHandler(teacher_handlers.cancel_current_custom_question, pattern="^cancel_current_custom_question$"),
+
+                    # Отмена создания задания
+                    CallbackQueryHandler(teacher_handlers.create_assignment_start, pattern="^teacher_create_assignment$"),
+                    CallbackQueryHandler(teacher_handlers.teacher_menu, pattern="^teacher_menu$"),
+                ],
+                TeacherStates.ENTER_CUSTOM_QUESTION_ANSWER: [
+                    # Обработка текстового ввода правильного ответа/критериев
+                    MessageHandler(filters.TEXT & ~filters.COMMAND, teacher_handlers.process_custom_question_answer),
+
+                    # Отмена текущего вопроса
+                    CallbackQueryHandler(teacher_handlers.cancel_current_custom_question, pattern="^cancel_current_custom_question$"),
+
+                    # Отмена создания задания
                     CallbackQueryHandler(teacher_handlers.create_assignment_start, pattern="^teacher_create_assignment$"),
                     CallbackQueryHandler(teacher_handlers.teacher_menu, pattern="^teacher_menu$"),
                 ],

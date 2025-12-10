@@ -170,15 +170,18 @@ async def is_homework_completed(
 async def auto_complete_homework(
     homework_id: int,
     student_id: int,
-    total_questions: int
+    total_questions: int,
+    bot=None
 ) -> bool:
     """
     Автоматически обновляет статус задания на 'completed', если все вопросы выполнены.
+    Опционально отправляет уведомление учителю о завершении.
 
     Args:
         homework_id: ID задания
         student_id: ID ученика
         total_questions: Всего вопросов в задании
+        bot: Telegram Bot instance для отправки уведомлений (опционально)
 
     Returns:
         True если статус был обновлён
@@ -195,6 +198,39 @@ async def auto_complete_homework(
 
         if success:
             logger.info(f"Auto-completed homework {homework_id} for student {student_id}")
+
+            # Отправляем уведомление учителю
+            if bot:
+                try:
+                    from . import notification_service
+                    from ...teacher_mode.services import teacher_service
+
+                    # Получаем информацию о задании
+                    homework = await assignment_service.get_homework_by_id(homework_id)
+                    if homework:
+                        # Получаем статистику выполнения
+                        performance = await get_student_performance_summary(student_id, homework_id)
+                        correct_count = performance.get('correct', 0)
+                        total_count = performance.get('total', 0)
+
+                        # Получаем имя ученика
+                        student_names = await teacher_service.get_users_display_names([student_id])
+                        student_name = student_names.get(student_id, f"Ученик {student_id}")
+
+                        # Отправляем уведомление учителю
+                        await notification_service.notify_teacher_about_completion(
+                            bot=bot,
+                            teacher_id=homework.teacher_id,
+                            student_id=student_id,
+                            student_name=student_name,
+                            homework_id=homework_id,
+                            homework_title=homework.title,
+                            correct_count=correct_count,
+                            total_count=total_count
+                        )
+                except Exception as e:
+                    logger.error(f"Failed to send teacher notification: {e}")
+                    # Не падаем, если уведомление не удалось отправить
 
         return success
 

@@ -251,6 +251,7 @@ async def teacher_profile(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
     # Формируем текст с информацией о подписке
     tier_names = {
+        'teacher_free': '🆓 Бесплатный',
         'teacher_basic': '👨‍🏫 Basic',
         'teacher_standard': '👨‍🏫 Standard',
         'teacher_premium': '👨‍🏫 Premium'
@@ -272,10 +273,25 @@ async def teacher_profile(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         "чтобы они могли подключиться к вам.".format(profile.teacher_code)
     )
 
+    # Добавляем предупреждение для teacher_free если достигнут лимит
+    if profile.subscription_tier == 'teacher_free' and student_count >= max_students:
+        text += (
+            "\n\n"
+            "⚠️ <b>Достигнут лимит учеников</b>\n\n"
+            "💡 Обновите тариф, чтобы подключить больше учеников и получить "
+            "доступ к расширенным функциям!"
+        )
+
     keyboard = [
-        [InlineKeyboardButton("📋 Список учеников", callback_data="teacher_students")],
-        [InlineKeyboardButton("◀️ Назад", callback_data="teacher_menu")]
+        [InlineKeyboardButton("📋 Список учеников", callback_data="teacher_students")]
     ]
+
+    # Добавляем кнопку обновления тарифа для teacher_free
+    if profile.subscription_tier == 'teacher_free':
+        keyboard.insert(0, [InlineKeyboardButton("💎 Обновить тариф", callback_data="teacher_subscriptions")])
+
+    keyboard.append([InlineKeyboardButton("◀️ Назад", callback_data="teacher_menu")])
+
     reply_markup = InlineKeyboardMarkup(keyboard)
 
     await query.message.edit_text(text, reply_markup=reply_markup, parse_mode='HTML')
@@ -421,6 +437,7 @@ async def create_assignment_start(update: Update, context: ContextTypes.DEFAULT_
     )
 
     keyboard = [
+        [InlineKeyboardButton("🎯 Полный вариант ЕГЭ", callback_data="assign_task_full_exam")],
         [InlineKeyboardButton("📝 Тестовая часть (1-16)", callback_data="assign_task_test_part")],
         [InlineKeyboardButton("💡 Задание 19", callback_data="assign_task_task19")],
         [InlineKeyboardButton("⚙️ Задание 20", callback_data="assign_task_task20")],
@@ -458,6 +475,11 @@ async def select_task_type(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         context.user_data['custom_questions'] = []  # Список кастомных вопросов
         return await start_custom_question_entry(update, context)
 
+    # Обрабатываем полный вариант ЕГЭ отдельно
+    if task_type == "full_exam":
+        context.user_data['assignment_task_type'] = 'full_exam'
+        return await create_full_exam_variant(update, context)
+
     # Сохраняем выбранный тип задания
     context.user_data['assignment_task_type'] = task_type
 
@@ -491,6 +513,136 @@ async def select_task_type(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     await query.message.edit_text(text, reply_markup=reply_markup, parse_mode='HTML')
 
     return TeacherStates.SELECT_SELECTION_MODE
+
+
+async def create_full_exam_variant(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Создание полного варианта ЕГЭ (20 заданий)"""
+    import random
+    from ..services.topics_loader import load_topics_for_module
+
+    query = update.callback_query
+
+    # Показываем сообщение о создании
+    await query.message.edit_text(
+        "🎯 <b>Создание полного варианта ЕГЭ</b>\n\n"
+        "⏳ Генерирую задания...",
+        parse_mode='HTML'
+    )
+
+    try:
+        # Структура для хранения всех заданий
+        full_exam_questions = []
+
+        # 1. Генерируем тестовую часть (1-16)
+        test_part_data = load_topics_for_module('test_part')
+        all_test_questions = test_part_data.get('questions', [])
+
+        # Группируем вопросы по номерам экзамена
+        questions_by_exam_num = {}
+        for q in all_test_questions:
+            exam_num = q.get('exam_number')
+            if exam_num and 1 <= exam_num <= 16:
+                if exam_num not in questions_by_exam_num:
+                    questions_by_exam_num[exam_num] = []
+                questions_by_exam_num[exam_num].append(q)
+
+        # Выбираем по одному случайному вопросу для каждого номера 1-16
+        test_part_questions = []
+        for exam_num in range(1, 17):
+            if exam_num in questions_by_exam_num and questions_by_exam_num[exam_num]:
+                selected_q = random.choice(questions_by_exam_num[exam_num])
+                test_part_questions.append({
+                    'module': 'test_part',
+                    'question_id': selected_q['id'],
+                    'exam_number': exam_num,
+                    'title': selected_q.get('title', f'Задание {exam_num}')
+                })
+
+        full_exam_questions.extend(test_part_questions)
+
+        # 2. Генерируем задания 19, 20, 24, 25 (по 1 заданию каждое)
+        advanced_modules = ['task19', 'task20', 'task24', 'task25']
+        module_names = {
+            'task19': '💡 Задание 19',
+            'task20': '⚙️ Задание 20',
+            'task24': '📊 Задание 24',
+            'task25': '💻 Задание 25'
+        }
+
+        for module in advanced_modules:
+            module_data = load_topics_for_module(module)
+            all_questions_ids = list(module_data['topics_by_id'].keys())
+
+            if all_questions_ids:
+                selected_id = random.choice(all_questions_ids)
+                topic = module_data['topics_by_id'].get(selected_id)
+                full_exam_questions.append({
+                    'module': module,
+                    'question_id': selected_id,
+                    'title': topic.get('title', f'{module_names[module]}') if topic else module_names[module]
+                })
+
+        # Сохраняем в assignment_data
+        context.user_data['assignment_data'] = {
+            'task_module': 'full_exam',
+            'selection_mode': 'full_exam',
+            'full_exam_questions': full_exam_questions,
+            'questions_count': len(full_exam_questions)
+        }
+
+        # Формируем сообщение с подтверждением
+        text = (
+            "🎯 <b>Полный вариант ЕГЭ сгенерирован</b>\n\n"
+            f"✅ Всего заданий: {len(full_exam_questions)}\n\n"
+            "<b>Состав варианта:</b>\n"
+            f"📝 Тестовая часть (1-16): {len(test_part_questions)} заданий\n"
+            f"💡 Задание 19: 1 задание\n"
+            f"⚙️ Задание 20: 1 задание\n"
+            f"📊 Задание 24: 1 задание\n"
+            f"💻 Задание 25: 1 задание\n\n"
+            "<i>Нажмите 'Продолжить' для выбора студентов</i>"
+        )
+
+        keyboard = [
+            [InlineKeyboardButton("✅ Продолжить", callback_data="confirm_full_exam")],
+            [InlineKeyboardButton("🔄 Генерировать заново", callback_data="regenerate_full_exam")],
+            [InlineKeyboardButton("◀️ Отмена", callback_data="teacher_create_assignment")]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+
+        await query.message.edit_text(text, reply_markup=reply_markup, parse_mode='HTML')
+
+        return TeacherStates.SELECT_SELECTION_MODE
+
+    except Exception as e:
+        await query.message.edit_text(
+            f"❌ <b>Ошибка при создании варианта</b>\n\n"
+            f"Произошла ошибка: {str(e)}\n\n"
+            "Попробуйте снова или выберите другой тип задания.",
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("◀️ Назад", callback_data="teacher_create_assignment")
+            ]]),
+            parse_mode='HTML'
+        )
+        return TeacherStates.CREATE_ASSIGNMENT
+
+
+async def regenerate_full_exam(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Перегенерирует полный вариант ЕГЭ"""
+    query = update.callback_query
+    await query.answer()
+
+    # Просто вызываем создание заново
+    return await create_full_exam_variant(update, context)
+
+
+async def confirm_full_exam(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Подтверждение полного варианта ЕГЭ и переход к выбору студентов"""
+    query = update.callback_query
+    await query.answer()
+
+    # Переходим к выбору студентов
+    return await proceed_to_student_selection(update, context)
 
 
 async def select_selection_mode(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -537,48 +689,468 @@ async def select_selection_mode(update: Update, context: ContextTypes.DEFAULT_TY
         return await show_topic_blocks_selection(update, context)
 
     elif mode == "numbers":
-        # Режим "Конкретные номера" - показываем инструкцию для ввода
-        from ..services.topics_loader import load_topics_for_module
-
-        topics_data = load_topics_for_module(task_type)
-        total_count = topics_data['total_count']
-
-        # Для test_part показываем выбор по номерам ЕГЭ (1-16)
-        if task_type == 'test_part':
-            await query.message.edit_text(
-                f"🔢 <b>{task_name}: Выбор по номерам заданий ЕГЭ</b>\n\n"
-                f"📚 Доступны задания: 1-16 (тестовая часть)\n"
-                f"📊 Всего вопросов в базе: {total_count}\n\n"
-                "Введите номера заданий ЕГЭ одним сообщением:\n\n"
-                "<b>Примеры форматов:</b>\n"
-                "• Отдельные номера: <code>1,5,10</code>\n"
-                "• Диапазоны: <code>1-5,10-13</code>\n"
-                "• Комбинированно: <code>1,3,5-10,15</code>\n\n"
-                "💡 Можно использовать пробелы для читаемости",
-                reply_markup=InlineKeyboardMarkup([[
-                    InlineKeyboardButton("◀️ Отмена", callback_data=f"assign_task_{task_type}")
-                ]]),
-                parse_mode='HTML'
-            )
-        else:
-            # Для остальных модулей показываем выбор по ID из банка тем
-            await query.message.edit_text(
-                f"🔢 <b>{task_name}: Ввод номеров заданий</b>\n\n"
-                f"📚 В банке доступно: {total_count} заданий (ID: 1-{total_count})\n\n"
-                "Введите ID заданий одним сообщением:\n\n"
-                "<b>Примеры форматов:</b>\n"
-                "• Отдельные номера: <code>1,5,10,23</code>\n"
-                "• Диапазоны: <code>1-5,10-15,20</code>\n"
-                "• Комбинированно: <code>1,3,5-10,15,20-25</code>\n\n"
-                "💡 Можно использовать пробелы для читаемости",
-                reply_markup=InlineKeyboardMarkup([[
-                    InlineKeyboardButton("◀️ Отмена", callback_data=f"assign_task_{task_type}")
-                ]]),
-                parse_mode='HTML'
-            )
+        # Режим "Конкретные номера" - показываем выбор способа ввода
+        await query.message.edit_text(
+            f"🔢 <b>{task_name}: Выбор конкретных заданий</b>\n\n"
+            "Выберите способ отбора заданий:",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("📋 Выбрать из списка", callback_data=f"numbers_browser_{task_type}")],
+                [InlineKeyboardButton("✏️ Ввести вручную", callback_data=f"numbers_manual_{task_type}")],
+                [InlineKeyboardButton("◀️ Назад", callback_data=f"assign_task_{task_type}")]
+            ]),
+            parse_mode='HTML'
+        )
         return TeacherStates.ENTER_QUESTION_NUMBERS
 
     return TeacherStates.CREATE_ASSIGNMENT
+
+
+async def show_manual_numbers_input(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Показывает инструкцию для ручного ввода номеров заданий"""
+    query = update.callback_query
+    await query.answer()
+
+    task_type = query.data.replace("numbers_manual_", "")
+    context.user_data['assignment_task_type'] = task_type
+
+    from ..services.topics_loader import load_topics_for_module
+
+    topics_data = load_topics_for_module(task_type)
+    total_count = topics_data['total_count']
+
+    task_names = {
+        'test_part': '📝 Тестовая часть (1-16)',
+        'task19': '💡 Задание 19',
+        'task20': '⚙️ Задание 20',
+        'task24': '📊 Задание 24',
+        'task25': '💻 Задание 25'
+    }
+    task_name = task_names.get(task_type, task_type)
+
+    # Для test_part показываем выбор по номерам ЕГЭ (1-16)
+    if task_type == 'test_part':
+        await query.message.edit_text(
+            f"✏️ <b>{task_name}: Ввод номеров вручную</b>\n\n"
+            f"📚 Доступны задания: 1-16 (тестовая часть)\n"
+            f"📊 Всего вопросов в базе: {total_count}\n\n"
+            "Введите номера заданий ЕГЭ одним сообщением:\n\n"
+            "<b>Примеры форматов:</b>\n"
+            "• Отдельные номера: <code>1,5,10</code>\n"
+            "• Диапазоны: <code>1-5,10-13</code>\n"
+            "• Комбинированно: <code>1,3,5-10,15</code>\n\n"
+            "💡 Можно использовать пробелы для читаемости",
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("◀️ Назад", callback_data="selection_mode_numbers")
+            ]]),
+            parse_mode='HTML'
+        )
+    else:
+        # Для остальных модулей показываем выбор по ID из банка тем
+        await query.message.edit_text(
+            f"✏️ <b>{task_name}: Ввод номеров вручную</b>\n\n"
+            f"📚 В банке доступно: {total_count} заданий (ID: 1-{total_count})\n\n"
+            "Введите ID заданий одним сообщением:\n\n"
+            "<b>Примеры форматов:</b>\n"
+            "• Отдельные номера: <code>1,5,10,23</code>\n"
+            "• Диапазоны: <code>1-5,10-15,20</code>\n"
+            "• Комбинированно: <code>1,3,5-10,15,20-25</code>\n\n"
+            "💡 Можно использовать пробелы для читаемости",
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("◀️ Назад", callback_data="selection_mode_numbers")
+            ]]),
+            parse_mode='HTML'
+        )
+    return TeacherStates.ENTER_QUESTION_NUMBERS
+
+
+async def show_question_browser(update: Update, context: ContextTypes.DEFAULT_TYPE, page: int = 0) -> int:
+    """Показывает браузер заданий с возможностью выбора"""
+    query = update.callback_query
+    await query.answer()
+
+    # Извлекаем task_type из callback_data или из контекста
+    if query.data.startswith("numbers_browser_"):
+        task_type = query.data.replace("numbers_browser_", "")
+        context.user_data['assignment_task_type'] = task_type
+        # Инициализируем список выбранных заданий ТОЛЬКО если его еще нет
+        # Это позволяет сохранить выбор при возврате из подтверждения
+        if 'browser_selected_ids' not in context.user_data:
+            context.user_data['browser_selected_ids'] = []
+            context.user_data['browser_page'] = 0
+            context.user_data['browser_search_query'] = None
+        # При возврате из подтверждения восстанавливаем выбор из selected_question_ids
+        elif 'selected_question_ids' in context.user_data:
+            context.user_data['browser_selected_ids'] = context.user_data['selected_question_ids']
+    else:
+        task_type = context.user_data.get('assignment_task_type')
+
+    from ..services.topics_loader import load_topics_for_module
+
+    topics_data = load_topics_for_module(task_type)
+    all_questions = list(topics_data['topics_by_id'].items())
+
+    # Применяем поиск если есть
+    search_query = context.user_data.get('browser_search_query')
+    if search_query:
+        filtered_questions = []
+        for q_id, q_data in all_questions:
+            title = q_data.get('title', '').lower()
+            if search_query.lower() in title:
+                filtered_questions.append((q_id, q_data))
+        all_questions = filtered_questions
+
+    task_names = {
+        'test_part': '📝 Тестовая часть',
+        'task19': '💡 Задание 19',
+        'task20': '⚙️ Задание 20',
+        'task24': '📊 Задание 24',
+        'task25': '💻 Задание 25'
+    }
+    task_name = task_names.get(task_type, task_type)
+
+    # Получаем текущую страницу
+    page = context.user_data.get('browser_page', 0)
+    items_per_page = 5
+    total_pages = (len(all_questions) + items_per_page - 1) // items_per_page
+
+    # Ограничиваем страницу
+    page = max(0, min(page, total_pages - 1)) if total_pages > 0 else 0
+    context.user_data['browser_page'] = page
+
+    start_idx = page * items_per_page
+    end_idx = start_idx + items_per_page
+    page_questions = all_questions[start_idx:end_idx]
+
+    # Получаем список выбранных ID
+    selected_ids = set(context.user_data.get('browser_selected_ids', []))
+
+    # Формируем текст
+    text = f"📋 <b>{task_name}: Выбор заданий</b>\n\n"
+    text += f"✅ Выбрано: {len(selected_ids)} заданий\n"
+
+    if search_query:
+        text += f"🔍 Поиск: <code>{search_query}</code>\n"
+        text += f"📊 Найдено: {len(all_questions)} заданий\n\n"
+    else:
+        text += f"📊 Всего: {len(all_questions)} заданий\n\n"
+
+    text += f"<b>Страница {page + 1} из {total_pages}</b>\n\n"
+
+    if not page_questions:
+        text += "<i>Ничего не найдено</i>\n\n"
+
+    # Формируем клавиатуру
+    keyboard = []
+
+    for q_id, q_data in page_questions:
+        title = q_data.get('title', f'Вопрос {q_id}')
+        # Обрезаем длинные названия
+        if len(title) > 50:
+            title = title[:47] + "..."
+
+        # Показываем статус выбора
+        if q_id in selected_ids:
+            emoji = "✅"
+        else:
+            emoji = "⬜"
+
+        button_text = f"{emoji} №{q_id}: {title}"
+        keyboard.append([
+            InlineKeyboardButton(button_text, callback_data=f"browser_toggle_{q_id}")
+        ])
+
+    # Навигация
+    nav_row = []
+    if page > 0:
+        nav_row.append(InlineKeyboardButton("⬅️ Назад", callback_data="browser_prev_page"))
+    if page < total_pages - 1:
+        nav_row.append(InlineKeyboardButton("➡️ Далее", callback_data="browser_next_page"))
+    if nav_row:
+        keyboard.append(nav_row)
+
+    # Дополнительные кнопки
+    keyboard.append([
+        InlineKeyboardButton("🔍 Поиск", callback_data="browser_search"),
+        InlineKeyboardButton("🔄 Сбросить поиск", callback_data="browser_clear_search") if search_query else InlineKeyboardButton("📝 Ввести вручную", callback_data=f"numbers_manual_{task_type}")
+    ])
+
+    keyboard.append([
+        InlineKeyboardButton(f"✅ Подтвердить ({len(selected_ids)})", callback_data="browser_confirm") if selected_ids else InlineKeyboardButton("◀️ Назад", callback_data="selection_mode_numbers")
+    ])
+
+    if selected_ids:
+        keyboard.append([
+            InlineKeyboardButton("◀️ Назад", callback_data="selection_mode_numbers")
+        ])
+
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
+    await query.message.edit_text(text, reply_markup=reply_markup, parse_mode='HTML')
+
+    return TeacherStates.ENTER_QUESTION_NUMBERS
+
+
+async def toggle_question_browser(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Добавляет или удаляет вопрос из выбранных"""
+    query = update.callback_query
+    await query.answer()
+
+    # Извлекаем ID вопроса
+    question_id = int(query.data.replace("browser_toggle_", ""))
+
+    # Получаем список выбранных ID
+    selected_ids = context.user_data.get('browser_selected_ids', [])
+
+    # Toggle: если есть - удаляем, если нет - добавляем
+    if question_id in selected_ids:
+        selected_ids.remove(question_id)
+    else:
+        selected_ids.append(question_id)
+
+    context.user_data['browser_selected_ids'] = selected_ids
+
+    # Обновляем отображение
+    return await show_question_browser(update, context)
+
+
+async def navigate_question_browser(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Навигация по страницам браузера"""
+    query = update.callback_query
+    await query.answer()
+
+    current_page = context.user_data.get('browser_page', 0)
+
+    if query.data == "browser_next_page":
+        context.user_data['browser_page'] = current_page + 1
+    elif query.data == "browser_prev_page":
+        context.user_data['browser_page'] = max(0, current_page - 1)
+
+    return await show_question_browser(update, context)
+
+
+async def start_browser_search(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Запрашивает поисковый запрос"""
+    query = update.callback_query
+    await query.answer()
+
+    task_type = context.user_data.get('assignment_task_type')
+
+    task_names = {
+        'test_part': '📝 Тестовая часть',
+        'task19': '💡 Задание 19',
+        'task20': '⚙️ Задание 20',
+        'task24': '📊 Задание 24',
+        'task25': '💻 Задание 25'
+    }
+    task_name = task_names.get(task_type, task_type)
+
+    await query.message.edit_text(
+        f"🔍 <b>{task_name}: Поиск заданий</b>\n\n"
+        "Введите ключевое слово или фразу для поиска в названиях заданий:\n\n"
+        "<i>Например: алгоритм, база данных, функция</i>",
+        reply_markup=InlineKeyboardMarkup([[
+            InlineKeyboardButton("◀️ Назад", callback_data="browser_cancel_search")
+        ]]),
+        parse_mode='HTML'
+    )
+
+    return TeacherStates.BROWSER_SEARCH
+
+
+async def process_browser_search(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Обрабатывает поисковый запрос"""
+    search_query = update.message.text.strip()
+
+    if not search_query:
+        await update.message.reply_text(
+            "❌ Поисковый запрос не может быть пустым. Попробуйте еще раз:",
+            parse_mode='HTML'
+        )
+        return TeacherStates.BROWSER_SEARCH
+
+    # Сохраняем запрос и сбрасываем страницу
+    context.user_data['browser_search_query'] = search_query
+    context.user_data['browser_page'] = 0
+
+    # Загружаем данные и генерируем браузер вручную
+    task_type = context.user_data.get('assignment_task_type')
+
+    from ..services.topics_loader import load_topics_for_module
+
+    topics_data = load_topics_for_module(task_type)
+    all_questions = list(topics_data['topics_by_id'].items())
+
+    # Применяем поиск
+    filtered_questions = []
+    for q_id, q_data in all_questions:
+        title = q_data.get('title', '').lower()
+        if search_query.lower() in title:
+            filtered_questions.append((q_id, q_data))
+
+    task_names = {
+        'test_part': '📝 Тестовая часть',
+        'task19': '💡 Задание 19',
+        'task20': '⚙️ Задание 20',
+        'task24': '📊 Задание 24',
+        'task25': '💻 Задание 25'
+    }
+    task_name = task_names.get(task_type, task_type)
+
+    # Получаем список выбранных ID
+    selected_ids = set(context.user_data.get('browser_selected_ids', []))
+
+    # Пагинация
+    page = 0
+    items_per_page = 5
+    total_pages = (len(filtered_questions) + items_per_page - 1) // items_per_page if filtered_questions else 1
+    page_questions = filtered_questions[0:items_per_page]
+
+    # Формируем текст
+    text = f"📋 <b>{task_name}: Выбор заданий</b>\n\n"
+    text += f"✅ Выбрано: {len(selected_ids)} заданий\n"
+    text += f"🔍 Поиск: <code>{search_query}</code>\n"
+    text += f"📊 Найдено: {len(filtered_questions)} заданий\n\n"
+    text += f"<b>Страница 1 из {total_pages}</b>\n\n"
+
+    if not page_questions:
+        text += "<i>Ничего не найдено</i>\n\n"
+
+    # Формируем клавиатуру
+    keyboard = []
+
+    for q_id, q_data in page_questions:
+        title = q_data.get('title', f'Вопрос {q_id}')
+        if len(title) > 50:
+            title = title[:47] + "..."
+
+        emoji = "✅" if q_id in selected_ids else "⬜"
+        button_text = f"{emoji} №{q_id}: {title}"
+        keyboard.append([
+            InlineKeyboardButton(button_text, callback_data=f"browser_toggle_{q_id}")
+        ])
+
+    # Навигация
+    if total_pages > 1:
+        nav_row = []
+        if page < total_pages - 1:
+            nav_row.append(InlineKeyboardButton("➡️ Далее", callback_data="browser_next_page"))
+        if nav_row:
+            keyboard.append(nav_row)
+
+    # Дополнительные кнопки
+    keyboard.append([
+        InlineKeyboardButton("🔍 Новый поиск", callback_data="browser_search"),
+        InlineKeyboardButton("🔄 Сбросить поиск", callback_data="browser_clear_search")
+    ])
+
+    keyboard.append([
+        InlineKeyboardButton(f"✅ Подтвердить ({len(selected_ids)})", callback_data="browser_confirm") if selected_ids else InlineKeyboardButton("◀️ Назад", callback_data="selection_mode_numbers")
+    ])
+
+    if selected_ids:
+        keyboard.append([
+            InlineKeyboardButton("◀️ Назад", callback_data="selection_mode_numbers")
+        ])
+
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
+    # Отправляем новое сообщение с результатами поиска
+    await update.message.reply_text(text, reply_markup=reply_markup, parse_mode='HTML')
+
+    return TeacherStates.ENTER_QUESTION_NUMBERS
+
+
+async def clear_browser_search(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Сбрасывает поисковый запрос"""
+    query = update.callback_query
+    await query.answer()
+
+    context.user_data['browser_search_query'] = None
+    context.user_data['browser_page'] = 0
+
+    return await show_question_browser(update, context)
+
+
+async def cancel_browser_search(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Отменяет ввод поискового запроса"""
+    query = update.callback_query
+    await query.answer()
+
+    return await show_question_browser(update, context)
+
+
+async def confirm_browser_selection(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Подтверждает выбор заданий из браузера"""
+    query = update.callback_query
+    await query.answer()
+
+    task_type = context.user_data.get('assignment_task_type')
+    selected_ids = context.user_data.get('browser_selected_ids', [])
+
+    if not selected_ids:
+        await query.answer("⚠️ Не выбрано ни одного задания", show_alert=True)
+        return TeacherStates.ENTER_QUESTION_NUMBERS
+
+    # Сохраняем выбранные ID для дальнейшей обработки
+    context.user_data['selected_question_ids'] = sorted(selected_ids)
+    context.user_data['selected_blocks'] = []
+
+    # Загружаем данные для отображения
+    from ..services.topics_loader import load_topics_for_module
+    topics_data = load_topics_for_module(task_type)
+
+    # Показываем подтверждение (используем существующую функцию)
+    return await show_numbers_confirmation_from_browser(update, context, sorted(selected_ids), task_type, topics_data)
+
+
+async def show_numbers_confirmation_from_browser(update: Update, context: ContextTypes.DEFAULT_TYPE,
+                                                  question_ids: List[int], task_type: str,
+                                                  topics_data: Dict) -> int:
+    """Показать список заданий выбранных через браузер для финального подтверждения"""
+
+    task_names = {
+        'task19': '💡 Задание 19',
+        'task20': '⚙️ Задание 20',
+        'task24': '📊 Задание 24',
+        'task25': '💻 Задание 25',
+        'test_part': '📝 Тестовая часть'
+    }
+    task_name = task_names.get(task_type, task_type)
+
+    # Формируем список заданий с названиями
+    text = (
+        f"📝 <b>{task_name}: Подтверждение заданий</b>\n\n"
+        f"✅ Выбрано заданий: {len(question_ids)}\n\n"
+        "Список выбранных заданий:\n\n"
+    )
+
+    # Добавляем информацию о каждом задании
+    for idx, q_id in enumerate(question_ids, 1):
+        topic = topics_data['topics_by_id'].get(q_id)
+        if topic:
+            title = topic.get('title', 'Без названия')
+            # Обрезаем длинные названия
+            if len(title) > 60:
+                title = title[:57] + "..."
+            text += f"{idx}. <b>№{q_id}</b>: {title}\n"
+        else:
+            text += f"{idx}. <b>№{q_id}</b>: (название не найдено)\n"
+
+    text += "\n<i>Подтвердите выбор или вернитесь к браузеру</i>"
+
+    keyboard = [
+        [InlineKeyboardButton("✅ Подтвердить выбор", callback_data="confirm_numbers_selection")],
+        [InlineKeyboardButton("◀️ К браузеру", callback_data=f"numbers_browser_{task_type}")],
+        [InlineKeyboardButton("❌ Отмена", callback_data="selection_mode_numbers")]
+    ]
+
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
+    # Обновляем сообщение
+    query = update.callback_query
+    await query.message.edit_text(text, reply_markup=reply_markup, parse_mode='HTML')
+
+    return TeacherStates.ENTER_QUESTION_NUMBERS
 
 
 def parse_question_numbers(input_text: str) -> list:
@@ -1471,7 +2043,8 @@ async def prompt_assignment_title(update: Update, context: ContextTypes.DEFAULT_
         'task24': '📊 Задание 24',
         'task25': '💻 Задание 25',
         'mixed': '🔀 Смешанное задание',
-        'custom': '📝 Кастомное задание'
+        'custom': '📝 Кастомное задание',
+        'full_exam': '🎯 Полный вариант ЕГЭ'
     }
     default_title = task_names.get(task_type, f"Задание {task_type}")
 
@@ -1521,7 +2094,8 @@ async def process_assignment_title_input(update: Update, context: ContextTypes.D
             'task24': '📊 Задание 24',
             'task25': '💻 Задание 25',
             'mixed': '🔀 Смешанное задание',
-            'custom': '📝 Кастомное задание'
+            'custom': '📝 Кастомное задание',
+            'full_exam': '🎯 Полный вариант ЕГЭ'
         }
         assignment_title = task_names.get(task_type, f"Задание {task_type}")
     else:
@@ -1677,7 +2251,8 @@ async def confirm_and_create_assignment(update: Update, context: ContextTypes.DE
             'task24': 'Задание 24',
             'task25': 'Задание 25',
             'mixed': 'Смешанное задание',
-            'custom': 'Кастомное задание'
+            'custom': 'Кастомное задание',
+            'full_exam': 'Полный вариант ЕГЭ'
         }
         title = task_names.get(task_type, f"Задание {task_type}")
 
@@ -2987,21 +3562,248 @@ async def process_custom_question(update: Update, context: ContextTypes.DEFAULT_
         )
         return TeacherStates.ENTER_CUSTOM_QUESTION
 
+    # Сохраняем текст вопроса во временное хранилище
+    context.user_data['current_custom_question'] = {
+        'text': question_text
+    }
+
+    # Просим выбрать тип задания
+    text = f"✅ <b>Текст вопроса сохранен!</b>\n\n"
+    text += f"<i>{question_text[:150]}{'...' if len(question_text) > 150 else ''}</i>\n\n"
+    text += "📚 <b>Выберите тип задания:</b>\n\n"
+    text += "Это определит, как будет проверяться ответ ученика."
+
+    keyboard = [
+        [InlineKeyboardButton("📝 Тестовая часть (короткий ответ)", callback_data="custom_type_test_part")],
+        [InlineKeyboardButton("💡 Задание 19 (примеры)", callback_data="custom_type_task19")],
+        [InlineKeyboardButton("⚙️ Задание 20 (слова)", callback_data="custom_type_task20")],
+        [InlineKeyboardButton("📊 Задание 24 (пропуски)", callback_data="custom_type_task24")],
+        [InlineKeyboardButton("💻 Задание 25 (сочинение)", callback_data="custom_type_task25")],
+        [InlineKeyboardButton("◀️ Отменить вопрос", callback_data="cancel_current_custom_question")]
+    ]
+
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await update.message.reply_text(text, reply_markup=reply_markup, parse_mode='HTML')
+
+    return TeacherStates.SELECT_CUSTOM_QUESTION_TYPE
+
+
+async def select_custom_question_type(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """
+    Обрабатывает выбор типа задания для кастомного вопроса.
+    """
+    query = update.callback_query
+    await query.answer()
+
+    # Извлекаем тип из callback_data
+    question_type = query.data.replace("custom_type_", "")
+
+    current_question = context.user_data.get('current_custom_question', {})
+    current_question['type'] = question_type
+
+    context.user_data['current_custom_question'] = current_question
+
+    type_names = {
+        'test_part': '📝 Тестовая часть',
+        'task19': '💡 Задание 19',
+        'task20': '⚙️ Задание 20',
+        'task24': '📊 Задание 24',
+        'task25': '💻 Задание 25'
+    }
+    type_name = type_names.get(question_type, question_type)
+
+    # Спрашиваем, хочет ли учитель указать правильный ответ/критерии
+    text = f"✅ <b>Тип задания: {type_name}</b>\n\n"
+    text += "❓ <b>Хотите указать правильный ответ или критерии оценки?</b>\n\n"
+    text += "Это поможет AI более точно проверять ответы учеников.\n\n"
+    text += "• <b>Для тестовой части:</b> точный правильный ответ\n"
+    text += "• <b>Для заданий 19-25:</b> критерии оценки или примеры правильного ответа"
+
+    keyboard = [
+        [InlineKeyboardButton("✍️ Да, указать ответ/критерии", callback_data="enter_custom_answer_yes")],
+        [InlineKeyboardButton("⏭ Нет, пропустить", callback_data="enter_custom_answer_skip")],
+        [InlineKeyboardButton("◀️ Отменить вопрос", callback_data="cancel_current_custom_question")]
+    ]
+
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await query.message.edit_text(text, reply_markup=reply_markup, parse_mode='HTML')
+
+    return TeacherStates.SELECT_CUSTOM_QUESTION_TYPE
+
+
+async def prompt_custom_question_answer(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """
+    Запрашивает ввод правильного ответа или критериев оценки.
+    """
+    query = update.callback_query
+    await query.answer()
+
+    choice = query.data
+
+    if choice == "enter_custom_answer_skip":
+        # Пропускаем ввод ответа, сохраняем вопрос
+        return await finalize_custom_question(update, context, skip_answer=True)
+
+    # Запрашиваем ввод ответа/критериев
+    current_question = context.user_data.get('current_custom_question', {})
+    question_type = current_question.get('type', '')
+
+    type_names = {
+        'test_part': '📝 Тестовая часть',
+        'task19': '💡 Задание 19',
+        'task20': '⚙️ Задание 20',
+        'task24': '📊 Задание 24',
+        'task25': '💻 Задание 25'
+    }
+    type_name = type_names.get(question_type, question_type)
+
+    text = f"✍️ <b>{type_name}</b>\n\n"
+
+    if question_type == 'test_part':
+        text += "📝 <b>Введите правильный ответ:</b>\n\n"
+        text += "Например: <code>125</code> или <code>программирование</code>\n\n"
+        text += "Это поможет AI точнее проверять короткие ответы."
+    else:
+        text += "📝 <b>Введите критерии оценки или пример правильного ответа:</b>\n\n"
+        text += "Например:\n"
+        text += "• Ключевые пункты, которые должны быть в ответе\n"
+        text += "• Примеры правильных формулировок\n"
+        text += "• Критерии для оценки качества ответа"
+
+    keyboard = [[InlineKeyboardButton("◀️ Отменить вопрос", callback_data="cancel_current_custom_question")]]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
+    await query.message.edit_text(text, reply_markup=reply_markup, parse_mode='HTML')
+
+    return TeacherStates.ENTER_CUSTOM_QUESTION_ANSWER
+
+
+async def process_custom_question_answer(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """
+    Обрабатывает ввод правильного ответа/критериев оценки.
+    """
+    answer_text = update.message.text.strip()
+
+    if len(answer_text) < 3:
+        await update.message.reply_text(
+            "❌ <b>Ответ слишком короткий</b>\n\n"
+            "Минимальная длина: 3 символа.\n"
+            "Попробуйте еще раз:",
+            parse_mode='HTML'
+        )
+        return TeacherStates.ENTER_CUSTOM_QUESTION_ANSWER
+
+    if len(answer_text) > 1000:
+        await update.message.reply_text(
+            "❌ <b>Ответ слишком длинный</b>\n\n"
+            "Максимальная длина: 1000 символов.\n"
+            "Попробуйте еще раз:",
+            parse_mode='HTML'
+        )
+        return TeacherStates.ENTER_CUSTOM_QUESTION_ANSWER
+
+    # Сохраняем ответ
+    current_question = context.user_data.get('current_custom_question', {})
+    current_question['correct_answer'] = answer_text
+    context.user_data['current_custom_question'] = current_question
+
+    # Финализируем вопрос
+    return await finalize_custom_question_direct(update, context, skip_answer=False)
+
+
+async def finalize_custom_question(update: Update, context: ContextTypes.DEFAULT_TYPE, skip_answer: bool = False) -> int:
+    """
+    Финализирует кастомный вопрос и добавляет его в список.
+    """
+    query = update.callback_query
+
+    current_question = context.user_data.get('current_custom_question', {})
+
+    if not current_question:
+        await query.answer("⚠️ Ошибка: вопрос не найден", show_alert=True)
+        return TeacherStates.ENTER_CUSTOM_QUESTION
+
     # Добавляем вопрос в список
     custom_questions = context.user_data.get('custom_questions', [])
     question_id = len(custom_questions) + 1
 
-    custom_questions.append({
+    question_data = {
         'id': question_id,
-        'text': question_text
-    })
+        'text': current_question['text'],
+        'type': current_question.get('type', 'test_part'),
+        'correct_answer': current_question.get('correct_answer', None)
+    }
 
+    custom_questions.append(question_data)
     context.user_data['custom_questions'] = custom_questions
+    context.user_data.pop('current_custom_question', None)
+
+    type_names = {
+        'test_part': '📝 Тестовая часть',
+        'task19': '💡 Задание 19',
+        'task20': '⚙️ Задание 20',
+        'task24': '📊 Задание 24',
+        'task25': '💻 Задание 25'
+    }
+    type_name = type_names.get(question_data['type'], question_data['type'])
 
     text = f"✅ <b>Вопрос #{question_id} добавлен!</b>\n\n"
-    text += f"<i>{question_text[:100]}{'...' if len(question_text) > 100 else ''}</i>\n\n"
-    text += f"📊 Всего вопросов: {len(custom_questions)}\n\n"
-    text += "💬 Отправьте следующий вопрос или завершите создание:"
+    text += f"📚 <b>Тип:</b> {type_name}\n"
+    text += f"📝 <b>Текст:</b> <i>{question_data['text'][:100]}{'...' if len(question_data['text']) > 100 else ''}</i>\n"
+    if question_data['correct_answer']:
+        text += f"✅ <b>Ответ/Критерии:</b> указаны\n"
+    text += f"\n📊 <b>Всего вопросов:</b> {len(custom_questions)}\n\n"
+    text += "💬 Отправьте текст следующего вопроса или завершите создание:"
+
+    keyboard = [
+        [InlineKeyboardButton(f"✅ Завершить ({len(custom_questions)} вопросов)", callback_data="finish_custom_questions")],
+        [InlineKeyboardButton("👀 Просмотреть все вопросы", callback_data="review_custom_questions")],
+        [InlineKeyboardButton("❌ Отменить", callback_data="teacher_create_assignment")]
+    ]
+
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await query.message.edit_text(text, reply_markup=reply_markup, parse_mode='HTML')
+
+    return TeacherStates.ENTER_CUSTOM_QUESTION
+
+
+async def finalize_custom_question_direct(update: Update, context: ContextTypes.DEFAULT_TYPE, skip_answer: bool = False) -> int:
+    """
+    Финализирует кастомный вопрос после текстового ввода (без callback query).
+    """
+    current_question = context.user_data.get('current_custom_question', {})
+
+    # Добавляем вопрос в список
+    custom_questions = context.user_data.get('custom_questions', [])
+    question_id = len(custom_questions) + 1
+
+    question_data = {
+        'id': question_id,
+        'text': current_question['text'],
+        'type': current_question.get('type', 'test_part'),
+        'correct_answer': current_question.get('correct_answer', None)
+    }
+
+    custom_questions.append(question_data)
+    context.user_data['custom_questions'] = custom_questions
+    context.user_data.pop('current_custom_question', None)
+
+    type_names = {
+        'test_part': '📝 Тестовая часть',
+        'task19': '💡 Задание 19',
+        'task20': '⚙️ Задание 20',
+        'task24': '📊 Задание 24',
+        'task25': '💻 Задание 25'
+    }
+    type_name = type_names.get(question_data['type'], question_data['type'])
+
+    text = f"✅ <b>Вопрос #{question_id} добавлен!</b>\n\n"
+    text += f"📚 <b>Тип:</b> {type_name}\n"
+    text += f"📝 <b>Текст:</b> <i>{question_data['text'][:100]}{'...' if len(question_data['text']) > 100 else ''}</i>\n"
+    if question_data['correct_answer']:
+        text += f"✅ <b>Ответ/Критерии:</b> указаны\n"
+    text += f"\n📊 <b>Всего вопросов:</b> {len(custom_questions)}\n\n"
+    text += "💬 Отправьте текст следующего вопроса или завершите создание:"
 
     keyboard = [
         [InlineKeyboardButton(f"✅ Завершить ({len(custom_questions)} вопросов)", callback_data="finish_custom_questions")],
@@ -3013,6 +3815,18 @@ async def process_custom_question(update: Update, context: ContextTypes.DEFAULT_
     await update.message.reply_text(text, reply_markup=reply_markup, parse_mode='HTML')
 
     return TeacherStates.ENTER_CUSTOM_QUESTION
+
+
+async def cancel_current_custom_question(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """
+    Отменяет добавление текущего кастомного вопроса.
+    """
+    query = update.callback_query
+    await query.answer("❌ Вопрос отменен")
+
+    context.user_data.pop('current_custom_question', None)
+
+    return await start_custom_question_entry(update, context)
 
 
 async def review_custom_questions(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -3031,9 +3845,21 @@ async def review_custom_questions(update: Update, context: ContextTypes.DEFAULT_
     text = f"📝 <b>Кастомное задание</b>\n\n"
     text += f"📊 Всего вопросов: {len(custom_questions)}\n\n"
 
+    type_names = {
+        'test_part': '📝 Тестовая часть',
+        'task19': '💡 Задание 19',
+        'task20': '⚙️ Задание 20',
+        'task24': '📊 Задание 24',
+        'task25': '💻 Задание 25'
+    }
+
     for q in custom_questions:
-        question_preview = q['text'][:80] + ('...' if len(q['text']) > 80 else '')
-        text += f"<b>{q['id']}.</b> {question_preview}\n\n"
+        question_preview = q['text'][:60] + ('...' if len(q['text']) > 60 else '')
+        question_type = type_names.get(q.get('type', 'test_part'), 'Не указан')
+        has_answer = "✅" if q.get('correct_answer') else "⚪"
+
+        text += f"<b>{q['id']}.</b> {question_type} {has_answer}\n"
+        text += f"<i>{question_preview}</i>\n\n"
 
     if len(text) > 3900:
         text = text[:3900] + "\n\n<i>(список обрезан)</i>"
