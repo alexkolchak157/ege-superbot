@@ -467,9 +467,10 @@ async def show_teacher_plans_in_shop(update: Update, context: ContextTypes.DEFAU
     query = update.callback_query
     await query.answer()
 
+    user_id = update.effective_user.id
     from payment.config import get_all_teacher_plans
 
-    teacher_plans = get_all_teacher_plans()
+    teacher_plans = get_all_teacher_plans(user_id)
 
     text = (
         "👨‍🏫 <b>Подписки для учителей</b>\n\n"
