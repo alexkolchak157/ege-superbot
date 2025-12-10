@@ -305,7 +305,7 @@ async def show_teacher_subscriptions(update: Update, context: ContextTypes.DEFAU
     await query.answer()
 
     user_id = update.effective_user.id
-    teacher_plans = get_all_teacher_plans()
+    teacher_plans = get_all_teacher_plans(user_id)
 
     # Проверяем, использовал ли пользователь пробный период
     subscription_manager = context.bot_data.get('subscription_manager')

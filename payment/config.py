@@ -857,16 +857,34 @@ def get_teacher_max_students(plan_id: str) -> int:
     return plan.get('max_students', 0)
 
 
-def get_all_teacher_plans() -> List[Dict[str, Any]]:
+def get_all_teacher_plans(user_id: Optional[int] = None) -> List[Dict[str, Any]]:
     """
     Возвращает список всех планов подписок для учителей.
+    Тестовые планы (is_test=True) показываются только администраторам.
+
+    Args:
+        user_id: ID пользователя для проверки прав доступа к тестовым планам.
+                 Если None, тестовые планы не показываются.
 
     Returns:
         Список словарей с информацией о планах учителей
     """
+    # Проверяем, является ли пользователь админом
+    is_admin = False
+    if user_id is not None:
+        try:
+            from core.config import ADMIN_IDS
+            is_admin = user_id in ADMIN_IDS
+        except ImportError:
+            logger.warning("Could not import ADMIN_IDS from core.config")
+
     teacher_plans = []
     for plan_id, plan_info in SUBSCRIPTION_PLANS.items():
         if plan_info.get('type') == 'teacher':
+            # Пропускаем тестовые планы для обычных пользователей
+            if plan_info.get('is_test', False) and not is_admin:
+                continue
+
             plan_copy = plan_info.copy()
             plan_copy['plan_id'] = plan_id
             teacher_plans.append(plan_copy)
