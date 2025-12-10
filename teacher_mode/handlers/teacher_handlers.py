@@ -2835,6 +2835,9 @@ async def view_homework_submissions(update: Update, context: ContextTypes.DEFAUL
     query = update.callback_query
     await query.answer()
 
+    # Импортируем необходимые сервисы
+    from ..services import assignment_service, teacher_service
+
     # Извлекаем ID задания из callback_data: homework_submissions:homework_id
     homework_id = int(query.data.split(':')[1])
 
