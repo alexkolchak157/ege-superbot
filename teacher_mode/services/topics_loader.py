@@ -92,17 +92,33 @@ def _load_test_part_topics(base_dir: str) -> Dict:
         Словарь в формате, совместимом с load_topics_for_module
     """
     try:
-        # Импортируем loader из test_part модуля
-        import sys
-        test_part_dir = os.path.join(base_dir, 'test_part')
-        if test_part_dir not in sys.path:
-            sys.path.insert(0, test_part_dir)
+        # Пытаемся импортировать напрямую
+        try:
+            from test_part.loader import get_questions_list_flat, load_questions
+        except ImportError:
+            # Если не получилось - добавляем в sys.path
+            import sys
+            test_part_dir = os.path.join(base_dir, 'test_part')
+            if test_part_dir not in sys.path:
+                sys.path.insert(0, test_part_dir)
+                logger.info(f"Added {test_part_dir} to sys.path for test_part import")
 
-        from test_part.loader import get_questions_list_flat
+            from test_part.loader import get_questions_list_flat, load_questions
 
+        # Получаем список вопросов
         questions = get_questions_list_flat()
+
+        # Если вопросы не загружены (None или пустой список), пытаемся загрузить
         if not questions:
-            logger.info("No questions found for test_part")
+            logger.warning("test_part questions not initialized, attempting to load...")
+            try:
+                load_questions()  # Принудительная загрузка
+                questions = get_questions_list_flat()
+            except Exception as load_error:
+                logger.error(f"Failed to load test_part questions: {load_error}")
+
+        if not questions:
+            logger.warning("No questions available for test_part after load attempt")
             return {'blocks': {}, 'topics_by_id': {}, 'total_count': 0}
 
         # Группируем вопросы по exam_number (только 1-16 для тестовой части)

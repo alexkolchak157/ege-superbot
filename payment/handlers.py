@@ -44,12 +44,13 @@ import aiosqlite
 from core.error_handler import safe_handler
 from .config import (
     SUBSCRIPTION_PLANS,
-    SUBSCRIPTION_PLANS, 
+    SUBSCRIPTION_PLANS,
     SUBSCRIPTION_MODE,
     DURATION_DISCOUNTS,
     MODULE_PLANS,
     PAYMENT_ADMIN_CHAT_ID,
-    get_plan_price_kopecks
+    get_plan_price_kopecks,
+    get_available_plans
 )
 from .subscription_manager import SubscriptionManager
 from .tinkoff import TinkoffPayment
@@ -287,9 +288,11 @@ async def show_unified_plans(update: Update, context: ContextTypes.DEFAULT_TYPE)
     
     # Показываем доступные планы
     text = "💎 <b>Выберите план подписки:</b>\n\n"
-    
+
     keyboard = []
-    for plan_id, plan in SUBSCRIPTION_PLANS.items():
+    # Получаем доступные тарифы для пользователя (тестовые тарифы видны только админу)
+    available_plans = get_available_plans(user_id)
+    for plan_id, plan in available_plans.items():
         text += f"<b>{plan['name']}</b>\n"
         text += f"💰 {plan['price_rub']} ₽\n"
         text += f"📝 {plan['description']}\n"
@@ -611,6 +614,20 @@ async def handle_plan_selection(update: Update, context: ContextTypes.DEFAULT_TY
     # Обработка подписок для учителей (teacher_basic, teacher_standard, teacher_premium)
     elif plan_id.startswith("teacher_"):
         from payment.config import SUBSCRIPTION_PLANS, is_teacher_plan
+        from payment.subscription_manager import SubscriptionManager
+
+        # КРИТИЧНО: Проверяем использование trial для teacher_trial_7days
+        if plan_id == "teacher_trial_7days":
+            subscription_manager = SubscriptionManager()
+            user_id = update.effective_user.id
+
+            if await subscription_manager.has_used_teacher_trial(user_id):
+                await query.answer(
+                    "❌ Вы уже использовали пробный период для учителей",
+                    show_alert=True
+                )
+                logger.warning(f"User {user_id} attempted to use teacher trial twice")
+                return CHOOSING_PLAN
 
         context.user_data['is_trial'] = False
         context.user_data['selected_plan'] = plan_id
