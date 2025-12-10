@@ -757,6 +757,7 @@ async def get_student_statistics(teacher_id: int, student_id: int) -> Optional[D
                     'total_assignments': 0,
                     'completed_assignments': 0,
                     'total_questions': 0,
+                    'total_answered': 0,
                     'correct_answers': 0,
                     'incorrect_answers': 0,
                     'accuracy_rate': 0,
