@@ -1110,22 +1110,24 @@ async def handle_plan_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def next_topic(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Переход к следующей теме."""
     query = update.callback_query
-    
+    await query.answer()
+
     # Удаляем все предыдущие сообщения перед показом выбора новой темы
     await delete_previous_messages(context, query.message.chat_id)
-    
+
     # Возвращаемся к выбору темы в режиме тренировки
     context.user_data['mode'] = 'train'
     kb = keyboards.build_initial_choice_keyboard('train')
-    
+
     # Отправляем новое сообщение с выбором темы
-    await query.message.chat.send_message(
-        "🎯 <b>Режим тренировки</b>\n\n"
-        "Выберите следующую тему:",
+    await context.bot.send_message(
+        chat_id=query.message.chat_id,
+        text="🎯 <b>Режим тренировки</b>\n\n"
+             "Выберите следующую тему:",
         reply_markup=kb,
         parse_mode=ParseMode.HTML
     )
-    
+
     return states.CHOOSING_TOPIC
 
 @safe_handler()
@@ -1773,23 +1775,26 @@ async def return_to_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     return states.CHOOSING_MODE
 
+@safe_handler()
 async def t24_retry(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Повторить попытку составления плана для той же темы."""
     query = update.callback_query
-    
+    await query.answer()
+
     # Удаляем все предыдущие сообщения
     await delete_previous_messages(context, query.message.chat_id)
-    
+
     topic_name = context.user_data.get('current_topic')
     topic_index = context.user_data.get('current_topic_index')
-    
+
     if not topic_name:
-        await query.message.chat.send_message(
-            "❌ Ошибка: тема не найдена. Выберите тему заново.",
+        await context.bot.send_message(
+            chat_id=query.message.chat_id,
+            text="❌ Ошибка: тема не найдена. Выберите тему заново.",
             reply_markup=keyboards.build_initial_choice_keyboard('train')
         )
         return states.CHOOSING_TOPIC
-    
+
     # Отправляем задание заново
     task_text = f"""📝 <b>Задание 24</b>
 
@@ -1813,12 +1818,13 @@ async def t24_retry(update: Update, context: ContextTypes.DEFAULT_TYPE):
    в) для личности</code>
 
 💡 <i>Отправьте ваш план одним сообщением</i>"""
-    
-    await query.message.chat.send_message(
-        task_text,
+
+    await context.bot.send_message(
+        chat_id=query.message.chat_id,
+        text=task_text,
         parse_mode=ParseMode.HTML
     )
-    
+
     return states.AWAITING_PLAN
 
 async def cmd_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
