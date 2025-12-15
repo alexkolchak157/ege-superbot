@@ -1507,7 +1507,7 @@ async def start_exam_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def send_exam_question(message, context: ContextTypes.DEFAULT_TYPE, index: int):
     """Отправка вопроса в режиме экзамена с поддержкой всех типов вопросов."""
     exam_questions = context.user_data.get('exam_questions', [])
-    
+
     # ========== КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: Гарантируем наличие user_id ==========
     # Проверяем наличие user_id в context.user_data
     if 'user_id' not in context.user_data:
@@ -1529,7 +1529,7 @@ async def send_exam_question(message, context: ContextTypes.DEFAULT_TYPE, index:
                     "⚠️ Произошла ошибка при загрузке вопроса. Пожалуйста, начните заново.",
                     reply_markup=keyboards.get_initial_choice_keyboard()
                 )
-                return
+                return states.CHOOSING_MODE
         else:
             # Нет сохраненного update - критическая ошибка
             logger.error("send_exam_question: Cannot determine user_id - no _update in context")
@@ -1537,16 +1537,16 @@ async def send_exam_question(message, context: ContextTypes.DEFAULT_TYPE, index:
                 "⚠️ Произошла ошибка при загрузке вопроса. Пожалуйста, начните заново.",
                 reply_markup=keyboards.get_initial_choice_keyboard()
             )
-            return
-    
+            return states.CHOOSING_MODE
+
     user_id = context.user_data['user_id']
     logger.debug(f"send_exam_question: Processing for user {user_id}, question index {index}")
-    
+
     # ========== Проверяем завершение экзамена ==========
     if index >= len(exam_questions):
-        # Экзамен завершен
+        # Экзамен завершен - показываем результаты и переходим в CHOOSING_MODE
         await show_exam_results(message, context)
-        return
+        return states.CHOOSING_MODE
     
     question = exam_questions[index]
     context.user_data['exam_current'] = index + 1
@@ -1831,17 +1831,18 @@ async def check_exam_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"✅ Ответ принят ({current_index + 1}/{len(context.user_data['exam_questions'])})",
         parse_mode=ParseMode.HTML
     )
-    
+
     # Переходим к следующему вопросу
-    await send_exam_question(update.message, context, current_index + 1)
-    return states.EXAM_MODE
+    next_state = await send_exam_question(update.message, context, current_index + 1)
+    # Если экзамен завершен, send_exam_question вернет CHOOSING_MODE
+    return next_state if next_state else states.EXAM_MODE
 
 @safe_handler()
 async def skip_exam_question(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Пропуск вопроса в режиме экзамена."""
     query = update.callback_query
     await query.answer("Вопрос пропущен")
-    
+
     current_index = context.user_data.get('exam_current', 1) - 1
     current_question_id = context.user_data.get('current_question_id')
 
@@ -1849,10 +1850,11 @@ async def skip_exam_question(update: Update, context: ContextTypes.DEFAULT_TYPE)
     if 'exam_skipped' not in context.user_data:
         context.user_data['exam_skipped'] = []
     context.user_data['exam_skipped'].append(current_question_id)
-    
+
     # Переходим к следующему вопросу
-    await send_exam_question(query.message, context, current_index + 1)
-    return states.EXAM_MODE
+    next_state = await send_exam_question(query.message, context, current_index + 1)
+    # Если экзамен завершен, send_exam_question вернет CHOOSING_MODE
+    return next_state if next_state else states.EXAM_MODE
 
 async def show_exam_results(message, context: ContextTypes.DEFAULT_TYPE):
     """Показ результатов экзамена."""
@@ -2042,11 +2044,12 @@ async def exam_continue(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Продолжение экзамена после попытки прерывания."""
     query = update.callback_query
     await query.answer("Продолжаем экзамен")
-    
+
     # Возвращаем текущий вопрос
     current_index = context.user_data.get('exam_current', 1) - 1
-    await send_exam_question(query.message, context, current_index)
-    return states.EXAM_MODE
+    next_state = await send_exam_question(query.message, context, current_index)
+    # Если экзамен завершен, send_exam_question вернет CHOOSING_MODE
+    return next_state if next_state else states.EXAM_MODE
 
 @safe_handler()
 async def start_partial_exam(update: Update, context: ContextTypes.DEFAULT_TYPE):
