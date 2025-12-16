@@ -2147,7 +2147,8 @@ async def process_assignment_title_input(update: Update, context: ContextTypes.D
     keyboard = []
 
     # Предлагаем варианты дедлайнов
-    today = datetime.now()
+    from teacher_mode.utils.datetime_utils import utc_now
+    today = utc_now()  # ИСПРАВЛЕНО: timezone-aware datetime
     for days in [1, 3, 7, 14]:
         deadline_date = today + timedelta(days=days)
         date_str = deadline_date.strftime("%d.%m.%Y")
@@ -2199,7 +2200,8 @@ async def set_assignment_deadline(update: Update, context: ContextTypes.DEFAULT_
     keyboard = []
 
     # Предлагаем варианты дедлайнов
-    today = datetime.now()
+    from teacher_mode.utils.datetime_utils import utc_now
+    today = utc_now()  # ИСПРАВЛЕНО: timezone-aware datetime
     for days in [1, 3, 7, 14]:
         deadline_date = today + timedelta(days=days)
         date_str = deadline_date.strftime("%d.%m.%Y")
@@ -2235,7 +2237,8 @@ async def confirm_and_create_assignment(update: Update, context: ContextTypes.DE
 
     deadline = None
     if deadline_days != "none":
-        deadline = datetime.now() + timedelta(days=int(deadline_days))
+        from teacher_mode.utils.datetime_utils import utc_now
+        deadline = utc_now() + timedelta(days=int(deadline_days))  # ИСПРАВЛЕНО: timezone-aware datetime
 
     # Создаём задание через assignment_service
     from ..services import assignment_service

@@ -8,12 +8,13 @@ import secrets
 import string
 import json
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Optional, List
 import aiosqlite
 
 from core.config import DATABASE_FILE
 from ..models import TeacherProfile, TeacherStudentRelationship, RelationshipStatus
+from ..utils.datetime_utils import utc_now, ensure_timezone_aware, parse_datetime_safe
 
 logger = logging.getLogger(__name__)
 
@@ -42,8 +43,6 @@ async def create_teacher_profile(
         TeacherProfile
     """
     try:
-        from datetime import timedelta
-
         async with aiosqlite.connect(DATABASE_FILE) as db:
             # Генерируем уникальный код
             teacher_code = generate_teacher_code()
@@ -65,7 +64,7 @@ async def create_teacher_profile(
             )
 
             # Создаем профиль учителя
-            now = datetime.now()
+            now = utc_now()  # ИСПРАВЛЕНО: используем timezone-aware datetime
             feedback_settings_json = json.dumps({})
 
             # Для teacher_free автоматически активируем подписку на 100 лет
@@ -82,7 +81,7 @@ async def create_teacher_profile(
                  has_active_subscription, subscription_expires, created_at, feedback_settings)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """, (user_id, teacher_code, display_name, subscription_tier,
-                  has_active, expires, now, feedback_settings_json))
+                  has_active, expires.isoformat() if expires else None, now.isoformat(), feedback_settings_json))
 
             await db.commit()
 
@@ -134,9 +133,9 @@ async def get_teacher_profile(user_id: int) -> Optional[TeacherProfile]:
                 teacher_code=row['teacher_code'],
                 display_name=row['display_name'],
                 has_active_subscription=bool(row['has_active_subscription']),
-                subscription_expires=datetime.fromisoformat(row['subscription_expires']) if row['subscription_expires'] else None,
+                subscription_expires=parse_datetime_safe(row['subscription_expires']),  # ИСПРАВЛЕНО: безопасный парсинг
                 subscription_tier=row['subscription_tier'],
-                created_at=datetime.fromisoformat(row['created_at']),
+                created_at=parse_datetime_safe(row['created_at']) or utc_now(),  # ИСПРАВЛЕНО: fallback на текущее время
                 feedback_settings=json.loads(row['feedback_settings']) if row['feedback_settings'] else {}
             )
 
@@ -174,9 +173,9 @@ async def get_teacher_by_code(teacher_code: str) -> Optional[TeacherProfile]:
                 teacher_code=row['teacher_code'],
                 display_name=row['display_name'],
                 has_active_subscription=bool(row['has_active_subscription']),
-                subscription_expires=datetime.fromisoformat(row['subscription_expires']) if row['subscription_expires'] else None,
+                subscription_expires=parse_datetime_safe(row['subscription_expires']),  # ИСПРАВЛЕНО: безопасный парсинг
                 subscription_tier=row['subscription_tier'],
-                created_at=datetime.fromisoformat(row['created_at']),
+                created_at=parse_datetime_safe(row['created_at']) or utc_now(),  # ИСПРАВЛЕНО: fallback на текущее время
                 feedback_settings=json.loads(row['feedback_settings']) if row['feedback_settings'] else {}
             )
 
@@ -214,12 +213,12 @@ async def add_student_to_teacher(
             )
 
             # Создаем связь учитель-ученик
-            now = datetime.now()
+            now = utc_now()  # ИСПРАВЛЕНО: timezone-aware datetime
             cursor = await db.execute("""
                 INSERT INTO teacher_student_relationships
                 (teacher_id, student_id, invited_at, status)
                 VALUES (?, ?, ?, 'active')
-            """, (teacher_id, student_id, now))
+            """, (teacher_id, student_id, now.isoformat()))
 
             await db.commit()
 
@@ -309,16 +308,12 @@ async def can_add_student(teacher_id: int) -> tuple[bool, str]:
     if not profile:
         return False, "Профиль учителя не найден"
 
-    # КРИТИЧНО: Проверяем дату истечения подписки
+    # ИСПРАВЛЕНО: Проверяем дату истечения подписки с правильной timezone обработкой
     if profile.subscription_expires:
-        # Убедимся, что datetime timezone-aware
-        expires_dt = profile.subscription_expires
-        if expires_dt.tzinfo is None:
-            from datetime import timezone
-            expires_dt = expires_dt.replace(tzinfo=timezone.utc)
+        expires_dt = ensure_timezone_aware(profile.subscription_expires)
+        now = utc_now()
 
-        from datetime import timezone
-        if expires_dt < datetime.now(timezone.utc):
+        if expires_dt < now:
             return False, "Подписка учителя истекла"
 
     if not profile.has_active_subscription:
@@ -443,16 +438,12 @@ async def has_teacher_access(user_id: int) -> bool:
     if not profile.has_active_subscription:
         return False
 
-    # Проверяем дату истечения
+    # ИСПРАВЛЕНО: Проверяем дату истечения с правильной timezone обработкой
     if profile.subscription_expires:
-        # Убедимся, что datetime timezone-aware
-        expires_dt = profile.subscription_expires
-        if expires_dt.tzinfo is None:
-            from datetime import timezone
-            expires_dt = expires_dt.replace(tzinfo=timezone.utc)
+        expires_dt = ensure_timezone_aware(profile.subscription_expires)
+        now = utc_now()
 
-        from datetime import timezone
-        if expires_dt < datetime.now(timezone.utc):
+        if expires_dt < now:
             return False
 
     return True
@@ -509,19 +500,13 @@ async def validate_teacher_subscription_integrity(teacher_id: int) -> tuple[bool
                     f"module_subscriptions.is_active={ms_active}"
                 )
 
-            # Если обе таблицы указывают на активную подписку, проверяем даты
+            # ИСПРАВЛЕНО: Если обе таблицы указывают на активную подписку, проверяем даты
             if tp_active and ms_active:
-                tp_expires = datetime.fromisoformat(row['tp_expires']) if row['tp_expires'] else None
-                ms_expires = datetime.fromisoformat(row['ms_expires']) if row['ms_expires'] else None
+                tp_expires = parse_datetime_safe(row['tp_expires'])
+                ms_expires = parse_datetime_safe(row['ms_expires'])
 
                 if tp_expires and ms_expires:
-                    # Убедимся, что оба datetime timezone-aware
-                    from datetime import timezone
-                    if tp_expires.tzinfo is None:
-                        tp_expires = tp_expires.replace(tzinfo=timezone.utc)
-                    if ms_expires.tzinfo is None:
-                        ms_expires = ms_expires.replace(tzinfo=timezone.utc)
-
+                    # Оба datetime уже timezone-aware после parse_datetime_safe
                     # Допускаем разницу в 1 минуту из-за возможных задержек записи
                     time_diff = abs((tp_expires - ms_expires).total_seconds())
                     if time_diff > 60:

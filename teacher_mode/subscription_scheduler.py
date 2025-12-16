@@ -7,6 +7,7 @@ from datetime import datetime, timedelta
 from telegram.ext import ContextTypes
 
 from core.config import DATABASE_FILE
+from teacher_mode.utils.datetime_utils import utc_now, parse_datetime_safe, ensure_timezone_aware
 
 logger = logging.getLogger(__name__)
 
@@ -127,7 +128,7 @@ async def check_expiring_teacher_subscriptions(context: ContextTypes.DEFAULT_TYP
                 tier = row['subscription_tier']
 
                 # Вычисляем количество дней до истечения
-                days_left = (expires_at - datetime.now()).days
+                days_left = (ensure_timezone_aware(expires_at) - utc_now()).days
 
                 # Отправляем уведомление только за 3 дня и за 1 день
                 if days_left not in [3, 1]:

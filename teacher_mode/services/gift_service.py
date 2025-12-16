@@ -14,6 +14,7 @@ import aiosqlite
 
 from core.config import DATABASE_FILE
 from ..models import GiftedSubscription, PromoCode
+from ..utils.datetime_utils import utc_now, ensure_timezone_aware
 
 logger = logging.getLogger(__name__)
 
@@ -38,7 +39,7 @@ async def gift_subscription(
     """
     try:
         async with aiosqlite.connect(DATABASE_FILE) as db:
-            now = datetime.now()
+            now = utc_now()  # ИСПРАВЛЕНО: timezone-aware datetime
             expires_at = now + timedelta(days=duration_days)
 
             cursor = await db.execute("""
@@ -130,7 +131,7 @@ async def get_active_gifted_subscription(recipient_id: int) -> Optional[GiftedSu
                   AND expires_at > ?
                 ORDER BY expires_at DESC
                 LIMIT 1
-            """, (recipient_id, datetime.now()))
+            """, (recipient_id, utc_now().isoformat()))
 
             row = await cursor.fetchone()
             if not row:
@@ -303,7 +304,7 @@ async def validate_promo_code(code: str, user_id: int) -> tuple[bool, str]:
         return False, "Промокод неактивен"
 
     # Проверяем срок действия
-    if promo.expires_at and promo.expires_at < datetime.now():
+    if promo.expires_at and ensure_timezone_aware(promo.expires_at) < utc_now():
         return False, "Срок действия промокода истёк"
 
     # Проверяем лимит использований
@@ -356,7 +357,7 @@ async def activate_promo_code(code: str, user_id: int) -> Optional[GiftedSubscri
             await db.execute("""
                 INSERT INTO promo_code_usage (promo_code, student_id, used_at)
                 VALUES (?, ?, ?)
-            """, (code, user_id, datetime.now()))
+            """, (code, user_id, utc_now().isoformat()))
 
             # Увеличиваем счётчик использований
             await db.execute("""
