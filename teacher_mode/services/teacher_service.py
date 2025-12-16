@@ -189,7 +189,10 @@ async def add_student_to_teacher(
     student_id: int
 ) -> Optional[TeacherStudentRelationship]:
     """
-    Добавляет ученика к учителю.
+    Добавляет ученика к учителю с защитой от race conditions.
+
+    ИСПРАВЛЕНО: Использует транзакцию с EXCLUSIVE блокировкой для
+    атомарной проверки лимита и вставки записи.
 
     Args:
         teacher_id: ID учителя
@@ -199,44 +202,102 @@ async def add_student_to_teacher(
         TeacherStudentRelationship или None (если превышен лимит)
     """
     try:
-        # Проверяем лимит учеников по тарифу
-        can_add, reason = await can_add_student(teacher_id)
-        if not can_add:
-            logger.warning(f"Учитель {teacher_id} не может добавить ученика: {reason}")
-            return None
-
         async with aiosqlite.connect(DATABASE_FILE) as db:
-            # Добавляем роль student ученику (если ещё нет)
-            await db.execute(
-                "INSERT OR IGNORE INTO user_roles (user_id, role) VALUES (?, 'student')",
-                (student_id,)
-            )
+            # ИСПРАВЛЕНО: Начинаем эксклюзивную транзакцию для предотвращения race conditions
+            await db.execute("BEGIN EXCLUSIVE")
 
-            # Создаем связь учитель-ученик
-            now = utc_now()  # ИСПРАВЛЕНО: timezone-aware datetime
-            cursor = await db.execute("""
-                INSERT INTO teacher_student_relationships
-                (teacher_id, student_id, invited_at, status)
-                VALUES (?, ?, ?, 'active')
-            """, (teacher_id, student_id, now.isoformat()))
+            try:
+                # Проверяем профиль учителя
+                db.row_factory = aiosqlite.Row
+                cursor = await db.execute("""
+                    SELECT user_id, subscription_tier, has_active_subscription,
+                           subscription_expires
+                    FROM teacher_profiles
+                    WHERE user_id = ?
+                """, (teacher_id,))
 
-            await db.commit()
+                profile_row = await cursor.fetchone()
+                if not profile_row:
+                    await db.rollback()
+                    logger.warning(f"Профиль учителя {teacher_id} не найден")
+                    return None
 
-            relationship = TeacherStudentRelationship(
-                id=cursor.lastrowid,
-                teacher_id=teacher_id,
-                student_id=student_id,
-                invited_at=now,
-                status=RelationshipStatus.ACTIVE
-            )
+                # Проверяем активность подписки
+                has_active = bool(profile_row['has_active_subscription'])
+                expires_str = profile_row['subscription_expires']
 
-            logger.info(f"Ученик {student_id} добавлен к учителю {teacher_id}")
-            return relationship
+                if not has_active:
+                    await db.rollback()
+                    logger.warning(f"У учителя {teacher_id} нет активной подписки")
+                    return None
 
-    except aiosqlite.IntegrityError:
-        # Связь уже существует
-        logger.warning(f"Связь учитель {teacher_id} - ученик {student_id} уже существует")
-        return None
+                # Проверяем дату истечения внутри транзакции
+                if expires_str:
+                    expires_dt = parse_datetime_safe(expires_str)
+                    if expires_dt and ensure_timezone_aware(expires_dt) < utc_now():
+                        await db.rollback()
+                        logger.warning(f"Подписка учителя {teacher_id} истекла")
+                        return None
+
+                # Получаем максимальное количество учеников для тарифа
+                from payment.config import get_teacher_max_students
+                subscription_tier = profile_row['subscription_tier']
+                max_students = get_teacher_max_students(subscription_tier)
+
+                # Проверяем текущее количество активных учеников (внутри транзакции)
+                if max_students != -1:  # Если не безлимит
+                    cursor = await db.execute("""
+                        SELECT COUNT(*) as count
+                        FROM teacher_student_relationships
+                        WHERE teacher_id = ? AND status = 'active'
+                    """, (teacher_id,))
+                    row = await cursor.fetchone()
+                    current_count = row['count'] if row else 0
+
+                    if current_count >= max_students:
+                        await db.rollback()
+                        logger.warning(f"Учитель {teacher_id} достиг лимита учеников ({max_students})")
+                        return None
+
+                # Все проверки пройдены - добавляем ученика
+                # Добавляем роль student ученику
+                await db.execute(
+                    "INSERT OR IGNORE INTO user_roles (user_id, role) VALUES (?, 'student')",
+                    (student_id,)
+                )
+
+                # Создаем связь учитель-ученик
+                now = utc_now()
+                cursor = await db.execute("""
+                    INSERT INTO teacher_student_relationships
+                    (teacher_id, student_id, invited_at, status)
+                    VALUES (?, ?, ?, 'active')
+                """, (teacher_id, student_id, now.isoformat()))
+
+                # Commit транзакции
+                await db.commit()
+
+                relationship = TeacherStudentRelationship(
+                    id=cursor.lastrowid,
+                    teacher_id=teacher_id,
+                    student_id=student_id,
+                    invited_at=now,
+                    status=RelationshipStatus.ACTIVE
+                )
+
+                logger.info(f"Ученик {student_id} добавлен к учителю {teacher_id} (транзакция успешна)")
+                return relationship
+
+            except aiosqlite.IntegrityError:
+                # Связь уже существует - rollback
+                await db.rollback()
+                logger.warning(f"Связь учитель {teacher_id} - ученик {student_id} уже существует")
+                return None
+            except Exception as e:
+                # Любая другая ошибка - rollback
+                await db.rollback()
+                raise
+
     except Exception as e:
         logger.error(f"Ошибка при добавлении ученика к учителю: {e}")
         return None

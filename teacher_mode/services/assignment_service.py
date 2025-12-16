@@ -625,6 +625,9 @@ async def add_teacher_comment(progress_id: int, teacher_comment: str) -> bool:
     """
     Добавляет комментарий учителя к ответу ученика.
 
+    ИСПРАВЛЕНО: Использует отдельную колонку teacher_comment вместо
+    добавления к ai_feedback, что предотвращает неконтролируемый рост текста.
+
     Args:
         progress_id: ID записи в homework_progress
         teacher_comment: Комментарий учителя
@@ -634,27 +637,16 @@ async def add_teacher_comment(progress_id: int, teacher_comment: str) -> bool:
     """
     try:
         async with aiosqlite.connect(DATABASE_FILE) as db:
-            # Проверяем, есть ли колонка teacher_comment
-            # Если нет, нужно будет добавить через миграцию
-            # Пока просто обновим ai_feedback, добавив комментарий
-            cursor = await db.execute("""
-                SELECT ai_feedback FROM homework_progress WHERE id = ?
-            """, (progress_id,))
-
-            row = await cursor.fetchone()
-            if not row:
-                return False
-
-            current_feedback = row[0] or ""
-            updated_feedback = f"{current_feedback}\n\n👨‍🏫 <b>Комментарий учителя:</b>\n{teacher_comment}"
-
+            # ИСПРАВЛЕНО: Записываем комментарий в отдельную колонку
             await db.execute("""
                 UPDATE homework_progress
-                SET ai_feedback = ?
+                SET teacher_comment = ?,
+                    teacher_comment_at = ?
                 WHERE id = ?
-            """, (updated_feedback, progress_id))
+            """, (teacher_comment, utc_now().isoformat(), progress_id))
 
             await db.commit()
+            logger.info(f"Комментарий учителя добавлен к progress_id={progress_id}")
             return True
 
     except Exception as e:
