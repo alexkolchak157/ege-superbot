@@ -8,6 +8,7 @@ from telegram.ext import ContextTypes, ConversationHandler
 
 from ..states import StudentStates
 from ..services import teacher_service, assignment_service
+from ..utils.rate_limiter import check_operation_limit
 
 logger = logging.getLogger(__name__)
 
@@ -123,6 +124,17 @@ async def confirm_teacher_connection(update: Update, context: ContextTypes.DEFAU
     await query.answer()
 
     user_id = update.effective_user.id
+
+    # ИСПРАВЛЕНО: Rate limiting для защиты от спама подключений
+    allowed, retry_after = check_operation_limit(user_id, 'connect_teacher')
+    if not allowed:
+        await query.message.edit_text(
+            f"⏱ <b>Слишком много попыток подключения</b>\n\n"
+            f"Пожалуйста, подождите {retry_after} секунд и попробуйте снова.",
+            parse_mode='HTML'
+        )
+        return ConversationHandler.END
+
     teacher_code = context.user_data.get('pending_teacher_code')
     teacher_name = context.user_data.get('pending_teacher_name')
 
