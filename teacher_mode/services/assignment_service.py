@@ -17,6 +17,7 @@ from ..models import (
     StudentAssignmentStatus,
     TargetType
 )
+from ..utils.datetime_utils import utc_now, parse_datetime_safe, datetime_to_iso
 
 logger = logging.getLogger(__name__)
 
@@ -49,8 +50,11 @@ async def create_homework_assignment(
     """
     try:
         async with aiosqlite.connect(DATABASE_FILE) as db:
-            now = datetime.now()
+            now = utc_now()  # ИСПРАВЛЕНО: timezone-aware datetime
             assignment_data_json = json.dumps(assignment_data)
+
+            # ИСПРАВЛЕНО: убеждаемся что deadline тоже timezone-aware
+            deadline_iso = datetime_to_iso(deadline) if deadline else None
 
             cursor = await db.execute("""
                 INSERT INTO homework_assignments
@@ -59,10 +63,10 @@ async def create_homework_assignment(
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'active')
             """, (
                 teacher_id,
-                now,
+                now.isoformat(),
                 title,
                 description,
-                deadline.isoformat() if deadline else None,
+                deadline_iso,
                 assignment_type.value,
                 assignment_data_json,
                 target_type.value
@@ -76,7 +80,7 @@ async def create_homework_assignment(
                     INSERT INTO homework_student_assignments
                     (homework_id, student_id, assigned_at, status)
                     VALUES (?, ?, ?, 'assigned')
-                """, (homework_id, student_id, now))
+                """, (homework_id, student_id, now.isoformat()))
 
             await db.commit()
 
@@ -117,13 +121,13 @@ async def assign_homework_to_student(
     """
     try:
         async with aiosqlite.connect(DATABASE_FILE) as db:
-            now = datetime.now()
+            now = utc_now()  # ИСПРАВЛЕНО: timezone-aware datetime
 
             cursor = await db.execute("""
                 INSERT INTO homework_student_assignments
                 (homework_id, student_id, assigned_at, status)
                 VALUES (?, ?, ?, 'assigned')
-            """, (homework_id, student_id, now))
+            """, (homework_id, student_id, now.isoformat()))
 
             await db.commit()
 
@@ -191,15 +195,15 @@ async def get_student_homeworks(student_id: int) -> List[HomeworkStudentAssignme
                     id=row['assignment_id'],
                     homework_id=row['homework_id'],
                     student_id=row['student_id'],
-                    assigned_at=datetime.fromisoformat(row['assigned_at']),
-                    completed_at=datetime.fromisoformat(row['completed_at']) if row['completed_at'] else None,
+                    assigned_at=parse_datetime_safe(row['assigned_at']) or utc_now(),  # ИСПРАВЛЕНО: безопасный парсинг
+                    completed_at=parse_datetime_safe(row['completed_at']),  # ИСПРАВЛЕНО: безопасный парсинг
                     status=StudentAssignmentStatus(row['student_status'])
                 )
 
                 # Добавляем данные о задании для удобства
                 assignment.title = row['title']
                 assignment.description = row['description']
-                assignment.deadline = datetime.fromisoformat(row['deadline']) if row['deadline'] else None
+                assignment.deadline = parse_datetime_safe(row['deadline'])  # ИСПРАВЛЕНО: безопасный парсинг
                 assignment.assignment_type = AssignmentType(row['assignment_type'])
 
                 assignments.append(assignment)
@@ -239,10 +243,10 @@ async def get_homework_by_id(homework_id: int) -> Optional[HomeworkAssignment]:
             return HomeworkAssignment(
                 id=row['id'],
                 teacher_id=row['teacher_id'],
-                created_at=datetime.fromisoformat(row['created_at']),
+                created_at=parse_datetime_safe(row['created_at']) or utc_now(),  # ИСПРАВЛЕНО: безопасный парсинг
                 title=row['title'],
                 description=row['description'],
-                deadline=datetime.fromisoformat(row['deadline']) if row['deadline'] else None,
+                deadline=parse_datetime_safe(row['deadline']),  # ИСПРАВЛЕНО: безопасный парсинг
                 assignment_type=AssignmentType(row['assignment_type']),
                 assignment_data=json.loads(row['assignment_data']),
                 target_type=TargetType(row['target_type']),
@@ -283,10 +287,10 @@ async def get_teacher_homeworks(teacher_id: int) -> List[HomeworkAssignment]:
                 homework = HomeworkAssignment(
                     id=row['id'],
                     teacher_id=row['teacher_id'],
-                    created_at=datetime.fromisoformat(row['created_at']),
+                    created_at=parse_datetime_safe(row['created_at']) or utc_now(),  # ИСПРАВЛЕНО: безопасный парсинг
                     title=row['title'],
                     description=row['description'],
-                    deadline=datetime.fromisoformat(row['deadline']) if row['deadline'] else None,
+                    deadline=parse_datetime_safe(row['deadline']),  # ИСПРАВЛЕНО: безопасный парсинг
                     assignment_type=AssignmentType(row['assignment_type']),
                     assignment_data=json.loads(row['assignment_data']),
                     target_type=TargetType(row['target_type']),
@@ -357,7 +361,7 @@ async def update_student_assignment_status(
                     UPDATE homework_student_assignments
                     SET status = ?, completed_at = ?
                     WHERE homework_id = ? AND student_id = ?
-                """, (status.value, datetime.now(), homework_id, student_id))
+                """, (status.value, utc_now().isoformat(), homework_id, student_id))  # ИСПРАВЛЕНО: timezone-aware datetime
             else:
                 await db.execute("""
                     UPDATE homework_student_assignments
@@ -621,6 +625,9 @@ async def add_teacher_comment(progress_id: int, teacher_comment: str) -> bool:
     """
     Добавляет комментарий учителя к ответу ученика.
 
+    ИСПРАВЛЕНО: Использует отдельную колонку teacher_comment вместо
+    добавления к ai_feedback, что предотвращает неконтролируемый рост текста.
+
     Args:
         progress_id: ID записи в homework_progress
         teacher_comment: Комментарий учителя
@@ -630,27 +637,16 @@ async def add_teacher_comment(progress_id: int, teacher_comment: str) -> bool:
     """
     try:
         async with aiosqlite.connect(DATABASE_FILE) as db:
-            # Проверяем, есть ли колонка teacher_comment
-            # Если нет, нужно будет добавить через миграцию
-            # Пока просто обновим ai_feedback, добавив комментарий
-            cursor = await db.execute("""
-                SELECT ai_feedback FROM homework_progress WHERE id = ?
-            """, (progress_id,))
-
-            row = await cursor.fetchone()
-            if not row:
-                return False
-
-            current_feedback = row[0] or ""
-            updated_feedback = f"{current_feedback}\n\n👨‍🏫 <b>Комментарий учителя:</b>\n{teacher_comment}"
-
+            # ИСПРАВЛЕНО: Записываем комментарий в отдельную колонку
             await db.execute("""
                 UPDATE homework_progress
-                SET ai_feedback = ?
+                SET teacher_comment = ?,
+                    teacher_comment_at = ?
                 WHERE id = ?
-            """, (updated_feedback, progress_id))
+            """, (teacher_comment, utc_now().isoformat(), progress_id))
 
             await db.commit()
+            logger.info(f"Комментарий учителя добавлен к progress_id={progress_id}")
             return True
 
     except Exception as e:

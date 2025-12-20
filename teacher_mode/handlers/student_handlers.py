@@ -44,16 +44,15 @@ async def enter_teacher_code_start(update: Update, context: ContextTypes.DEFAULT
 
 async def process_teacher_code(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Обработка введенного кода учителя"""
+    from ..utils.validation import validate_teacher_code
+
     code = update.message.text.strip().upper()
     user_id = update.effective_user.id
 
-    # Проверяем формат кода
-    if not code.startswith("TEACH-") or len(code) != 12:
-        text = (
-            "❌ Неверный формат кода.\n\n"
-            "Код должен выглядеть так: <code>TEACH-ABC123</code>\n"
-            "Попробуйте еще раз."
-        )
+    # ИСПРАВЛЕНО: Валидация кода с защитой от DoS и инъекций
+    is_valid, error_message = validate_teacher_code(code)
+    if not is_valid:
+        text = f"❌ {error_message}\n\nПопробуйте еще раз."
         keyboard = [[InlineKeyboardButton("◀️ Отмена", callback_data="main_menu")]]
         reply_markup = InlineKeyboardMarkup(keyboard)
         await update.message.reply_text(text, reply_markup=reply_markup, parse_mode='HTML')
