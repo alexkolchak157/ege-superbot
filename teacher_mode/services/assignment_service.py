@@ -726,6 +726,9 @@ async def get_student_statistics(teacher_id: int, student_id: int) -> Optional[D
     """
     Получает детальную статистику ученика по всем заданиям учителя.
 
+    ИСПРАВЛЕНО: Оптимизирован N+1 запрос - теперь используется один JOIN вместо
+    N отдельных запросов для каждого задания.
+
     Args:
         teacher_id: ID учителя
         student_id: ID ученика
@@ -737,18 +740,27 @@ async def get_student_statistics(teacher_id: int, student_id: int) -> Optional[D
         async with aiosqlite.connect(DATABASE_FILE) as db:
             db.row_factory = aiosqlite.Row
 
-            # Получаем все домашние задания учителя для этого ученика
+            # ИСПРАВЛЕНО: Получаем все задания И их прогресс одним запросом с LEFT JOIN
+            # Это устраняет N+1 проблему (было: 1 + N запросов, стало: 2 запроса)
             cursor = await db.execute("""
-                SELECT ha.id, ha.title, ha.assignment_type, ha.assignment_data, ha.created_at
+                SELECT
+                    ha.id,
+                    ha.title,
+                    ha.assignment_type,
+                    ha.assignment_data,
+                    ha.created_at,
+                    hp.question_id,
+                    hp.is_correct
                 FROM homework_assignments ha
                 JOIN homework_student_assignments hsa ON ha.id = hsa.homework_id
+                LEFT JOIN homework_progress hp ON hp.homework_id = ha.id AND hp.student_id = ?
                 WHERE ha.teacher_id = ? AND hsa.student_id = ?
-                ORDER BY ha.created_at DESC
-            """, (teacher_id, student_id))
+                ORDER BY ha.created_at DESC, hp.question_id
+            """, (student_id, teacher_id, student_id))
 
-            assignments = await cursor.fetchall()
+            rows = await cursor.fetchall()
 
-            if not assignments:
+            if not rows:
                 return {
                     'total_assignments': 0,
                     'completed_assignments': 0,
@@ -762,45 +774,58 @@ async def get_student_statistics(teacher_id: int, student_id: int) -> Optional[D
                     'strong_modules': []
                 }
 
+            # Группируем результаты по заданиям
+            assignments_dict = {}
+            for row in rows:
+                assignment_id = row['id']
+
+                if assignment_id not in assignments_dict:
+                    assignments_dict[assignment_id] = {
+                        'id': assignment_id,
+                        'title': row['title'],
+                        'assignment_type': row['assignment_type'],
+                        'assignment_data': json.loads(row['assignment_data']),
+                        'created_at': row['created_at'],
+                        'progress': []
+                    }
+
+                # Добавляем прогресс (если есть)
+                if row['question_id'] is not None:
+                    assignments_dict[assignment_id]['progress'].append({
+                        'question_id': row['question_id'],
+                        'is_correct': bool(row['is_correct'])
+                    })
+
             # Статистика по модулям
             module_stats = {}  # module_name -> {correct: int, incorrect: int, total: int}
 
-            total_assignments = len(assignments)
+            total_assignments = len(assignments_dict)
             completed_assignments = 0
             total_questions = 0
             correct_answers = 0
             incorrect_answers = 0
 
-            for assignment in assignments:
-                assignment_id = assignment['id']
-                assignment_data = json.loads(assignment['assignment_data'])
-
-                # Получаем прогресс ученика по этому заданию
-                progress_cursor = await db.execute("""
-                    SELECT question_id, is_correct
-                    FROM homework_progress
-                    WHERE homework_id = ? AND student_id = ?
-                """, (assignment_id, student_id))
-
-                progress_rows = await progress_cursor.fetchall()
+            for assignment_data in assignments_dict.values():
+                assignment_json = assignment_data['assignment_data']
+                progress_rows = assignment_data['progress']
 
                 # Определяем модуль задания
-                if assignment_data.get('is_custom'):
+                if assignment_json.get('is_custom'):
                     task_module = 'custom'
-                elif assignment_data.get('is_mixed'):
+                elif assignment_json.get('is_mixed'):
                     # Для смешанных заданий учитываем все модули
-                    modules_list = [m['task_module'] for m in assignment_data.get('modules', [])]
+                    modules_list = [m['task_module'] for m in assignment_json.get('modules', [])]
                 else:
-                    task_module = assignment_data.get('task_module', 'unknown')
+                    task_module = assignment_json.get('task_module', 'unknown')
                     modules_list = [task_module]
 
                 # Подсчитываем вопросы
-                if assignment_data.get('is_mixed'):
-                    assignment_questions = assignment_data.get('total_questions_count', 0)
-                elif assignment_data.get('is_custom'):
-                    assignment_questions = len(assignment_data.get('custom_questions', []))
+                if assignment_json.get('is_mixed'):
+                    assignment_questions = assignment_json.get('total_questions_count', 0)
+                elif assignment_json.get('is_custom'):
+                    assignment_questions = len(assignment_json.get('custom_questions', []))
                 else:
-                    assignment_questions = assignment_data.get('questions_count', 0)
+                    assignment_questions = assignment_json.get('questions_count', 0)
 
                 total_questions += assignment_questions
 

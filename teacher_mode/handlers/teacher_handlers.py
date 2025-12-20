@@ -50,6 +50,7 @@ from telegram.ext import ContextTypes, ConversationHandler
 
 from ..states import TeacherStates
 from ..services import teacher_service
+from ..utils.rate_limiter import check_operation_limit
 from payment.config import get_all_teacher_plans, is_teacher_plan
 from core.config import ADMIN_IDS
 
@@ -2228,6 +2229,20 @@ async def confirm_and_create_assignment(update: Update, context: ContextTypes.DE
 
     user_id = update.effective_user.id
 
+    # ИСПРАВЛЕНО: Rate limiting для защиты от спама создания заданий
+    allowed, retry_after = check_operation_limit(user_id, 'create_homework')
+    if not allowed:
+        await query.message.edit_text(
+            f"⏱ <b>Слишком много заданий создано</b>\n\n"
+            f"Пожалуйста, подождите {retry_after} секунд и попробуйте снова.\n\n"
+            f"💡 Лимит: 20 заданий в час",
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("◀️ В меню учителя", callback_data="teacher_menu")
+            ]]),
+            parse_mode='HTML'
+        )
+        return ConversationHandler.END
+
     # Извлекаем данные из контекста
     task_type = context.user_data.get('assignment_task_type')
     selected_students = context.user_data.get('selected_students', [])
@@ -2781,6 +2796,21 @@ async def create_promo_code_handler(update: Update, context: ContextTypes.DEFAUL
     await query.answer()
 
     user_id = update.effective_user.id
+
+    # ИСПРАВЛЕНО: Rate limiting для защиты от спама создания промокодов
+    allowed, retry_after = check_operation_limit(user_id, 'create_promo')
+    if not allowed:
+        await query.message.edit_text(
+            f"⏱ <b>Слишком много промокодов создано</b>\n\n"
+            f"Пожалуйста, подождите {retry_after} секунд и попробуйте снова.\n\n"
+            f"💡 Лимит: 5 промокодов в час",
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("◀️ Назад", callback_data="gift_my_promos")
+            ]]),
+            parse_mode='HTML'
+        )
+        return TeacherStates.TEACHER_MENU
+
     uses_str = query.data.replace("promo_uses_", "")
     max_uses = None if uses_str == "unlimited" else int(uses_str)
     duration_days = context.user_data.get('promo_duration', 30)
@@ -3116,6 +3146,19 @@ async def process_teacher_comment(update: Update, context: ContextTypes.DEFAULT_
     """
     Обрабатывает введенный комментарий учителя и сохраняет его.
     """
+    user_id = update.effective_user.id
+
+    # ИСПРАВЛЕНО: Rate limiting для защиты от спама комментариев
+    allowed, retry_after = check_operation_limit(user_id, 'add_comment')
+    if not allowed:
+        await update.message.reply_text(
+            f"⏱ <b>Слишком много комментариев</b>\n\n"
+            f"Пожалуйста, подождите {retry_after} секунд и попробуйте снова.\n\n"
+            f"💡 Лимит: 30 комментариев в минуту",
+            parse_mode='HTML'
+        )
+        return TeacherStates.TEACHER_MENU
+
     progress_id = context.user_data.get('commenting_progress_id')
 
     if not progress_id:
@@ -4318,6 +4361,21 @@ async def handle_promo_input(update: Update, context: ContextTypes.DEFAULT_TYPE)
     Перенаправляет на обработчик из payment модуля.
     """
     user_id = update.effective_user.id
+
+    # ИСПРАВЛЕНО: Rate limiting для защиты от брутфорса промокодов
+    allowed, retry_after = check_operation_limit(user_id, 'use_promo')
+    if not allowed:
+        await update.message.reply_text(
+            f"⏱ <b>Слишком много попыток ввода промокода</b>\n\n"
+            f"Пожалуйста, подождите {retry_after} секунд и попробуйте снова.\n\n"
+            f"💡 Лимит: 3 попытки в минуту",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("◀️ Назад в меню учителя", callback_data="teacher_menu")]
+            ]),
+            parse_mode='HTML'
+        )
+        return TeacherStates.TEACHER_MENU
+
     promo_code = update.message.text
 
     logger.info(f"[Teacher Payment] User {user_id} entered promo code: {promo_code}")
