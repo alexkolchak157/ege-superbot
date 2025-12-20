@@ -140,3 +140,73 @@ class PromoCode:
     created_at: datetime
     expires_at: Optional[datetime]
     status: str  # 'active', 'expired', 'exhausted'
+
+
+# ============================================
+# Модели для быстрой проверки работ (Quick Check)
+# ============================================
+
+class QuickCheckTaskType(str, Enum):
+    """Типы заданий для быстрой проверки"""
+    TASK19 = "task19"
+    TASK20 = "task20"
+    TASK24 = "task24"
+    TASK25 = "task25"
+    CUSTOM = "custom"  # Произвольное задание
+
+
+@dataclass
+class QuickCheck:
+    """Быстрая проверка работы ученика"""
+    id: int
+    teacher_id: int
+    task_type: QuickCheckTaskType
+    task_condition: str
+    student_answer: str
+    student_id: Optional[int]
+    ai_feedback: Optional[str]
+    is_correct: Optional[bool]
+    score: Optional[int]
+    teacher_comment: Optional[str]
+    tags: Optional[List[str]]  # Теги для категоризации
+    template_name: Optional[str]
+    created_at: datetime
+    updated_at: Optional[datetime]
+
+
+@dataclass
+class QuickCheckTemplate:
+    """Шаблон задания для быстрой проверки"""
+    id: int
+    teacher_id: int
+    template_name: str
+    task_type: QuickCheckTaskType
+    task_condition: str
+    tags: Optional[List[str]]
+    usage_count: int
+    created_at: datetime
+    updated_at: Optional[datetime]
+
+
+@dataclass
+class QuickCheckQuota:
+    """Квота на быстрые проверки для учителя"""
+    id: int
+    teacher_id: int
+    monthly_limit: int  # Месячный лимит проверок
+    used_this_month: int  # Использовано в текущем месяце
+    current_period_start: datetime
+    current_period_end: datetime
+    bonus_checks: int  # Бонусные проверки (не сгорают)
+    last_reset_at: Optional[datetime]
+    updated_at: datetime
+
+    @property
+    def remaining_checks(self) -> int:
+        """Оставшиеся проверки в текущем периоде"""
+        return max(0, self.monthly_limit + self.bonus_checks - self.used_this_month)
+
+    @property
+    def can_check(self) -> bool:
+        """Можно ли выполнить проверку"""
+        return self.remaining_checks > 0
