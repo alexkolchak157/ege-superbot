@@ -149,6 +149,9 @@ RATE_LIMITS = {
 
     # Подключение к учителю: 5 попыток в час
     'connect_teacher': {'max_requests': 5, 'window_seconds': 3600},
+
+    # Быстрая проверка: 50 проверок в час (дополнительно к квоте из БД)
+    'quick_check': {'max_requests': 50, 'window_seconds': 3600},
 }
 
 

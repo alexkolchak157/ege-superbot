@@ -174,3 +174,4 @@ cython_debug/
 .pypirc
 quiz_async.db
 users.db
+main_database.db

@@ -57,6 +57,17 @@ class TeacherStates(IntEnum):
     PAYMENT_ENTERING_EMAIL = 81  # Ввод email для оплаты подписки
     PAYMENT_AUTO_RENEWAL_CHOICE = 82  # Выбор типа оплаты (с автопродлением или разовая)
 
+    # Быстрая проверка работ (Quick Check)
+    QUICK_CHECK_MENU = 90  # Меню быстрой проверки
+    QUICK_CHECK_SELECT_TYPE = 91  # Выбор типа задания
+    QUICK_CHECK_ENTER_CONDITION = 92  # Ввод условия задания
+    QUICK_CHECK_ENTER_ANSWER = 93  # Ввод ответа (одиночная проверка)
+    QUICK_CHECK_ENTER_ANSWERS_BULK = 94  # Ввод ответов (массовая проверка)
+    QUICK_CHECK_VIEWING_RESULT = 95  # Просмотр результата проверки
+    QUICK_CHECK_HISTORY = 96  # История проверок
+    QUICK_CHECK_TEMPLATES = 97  # Управление шаблонами
+    QUICK_CHECK_SAVE_TEMPLATE = 98  # Сохранение шаблона
+
 
 class StudentStates(IntEnum):
     """Состояния для учеников (связь с учителем)"""
