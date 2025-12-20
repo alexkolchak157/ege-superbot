@@ -6,7 +6,7 @@ import logging
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, filters, ConversationHandler
 
 from core.plugin_base import BotPlugin
-from .handlers import teacher_handlers, student_handlers, analytics_handlers
+from .handlers import teacher_handlers, student_handlers, analytics_handlers, quick_check_handlers
 from .states import TeacherStates, StudentStates
 
 logger = logging.getLogger(__name__)
@@ -71,6 +71,13 @@ class TeacherModePlugin(BotPlugin):
 
                     # Статистика ученика
                     CallbackQueryHandler(teacher_handlers.show_student_statistics, pattern="^student_stats:"),
+
+                    # Быстрая проверка работ
+                    CallbackQueryHandler(quick_check_handlers.quick_check_menu, pattern="^quick_check_menu$"),
+                    CallbackQueryHandler(quick_check_handlers.start_single_check, pattern="^qc_check_single$"),
+                    CallbackQueryHandler(quick_check_handlers.start_bulk_check, pattern="^qc_check_bulk$"),
+                    CallbackQueryHandler(quick_check_handlers.show_history, pattern="^qc_history$"),
+                    CallbackQueryHandler(quick_check_handlers.show_stats, pattern="^qc_stats$"),
 
                     # Подарки и промокоды
                     CallbackQueryHandler(teacher_handlers.show_gift_subscription_menu, pattern="^teacher_gift_menu$"),
@@ -314,6 +321,41 @@ class TeacherModePlugin(BotPlugin):
                     # Отмена платежа
                     CallbackQueryHandler(teacher_handlers.teacher_menu, pattern="^cancel_payment$"),
                     CallbackQueryHandler(teacher_handlers.teacher_menu, pattern="^teacher_menu$"),
+                ],
+                # ============================================
+                # Quick Check States
+                # ============================================
+                TeacherStates.QUICK_CHECK_MENU: [
+                    # Все обработчики из TEACHER_MENU (для навигации внутри QC)
+                    CallbackQueryHandler(quick_check_handlers.quick_check_menu, pattern="^quick_check_menu$"),
+                    CallbackQueryHandler(quick_check_handlers.start_single_check, pattern="^qc_check_single$"),
+                    CallbackQueryHandler(quick_check_handlers.start_bulk_check, pattern="^qc_check_bulk$"),
+                    CallbackQueryHandler(quick_check_handlers.show_history, pattern="^qc_history$"),
+                    CallbackQueryHandler(quick_check_handlers.show_stats, pattern="^qc_stats$"),
+                    CallbackQueryHandler(teacher_handlers.teacher_menu, pattern="^teacher_menu$"),
+                ],
+                TeacherStates.QUICK_CHECK_SELECT_TYPE: [
+                    # Одиночная проверка
+                    CallbackQueryHandler(quick_check_handlers.select_task_type, pattern="^qc_type_"),
+                    # Массовая проверка
+                    CallbackQueryHandler(quick_check_handlers.select_bulk_task_type, pattern="^qc_bulk_"),
+                    CallbackQueryHandler(quick_check_handlers.quick_check_menu, pattern="^quick_check_menu$"),
+                    CallbackQueryHandler(teacher_handlers.teacher_menu, pattern="^teacher_menu$"),
+                ],
+                TeacherStates.QUICK_CHECK_ENTER_CONDITION: [
+                    # Ввод условия задания (текст)
+                    MessageHandler(filters.TEXT & ~filters.COMMAND, quick_check_handlers.process_task_condition),
+                    CallbackQueryHandler(quick_check_handlers.quick_check_menu, pattern="^quick_check_menu$"),
+                ],
+                TeacherStates.QUICK_CHECK_ENTER_ANSWER: [
+                    # Ввод ответа ученика (одиночная проверка)
+                    MessageHandler(filters.TEXT & ~filters.COMMAND, quick_check_handlers.process_single_answer),
+                    CallbackQueryHandler(quick_check_handlers.quick_check_menu, pattern="^quick_check_menu$"),
+                ],
+                TeacherStates.QUICK_CHECK_ENTER_ANSWERS_BULK: [
+                    # Ввод ответов построчно (массовая проверка)
+                    MessageHandler(filters.TEXT & ~filters.COMMAND, quick_check_handlers.process_bulk_answers),
+                    CallbackQueryHandler(quick_check_handlers.quick_check_menu, pattern="^quick_check_menu$"),
                 ],
             },
             fallbacks=[
