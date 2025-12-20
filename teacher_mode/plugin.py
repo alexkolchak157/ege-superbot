@@ -21,7 +21,47 @@ class TeacherModePlugin(BotPlugin):
 
     async def post_init(self, app: Application):
         """Инициализация плагина"""
+        # Автоматически применяем миграции Quick Check если нужно
+        await self._ensure_quick_check_tables()
         logger.info("Teacher mode plugin initialized")
+
+    async def _ensure_quick_check_tables(self):
+        """Создает таблицы Quick Check если их нет"""
+        import aiosqlite
+        from core.config import DATABASE_FILE
+        import os
+
+        try:
+            async with aiosqlite.connect(DATABASE_FILE) as db:
+                # Проверяем существование таблицы
+                cursor = await db.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table' AND name='quick_check_quotas'"
+                )
+                exists = await cursor.fetchone()
+
+                if not exists:
+                    logger.info("Quick Check tables not found, running migration...")
+
+                    # Читаем SQL миграции
+                    migration_path = os.path.join(
+                        os.path.dirname(__file__),
+                        'migrations',
+                        'create_quick_checks_table.sql'
+                    )
+
+                    with open(migration_path, 'r', encoding='utf-8') as f:
+                        migration_sql = f.read()
+
+                    # Выполняем миграцию
+                    await db.executescript(migration_sql)
+                    await db.commit()
+
+                    logger.info("✅ Quick Check tables created successfully")
+                else:
+                    logger.info("Quick Check tables already exist")
+
+        except Exception as e:
+            logger.error(f"Error ensuring Quick Check tables: {e}", exc_info=True)
 
     def entry_handler(self):
         """Возвращает обработчик для входа из главного меню"""
