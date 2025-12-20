@@ -52,13 +52,18 @@ class TeacherModePlugin(BotPlugin):
                     with open(migration_path, 'r', encoding='utf-8') as f:
                         migration_sql = f.read()
 
-                    # Выполняем миграцию
-                    await db.executescript(migration_sql)
+                    # Выполняем миграцию (разбиваем на statements, т.к. executescript не поддерживается)
+                    statements = [s.strip() for s in migration_sql.split(';') if s.strip()]
+
+                    for statement in statements:
+                        if statement:
+                            await db.execute(statement)
+
                     await db.commit()
 
                     logger.info("✅ Quick Check tables created successfully")
                 else:
-                    logger.info("Quick Check tables already exist")
+                    logger.debug("Quick Check tables already exist")
 
         except Exception as e:
             logger.error(f"Error ensuring Quick Check tables: {e}", exc_info=True)
