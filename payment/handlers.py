@@ -693,8 +693,9 @@ async def handle_teacher_plan_confirmation(update: Update, context: ContextTypes
     """
     Обработчик подтверждения выбора учительского тарифа.
 
-    После того, как пользователь подтвердил, что он учитель,
-    продолжаем стандартный флоу выбора длительности подписки.
+    ИСПРАВЛЕНО: Добавлена специальная обработка для teacher_free и teacher_trial_7days.
+    Для teacher_free (бесплатный тариф) - активация без выбора срока.
+    Для teacher_trial_7days - переход к вводу email с фиксированным сроком 7 дней.
     """
     query = update.callback_query
     await query.answer()
@@ -704,8 +705,98 @@ async def handle_teacher_plan_confirmation(update: Update, context: ContextTypes
 
     logger.info(f"✅ Teacher plan confirmed by user {update.effective_user.id}: {plan_id}")
 
+    # ИСПРАВЛЕНО: Специальная обработка для teacher_free
+    if plan_id == 'teacher_free':
+        # teacher_free - бесплатный тариф на 100 лет, активируем сразу
+        user_id = update.effective_user.id
+        subscription_manager = context.bot_data.get('subscription_manager', SubscriptionManager())
+
+        try:
+            # Активируем подписку teacher_free
+            success = await subscription_manager.activate_subscription(
+                user_id=user_id,
+                plan_id='teacher_free',
+                duration_months=1200  # ~100 лет в месяцах
+            )
+
+            if success:
+                # Получаем профиль учителя для отображения кода
+                from teacher_mode.services.teacher_service import get_teacher_profile
+                teacher_profile = await get_teacher_profile(user_id)
+
+                if teacher_profile:
+                    text = (
+                        "🎉 <b>Бесплатный тариф учителя активирован!</b>\n\n"
+                        f"🔑 <b>Ваш код для учеников:</b> <code>{teacher_profile.teacher_code}</code>\n\n"
+                        "✅ <b>Что вы получили:</b>\n"
+                        "• Возможность добавить 1 ученика\n"
+                        "• Создание домашних заданий\n"
+                        "• Отслеживание прогресса ученика\n"
+                        "• Базовая статистика\n\n"
+                        "💡 <b>Как использовать:</b>\n"
+                        "1. Отправьте код <code>{}</code> своему ученику\n"
+                        "2. Ученик вводит код в боте\n"
+                        "3. Вы сможете отслеживать его прогресс\n\n"
+                        "📈 Хотите больше возможностей? Обновите тариф на платный!"
+                    ).format(teacher_profile.teacher_code)
+
+                    keyboard = [
+                        [InlineKeyboardButton("👥 Перейти в режим учителя", callback_data="teacher_menu")],
+                        [InlineKeyboardButton("💎 Посмотреть другие тарифы", callback_data="teacher_subscriptions")],
+                        [InlineKeyboardButton("◀️ Главное меню", callback_data="main_menu")]
+                    ]
+                else:
+                    text = (
+                        "🎉 <b>Бесплатный тариф учителя активирован!</b>\n\n"
+                        "✅ Теперь вы можете использовать режим учителя с 1 учеником.\n\n"
+                        "Перейдите в режим учителя, чтобы получить свой код для ученика."
+                    )
+                    keyboard = [
+                        [InlineKeyboardButton("👥 Перейти в режим учителя", callback_data="teacher_menu")],
+                        [InlineKeyboardButton("◀️ Главное меню", callback_data="main_menu")]
+                    ]
+
+                await query.edit_message_text(
+                    text,
+                    reply_markup=InlineKeyboardMarkup(keyboard),
+                    parse_mode=ParseMode.HTML
+                )
+                return ConversationHandler.END
+            else:
+                await query.edit_message_text(
+                    "❌ Ошибка активации бесплатного тарифа.\n"
+                    "Пожалуйста, попробуйте позже или обратитесь в поддержку.",
+                    reply_markup=InlineKeyboardMarkup([[
+                        InlineKeyboardButton("◀️ Назад", callback_data="teacher_subscriptions")
+                    ]])
+                )
+                return ConversationHandler.END
+
+        except Exception as e:
+            logger.error(f"Error activating teacher_free: {e}")
+            await query.edit_message_text(
+                "❌ Произошла ошибка при активации.\n"
+                "Пожалуйста, попробуйте позже.",
+                reply_markup=InlineKeyboardMarkup([[
+                    InlineKeyboardButton("◀️ Назад", callback_data="teacher_subscriptions")
+                ]])
+            )
+            return ConversationHandler.END
+
+    # ИСПРАВЛЕНО: Специальная обработка для teacher_trial_7days
+    elif plan_id == 'teacher_trial_7days' or plan_id.startswith('test_teacher_trial'):
+        # Пробный период учителя - фиксированный срок 7 дней за 1₽
+        # Переходим сразу к вводу email, без выбора срока
+        context.user_data['duration_months'] = 1
+        context.user_data['total_price'] = 1
+        from payment.config import get_plan_info
+        plan_info = get_plan_info(plan_id)
+        context.user_data['plan_name'] = plan_info['name'] if plan_info else "Пробный период учителя"
+
+        return await request_email_for_trial(update, context)
+
+    # Для остальных teacher планов - показываем выбор длительности
     # Все данные уже сохранены в context.user_data в handle_plan_selection
-    # Теперь просто продолжаем с выбором длительности
     return await show_duration_options(update, context)
 
 
@@ -836,58 +927,65 @@ async def show_duration_options(update: Update, context: ContextTypes.DEFAULT_TY
     query = update.callback_query
     if query:
         await query.answer()
-    
+
     plan_id = context.user_data.get('selected_plan')
     base_price = context.user_data.get('base_price', 249)
-    
+
     # Импортируем конфигурацию
-    from payment.config import DURATION_DISCOUNTS
-    
+    from payment.config import DURATION_DISCOUNTS, is_teacher_plan
+
     # Формируем текст
     text = "⏱ <b>Выберите срок подписки:</b>\n\n"
     text += f"💰 Базовая цена: {base_price}₽/месяц\n\n"
-    
+
     # Формируем кнопки с вариантами длительности
     keyboard = []
-    
+
     for months, discount_info in DURATION_DISCOUNTS.items():
         # Рассчитываем цену
         multiplier = discount_info['multiplier']
         total_price = int(base_price * multiplier)
         price_per_month = int(total_price / months)
-        
+
         # Формируем текст кнопки
         button_text = f"{discount_info['label']}"
-        
+
         if months == 1:
             button_text += f" — {total_price}₽"
         else:
             savings = discount_info.get('savings', 0)
             button_text += f" — {total_price}₽ (экономия {savings}₽)"
-        
+
         # Добавляем badge если есть
         if discount_info.get('badge'):
             button_text = f"{discount_info['badge']} {button_text}"
-        
+
         keyboard.append([
             InlineKeyboardButton(
                 button_text,
                 callback_data=f"duration_{months}"
             )
         ])
-        
+
         # Добавляем детали в текст
         if months == 1:
             text += f"📅 <b>1 месяц:</b> {total_price}₽\n"
         else:
             text += f"📅 <b>{months} месяца:</b> {total_price}₽ ({price_per_month}₽/мес)\n"
             text += f"   💰 Экономия: {savings}₽ ({discount_info['discount_percent']}%)\n\n"
-    
-    # Кнопка назад
-    keyboard.append([
-        InlineKeyboardButton("⬅️ Назад к выбору плана", callback_data="back_to_plans")
-    ])
-    
+
+    # ИСПРАВЛЕНО: Кнопка назад зависит от типа плана
+    if plan_id and is_teacher_plan(plan_id):
+        # Для teacher планов - возврат к тарифам учителей
+        keyboard.append([
+            InlineKeyboardButton("⬅️ Назад к тарифам учителей", callback_data="teacher_subscriptions")
+        ])
+    else:
+        # Для обычных планов - возврат к выбору плана
+        keyboard.append([
+            InlineKeyboardButton("⬅️ Назад к выбору плана", callback_data="back_to_plans")
+        ])
+
     reply_markup = InlineKeyboardMarkup(keyboard)
     
     # Отправляем или редактируем сообщение
