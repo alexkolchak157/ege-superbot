@@ -1734,12 +1734,14 @@ class SubscriptionManager:
                             else:
                                 display_name = f"User {user_id}"
 
-                            # КРИТИЧНО: Обработка race condition
+                            # ИСПРАВЛЕНО: Передаем существующее соединение для предотвращения database lock
+                            # create_teacher_profile будет использовать это соединение вместо создания нового
                             try:
                                 teacher_profile = await create_teacher_profile(
                                     user_id=user_id,
                                     display_name=display_name,
-                                    subscription_tier=plan_id
+                                    subscription_tier=plan_id,
+                                    db_connection=conn  # ИСПРАВЛЕНО: Передаем соединение
                                 )
 
                                 if teacher_profile:
@@ -2761,15 +2763,24 @@ class SubscriptionManager:
                 else:
                     display_name = "Учитель"
 
-                # Создаем teacher_profile
+                # ИСПРАВЛЕНО: Добавляем роль teacher перед созданием профиля
+                await conn.execute(
+                    "INSERT OR IGNORE INTO user_roles (user_id, role) VALUES (?, 'teacher')",
+                    (user_id,)
+                )
+
+                # Создаем teacher_profile с временной меткой для поля created_at
+                from datetime import datetime, timezone
+                now = datetime.now(timezone.utc)
+
                 await conn.execute(
                     """
                     INSERT INTO teacher_profiles
                     (user_id, teacher_code, display_name, has_active_subscription,
-                     subscription_tier, subscription_expires)
-                    VALUES (?, ?, ?, 1, ?, ?)
+                     subscription_tier, subscription_expires, created_at, feedback_settings)
+                    VALUES (?, ?, ?, 1, ?, ?, ?, '{}')
                     """,
-                    (user_id, teacher_code, display_name, plan_id, expires_at.isoformat())
+                    (user_id, teacher_code, display_name, plan_id, expires_at.isoformat(), now.isoformat())
                 )
                 logger.info(f"Created teacher profile for user {user_id} with code {teacher_code}")
                 action = 'activated'
