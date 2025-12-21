@@ -29,21 +29,40 @@ def generate_teacher_code() -> str:
 async def create_teacher_profile(
     user_id: int,
     display_name: str,
-    subscription_tier: str = 'teacher_free'
+    subscription_tier: str = 'teacher_free',
+    db_connection: Optional[aiosqlite.Connection] = None
 ) -> TeacherProfile:
     """
-    Создает профиль учителя.
+    Создает профиль учителя с защитой от database lock.
+
+    ИСПРАВЛЕНО: Добавлена поддержка внешнего соединения для предотвращения
+    множественных соединений с БД и database lock.
 
     Args:
         user_id: ID пользователя Telegram
         display_name: Отображаемое имя учителя
         subscription_tier: Уровень подписки (по умолчанию teacher_free)
+        db_connection: Опциональное существующее соединение с БД для использования в транзакции
 
     Returns:
         TeacherProfile
     """
     try:
-        async with aiosqlite.connect(DATABASE_FILE) as db:
+        # ИСПРАВЛЕНО: Используем переданное соединение или создаем новое с увеличенным timeout
+        if db_connection is not None:
+            # Используем переданное соединение (в рамках транзакции)
+            db = db_connection
+            should_commit = False  # Не коммитим - это делает внешняя транзакция
+        else:
+            # Создаем новое соединение с увеличенным timeout для предотвращения lock
+            db = await aiosqlite.connect(DATABASE_FILE, timeout=30.0)
+            should_commit = True
+
+        try:
+            # ИСПРАВЛЕНО: Начинаем эксклюзивную транзакцию для предотвращения race conditions
+            if should_commit:
+                await db.execute("BEGIN EXCLUSIVE")
+
             # Генерируем уникальный код
             teacher_code = generate_teacher_code()
 
@@ -83,7 +102,9 @@ async def create_teacher_profile(
             """, (user_id, teacher_code, display_name, subscription_tier,
                   has_active, expires.isoformat() if expires else None, now.isoformat(), feedback_settings_json))
 
-            await db.commit()
+            # Коммитим только если создали свое соединение
+            if should_commit:
+                await db.commit()
 
             profile = TeacherProfile(
                 user_id=user_id,
@@ -98,6 +119,17 @@ async def create_teacher_profile(
 
             logger.info(f"Создан профиль учителя для user_id={user_id}, код={teacher_code}, тариф={subscription_tier}")
             return profile
+
+        except Exception as e:
+            # Откатываем транзакцию только если создали свое соединение
+            if should_commit:
+                await db.rollback()
+            raise
+
+        finally:
+            # Закрываем соединение только если создали свое
+            if should_commit and db:
+                await db.close()
 
     except Exception as e:
         logger.error(f"Ошибка при создании профиля учителя: {e}")
