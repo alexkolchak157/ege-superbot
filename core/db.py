@@ -1475,8 +1475,11 @@ async def apply_teacher_mode_migration(db: aiosqlite.Connection):
                 display_name TEXT NOT NULL,
                 has_active_subscription BOOLEAN DEFAULT FALSE,
                 subscription_expires DATETIME NULL,
-                subscription_tier TEXT DEFAULT 'teacher_basic' CHECK(
-                    subscription_tier IN ('teacher_basic', 'teacher_standard', 'teacher_premium')
+                subscription_tier TEXT DEFAULT 'teacher_free' CHECK(
+                    subscription_tier IN (
+                        'teacher_free', 'teacher_trial_7days',
+                        'teacher_basic', 'teacher_standard', 'teacher_premium'
+                    )
                 ),
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
                 feedback_settings TEXT DEFAULT '{}',
