@@ -286,16 +286,13 @@ async def process_single_answer(update: Update, context: ContextTypes.DEFAULT_TY
             is_correct=is_correct
         )
 
-        # Формируем результат
-        result_emoji = "✅" if is_correct else "❌"
-        result_text = "Правильно" if is_correct else "Неправильно"
-
+        # Формируем результат (без дублирующего заголовка - AI feedback уже содержит оценку)
         text = (
-            f"{result_emoji} <b>Результат проверки: {result_text}</b>\n\n"
+            f"<b>🔍 Быстрая проверка</b>\n\n"
             f"<b>Тип задания:</b> {task_type.value}\n\n"
             f"<b>Условие:</b>\n{condition[:200]}{'...' if len(condition) > 200 else ''}\n\n"
             f"<b>Ответ ученика:</b>\n<code>{answer[:200]}</code>\n\n"
-            f"<b>🤖 AI обратная связь:</b>\n{ai_feedback}\n\n"
+            f"{ai_feedback}\n\n"
             f"💡 Осталось проверок: {quota.remaining_checks - 1}"
         )
 
