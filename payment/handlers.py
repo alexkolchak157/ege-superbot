@@ -707,54 +707,52 @@ async def handle_teacher_plan_confirmation(update: Update, context: ContextTypes
 
     # ИСПРАВЛЕНО: Специальная обработка для teacher_free
     if plan_id == 'teacher_free':
-        # teacher_free - бесплатный тариф на 100 лет, активируем сразу
+        # teacher_free - бесплатный тариф, доступен по умолчанию
+        # Просто создаем профиль учителя, который автоматически получает активную подписку на 100 лет
         user_id = update.effective_user.id
-        subscription_manager = context.bot_data.get('subscription_manager', SubscriptionManager())
 
         try:
-            # Активируем подписку teacher_free
-            success = await subscription_manager.activate_subscription(
-                user_id=user_id,
-                plan_id='teacher_free',
-                duration_months=1200  # ~100 лет в месяцах
-            )
+            # Проверяем, есть ли уже профиль учителя
+            from teacher_mode.services.teacher_service import get_teacher_profile, create_teacher_profile
+            teacher_profile = await get_teacher_profile(user_id)
 
-            if success:
-                # Получаем профиль учителя для отображения кода
-                from teacher_mode.services.teacher_service import get_teacher_profile
-                teacher_profile = await get_teacher_profile(user_id)
+            # Если профиля нет - создаем его
+            if not teacher_profile:
+                # Получаем имя пользователя
+                user = update.effective_user
+                display_name = user.first_name or user.username or f"User {user_id}"
 
-                if teacher_profile:
-                    text = (
-                        "🎉 <b>Бесплатный тариф учителя активирован!</b>\n\n"
-                        f"🔑 <b>Ваш код для учеников:</b> <code>{teacher_profile.teacher_code}</code>\n\n"
-                        "✅ <b>Что вы получили:</b>\n"
-                        "• Возможность добавить 1 ученика\n"
-                        "• Создание домашних заданий\n"
-                        "• Отслеживание прогресса ученика\n"
-                        "• Базовая статистика\n\n"
-                        "💡 <b>Как использовать:</b>\n"
-                        "1. Отправьте код <code>{}</code> своему ученику\n"
-                        "2. Ученик вводит код в боте\n"
-                        "3. Вы сможете отслеживать его прогресс\n\n"
-                        "📈 Хотите больше возможностей? Обновите тариф на платный!"
-                    ).format(teacher_profile.teacher_code)
+                # Создаем профиль учителя с teacher_free
+                # В create_teacher_profile для teacher_free автоматически устанавливается:
+                # - has_active_subscription = True
+                # - subscription_expires = now + 100 лет
+                teacher_profile = await create_teacher_profile(
+                    user_id=user_id,
+                    display_name=display_name,
+                    subscription_tier='teacher_free'
+                )
 
-                    keyboard = [
-                        [InlineKeyboardButton("👥 Перейти в режим учителя", callback_data="teacher_menu")],
-                        [InlineKeyboardButton("💎 Посмотреть другие тарифы", callback_data="teacher_subscriptions")],
-                        [InlineKeyboardButton("◀️ Главное меню", callback_data="main_menu")]
-                    ]
-                else:
-                    text = (
-                        "🎉 <b>Бесплатный тариф учителя активирован!</b>\n\n"
-                        "✅ Теперь вы можете использовать режим учителя с 1 учеником.\n\n"
-                        "Перейдите в режим учителя, чтобы получить свой код для ученика."
-                    )
-                    keyboard = [
-                        [InlineKeyboardButton("👥 Перейти в режим учителя", callback_data="teacher_menu")],
-                        [InlineKeyboardButton("◀️ Главное меню", callback_data="main_menu")]
-                    ]
+            if teacher_profile:
+                text = (
+                    "🎉 <b>Бесплатный режим учителя доступен!</b>\n\n"
+                    f"🔑 <b>Ваш код для учеников:</b> <code>{teacher_profile.teacher_code}</code>\n\n"
+                    "✅ <b>Что вы получили:</b>\n"
+                    "• Возможность добавить 1 ученика\n"
+                    "• Создание домашних заданий\n"
+                    "• Отслеживание прогресса ученика\n"
+                    "• Базовая статистика\n\n"
+                    "💡 <b>Как использовать:</b>\n"
+                    "1. Отправьте код <code>{}</code> своему ученику\n"
+                    "2. Ученик вводит код в боте\n"
+                    "3. Вы сможете отслеживать его прогресс\n\n"
+                    "📈 Хотите больше возможностей? Обновите тариф на платный!"
+                ).format(teacher_profile.teacher_code)
+
+                keyboard = [
+                    [InlineKeyboardButton("👥 Перейти в режим учителя", callback_data="teacher_menu")],
+                    [InlineKeyboardButton("💎 Посмотреть другие тарифы", callback_data="teacher_subscriptions")],
+                    [InlineKeyboardButton("◀️ Главное меню", callback_data="main_menu")]
+                ]
 
                 await query.edit_message_text(
                     text,
@@ -764,7 +762,7 @@ async def handle_teacher_plan_confirmation(update: Update, context: ContextTypes
                 return ConversationHandler.END
             else:
                 await query.edit_message_text(
-                    "❌ Ошибка активации бесплатного тарифа.\n"
+                    "❌ Ошибка создания профиля учителя.\n"
                     "Пожалуйста, попробуйте позже или обратитесь в поддержку.",
                     reply_markup=InlineKeyboardMarkup([[
                         InlineKeyboardButton("◀️ Назад", callback_data="teacher_subscriptions")
@@ -773,9 +771,11 @@ async def handle_teacher_plan_confirmation(update: Update, context: ContextTypes
                 return ConversationHandler.END
 
         except Exception as e:
-            logger.error(f"Error activating teacher_free: {e}")
+            logger.error(f"Error creating teacher_free profile: {e}")
+            import traceback
+            traceback.print_exc()
             await query.edit_message_text(
-                "❌ Произошла ошибка при активации.\n"
+                "❌ Произошла ошибка при создании профиля.\n"
                 "Пожалуйста, попробуйте позже.",
                 reply_markup=InlineKeyboardMarkup([[
                     InlineKeyboardButton("◀️ Назад", callback_data="teacher_subscriptions")
