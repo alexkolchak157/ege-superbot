@@ -615,13 +615,13 @@ async def handle_plan_selection(update: Update, context: ContextTypes.DEFAULT_TY
         # Показываем варианты длительности
         return await show_duration_options(update, context)
 
-    # Обработка подписок для учителей (teacher_basic, teacher_standard, teacher_premium)
-    elif plan_id.startswith("teacher_"):
+    # Обработка подписок для учителей (teacher_basic, teacher_standard, teacher_premium, test_teacher_*)
+    elif plan_id.startswith("teacher_") or plan_id.startswith("test_teacher_"):
         from payment.config import SUBSCRIPTION_PLANS, is_teacher_plan
         from payment.subscription_manager import SubscriptionManager
 
-        # КРИТИЧНО: Проверяем использование trial для teacher_trial_7days
-        if plan_id == "teacher_trial_7days":
+        # КРИТИЧНО: Проверяем использование trial для teacher_trial_7days и test_teacher_trial_7days
+        if plan_id in ("teacher_trial_7days", "test_teacher_trial_7days"):
             subscription_manager = SubscriptionManager()
             user_id = update.effective_user.id
 
