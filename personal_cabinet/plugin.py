@@ -25,6 +25,9 @@ from .handlers import (
     VIEWING
 )
 
+# Импортируем обработчики teacher mode для подключения к учителю и режима учителя
+from teacher_mode.handlers import student_handlers, teacher_handlers
+
 
 class PersonalCabinetPlugin(BotPlugin):
     """Плагин личного кабинета"""
@@ -54,6 +57,10 @@ class PersonalCabinetPlugin(BotPlugin):
                     CallbackQueryHandler(handle_notification_toggle, pattern="^cabinet_toggle_notifications$"),
                     CallbackQueryHandler(handle_auto_renewal_toggle, pattern="^cabinet_toggle_auto_renewal$"),
                     CallbackQueryHandler(handle_buy_subscription, pattern="^cabinet_buy_subscription$"),
+                    # Обработчики режима учителя и подключения к учителю
+                    CallbackQueryHandler(teacher_handlers.teacher_menu, pattern="^teacher_menu$"),
+                    CallbackQueryHandler(student_handlers.enter_teacher_code_start, pattern="^connect_to_teacher$"),
+                    CallbackQueryHandler(student_handlers.homework_list, pattern="^student_homework_list$"),
                     CallbackQueryHandler(show_personal_cabinet, pattern="^back_to_cabinet$"),
                 ]
             },
