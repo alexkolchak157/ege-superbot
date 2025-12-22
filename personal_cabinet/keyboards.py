@@ -15,10 +15,9 @@ def get_main_cabinet_keyboard() -> InlineKeyboardMarkup:
     keyboard = [
         [InlineKeyboardButton("💳 Моя подписка", callback_data="cabinet_subscription")],
         [InlineKeyboardButton("📊 Статистика", callback_data="cabinet_statistics")],
-        # ВРЕМЕННО СКРЫТО: Режим учителя находится в разработке
-        # [InlineKeyboardButton("📚 Мои домашние задания", callback_data="student_homework_list")],
-        # [InlineKeyboardButton("👨‍🏫 Для репетиторов: Режим учителя", callback_data="teacher_menu")],
-        # [InlineKeyboardButton("🎓 Для учеников: Подключиться к учителю", callback_data="connect_to_teacher")],
+        [InlineKeyboardButton("📚 Мои домашние задания", callback_data="student_homework_list")],
+        [InlineKeyboardButton("👨‍🏫 Для репетиторов: Режим учителя", callback_data="teacher_menu")],
+        [InlineKeyboardButton("🎓 Для учеников: Подключиться к учителю", callback_data="connect_to_teacher")],
         [InlineKeyboardButton("⚙️ Настройки", callback_data="cabinet_settings")],
         [InlineKeyboardButton("❓ Помощь и поддержка", url="https://t.me/obshestvonapalcahsupport")],
         [InlineKeyboardButton("🏠 Главное меню", callback_data="to_main_menu")]

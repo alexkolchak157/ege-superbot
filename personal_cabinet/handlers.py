@@ -68,90 +68,78 @@ async def show_subscription_info(update: Update, context: ContextTypes.DEFAULT_T
 
     user_id = update.effective_user.id
 
-    # Получаем информацию о подписке
-    sub_info = await classifier.get_subscription_info(user_id)
-    has_subscription = sub_info.get('has_subscription', False)
+    # Получаем информацию о модульных подписках
+    modules_data = await subscription_manager.get_user_modules(user_id)
+    has_subscription = bool(modules_data)
 
     # Формируем текст
     if has_subscription:
-        plan_id = sub_info.get('plan_id', 'unknown')
-        end_date = sub_info.get('end_date')
-        days_left = sub_info.get('days_until_expiry', 0)
-        is_trial = sub_info.get('is_trial', False)
-        auto_renew = sub_info.get('auto_renew', False)
+        # Пользователь имеет активные модули
+        text = "💳 <b>Моя подписка</b>\n\n"
+        text += "✅ <b>Ваши активные модули:</b>\n\n"
 
-        # Определяем название плана
-        if is_trial:
-            plan_name = "🎁 Пробный период"
-        else:
-            plan_name = f"📦 {plan_id}"
+        module_names = {
+            'test_part': '📝 Тестовая часть',
+            'task19': '🎯 Задание 19',
+            'task20': '📖 Задание 20',
+            'task24': '💎 Задание 24',
+            'task25': '✍️ Задание 25'
+        }
 
-        # Форматируем дату окончания
-        if end_date:
-            end_date_str = end_date.strftime("%d.%m.%Y")
-        else:
-            end_date_str = "неизвестно"
+        # Находим минимальное количество дней до истечения
+        min_days_left = float('inf')
+        closest_expiry_date = None
 
-        # Эмодзи и статус для дней
-        if days_left <= 3:
-            days_emoji = "🔴"
-            status_line = f"⚠️ <b>Истекает через {days_left} дн.</b>"
-        elif days_left <= 7:
-            days_emoji = "🟡"
-            status_line = f"⚠️ <b>Истекает через {days_left} дн.</b>"
-        else:
-            days_emoji = "✅"
-            status_line = f"✅ <b>Активна до {end_date_str}</b>"
+        for module in modules_data:
+            name = module_names.get(module['module_code'], module['module_code'])
+            expires = module['expires_at'].strftime('%d.%m.%Y')
 
-        # Визуальный прогресс-бар (30 дней = 100%)
-        progress_days = 30  # Базовый период
-        progress = min(days_left / progress_days, 1.0)
-        filled = int(progress * 10)
-        bar = "█" * filled + "░" * (10 - filled)
+            # Вычисляем дни до истечения
+            days_left = (module['expires_at'] - datetime.now(timezone.utc)).days
 
-        # Статус автопродления
-        auto_renew_status = "✅ Включено" if auto_renew else "❌ Отключено"
+            if days_left < min_days_left:
+                min_days_left = days_left
+                closest_expiry_date = module['expires_at']
 
-        text = (
-            f"💳 <b>Моя подписка</b>\n\n"
-            f"{status_line}\n\n"
-            f"<b>Текущий план:</b> {plan_name}\n"
-            f"<b>Окончание:</b> {end_date_str} ({days_emoji} {days_left} дн.)\n"
-            f"<b>Прогресс:</b> {bar}\n"
-            f"<b>Автопродление:</b> {auto_renew_status}\n\n"
-        )
+            # Эмодзи статуса
+            if days_left <= 3:
+                days_emoji = "🔴"
+            elif days_left <= 7:
+                days_emoji = "🟡"
+            else:
+                days_emoji = "✅"
 
-        if days_left <= 7 and not auto_renew:
-            text += "⚠️ <i>Подписка скоро истечёт! Продли или включи автопродление.</i>\n\n"
-        elif days_left <= 7 and auto_renew:
-            text += "✅ <i>Автопродление включено — подписка обновится автоматически.</i>\n\n"
+            text += f"{days_emoji} {name}\n   └ Действует до: {expires} ({days_left} дн.)\n\n"
+
+        # Предупреждение если есть модули со скорым истечением
+        if min_days_left <= 7:
+            text += f"⚠️ <i>Некоторые модули скоро истекут! Продли подписку.</i>\n\n"
+
+        # Проверка доступа к остальным модулям
+        all_modules = ['test_part', 'task19', 'task20', 'task24', 'task25']
+        active_module_codes = [m['module_code'] for m in modules_data]
+        inactive_modules = [module_names[code] for code in all_modules if code not in active_module_codes]
+
+        if inactive_modules:
+            text += "❌ <b>Неактивные модули:</b>\n"
+            text += ", ".join(inactive_modules) + "\n\n"
+            text += "💡 <i>Добавь модули для полного доступа ко всем заданиям!</i>"
 
     else:
-        # Нет активной подписки
-        had_subscription = sub_info.get('had_subscription', False)
-
-        if had_subscription:
-            days_since_cancel = sub_info.get('days_since_cancel', 0)
-            text = (
-                f"💳 <b>Моя подписка</b>\n\n"
-                f"❌ <b>У тебя нет активной подписки</b>\n\n"
-                f"Подписка закончилась {days_since_cancel} дн. назад.\n\n"
-                f"💡 Оформи подписку, чтобы получить доступ ко всем материалам "
-                f"и неограниченным AI-проверкам!"
-            )
-        else:
-            text = (
-                f"💳 <b>Моя подписка</b>\n\n"
-                f"🆓 <b>У тебя бесплатный доступ</b>\n\n"
-                f"Ты можешь использовать:\n"
-                f"• Бесплатные материалы\n"
-                f"• 3 AI-проверки в неделю\n\n"
-                f"💡 Оформи подписку, чтобы получить полный доступ!"
-            )
+        # Нет активных модулей
+        text = (
+            f"💳 <b>Моя подписка</b>\n\n"
+            f"🆓 <b>У тебя бесплатный доступ</b>\n\n"
+            f"Ты можешь использовать:\n"
+            f"• Бесплатные материалы\n"
+            f"• 3 AI-проверки в неделю\n\n"
+            f"💡 Оформи подписку, чтобы получить полный доступ ко всем заданиям!"
+        )
 
     # Определяем параметры для клавиатуры
-    can_toggle_auto_renew = has_subscription and not is_trial
-    auto_renew_enabled = sub_info.get('auto_renew', False) if has_subscription else False
+    # Для модульной системы автопродление не используется
+    can_toggle_auto_renew = False
+    auto_renew_enabled = False
 
     keyboard = get_subscription_keyboard(
         has_subscription=has_subscription,

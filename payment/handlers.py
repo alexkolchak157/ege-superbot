@@ -435,7 +435,10 @@ async def show_modular_interface(update: Update, context: ContextTypes.DEFAULT_T
         )
     ])
 
-    # УДАЛЕНО: Кнопка подписок для учителей (скрыта по запросу)
+    # Кнопка подписок для учителей
+    keyboard.append([
+        InlineKeyboardButton("👨‍🏫 Подписки для учителей", callback_data="show_teacher_subscriptions")
+    ])
 
     # Кнопка "Мои подписки" (если есть активные)
     if active_modules:
