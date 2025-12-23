@@ -1709,9 +1709,7 @@ async def show_topic_blocks_selection(update: Update, context: ContextTypes.DEFA
         "(можно выбрать несколько)\n\n"
     )
 
-    # Показываем статистику по блокам
-    for block_name, block_topics in blocks.items():
-        text += f"• {block_name}: {len(block_topics)} тем\n"
+    # Убрали дублирующуюся статистику - она уже показывается на кнопках
 
     keyboard = []
 
