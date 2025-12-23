@@ -22,11 +22,11 @@ from .handlers import (
     handle_notification_toggle,
     handle_auto_renewal_toggle,
     handle_buy_subscription,
+    wrapper_teacher_menu,
+    wrapper_connect_to_teacher,
+    wrapper_homework_list,
     VIEWING
 )
-
-# Импортируем обработчики teacher mode для подключения к учителю и режима учителя
-from teacher_mode.handlers import student_handlers, teacher_handlers
 
 
 class PersonalCabinetPlugin(BotPlugin):
@@ -57,10 +57,10 @@ class PersonalCabinetPlugin(BotPlugin):
                     CallbackQueryHandler(handle_notification_toggle, pattern="^cabinet_toggle_notifications$"),
                     CallbackQueryHandler(handle_auto_renewal_toggle, pattern="^cabinet_toggle_auto_renewal$"),
                     CallbackQueryHandler(handle_buy_subscription, pattern="^cabinet_buy_subscription$"),
-                    # Обработчики режима учителя и подключения к учителю
-                    CallbackQueryHandler(teacher_handlers.teacher_menu, pattern="^teacher_menu$"),
-                    CallbackQueryHandler(student_handlers.enter_teacher_code_start, pattern="^connect_to_teacher$"),
-                    CallbackQueryHandler(student_handlers.homework_list, pattern="^student_homework_list$"),
+                    # Wrapper функции для режима учителя (завершают ConversationHandler кабинета)
+                    CallbackQueryHandler(wrapper_teacher_menu, pattern="^teacher_menu$"),
+                    CallbackQueryHandler(wrapper_connect_to_teacher, pattern="^connect_to_teacher$"),
+                    CallbackQueryHandler(wrapper_homework_list, pattern="^student_homework_list$"),
                     CallbackQueryHandler(show_personal_cabinet, pattern="^back_to_cabinet$"),
                 ]
             },

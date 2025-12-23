@@ -1723,12 +1723,13 @@ async def show_topic_blocks_selection(update: Update, context: ContextTypes.DEFA
     # Создаем кнопки для каждого блока
     for block_name in sorted(blocks.keys()):
         selected = block_name in context.user_data['selected_blocks']
-        emoji = "✅" if selected else "⬜"
+        # Используем 📂 вместо чекбокса, чтобы не создавать впечатление выбора всех тем
+        prefix = "📂 " if selected else "📁 "
         topic_count = len(blocks[block_name])
 
         keyboard.append([
             InlineKeyboardButton(
-                f"{emoji} {block_name} ({topic_count})",
+                f"{prefix}{block_name} ({topic_count} тем)",
                 callback_data=f"toggle_block:{block_name}"
             )
         ])
