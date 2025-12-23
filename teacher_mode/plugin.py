@@ -184,6 +184,25 @@ class TeacherModePlugin(BotPlugin):
                     # Подтверждение выбора блоков
                     CallbackQueryHandler(teacher_handlers.confirm_topic_blocks, pattern="^topics_confirm_blocks$"),
 
+                    # Переключение выбора тем
+                    CallbackQueryHandler(teacher_handlers.toggle_topic_selection, pattern="^toggle_topic:"),
+
+                    # Подтверждение выбора тем
+                    CallbackQueryHandler(teacher_handlers.confirm_topics_selection, pattern="^topics_confirm_topics$"),
+
+                    # Фильтр по номеру задания ЕГЭ
+                    CallbackQueryHandler(teacher_handlers.toggle_exam_number_filter, pattern="^toggle_exam_num:"),
+                    CallbackQueryHandler(teacher_handlers.exam_number_filter_select_all, pattern="^exam_num_select_all$"),
+                    CallbackQueryHandler(teacher_handlers.exam_number_filter_deselect_all, pattern="^exam_num_deselect_all$"),
+                    CallbackQueryHandler(teacher_handlers.confirm_exam_number_filter, pattern="^exam_num_confirm$"),
+
+                    # Навигация назад
+                    CallbackQueryHandler(teacher_handlers.show_topics_selection, pattern="^topics_back_to_topics$"),
+                    CallbackQueryHandler(teacher_handlers.show_exam_number_filter, pattern="^topics_back_to_exam_filter$"),
+
+                    # Неактивная кнопка-заголовок (игнорируем)
+                    CallbackQueryHandler(lambda u, c: u.callback_query.answer(), pattern="^noop$"),
+
                     # Назад к выбору типа задания
                     CallbackQueryHandler(teacher_handlers.select_task_type, pattern="^assign_task_"),
 
@@ -200,6 +219,10 @@ class TeacherModePlugin(BotPlugin):
 
                     # Подтверждение выбора заданий
                     CallbackQueryHandler(teacher_handlers.confirm_selected_questions, pattern="^confirm_selected_questions$"),
+
+                    # Навигация назад
+                    CallbackQueryHandler(teacher_handlers.show_topics_selection, pattern="^topics_back_to_topics$"),
+                    CallbackQueryHandler(teacher_handlers.show_exam_number_filter, pattern="^topics_back_to_exam_filter$"),
 
                     # Назад к выбору типа задания
                     CallbackQueryHandler(teacher_handlers.select_task_type, pattern="^assign_task_"),
