@@ -85,16 +85,38 @@ def _load_test_part_topics(base_dir: str) -> Dict:
     """
     Загружает темы для тестовой части (задания 1-16) из questions.json.
 
+    Структура:
+    - Блоки: Политика, Право, Экономика, Человек и общество, Социология
+    - Темы: 2.1, 4.1 и т.д. (темы кодификатора)
+    - Можно фильтровать по exam_number (1-16)
+
     Args:
         base_dir: Базовая директория проекта
 
     Returns:
-        Словарь в формате, совместимом с load_topics_for_module
+        Словарь в формате:
+        {
+            'blocks': {
+                'Политика': [
+                    {'id': 1, 'title': '4.1 Политическая власть', 'topic': '4.1', 'exam_numbers': [5, 10], 'questions_count': 25},
+                    {'id': 2, 'title': '4.2 Политическая система', 'topic': '4.2', 'exam_numbers': [5], 'questions_count': 15},
+                    ...
+                ],
+                'Право': [...]
+            },
+            'topics_by_id': {
+                1: {'id': 1, 'block': 'Политика', 'topic': '4.1', 'title': '4.1 Политическая власть',
+                    'exam_numbers': [5, 10], 'question_ids': ['q1', 'q2'], 'questions_count': 25},
+                ...
+            },
+            'total_count': 1500
+        }
     """
     try:
         # Пытаемся импортировать напрямую
         try:
-            from test_part.loader import get_questions_list_flat, load_questions
+            from test_part.loader import get_questions_data, load_questions
+            from test_part.topic_data import TOPIC_NAMES
         except ImportError:
             # Если не получилось - добавляем в sys.path
             import sys
@@ -103,71 +125,88 @@ def _load_test_part_topics(base_dir: str) -> Dict:
                 sys.path.insert(0, test_part_dir)
                 logger.info(f"Added {test_part_dir} to sys.path for test_part import")
 
-            from test_part.loader import get_questions_list_flat, load_questions
+            from test_part.loader import get_questions_data, load_questions
+            from test_part.topic_data import TOPIC_NAMES
 
-        # Получаем список вопросов
-        questions = get_questions_list_flat()
+        # Получаем данные вопросов (структурированные по блокам и темам)
+        questions_data = get_questions_data()
 
-        # Если вопросы не загружены (None или пустой список), пытаемся загрузить
-        if not questions:
+        # Если вопросы не загружены, пытаемся загрузить
+        if not questions_data:
             logger.warning("test_part questions not initialized, attempting to load...")
             try:
-                load_questions()  # Принудительная загрузка
-                questions = get_questions_list_flat()
+                load_questions()
+                questions_data = get_questions_data()
             except Exception as load_error:
                 logger.error(f"Failed to load test_part questions: {load_error}")
 
-        if not questions:
+        if not questions_data:
             logger.warning("No questions available for test_part after load attempt")
             return {'blocks': {}, 'topics_by_id': {}, 'total_count': 0}
 
-        # Группируем вопросы по exam_number (только 1-16 для тестовой части)
+        # Структуры для хранения результата
         blocks = {}
         topics_by_id = {}
         topic_id_counter = 1
+        total_count = 0
 
-        # Фильтруем вопросы с exam_number от 1 до 16
-        test_part_questions = [q for q in questions if q.get('exam_number') and 1 <= q.get('exam_number') <= 16]
-
-        # Группируем по exam_number и по блоку
-        from collections import defaultdict
-        exam_groups = defaultdict(lambda: defaultdict(list))
-
-        for question in test_part_questions:
-            exam_num = question.get('exam_number')
-            block = question.get('block', 'Без категории')
-            exam_groups[exam_num][block].append(question)
-
-        # Создаем структуру для каждого номера задания
-        for exam_num in sorted(exam_groups.keys()):
-            block_name = f"Задание {exam_num}"
+        # Обрабатываем каждый блок (Политика, Право, Экономика и т.д.)
+        for block_name, topics_dict in questions_data.items():
             blocks[block_name] = []
 
-            # Внутри каждого номера группируем по предметным блокам (Экономика, Политика и т.д.)
-            for subject_block, block_questions in sorted(exam_groups[exam_num].items()):
-                # Создаем "тему" для каждого предметного блока внутри номера задания
+            # Обрабатываем каждую тему в блоке (4.1, 4.2 и т.д.)
+            for topic_code, topic_questions in topics_dict.items():
+                # Фильтруем только вопросы тестовой части (exam_number 1-16)
+                test_part_questions = [
+                    q for q in topic_questions
+                    if q.get('exam_number') and 1 <= q.get('exam_number') <= 16
+                ]
+
+                # Пропускаем темы без вопросов тестовой части
+                if not test_part_questions:
+                    continue
+
+                # Собираем уникальные номера заданий ЕГЭ для этой темы
+                exam_numbers = sorted(list(set(
+                    q.get('exam_number') for q in test_part_questions
+                    if q.get('exam_number')
+                )))
+
+                # Получаем читаемое название темы
+                topic_title = TOPIC_NAMES.get(topic_code, topic_code)
+                full_title = f"{topic_code} {topic_title}"
+
+                # Создаем объект темы
                 topic_obj = {
                     'id': topic_id_counter,
-                    'exam_number': exam_num,
-                    'block': subject_block,
-                    'title': f"{subject_block}",
-                    'questions_count': len(block_questions),
-                    'question_ids': [q['id'] for q in block_questions]
+                    'block': block_name,
+                    'topic': topic_code,
+                    'title': full_title,
+                    'exam_numbers': exam_numbers,
+                    'question_ids': [q['id'] for q in test_part_questions],
+                    'questions_count': len(test_part_questions)
                 }
 
                 topics_by_id[topic_id_counter] = topic_obj
 
+                # Добавляем в блок
                 blocks[block_name].append({
                     'id': topic_id_counter,
-                    'title': f"{subject_block} ({len(block_questions)} вопросов)"
+                    'title': f"{full_title} ({len(test_part_questions)} вопр.)",
+                    'topic': topic_code,
+                    'exam_numbers': exam_numbers,
+                    'questions_count': len(test_part_questions)
                 })
 
+                total_count += len(test_part_questions)
                 topic_id_counter += 1
+
+        logger.info(f"Loaded test_part topics: {len(blocks)} blocks, {len(topics_by_id)} topics, {total_count} questions")
 
         return {
             'blocks': blocks,
             'topics_by_id': topics_by_id,
-            'total_count': len(test_part_questions)
+            'total_count': total_count
         }
 
     except Exception as e:
