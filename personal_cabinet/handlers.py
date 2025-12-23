@@ -30,6 +30,53 @@ subscription_manager = SubscriptionManager()
 classifier = get_segment_classifier()
 
 
+# ==================== WRAPPER ФУНКЦИИ ДЛЯ TEACHER MODE ====================
+# Эти функции завершают ConversationHandler личного кабинета и позволяют
+# teacher mode ConversationHandler перехватить управление
+
+async def wrapper_teacher_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Wrapper для перехода в режим учителя.
+    Завершает ConversationHandler личного кабинета и вызывает teacher_menu.
+    """
+    from teacher_mode.handlers import teacher_handlers
+
+    # Сначала вызываем teacher_menu, который откроет меню учителя
+    await teacher_handlers.teacher_menu(update, context)
+
+    # Затем завершаем ConversationHandler личного кабинета
+    # чтобы teacher_conv_handler мог перехватить управление
+    return ConversationHandler.END
+
+
+async def wrapper_connect_to_teacher(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Wrapper для подключения к учителю.
+    Завершает ConversationHandler личного кабинета и вызывает enter_teacher_code_start.
+    """
+    from teacher_mode.handlers import student_handlers
+
+    # Вызываем обработчик подключения к учителю
+    await student_handlers.enter_teacher_code_start(update, context)
+
+    # Завершаем ConversationHandler личного кабинета
+    return ConversationHandler.END
+
+
+async def wrapper_homework_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Wrapper для списка домашних заданий.
+    Завершает ConversationHandler личного кабинета и вызывает homework_list.
+    """
+    from teacher_mode.handlers import student_handlers
+
+    # Вызываем обработчик списка домашних заданий
+    await student_handlers.homework_list(update, context)
+
+    # Завершаем ConversationHandler личного кабинета
+    return ConversationHandler.END
+
+
 async def show_personal_cabinet(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
     Показывает главное меню личного кабинета.
