@@ -5,14 +5,14 @@ import csv
 import json
 import random
 from typing import Dict, List, Optional, Any, Tuple
-from datetime import datetime
+from datetime import datetime, date
 from core.document_processor import DocumentHandlerMixin
 from core.vision_service import process_photo_message
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.constants import ParseMode
 from telegram.ext import ContextTypes, ConversationHandler
 from core.admin_tools import admin_manager
-from core import states
+from core import states, db
 from core.plugin_loader import build_main_menu
 from core.universal_ui import UniversalUIComponents, AdaptiveKeyboards, MessageFormatter
 from core.states import (
@@ -862,6 +862,17 @@ async def safe_handle_answer_task25(update: Update, context: ContextTypes.DEFAUL
     # Проверка лимитов AI-проверок
     freemium_manager = context.bot_data.get('freemium_manager')
     user_id = update.effective_user.id
+
+    # ========== ОБНОВЛЕНИЕ ДНЕВНОГО СТРИКА ==========
+    # Обновляем дневной стрик (если еще не обновлен сегодня)
+    current_date = date.today().isoformat()
+    last_activity_date = context.user_data.get('last_activity_date')
+
+    if last_activity_date != current_date:
+        daily_current, daily_max = await db.update_daily_streak(user_id)
+        context.user_data['last_activity_date'] = current_date
+        logger.info(f"[Task25] Daily streak updated for user {user_id}: {daily_current}/{daily_max}")
+
     is_premium = False
 
     if freemium_manager:

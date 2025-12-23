@@ -8,11 +8,11 @@ import json
 import random
 import re
 from typing import Optional, Dict, List, Any
-from datetime import datetime
+from datetime import datetime, date
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.constants import ParseMode
 from telegram.ext import ContextTypes, ConversationHandler
-from core import states
+from core import states, db
 from core.states import ANSWERING_T20, SEARCHING, VIEWING_EXAMPLE, CONFIRMING_RESET
 from core.universal_ui import UniversalUIComponents, AdaptiveKeyboards, MessageFormatter
 from core.ui_helpers import (
@@ -893,6 +893,17 @@ async def safe_handle_answer_task20(update: Update, context: ContextTypes.DEFAUL
 
     # FREEMIUM: Проверяем лимит AI-проверок
     user_id = update.effective_user.id
+
+    # ========== ОБНОВЛЕНИЕ ДНЕВНОГО СТРИКА ==========
+    # Обновляем дневной стрик (если еще не обновлен сегодня)
+    current_date = date.today().isoformat()
+    last_activity_date = context.user_data.get('last_activity_date')
+
+    if last_activity_date != current_date:
+        daily_current, daily_max = await db.update_daily_streak(user_id)
+        context.user_data['last_activity_date'] = current_date
+        logger.info(f"[Task20] Daily streak updated for user {user_id}: {daily_current}/{daily_max}")
+
     module_code = 'task20'
     freemium_manager = get_freemium_manager(
         context.application.bot_data.get('subscription_manager')
