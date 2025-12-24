@@ -10,19 +10,23 @@ from typing import Dict, Optional
 logger = logging.getLogger(__name__)
 
 
-def load_question_by_id(task_module: str, question_id: int) -> Optional[Dict]:
+def load_question_by_id(task_module: str, question_id) -> Optional[Dict]:
     """
     Загружает конкретный вопрос по ID из указанного модуля.
 
     Args:
-        task_module: Название модуля ('task19', 'task20', 'task24', 'task25')
-        question_id: ID вопроса
+        task_module: Название модуля ('test_part', 'task19', 'task20', 'task24', 'task25')
+        question_id: ID вопроса (может быть строкой для test_part или числом для остальных)
 
     Returns:
         Словарь с данными вопроса или None если не найден
     """
     try:
         base_dir = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
+
+        # Специальная обработка для test_part
+        if task_module == 'test_part':
+            return _load_test_part_question(question_id, base_dir)
 
         # Специальная обработка для task24
         if task_module == 'task24':
@@ -110,6 +114,58 @@ def _load_task24_question(question_id: int, base_dir: str) -> Optional[Dict]:
         return None
 
 
+def _load_test_part_question(question_id: str, base_dir: str) -> Optional[Dict]:
+    """
+    Загружает вопрос test_part из questions.json через модуль test_part.loader.
+
+    Args:
+        question_id: ID вопроса (строка, например "ekonomika_2_1_q1")
+        base_dir: Базовая директория проекта
+
+    Returns:
+        Словарь с данными вопроса или None
+    """
+    try:
+        # Импортируем функции из test_part
+        try:
+            from test_part.loader import get_questions_dict_flat, load_questions
+        except ImportError:
+            # Добавляем в sys.path если не получилось импортировать
+            import sys
+            test_part_dir = os.path.join(base_dir, 'test_part')
+            if test_part_dir not in sys.path:
+                sys.path.insert(0, test_part_dir)
+            from test_part.loader import get_questions_dict_flat, load_questions
+
+        # Получаем словарь вопросов
+        questions_dict = get_questions_dict_flat()
+
+        # Если вопросы не загружены, пытаемся загрузить
+        if not questions_dict:
+            logger.warning("test_part questions not initialized, attempting to load...")
+            load_questions()
+            questions_dict = get_questions_dict_flat()
+
+        if not questions_dict:
+            logger.warning("No questions available for test_part after load attempt")
+            return None
+
+        # Получаем вопрос по ID
+        question = questions_dict.get(question_id)
+
+        if not question:
+            logger.warning(f"Question {question_id} not found in test_part")
+            return None
+
+        return question
+
+    except Exception as e:
+        logger.error(f"Error loading test_part question {question_id}: {e}")
+        import traceback
+        traceback.print_exc()
+        return None
+
+
 def format_question_for_display(task_module: str, question_data: Dict) -> str:
     """
     Форматирует вопрос для отображения ученику.
@@ -121,7 +177,17 @@ def format_question_for_display(task_module: str, question_data: Dict) -> str:
     Returns:
         Отформатированный текст вопроса
     """
-    if task_module == 'task19':
+    if task_module == 'test_part':
+        # Используем функцию форматирования из модуля test_part
+        try:
+            from test_part.utils import format_question_text
+            return format_question_text(question_data)
+        except ImportError:
+            logger.warning("Could not import format_question_text from test_part")
+            # Простое форматирование как fallback
+            return f"<b>Вопрос #{question_data.get('exam_number', '?')}</b>\n\n{question_data.get('question', str(question_data))}"
+
+    elif task_module == 'task19':
         return f"<b>{question_data['title']}</b>\n\n{question_data['task_text']}"
 
     elif task_module == 'task20':
