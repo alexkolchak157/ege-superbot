@@ -7,9 +7,9 @@ import telegram
 from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton
 from telegram.ext import ContextTypes, ConversationHandler
 from telegram.constants import ParseMode
-from datetime import datetime
+from datetime import datetime, date
 from typing import Set, Dict, List, Optional, Any
-from core import states
+from core import states, db
 from core import utils as core_utils
 from .checker import PlanBotData, evaluate_plan, FEEDBACK_KB, evaluate_plan_with_ai
 from . import keyboards
@@ -859,6 +859,17 @@ async def handle_plan_enhanced(update: Update, context: ContextTypes.DEFAULT_TYP
     # Проверка лимитов AI-проверок
     freemium_manager = context.bot_data.get('freemium_manager')
     user_id = update.effective_user.id
+
+    # ========== ОБНОВЛЕНИЕ ДНЕВНОГО СТРИКА ==========
+    # Обновляем дневной стрик (если еще не обновлен сегодня)
+    current_date = date.today().isoformat()
+    last_activity_date = context.user_data.get('last_activity_date')
+
+    if last_activity_date != current_date:
+        daily_current, daily_max = await db.update_daily_streak(user_id)
+        context.user_data['last_activity_date'] = current_date
+        logger.info(f"[Task24] Daily streak updated for user {user_id}: {daily_current}/{daily_max}")
+
     is_premium = False
 
     if freemium_manager:

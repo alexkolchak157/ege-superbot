@@ -16,10 +16,10 @@ from telegram.constants import ParseMode
 from telegram.ext import ContextTypes, ConversationHandler
 from telegram.error import BadRequest
 from core.admin_tools import admin_manager
-from core import states
+from core import states, db
 from core.states import TASK19_WAITING
 from core.ai_evaluator import EvaluationResult
-from datetime import datetime
+from datetime import datetime, date
 import io
 from core.vision_service import get_vision_service
 from core.freemium_manager import get_freemium_manager
@@ -634,7 +634,17 @@ async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
             ]])
         )
         return states.CHOOSING_MODE
-    
+
+    # ========== ОБНОВЛЕНИЕ ДНЕВНОГО СТРИКА ==========
+    # Обновляем дневной стрик (если еще не обновлен сегодня)
+    current_date = date.today().isoformat()
+    last_activity_date = context.user_data.get('last_activity_date')
+
+    if last_activity_date != current_date:
+        daily_current, daily_max = await db.update_daily_streak(user_id)
+        context.user_data['last_activity_date'] = current_date
+        logger.info(f"[Task19] Daily streak updated for user {user_id}: {daily_current}/{daily_max}")
+
     # Определяем тип ответа
     user_answer = None
     is_photo = False

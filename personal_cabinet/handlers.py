@@ -9,7 +9,7 @@ from telegram import Update
 from telegram.ext import ContextTypes, ConversationHandler
 from telegram.constants import ParseMode
 
-from core.db import DATABASE_FILE
+from core.db import DATABASE_FILE, get_user_streaks
 from payment.subscription_manager import SubscriptionManager
 from core.user_segments import get_segment_classifier
 
@@ -215,6 +215,9 @@ async def show_statistics(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Получаем статистику
     activity = await classifier.get_user_activity_stats(user_id)
 
+    # Получаем стрики пользователя
+    streaks = await get_user_streaks(user_id)
+
     if not activity:
         text = (
             "📊 <b>Статистика</b>\n\n"
@@ -263,6 +266,12 @@ async def show_statistics(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         ai_limit_text = f"{ai_checks_today}/3 использовано сегодня"
 
+    # Формируем текст со стриками
+    daily_current = streaks.get('current_daily', 0)
+    daily_max = streaks.get('max_daily', 0)
+    correct_current = streaks.get('current_correct', 0)
+    correct_max = streaks.get('max_correct', 0)
+
     text = (
         f"📊 <b>Твоя статистика</b>\n\n"
         f"<b>📅 Зарегистрирован:</b> {reg_date_str}\n"
@@ -274,8 +283,21 @@ async def show_statistics(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"<b>🤖 AI-проверки:</b>\n"
         f"• Всего использовано: {ai_checks_total}\n"
         f"• Сегодня: {ai_limit_text}\n\n"
-        f"💪 Продолжай в том же духе!"
     )
+
+    # Добавляем стрики, если они есть
+    if daily_current > 0 or correct_current > 0 or daily_max > 0 or correct_max > 0:
+        text += f"<b>🔥 Серии:</b>\n"
+        text += f"• Дней подряд: {daily_current}"
+        if daily_max > daily_current:
+            text += f" (рекорд: {daily_max})"
+        text += "\n"
+        text += f"• Правильных подряд: {correct_current}"
+        if correct_max > correct_current:
+            text += f" (рекорд: {correct_max})"
+        text += "\n\n"
+
+    text += "💪 Продолжай в том же духе!"
 
     keyboard = get_statistics_keyboard()
 
