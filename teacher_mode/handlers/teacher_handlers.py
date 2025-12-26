@@ -499,6 +499,13 @@ async def select_task_type(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     # Сохраняем выбранный тип задания
     context.user_data['assignment_task_type'] = task_type
 
+    # Очищаем все данные предыдущего выбора
+    context.user_data['selected_blocks'] = []
+    context.user_data['selected_topic_ids'] = []
+    context.user_data['selected_exam_numbers'] = []
+    context.user_data['selected_question_ids'] = []
+    context.user_data['available_question_ids'] = []
+
     task_names = {
         'test_part': '📝 Тестовая часть (1-16)',
         'task19': '💡 Задание 19',
@@ -703,6 +710,12 @@ async def select_selection_mode(update: Update, context: ContextTypes.DEFAULT_TY
 
     elif mode == "topics":
         # Режим "По темам" - показываем список блоков
+        # Очищаем данные предыдущего выбора тем
+        context.user_data['selected_blocks'] = []
+        context.user_data['selected_topic_ids'] = []
+        context.user_data['selected_exam_numbers'] = []
+        context.user_data['selected_question_ids'] = []
+        context.user_data['available_question_ids'] = []
         return await show_topic_blocks_selection(update, context)
 
     elif mode == "numbers":
@@ -1695,7 +1708,8 @@ async def show_topic_blocks_selection(update: Update, context: ContextTypes.DEFA
         )
         return TeacherStates.SELECT_SELECTION_MODE
 
-    # Инициализируем список выбранных блоков
+    # Список выбранных блоков уже инициализирован в select_selection_mode
+    # Но на всякий случай проверяем
     if 'selected_blocks' not in context.user_data:
         context.user_data['selected_blocks'] = []
 
