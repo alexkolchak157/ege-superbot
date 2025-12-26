@@ -554,7 +554,14 @@ async def show_homework_question(update: Update, context: ContextTypes.DEFAULT_T
     # Парсим callback_data: hw_question:homework_id:question_id
     _, homework_id_str, question_id_str = query.data.split(':')
     homework_id = int(homework_id_str)
-    question_id = int(question_id_str)
+
+    # Пытаемся преобразовать в int для обычных модулей
+    # Для test_part оставляем как строку
+    try:
+        question_id = int(question_id_str)
+    except ValueError:
+        # Оставляем как строку (для test_part)
+        question_id = question_id_str
 
     # Получаем задание
     homework = await assignment_service.get_homework_by_id(homework_id)
