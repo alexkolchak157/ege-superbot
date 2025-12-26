@@ -484,7 +484,32 @@ async def start_homework(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
         # Загружаем информацию о вопросах
         from ..services.topics_loader import load_topics_for_module
-        topics_data = load_topics_for_module(task_module)
+
+        # Для test_part создаем специальную структуру topics_data
+        if task_module == 'test_part':
+            # Загружаем вопросы напрямую из test_part.loader
+            from test_part.loader import get_questions_dict_flat
+
+            questions_dict = get_questions_dict_flat()
+
+            # Создаем topics_by_id где ключи - это question_ids
+            topics_by_id = {}
+            for q_id in question_ids:
+                question = questions_dict.get(q_id)
+                if question:
+                    exam_num = question.get('exam_number', '?')
+                    topics_by_id[q_id] = {
+                        'title': f"Задание {exam_num}",
+                        'exam_number': exam_num
+                    }
+                else:
+                    # Fallback если вопрос не найден
+                    topics_by_id[q_id] = {'title': f'Вопрос {q_id}'}
+
+            topics_data = {'topics_by_id': topics_by_id}
+        else:
+            # Для остальных модулей загружаем обычным способом
+            topics_data = load_topics_for_module(task_module)
 
     # Получаем прогресс выполнения
     completed_questions = await assignment_service.get_completed_question_ids(homework_id, user_id)
