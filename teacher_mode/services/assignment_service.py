@@ -5,7 +5,7 @@
 import json
 import logging
 from datetime import datetime
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Union
 import aiosqlite
 
 from core.config import DATABASE_FILE
@@ -422,7 +422,7 @@ async def get_homework_statistics(homework_id: int) -> Dict[str, Any]:
         return {'total': 0, 'assigned': 0, 'in_progress': 0, 'completed': 0, 'checked': 0}
 
 
-async def get_completed_question_ids(homework_id: int, student_id: int) -> List[int]:
+async def get_completed_question_ids(homework_id: int, student_id: int) -> List[Union[int, str]]:
     """
     Получает список ID выполненных вопросов для конкретного задания и ученика.
 
@@ -431,7 +431,7 @@ async def get_completed_question_ids(homework_id: int, student_id: int) -> List[
         student_id: ID ученика
 
     Returns:
-        Список ID выполненных вопросов
+        Список ID выполненных вопросов (могут быть int или str для test_part)
     """
     try:
         async with aiosqlite.connect(DATABASE_FILE) as db:
@@ -444,14 +444,22 @@ async def get_completed_question_ids(homework_id: int, student_id: int) -> List[
             """, (homework_id, student_id))
 
             rows = await cursor.fetchall()
-            return [int(row['question_id']) for row in rows]
+            # Пытаемся преобразовать в int, если не получается - оставляем строкой
+            result = []
+            for row in rows:
+                q_id = row['question_id']
+                try:
+                    result.append(int(q_id))
+                except (ValueError, TypeError):
+                    result.append(q_id)
+            return result
 
     except Exception as e:
         logger.error(f"Ошибка при получении выполненных вопросов: {e}")
         return []
 
 
-async def save_question_progress(homework_id: int, student_id: int, question_id: int,
+async def save_question_progress(homework_id: int, student_id: int, question_id: Union[int, str],
                                  user_answer: str, is_correct: bool,
                                  ai_feedback: Optional[str] = None) -> bool:
     """
@@ -460,7 +468,7 @@ async def save_question_progress(homework_id: int, student_id: int, question_id:
     Args:
         homework_id: ID домашнего задания
         student_id: ID ученика
-        question_id: ID вопроса
+        question_id: ID вопроса (int или str для test_part)
         user_answer: Ответ ученика
         is_correct: Правильность ответа
         ai_feedback: Обратная связь от AI (опционально)
@@ -485,14 +493,14 @@ async def save_question_progress(homework_id: int, student_id: int, question_id:
         return False
 
 
-async def get_question_progress(homework_id: int, student_id: int, question_id: int) -> Optional[Dict]:
+async def get_question_progress(homework_id: int, student_id: int, question_id: Union[int, str]) -> Optional[Dict]:
     """
     Получает прогресс выполнения конкретного вопроса.
 
     Args:
         homework_id: ID домашнего задания
         student_id: ID ученика
-        question_id: ID вопроса
+        question_id: ID вопроса (int или str для test_part)
 
     Returns:
         Словарь с данными прогресса или None если не найдено
