@@ -643,32 +643,7 @@ async def show_homework_question(update: Update, context: ContextTypes.DEFAULT_T
         # Для обычных заданий берем модуль напрямую
         task_module = assignment_data.get('task_module')
 
-    # Проверяем, выполнен ли уже этот вопрос
-    progress = await assignment_service.get_question_progress(homework_id, user_id, question_id)
-
-    if progress:
-        # Показываем результат выполнения
-        text = (
-            f"✅ <b>Вопрос уже выполнен</b>\n\n"
-            f"<b>Ваш ответ:</b>\n{progress['user_answer']}\n\n"
-        )
-
-        if progress['ai_feedback']:
-            text += f"<b>Обратная связь:</b>\n{progress['ai_feedback']}\n\n"
-
-        if progress['is_correct']:
-            text += "✅ Ответ принят"
-        else:
-            text += "❌ Требуется доработка"
-
-        keyboard = [
-            [InlineKeyboardButton("◀️ К списку вопросов", callback_data=f"start_homework_{homework_id}")]
-        ]
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        await query.message.edit_text(text, reply_markup=reply_markup, parse_mode='HTML')
-        return ConversationHandler.END
-
-    # Загружаем вопрос
+    # Загружаем вопрос сначала (нужно для показа пояснений)
     if task_module == 'custom':
         # Для кастомных заданий берем текст вопроса из assignment_data
         custom_questions = assignment_data.get('custom_questions', [])
@@ -704,6 +679,42 @@ async def show_homework_question(update: Update, context: ContextTypes.DEFAULT_T
         # Форматируем вопрос для отображения
         question_text = format_question_for_display(task_module, question_data)
 
+    # Проверяем, выполнен ли уже этот вопрос
+    progress = await assignment_service.get_question_progress(homework_id, user_id, question_id)
+
+    if progress:
+        # Показываем результат выполнения
+        text = (
+            f"✅ <b>Вопрос уже выполнен</b>\n\n"
+            f"<b>Ваш ответ:</b>\n{progress['user_answer']}\n\n"
+        )
+
+        if progress['ai_feedback']:
+            text += f"<b>Обратная связь:</b>\n{progress['ai_feedback']}\n\n"
+
+        # Добавляем пояснение для test_part если оно есть
+        if task_module == 'test_part' and question_data.get('explanation'):
+            try:
+                from test_part.utils import md_to_html
+                explanation_html = md_to_html(question_data['explanation'])
+                text += f"💡 <b>Пояснение:</b>\n{explanation_html}\n\n"
+            except Exception as e:
+                logger.warning(f"Ошибка при форматировании пояснения: {e}")
+                text += f"💡 <b>Пояснение:</b>\n{question_data['explanation']}\n\n"
+
+        if progress['is_correct']:
+            text += "✅ Ответ принят"
+        else:
+            text += "❌ Требуется доработка"
+
+        keyboard = [
+            [InlineKeyboardButton("◀️ К списку вопросов", callback_data=f"start_homework_{homework_id}")]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        await query.message.edit_text(text, reply_markup=reply_markup, parse_mode='HTML')
+        return ConversationHandler.END
+
+    # Вопрос еще не выполнен, показываем его для ответа
     text = (
         f"📝 <b>{homework.title}</b>\n\n"
         f"{question_text}\n\n"
@@ -858,8 +869,21 @@ async def process_homework_answer(update: Update, context: ContextTypes.DEFAULT_
     text = (
         f"✅ <b>Ответ сохранен!</b>\n\n"
         f"<b>Обратная связь:</b>\n{ai_feedback}\n\n"
-        "Вы можете продолжить выполнение других заданий."
     )
+
+    # Добавляем пояснение для test_part если оно есть
+    if task_module == 'test_part' and question_data.get('explanation'):
+        # Конвертируем markdown в HTML
+        try:
+            from test_part.utils import md_to_html
+            explanation_html = md_to_html(question_data['explanation'])
+            text += f"💡 <b>Пояснение:</b>\n{explanation_html}\n\n"
+        except Exception as e:
+            logger.warning(f"Ошибка при форматировании пояснения: {e}")
+            # Fallback без форматирования
+            text += f"💡 <b>Пояснение:</b>\n{question_data['explanation']}\n\n"
+
+    text += "Вы можете продолжить выполнение других заданий."
 
     # Добавляем информацию о лимите если пользователь не Premium
     if not limit_info.get('is_premium') and remaining_checks <= 3:
@@ -868,16 +892,52 @@ async def process_homework_answer(update: Update, context: ContextTypes.DEFAULT_
         else:
             text += f"\n\n⏳ Бесплатные проверки на сегодня исчерпаны. Лимит обновится завтра."
 
+    # Определяем следующий невыполненный вопрос
+    homework = await assignment_service.get_homework_by_id(homework_id)
+    assignment_data = homework.assignment_data if homework else {}
+
+    # Получаем список всех вопросов в зависимости от типа задания
+    if assignment_data.get('is_custom'):
+        custom_questions = assignment_data.get('custom_questions', [])
+        question_ids = [q['id'] for q in custom_questions]
+    elif assignment_data.get('is_mixed'):
+        question_ids = []
+        for module_data in assignment_data.get('modules', []):
+            question_ids.extend(module_data.get('question_ids', []))
+    elif assignment_data.get('task_module') == 'full_exam' or assignment_data.get('full_exam_questions'):
+        full_exam_questions = assignment_data.get('full_exam_questions', [])
+        question_ids = [q['question_id'] for q in full_exam_questions]
+    else:
+        question_ids = assignment_data.get('question_ids', [])
+
+    # Получаем список выполненных вопросов (включая только что выполненный)
+    completed_questions = await assignment_service.get_completed_question_ids(homework_id, user_id)
+
+    # Находим следующий невыполненный вопрос
+    next_question_id = None
+    for q_id in question_ids:
+        if q_id not in completed_questions:
+            next_question_id = q_id
+            break
+
     # Очищаем контекст
     context.user_data.pop('current_homework_id', None)
     context.user_data.pop('current_question_id', None)
     context.user_data.pop('current_task_module', None)
 
-    keyboard = [
-        [InlineKeyboardButton("➡️ К списку вопросов", callback_data=f"start_homework_{homework_id}")],
-        [InlineKeyboardButton("📋 Мои задания", callback_data="student_homework_list")],
+    keyboard = []
+
+    # Кнопка следующего задания если есть невыполненные
+    if next_question_id is not None:
+        keyboard.append([InlineKeyboardButton(
+            "➡️ Следующее задание",
+            callback_data=f"hw_question:{homework_id}:{next_question_id}"
+        )])
+
+    keyboard.extend([
+        [InlineKeyboardButton("📋 К списку вопросов", callback_data=f"start_homework_{homework_id}")],
         [InlineKeyboardButton("🏠 Главное меню", callback_data="main_menu")]
-    ]
+    ])
     reply_markup = InlineKeyboardMarkup(keyboard)
 
     await checking_msg.edit_text(text, reply_markup=reply_markup, parse_mode='HTML')
