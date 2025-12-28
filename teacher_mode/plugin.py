@@ -157,8 +157,8 @@ class TeacherModePlugin(BotPlugin):
                     CallbackQueryHandler(teacher_handlers.teacher_menu, pattern="^teacher_menu$"),
                 ],
                 TeacherStates.ENTER_ASSIGNMENT_TITLE: [
-                    # Обработка текстового ввода названия задания
-                    MessageHandler(filters.TEXT & ~filters.COMMAND, teacher_handlers.process_assignment_title_input),
+                    # Обработка текстового ввода названия задания (включая команду /skip)
+                    MessageHandler(filters.TEXT, teacher_handlers.process_assignment_title_input),
 
                     # Отмена
                     CallbackQueryHandler(teacher_handlers.teacher_menu, pattern="^teacher_menu$"),
@@ -486,6 +486,7 @@ class TeacherModePlugin(BotPlugin):
         app.add_handler(CallbackQueryHandler(student_handlers.homework_list, pattern="^student_homework_list$"))
         app.add_handler(CallbackQueryHandler(student_handlers.view_homework, pattern="^homework_\\d+$"))
         app.add_handler(CallbackQueryHandler(student_handlers.start_homework, pattern="^start_homework_\\d+$"))
+        app.add_handler(CallbackQueryHandler(student_handlers.show_homework_explanation, pattern="^hw_show_explanation:"))
 
         # Обработчики для работы с платежами (вне conversation)
         app.add_handler(CallbackQueryHandler(teacher_handlers.handle_check_payment, pattern="^check_payment$"))

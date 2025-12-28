@@ -273,7 +273,7 @@ async def homework_list(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
                 button_text += f" (до {deadline_str})"
 
             keyboard.append([
-                InlineKeyboardButton(button_text, callback_data=f"homework_{hw.id}")
+                InlineKeyboardButton(button_text, callback_data=f"homework_{hw.homework_id}")
             ])
 
         keyboard.append([InlineKeyboardButton("◀️ Назад", callback_data="back_to_cabinet")])
@@ -692,24 +692,27 @@ async def show_homework_question(update: Update, context: ContextTypes.DEFAULT_T
         if progress['ai_feedback']:
             text += f"<b>Обратная связь:</b>\n{progress['ai_feedback']}\n\n"
 
-        # Добавляем пояснение для test_part если оно есть
-        if task_module == 'test_part' and question_data.get('explanation'):
-            try:
-                from test_part.utils import md_to_html
-                explanation_html = md_to_html(question_data['explanation'])
-                text += f"💡 <b>Пояснение:</b>\n{explanation_html}\n\n"
-            except Exception as e:
-                logger.warning(f"Ошибка при форматировании пояснения: {e}")
-                text += f"💡 <b>Пояснение:</b>\n{question_data['explanation']}\n\n"
-
         if progress['is_correct']:
             text += "✅ Ответ принят"
         else:
             text += "❌ Требуется доработка"
 
-        keyboard = [
-            [InlineKeyboardButton("◀️ К списку вопросов", callback_data=f"start_homework_{homework_id}")]
-        ]
+        # Сохраняем пояснение для показа по кнопке
+        has_explanation = task_module == 'test_part' and question_data.get('explanation')
+        if has_explanation:
+            context.user_data[f'hw_explanation_{homework_id}_{question_id}'] = question_data['explanation']
+
+        keyboard = []
+
+        # Кнопка пояснения если есть
+        if has_explanation:
+            keyboard.append([InlineKeyboardButton(
+                "💡 Показать пояснение",
+                callback_data=f"hw_show_explanation:{homework_id}:{question_id}"
+            )])
+
+        keyboard.append([InlineKeyboardButton("◀️ К списку вопросов", callback_data=f"start_homework_{homework_id}")])
+
         reply_markup = InlineKeyboardMarkup(keyboard)
         await query.message.edit_text(text, reply_markup=reply_markup, parse_mode='HTML')
         return ConversationHandler.END
@@ -788,10 +791,11 @@ async def process_homework_answer(update: Update, context: ContextTypes.DEFAULT_
         context.user_data.pop('current_task_module', None)
         return ConversationHandler.END
 
-    # Отправляем сообщение о проверке
-    checking_msg = await update.message.reply_text(
-        "⏳ Проверяю ответ через AI...",
-        parse_mode='HTML'
+    # Отправляем анимацию проверки
+    from core.ui_components import show_thinking_animation
+    checking_msg = await show_thinking_animation(
+        update.message,
+        text="Проверяю ваш ответ через AI"
     )
 
     # Загружаем данные вопроса для AI проверки
@@ -869,21 +873,14 @@ async def process_homework_answer(update: Update, context: ContextTypes.DEFAULT_
     text = (
         f"✅ <b>Ответ сохранен!</b>\n\n"
         f"<b>Обратная связь:</b>\n{ai_feedback}\n\n"
+        "Вы можете продолжить выполнение других заданий."
     )
 
-    # Добавляем пояснение для test_part если оно есть
-    if task_module == 'test_part' and question_data.get('explanation'):
-        # Конвертируем markdown в HTML
-        try:
-            from test_part.utils import md_to_html
-            explanation_html = md_to_html(question_data['explanation'])
-            text += f"💡 <b>Пояснение:</b>\n{explanation_html}\n\n"
-        except Exception as e:
-            logger.warning(f"Ошибка при форматировании пояснения: {e}")
-            # Fallback без форматирования
-            text += f"💡 <b>Пояснение:</b>\n{question_data['explanation']}\n\n"
-
-    text += "Вы можете продолжить выполнение других заданий."
+    # Сохраняем question_data для показа пояснения по кнопке
+    has_explanation = task_module == 'test_part' and question_data.get('explanation')
+    if has_explanation:
+        # Сохраняем в контексте для обработчика кнопки
+        context.user_data[f'hw_explanation_{homework_id}_{question_id}'] = question_data['explanation']
 
     # Добавляем информацию о лимите если пользователь не Premium
     if not limit_info.get('is_premium') and remaining_checks <= 3:
@@ -927,6 +924,13 @@ async def process_homework_answer(update: Update, context: ContextTypes.DEFAULT_
 
     keyboard = []
 
+    # Кнопка пояснения если есть
+    if has_explanation:
+        keyboard.append([InlineKeyboardButton(
+            "💡 Показать пояснение",
+            callback_data=f"hw_show_explanation:{homework_id}:{question_id}"
+        )])
+
     # Кнопка следующего задания если есть невыполненные
     if next_question_id is not None:
         keyboard.append([InlineKeyboardButton(
@@ -941,6 +945,52 @@ async def process_homework_answer(update: Update, context: ContextTypes.DEFAULT_
     reply_markup = InlineKeyboardMarkup(keyboard)
 
     await checking_msg.edit_text(text, reply_markup=reply_markup, parse_mode='HTML')
+
+    return ConversationHandler.END
+
+
+async def show_homework_explanation(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Показывает пояснение к вопросу домашнего задания"""
+    query = update.callback_query
+    await query.answer()
+
+    # Парсим callback_data: hw_show_explanation:homework_id:question_id
+    _, homework_id_str, question_id_str = query.data.split(':')
+    homework_id = int(homework_id_str)
+
+    # Пытаемся преобразовать question_id
+    try:
+        question_id = int(question_id_str)
+    except ValueError:
+        question_id = question_id_str
+
+    # Получаем сохраненное пояснение из контекста
+    explanation_key = f'hw_explanation_{homework_id}_{question_id}'
+    explanation = context.user_data.get(explanation_key)
+
+    if not explanation:
+        await query.answer("Пояснение недоступно", show_alert=True)
+        return ConversationHandler.END
+
+    # Конвертируем markdown в HTML
+    try:
+        from test_part.utils import md_to_html
+        explanation_html = md_to_html(explanation)
+        formatted_text = f"💡 <b>Пояснение к вопросу</b>\n\n{explanation_html}"
+    except Exception as e:
+        logger.warning(f"Ошибка при форматировании пояснения: {e}")
+        formatted_text = f"💡 <b>Пояснение к вопросу</b>\n\n{explanation}"
+
+    try:
+        # Отправляем пояснение как новое сообщение
+        await query.message.reply_text(
+            formatted_text,
+            parse_mode='HTML'
+        )
+        await query.answer()
+    except Exception as e:
+        logger.error(f"Ошибка при отправке пояснения: {e}")
+        await query.answer("Ошибка при показе пояснения", show_alert=True)
 
     return ConversationHandler.END
 
