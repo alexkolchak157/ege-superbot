@@ -90,6 +90,23 @@ async def test_db():
             )
         """)
 
+        # Таблица истории изменений подписок учителей
+        await db.execute("""
+            CREATE TABLE teacher_subscription_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                plan_id TEXT NOT NULL,
+                action TEXT NOT NULL CHECK(
+                    action IN ('activated', 'renewed', 'upgraded', 'downgraded', 'expired', 'cancelled')
+                ),
+                previous_tier TEXT,
+                new_tier TEXT,
+                expires_at DATETIME,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (user_id) REFERENCES users(user_id)
+            )
+        """)
+
         # Таблица платежей
         await db.execute("""
             CREATE TABLE payments (
