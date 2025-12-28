@@ -2770,7 +2770,7 @@ class SubscriptionManager:
                 )
 
                 # Создаем teacher_profile с временной меткой для поля created_at
-                from datetime import datetime, timezone
+                # datetime и timezone уже импортированы в начале файла
                 now = datetime.now(timezone.utc)
 
                 await conn.execute(
