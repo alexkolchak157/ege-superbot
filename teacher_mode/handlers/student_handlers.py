@@ -792,7 +792,7 @@ async def process_homework_answer(update: Update, context: ContextTypes.DEFAULT_
         return ConversationHandler.END
 
     # Отправляем анимацию проверки
-    from core.ui_components import show_thinking_animation
+    from core.ui_helpers import show_thinking_animation
     checking_msg = await show_thinking_animation(
         update.message,
         text="Проверяю ваш ответ через AI"
