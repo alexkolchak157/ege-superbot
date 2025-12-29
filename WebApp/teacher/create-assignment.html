@@ -1,0 +1,229 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <title>Создание задания — Режим учителя</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+  <!-- Content Security Policy -->
+  <meta http-equiv="Content-Security-Policy"
+        content="
+          default-src 'self' https://telegram.org;
+          script-src  'self' https://telegram.org;
+          connect-src 'self' https://t.me *;
+          style-src   'self' 'unsafe-inline';
+          img-src     'self' data:;
+          font-src    'self';
+          frame-ancestors https://t.me;">
+
+  <!-- Стили -->
+  <link rel="stylesheet" href="styles/main.css">
+  <link rel="stylesheet" href="styles/form.css">
+  <link rel="stylesheet" href="styles/components.css">
+
+  <!-- Telegram WebApp SDK -->
+  <script src="https://telegram.org/js/telegram-web-app.js" defer></script>
+
+  <!-- Наш bundle -->
+  <script src="bundle.js" defer></script>
+</head>
+<body>
+  <!-- Загрузочный экран -->
+  <div id="loading-screen" class="loading-screen">
+    <div class="spinner"></div>
+    <p>Загрузка...</p>
+  </div>
+
+  <!-- Главный контейнер -->
+  <div id="app" class="app-container" style="display: none;">
+    <!-- Хедер -->
+    <header class="page-header">
+      <h1 class="page-title">Создание задания</h1>
+      <button id="close-btn" class="icon-btn">✕</button>
+    </header>
+
+    <!-- Форма создания задания -->
+    <main class="assignment-form" id="assignment-form">
+
+      <!-- Шаг 1: Тип задания -->
+      <section class="form-section">
+        <h3 class="section-title">1. Тип задания</h3>
+        <div class="assignment-types" id="assignment-types">
+          <button class="type-card" data-type="test_part">
+            <div class="type-icon">📝</div>
+            <div class="type-title">Тестовая часть</div>
+            <div class="type-desc">Вопросы 1-16</div>
+          </button>
+
+          <button class="type-card" data-type="task19">
+            <div class="type-icon">💡</div>
+            <div class="type-title">Задание 19</div>
+            <div class="type-desc">Анализ ситуации</div>
+          </button>
+
+          <button class="type-card" data-type="task20">
+            <div class="type-icon">⚙️</div>
+            <div class="type-title">Задание 20</div>
+            <div class="type-desc">Логические задачи</div>
+          </button>
+
+          <button class="type-card" data-type="task24">
+            <div class="type-icon">📊</div>
+            <div class="type-title">Задание 24</div>
+            <div class="type-desc">Составление плана</div>
+          </button>
+
+          <button class="type-card" data-type="task25">
+            <div class="type-icon">💻</div>
+            <div class="type-title">Задание 25</div>
+            <div class="type-desc">Развернутый ответ</div>
+          </button>
+
+          <button class="type-card" data-type="mixed">
+            <div class="type-icon">🔀</div>
+            <div class="type-title">Смешанное</div>
+            <div class="type-desc">Комбинация модулей</div>
+          </button>
+
+          <button class="type-card" data-type="full_exam">
+            <div class="type-icon">📚</div>
+            <div class="type-title">Полный вариант</div>
+            <div class="type-desc">Весь ЕГЭ</div>
+          </button>
+        </div>
+      </section>
+
+      <!-- Шаг 2: Выбор вопросов (динамический) -->
+      <section class="form-section" id="question-selection-section" style="display: none;">
+        <h3 class="section-title">2. Выбор вопросов</h3>
+        <div id="question-selection-content"></div>
+      </section>
+
+      <!-- Шаг 3: Детали задания -->
+      <section class="form-section" id="details-section" style="display: none;">
+        <h3 class="section-title">3. Детали задания</h3>
+
+        <div class="form-group">
+          <label for="assignment-title" class="form-label">
+            Название задания <span class="required">*</span>
+          </label>
+          <input
+            type="text"
+            id="assignment-title"
+            class="form-input"
+            placeholder="Например: Домашнее задание №5"
+            minlength="3"
+            maxlength="100"
+            required>
+          <div class="form-hint">От 3 до 100 символов</div>
+          <div class="form-error" id="title-error"></div>
+        </div>
+
+        <div class="form-group">
+          <label for="assignment-description" class="form-label">
+            Описание (опционально)
+          </label>
+          <textarea
+            id="assignment-description"
+            class="form-textarea"
+            placeholder="Дополнительные инструкции для учеников..."
+            maxlength="500"
+            rows="4"></textarea>
+          <div class="form-hint">До 500 символов</div>
+        </div>
+      </section>
+
+      <!-- Шаг 4: Выбор учеников -->
+      <section class="form-section" id="students-section" style="display: none;">
+        <h3 class="section-title">4. Выбор учеников <span class="required">*</span></h3>
+        <div id="student-selector-content"></div>
+      </section>
+
+      <!-- Шаг 5: Дедлайн -->
+      <section class="form-section" id="deadline-section" style="display: none;">
+        <h3 class="section-title">5. Дедлайн</h3>
+
+        <div class="deadline-options">
+          <button class="deadline-quick-btn" data-days="1">Завтра</button>
+          <button class="deadline-quick-btn" data-days="3">3 дня</button>
+          <button class="deadline-quick-btn" data-days="7">Неделя</button>
+          <button class="deadline-quick-btn" data-days="14">2 недели</button>
+        </div>
+
+        <div class="form-group">
+          <label for="deadline-input" class="form-label">
+            Или выберите дату
+          </label>
+          <input
+            type="datetime-local"
+            id="deadline-input"
+            class="form-input">
+        </div>
+
+        <div class="form-group">
+          <label class="checkbox-label">
+            <input type="checkbox" id="no-deadline">
+            <span>Без дедлайна</span>
+          </label>
+        </div>
+      </section>
+
+      <!-- Прогресс -->
+      <div class="progress-indicator" id="progress-indicator">
+        <div class="progress-step completed" data-step="1">1</div>
+        <div class="progress-line"></div>
+        <div class="progress-step" data-step="2">2</div>
+        <div class="progress-line"></div>
+        <div class="progress-step" data-step="3">3</div>
+        <div class="progress-line"></div>
+        <div class="progress-step" data-step="4">4</div>
+        <div class="progress-line"></div>
+        <div class="progress-step" data-step="5">5</div>
+      </div>
+
+    </main>
+
+    <!-- Футер с действиями -->
+    <footer class="page-footer">
+      <div class="form-actions">
+        <button class="btn-secondary" id="save-draft-btn">
+          💾 Сохранить черновик
+        </button>
+        <button class="btn-secondary" id="preview-btn" disabled>
+          👁️ Предпросмотр
+        </button>
+        <button class="btn-primary" id="create-btn" disabled>
+          ✅ Создать задание
+        </button>
+      </div>
+    </footer>
+  </div>
+
+  <!-- Modal для предпросмотра -->
+  <div id="preview-modal" class="modal" style="display: none;">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h2>Предпросмотр задания</h2>
+        <button class="close-btn" id="preview-close-btn">×</button>
+      </div>
+
+      <div class="modal-body" id="preview-body">
+        <!-- Динамически заполняется -->
+      </div>
+
+      <div class="modal-footer">
+        <button class="btn-secondary" id="preview-edit-btn">
+          ← Вернуться к редактированию
+        </button>
+        <button class="btn-primary" id="preview-confirm-btn">
+          ✅ Создать задание
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast уведомления -->
+  <div id="toast-container" class="toast-container"></div>
+
+</body>
+</html>

@@ -3819,6 +3819,7 @@ async def process_mixed_question_counts(update: Update, context: ContextTypes.DE
         total_questions = 0
 
         module_names = {
+            'test_part': '📝 Тестовая часть (1-16)',
             'task19': '💡 Задание 19',
             'task20': '⚙️ Задание 20',
             'task24': '📊 Задание 24',
