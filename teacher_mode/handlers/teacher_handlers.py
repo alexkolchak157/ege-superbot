@@ -47,6 +47,7 @@ from datetime import datetime, timedelta
 from typing import List, Dict
 from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton
 from telegram.ext import ContextTypes, ConversationHandler
+from telegram import WebAppInfo
 
 from ..states import TeacherStates
 from ..services import teacher_service
@@ -190,10 +191,15 @@ async def teacher_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
         return TeacherStates.TEACHER_MENU  # Остаемся в состоянии, чтобы кнопки работали
 
     # Все проверки пройдены - показываем меню
+    from core.config import WEBAPP_URL
+
     keyboard = [
         [InlineKeyboardButton("👥 Мои ученики", callback_data="teacher_students")],
         [InlineKeyboardButton("📋 Мои задания", callback_data="teacher_my_assignments")],
-        [InlineKeyboardButton("➕ Создать задание", callback_data="teacher_create_assignment")],
+        [
+            InlineKeyboardButton("➕ Создать задание", callback_data="teacher_create_assignment"),
+            InlineKeyboardButton("🚀 Создать задание (WebApp)", web_app=WebAppInfo(url=WEBAPP_URL))
+        ],
         [InlineKeyboardButton("📊 Статистика", callback_data="teacher_statistics")],
         [InlineKeyboardButton("🔍 Проверить работу", callback_data="quick_check_menu")],
     ]
