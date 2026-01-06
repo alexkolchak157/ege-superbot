@@ -14,7 +14,8 @@ Backend API обеспечивает:
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, HTMLResponse
+from fastapi.openapi.docs import get_swagger_ui_html, get_redoc_html
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 import logging
@@ -40,12 +41,13 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Создание FastAPI приложения
+# Используем None для docs_url и redoc_url, чтобы настроить их вручную с локальными CDN
 app = FastAPI(
     title="Teacher WebApp API",
     version="1.0.0",
     description="Backend API для WebApp режима учителя бота по обществознанию",
-    docs_url="/docs",
-    redoc_url="/redoc",
+    docs_url=None,  # Отключаем стандартный /docs
+    redoc_url=None,  # Отключаем стандартный /redoc
     openapi_url="/openapi.json"
 )
 
@@ -139,6 +141,34 @@ async def health_check():
         "status": "healthy",
         "service": "teacher-webapp-api"
     }
+
+
+# Кастомные endpoints для документации с использованием альтернативных CDN
+@app.get("/docs", include_in_schema=False)
+async def custom_swagger_ui_html():
+    """
+    Swagger UI с использованием unpkg.com CDN вместо jsdelivr.
+    """
+    return get_swagger_ui_html(
+        openapi_url=app.openapi_url,
+        title=f"{app.title} - Swagger UI",
+        swagger_js_url="https://unpkg.com/swagger-ui-dist@5/swagger-ui-bundle.js",
+        swagger_css_url="https://unpkg.com/swagger-ui-dist@5/swagger-ui.css",
+        swagger_favicon_url="https://fastapi.tiangolo.com/img/favicon.png"
+    )
+
+
+@app.get("/redoc", include_in_schema=False)
+async def redoc_html():
+    """
+    ReDoc документация с использованием unpkg.com CDN.
+    """
+    return get_redoc_html(
+        openapi_url=app.openapi_url,
+        title=f"{app.title} - ReDoc",
+        redoc_js_url="https://unpkg.com/redoc@next/bundles/redoc.standalone.js",
+        redoc_favicon_url="https://fastapi.tiangolo.com/img/favicon.png"
+    )
 
 
 # Обработчик ошибок
