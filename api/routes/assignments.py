@@ -18,7 +18,6 @@ from api.schemas.assignment import (
 from teacher_mode.models import TeacherProfile, AssignmentType, TargetType
 from teacher_mode.services.assignment_service import create_homework_assignment
 from teacher_mode.services.topics_loader import load_topics_for_module
-from teacher_mode.services.notification_service import send_assignment_notifications
 from teacher_mode.utils.datetime_utils import parse_datetime_safe, utc_now
 from core.config import DATABASE_FILE
 
@@ -192,12 +191,10 @@ async def create_assignment(
                 detail="Failed to create assignment"
             )
 
-        # Отправляем уведомления ученикам (в фоне, не ждем)
-        try:
-            notified_count = await send_assignment_notifications(homework.id, valid_students)
-        except Exception as e:
-            logger.warning(f"Failed to send notifications: {e}")
-            notified_count = 0
+        # Уведомления будут отправлены через основного бота
+        # (API не имеет прямого доступа к Bot instance)
+        notified_count = 0
+        logger.info(f"Задание создано. Уведомления будут отправлены ботом.")
 
         logger.info(f"Создано задание {homework.id} учителем {teacher.user_id} для {len(valid_students)} учеников")
 
