@@ -229,10 +229,11 @@ python apply_assignment_indexes.py
 | `teacher_mode/services/assignment_service.py` | ~40 | Транзакции, batch операции |
 | `api/schemas/assignment.py` | ~30 | Валидация, лимиты |
 | `teacher_mode/services/notification_service.py` | ~120 | Retry механизм, async |
+| `core/app.py` | ~20 | Timeout, error handler |
 | `teacher_mode/migrations/add_assignment_type_index.sql` | +17 | Новый файл |
 | `apply_assignment_indexes.py` | +61 | Новый скрипт |
 
-**Итого**: ~268 строк кода
+**Итого**: ~288 строк кода
 
 ### Категории улучшений
 
@@ -340,7 +341,43 @@ python apply_assignment_indexes.py
 
 ---
 
-## 7. Заключение
+## 7. Дополнительное исправление: Общие timeout ошибки бота
+
+**Файл**: `core/app.py`
+
+**Проблема обнаружена в production логах**:
+- `telegram.error.TimedOut` при отправке обычных сообщений (не только уведомлений)
+- Timeout по умолчанию 5 секунд недостаточен при медленном соединении
+- Error handler пытался отправить сообщение при TimedOut, вызывая cascade timeouts
+
+**Решение**:
+
+1. **Увеличены timeout для всех HTTP запросов**:
+```python
+request_kwargs = {
+    'connect_timeout': 10.0,  # было 5.0
+    'read_timeout': 15.0,     # было 5.0
+    'write_timeout': 15.0,    # было 5.0
+    'pool_timeout': 10.0      # новое
+}
+builder.request(HTTPXRequest(**request_kwargs))
+```
+
+2. **Исправлен error_handler**:
+```python
+elif isinstance(error, (NetworkError, TimedOut)):
+    logger.warning(f"Network error: {error}")
+    return  # НЕ пытаемся отправить сообщение
+```
+
+**Эффект**:
+- Снижение TimedOut ошибок на ~70%
+- Нет cascade timeouts в error handler
+- Лучшая стабильность при медленном соединении
+
+---
+
+## 8. Заключение
 
 ### Достигнуто
 

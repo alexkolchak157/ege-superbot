@@ -43,14 +43,17 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> N
         # Можно добавить логику деактивации пользователя
 
     elif isinstance(error, (NetworkError, TimedOut)):
-        # Сетевые ошибки - можно игнорировать или залогировать
+        # ИСПРАВЛЕНО: Сетевые ошибки и таймауты - не пытаемся отправить сообщение
+        # так как это может вызвать еще один timeout
         logger.warning(f"Network error: {error}")
+        return  # Выходим без попытки отправить сообщение
 
     else:
         # Все остальные ошибки
         logger.error(f"Unhandled error: {type(error).__name__}: {error}")
 
     # Пытаемся уведомить пользователя об ошибке (если возможно)
+    # ТОЛЬКО для не-сетевых ошибок
     try:
         if update and hasattr(update, 'effective_message') and update.effective_message:
             await update.effective_message.reply_text(
@@ -955,9 +958,21 @@ def main():
         builder.post_shutdown(post_shutdown)
         
         # Дополнительные настройки
+        from telegram.request import HTTPXRequest
+
+        # ИСПРАВЛЕНО: Увеличены timeout для предотвращения TimedOut ошибок
+        # Особенно важно при медленном соединении или через прокси
+        request_kwargs = {
+            'connect_timeout': 10.0,  # было 5.0
+            'read_timeout': 15.0,     # было 5.0
+            'write_timeout': 15.0,    # было 5.0
+            'pool_timeout': 10.0
+        }
+
         if hasattr(config, 'PROXY_URL') and config.PROXY_URL:
-            from telegram.request import HTTPXRequest
-            builder.request(HTTPXRequest(proxy=config.PROXY_URL))
+            request_kwargs['proxy'] = config.PROXY_URL
+
+        builder.request(HTTPXRequest(**request_kwargs))
         
         # Создаем приложение
         application = builder.build()
