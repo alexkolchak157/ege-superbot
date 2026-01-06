@@ -16,9 +16,11 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, HTMLResponse
 from fastapi.openapi.docs import get_swagger_ui_html, get_redoc_html
+from fastapi.staticfiles import StaticFiles
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 import logging
+import os
 
 from api.routes import teacher, students, modules, questions, assignments, drafts
 from core.config import DEBUG
@@ -74,6 +76,14 @@ app.add_middleware(
     allow_methods=["GET", "POST", "PUT", "DELETE"],
     allow_headers=["*"],
 )
+
+# Монтирование статических файлов для Swagger UI
+STATIC_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "static")
+if os.path.exists(STATIC_DIR):
+    app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+    logger.info(f"📁 Статические файлы доступны в /static (директория: {STATIC_DIR})")
+else:
+    logger.warning(f"⚠️  Директория статических файлов не найдена: {STATIC_DIR}")
 
 
 # Регистрация роутов
@@ -143,17 +153,17 @@ async def health_check():
     }
 
 
-# Кастомные endpoints для документации с использованием альтернативных CDN
+# Кастомные endpoints для документации с локальными файлами
 @app.get("/docs", include_in_schema=False)
 async def custom_swagger_ui_html():
     """
-    Swagger UI с использованием unpkg.com CDN вместо jsdelivr.
+    Swagger UI с использованием локальных файлов (решение проблемы CSP блокировки).
     """
     return get_swagger_ui_html(
         openapi_url=app.openapi_url,
         title=f"{app.title} - Swagger UI",
-        swagger_js_url="https://unpkg.com/swagger-ui-dist@5/swagger-ui-bundle.js",
-        swagger_css_url="https://unpkg.com/swagger-ui-dist@5/swagger-ui.css",
+        swagger_js_url="/static/swagger-ui/swagger-ui-bundle.js",
+        swagger_css_url="/static/swagger-ui/swagger-ui.css",
         swagger_favicon_url="https://fastapi.tiangolo.com/img/favicon.png"
     )
 
