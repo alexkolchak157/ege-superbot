@@ -37,9 +37,13 @@ python-dotenv>=1.0
 pandas>=2.0
 requests>=2.31
 aiohttp>=3.8
-pydantic>=1.10.12
+pydantic>=2.0.0
 APScheduler>=3.10.0
 certifi>=2023.7.22  # Required by httpx/telegram
+
+# FastAPI and WebApp API
+fastapi>=0.104.0
+uvicorn[standard]>=0.24.0
 
 # Optional dependencies
 pymorphy2>=0.9.1  # Для лемматизации в task24
