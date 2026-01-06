@@ -53,20 +53,30 @@ def select_questions_for_module(module_data: dict, selection_mode: str,
     elif selection_mode == 'specific':
         # Валидируем что все ID существуют
         valid_ids = []
+        logger.debug(f"Processing specific selection for {len(question_ids or [])} question IDs")
+
         for qid in (question_ids or []):
+            original_qid = qid
             # Убираем префикс модуля если есть (test_part_123 -> 123)
             if '_' in str(qid):
                 qid = qid.split('_')[-1]
+                logger.debug(f"Removed prefix from {original_qid} -> {qid}")
 
             # Конвертируем в int если возможно
             try:
                 qid = int(qid)
+                logger.debug(f"Converted {original_qid} to int: {qid}")
             except (ValueError, TypeError):
+                logger.debug(f"Could not convert {qid} to int, keeping as string")
                 pass
 
             if qid in topics_by_id:
                 valid_ids.append(qid)
+                logger.debug(f"Question ID {qid} found in topics_by_id")
+            else:
+                logger.warning(f"Question ID {qid} (original: {original_qid}) not found in topics_by_id. Available keys: {list(topics_by_id.keys())[:10]}")
 
+        logger.info(f"Selected {len(valid_ids)} valid questions out of {len(question_ids or [])} requested")
         return valid_ids
 
     return []
@@ -119,17 +129,23 @@ async def create_assignment(
         all_selected_questions = []
         modules_data = {}
 
+        logger.info(f"Processing {len(request.modules)} module(s) for assignment creation")
+
         for module_selection in request.modules:
             module_code = module_selection.module_code
+            logger.info(f"Processing module: {module_code}, selection_mode: {module_selection.selection_mode}, question_ids: {module_selection.question_ids}")
 
             # Загружаем данные модуля
             module_data = load_topics_for_module(module_code)
 
             if not module_data or not module_data.get('topics_by_id'):
+                logger.error(f"Module {module_code} not found or has no topics")
                 raise HTTPException(
                     status_code=400,
                     detail=f"Module {module_code} not found or empty"
                 )
+
+            logger.info(f"Module {module_code} loaded: {len(module_data.get('topics_by_id', {}))} topics available")
 
             # Выбираем вопросы
             selected_ids = select_questions_for_module(
@@ -139,7 +155,10 @@ async def create_assignment(
                 module_selection.question_ids
             )
 
+            logger.info(f"Module {module_code}: selected {len(selected_ids)} question(s) using {module_selection.selection_mode} mode")
+
             if not selected_ids:
+                logger.error(f"No questions selected for module {module_code}. Mode: {module_selection.selection_mode}, IDs: {module_selection.question_ids}")
                 raise HTTPException(
                     status_code=400,
                     detail=f"No questions selected for module {module_code}"
