@@ -15,14 +15,17 @@ export function validateAssignmentForm(state) {
     errors.assignmentType = 'Выберите тип задания';
   }
 
-  // Валидация модулей (для смешанного типа)
-  if (state.assignmentType === 'mixed') {
+  // ИСПРАВЛЕНО: Валидация модулей для ВСЕХ типов заданий, кроме custom и full_exam
+  // task19, task20, task24, task25, mixed - все требуют выбора вопросов
+  const needsModules = ['task19', 'task20', 'task24', 'task25', 'mixed', 'test_part'].includes(state.assignmentType);
+
+  if (needsModules) {
     if (!state.modules || state.modules.length === 0) {
-      errors.modules = 'Выберите хотя бы один модуль';
+      errors.modules = 'Выберите хотя бы один вопрос';
     }
 
     // Проверяем каждый модуль
-    if (state.modules) {
+    if (state.modules && state.modules.length > 0) {
       state.modules.forEach((module, index) => {
         if (!module.module_code) {
           errors[`module_${index}_code`] = 'Не указан код модуля';
