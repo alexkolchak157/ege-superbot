@@ -15,10 +15,22 @@ Backend API обеспечивает:
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.requests import Request
 import logging
 
 from api.routes import teacher, students, modules, questions, assignments, drafts
 from core.config import DEBUG
+
+
+class ProxyHeadersMiddleware(BaseHTTPMiddleware):
+    """Middleware для обработки заголовков от nginx proxy"""
+    async def dispatch(self, request: Request, call_next):
+        # Обрабатываем X-Forwarded-Proto для правильной работы Swagger UI через HTTPS
+        forwarded_proto = request.headers.get("x-forwarded-proto")
+        if forwarded_proto:
+            request.scope["scheme"] = forwarded_proto
+        return await call_next(request)
 
 # Настройка логирования
 logging.basicConfig(
@@ -36,6 +48,9 @@ app = FastAPI(
     redoc_url="/redoc",
     openapi_url="/openapi.json"
 )
+
+# Добавляем middleware для обработки заголовков прокси (должен быть первым!)
+app.add_middleware(ProxyHeadersMiddleware)
 
 # Настройка CORS
 # В продакшене следует ограничить origins только Telegram доменами
