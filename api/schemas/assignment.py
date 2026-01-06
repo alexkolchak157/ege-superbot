@@ -23,11 +23,12 @@ class ModuleSelection(BaseModel):
         None,
         description="Количество вопросов (для режима random)",
         ge=1,
-        le=100
+        le=50  # ИСПРАВЛЕНО: снижен лимит с 100 до 50 на модуль
     )
     question_ids: Optional[List[str]] = Field(
         None,
-        description="ID вопросов (для режима specific)"
+        description="ID вопросов (для режима specific)",
+        max_length=50  # ИСПРАВЛЕНО: максимум 50 вопросов в specific режиме
     )
 
     @field_validator('question_ids')
@@ -35,8 +36,12 @@ class ModuleSelection(BaseModel):
     def validate_question_ids(cls, v, info):
         """Валидация question_ids в зависимости от selection_mode"""
         values = info.data
-        if values.get('selection_mode') == 'specific' and not v:
-            raise ValueError('question_ids required for specific selection mode')
+        if values.get('selection_mode') == 'specific':
+            if not v:
+                raise ValueError('question_ids required for specific selection mode')
+            # ИСПРАВЛЕНО: Проверка на уникальность вопросов
+            if len(v) != len(set(v)):
+                raise ValueError('Duplicate question IDs are not allowed')
         return v
 
     @field_validator('question_count')
@@ -98,6 +103,36 @@ class CreateAssignmentRequest(BaseModel):
         """Валидация дедлайна - не может быть в прошлом"""
         if v and v < datetime.utcnow():
             raise ValueError('Deadline cannot be in the past')
+        return v
+
+    @field_validator('modules')
+    @classmethod
+    def validate_total_questions(cls, v):
+        """
+        ИСПРАВЛЕНО: Валидация общего количества вопросов.
+        Максимум 200 вопросов на задание для предотвращения DoS.
+        """
+        total_estimated = 0
+        all_question_ids = set()
+
+        for module in v:
+            if module.selection_mode == 'random' and module.question_count:
+                total_estimated += module.question_count
+            elif module.selection_mode == 'specific' and module.question_ids:
+                # Проверка на пересечение вопросов между модулями
+                for qid in module.question_ids:
+                    full_id = f"{module.module_code}_{qid}"
+                    if full_id in all_question_ids:
+                        raise ValueError(f'Question {qid} appears multiple times across modules')
+                    all_question_ids.add(full_id)
+                total_estimated += len(module.question_ids)
+            elif module.selection_mode == 'all':
+                # Для режима 'all' предполагаем максимум 30 вопросов на модуль
+                total_estimated += 30
+
+        if total_estimated > 200:
+            raise ValueError(f'Total questions ({total_estimated}) exceeds maximum allowed (200)')
+
         return v
 
     class Config:

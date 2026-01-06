@@ -35,6 +35,11 @@ async def create_homework_assignment(
     """
     Создает домашнее задание.
 
+    ИСПРАВЛЕНО:
+    - Добавлены явные транзакции для атомарности
+    - Используется batch INSERT для назначений учеников
+    - Добавлен rollback при ошибках
+
     Args:
         teacher_id: ID учителя
         title: Название задания
@@ -50,55 +55,70 @@ async def create_homework_assignment(
     """
     try:
         async with aiosqlite.connect(DATABASE_FILE) as db:
-            now = utc_now()  # ИСПРАВЛЕНО: timezone-aware datetime
-            assignment_data_json = json.dumps(assignment_data)
+            # ИСПРАВЛЕНО: Явная транзакция для атомарности
+            await db.execute("BEGIN TRANSACTION")
 
-            # ИСПРАВЛЕНО: убеждаемся что deadline тоже timezone-aware
-            deadline_iso = datetime_to_iso(deadline) if deadline else None
+            try:
+                now = utc_now()  # ИСПРАВЛЕНО: timezone-aware datetime
+                assignment_data_json = json.dumps(assignment_data)
 
-            cursor = await db.execute("""
-                INSERT INTO homework_assignments
-                (teacher_id, created_at, title, description, deadline,
-                 assignment_type, assignment_data, target_type, status)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'active')
-            """, (
-                teacher_id,
-                now.isoformat(),
-                title,
-                description,
-                deadline_iso,
-                assignment_type.value,
-                assignment_data_json,
-                target_type.value
-            ))
+                # ИСПРАВЛЕНО: убеждаемся что deadline тоже timezone-aware
+                deadline_iso = datetime_to_iso(deadline) if deadline else None
 
-            homework_id = cursor.lastrowid
+                cursor = await db.execute("""
+                    INSERT INTO homework_assignments
+                    (teacher_id, created_at, title, description, deadline,
+                     assignment_type, assignment_data, target_type, status)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'active')
+                """, (
+                    teacher_id,
+                    now.isoformat(),
+                    title,
+                    description,
+                    deadline_iso,
+                    assignment_type.value,
+                    assignment_data_json,
+                    target_type.value
+                ))
 
-            # Создаём назначения для каждого ученика
-            for student_id in student_ids:
-                await db.execute("""
+                homework_id = cursor.lastrowid
+
+                # ИСПРАВЛЕНО: Batch INSERT для всех назначений за один раз
+                student_assignments = [
+                    (homework_id, student_id, now.isoformat(), 'assigned')
+                    for student_id in student_ids
+                ]
+
+                await db.executemany("""
                     INSERT INTO homework_student_assignments
                     (homework_id, student_id, assigned_at, status)
-                    VALUES (?, ?, ?, 'assigned')
-                """, (homework_id, student_id, now.isoformat()))
+                    VALUES (?, ?, ?, ?)
+                """, student_assignments)
 
-            await db.commit()
+                # ИСПРАВЛЕНО: Коммит только если все прошло успешно
+                await db.commit()
 
-            homework = HomeworkAssignment(
-                id=homework_id,
-                teacher_id=teacher_id,
-                created_at=now,
-                title=title,
-                description=description,
-                deadline=deadline,
-                assignment_type=assignment_type,
-                assignment_data=assignment_data,
-                target_type=target_type,
-                status=AssignmentStatus.ACTIVE
-            )
+                homework = HomeworkAssignment(
+                    id=homework_id,
+                    teacher_id=teacher_id,
+                    created_at=now,
+                    title=title,
+                    description=description,
+                    deadline=deadline,
+                    assignment_type=assignment_type,
+                    assignment_data=assignment_data,
+                    target_type=target_type,
+                    status=AssignmentStatus.ACTIVE
+                )
 
-            logger.info(f"Создано ДЗ id={homework_id} от учителя {teacher_id} для {len(student_ids)} учеников")
-            return homework
+                logger.info(f"Создано ДЗ id={homework_id} от учителя {teacher_id} для {len(student_ids)} учеников")
+                return homework
+
+            except Exception as inner_e:
+                # ИСПРАВЛЕНО: Откат транзакции при любой ошибке
+                await db.rollback()
+                logger.error(f"Ошибка внутри транзакции при создании ДЗ: {inner_e}")
+                raise
 
     except Exception as e:
         logger.error(f"Ошибка при создании домашнего задания: {e}")
