@@ -230,10 +230,12 @@ python apply_assignment_indexes.py
 | `api/schemas/assignment.py` | ~30 | Валидация, лимиты |
 | `teacher_mode/services/notification_service.py` | ~120 | Retry механизм, async |
 | `core/app.py` | ~20 | Timeout, error handler |
+| `WebApp/teacher/js/utils/validation.js` | ~15 | Валидация modules |
+| `WebApp/teacher/js/components/AssignmentForm.js` | ~40 | isFormValid, renderQuestionBrowser |
 | `teacher_mode/migrations/add_assignment_type_index.sql` | +17 | Новый файл |
 | `apply_assignment_indexes.py` | +61 | Новый скрипт |
 
-**Итого**: ~288 строк кода
+**Итого**: ~343 строк кода
 
 ### Категории улучшений
 
@@ -341,7 +343,74 @@ python apply_assignment_indexes.py
 
 ---
 
-## 7. Дополнительное исправление: Общие timeout ошибки бота
+## 7. Исправление валидации WebApp формы создания заданий
+
+**Файлы**:
+- `WebApp/teacher/js/utils/validation.js`
+- `WebApp/teacher/js/components/AssignmentForm.js`
+
+**Проблема обнаружена пользователем**:
+- Кнопка "Создать задание" неактивна даже при заполнении всех полей
+- `isFormValid()` не проверяла наличие выбранных вопросов
+- Валидация `modules` работала только для типа 'mixed'
+- Для типов task19, task20, task24, task25 валидация вопросов пропускалась
+
+**Решение**:
+
+1. **validation.js - расширена валидация типов**:
+```javascript
+// БЫЛО: только для 'mixed'
+if (state.assignmentType === 'mixed') {
+
+// СТАЛО: для всех типов, требующих вопросов
+const needsModules = ['task19', 'task20', 'task24', 'task25', 'mixed', 'test_part']
+  .includes(state.assignmentType);
+
+if (needsModules) {
+```
+
+2. **AssignmentForm.js - isFormValid() теперь проверяет modules**:
+```javascript
+const needsModules = ['task19', 'task20', ...].includes(this.state.assignmentType);
+
+if (needsModules) {
+  if (!this.state.modules || this.state.modules.length === 0) {
+    return false;
+  }
+
+  // Проверяем каждый модуль
+  for (const module of this.state.modules) {
+    if (module.selection_mode === 'specific') {
+      if (!module.question_ids || module.question_ids.length === 0) {
+        return false;
+      }
+    }
+    // ...
+  }
+}
+```
+
+3. **AssignmentForm.js - исправлено добавление модулей**:
+```javascript
+// БЫЛО: использовался индекс [0]
+if (!this.state.modules[0]) {
+
+// СТАЛО: поиск по module_code
+let module = this.state.modules.find(m => m.module_code === moduleCode);
+if (!module) {
+  module = { module_code: moduleCode, ... };
+  this.state.modules.push(module);
+}
+```
+
+**Эффект**:
+- ✅ Кнопка активируется только при выборе вопросов
+- ✅ Невозможно создать задание без вопросов
+- ✅ Правильная валидация для всех типов заданий
+
+---
+
+## 8. Общие timeout ошибки бота (дополнительное исправление)
 
 **Файл**: `core/app.py`
 

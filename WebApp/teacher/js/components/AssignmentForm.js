@@ -521,21 +521,35 @@ export class AssignmentForm {
     this.questionBrowser = new QuestionBrowser(container);
     await this.questionBrowser.init(moduleCode);
 
+    // ИСПРАВЛЕНО: Правильная инициализация модуля при выборе вопросов
     // Слушаем изменения выбора
     this.questionBrowser.on('change', (selectedIds) => {
-      if (!this.state.modules[0]) {
-        this.state.modules.push({
+      console.log('Questions selected:', selectedIds.length);
+
+      // Ищем существующий модуль по module_code
+      let module = this.state.modules.find(m => m.module_code === moduleCode);
+
+      if (!module) {
+        // Создаем новый модуль
+        module = {
           module_code: moduleCode,
           selection_mode: 'specific',
           question_count: null,
           question_ids: selectedIds
-        });
+        };
+        this.state.modules.push(module);
+        console.log('Created new module:', module);
       } else {
-        this.state.modules[0].question_ids = selectedIds;
+        // Обновляем существующий модуль
+        module.selection_mode = 'specific';
+        module.question_ids = selectedIds;
+        module.question_count = null;
+        console.log('Updated existing module:', module);
       }
 
       this.markAsChanged();
       this.updateCreateButton();
+      console.log('Current state.modules:', this.state.modules);
     });
   }
 
@@ -644,11 +658,38 @@ export class AssignmentForm {
    * @returns {boolean}
    */
   isFormValid() {
-    return (
-      this.state.assignmentType &&
-      this.state.title.trim().length >= 3 &&
-      this.state.studentIds.length > 0
-    );
+    // ИСПРАВЛЕНО: Добавлена проверка наличия выбранных вопросов для типов заданий, которые требуют их
+
+    // Базовые проверки
+    if (!this.state.assignmentType) return false;
+    if (this.state.title.trim().length < 3) return false;
+    if (this.state.studentIds.length === 0) return false;
+
+    // ИСПРАВЛЕНО: Проверка наличия вопросов для типов, которые их требуют
+    const needsModules = ['task19', 'task20', 'task24', 'task25', 'mixed', 'test_part'].includes(this.state.assignmentType);
+
+    if (needsModules) {
+      // Проверяем наличие модулей
+      if (!this.state.modules || this.state.modules.length === 0) {
+        return false;
+      }
+
+      // Проверяем что каждый модуль имеет выбранные вопросы
+      for (const module of this.state.modules) {
+        if (module.selection_mode === 'specific') {
+          if (!module.question_ids || module.question_ids.length === 0) {
+            return false;
+          }
+        } else if (module.selection_mode === 'random') {
+          if (!module.question_count || module.question_count < 1) {
+            return false;
+          }
+        }
+        // Для 'all' модуль валиден по умолчанию
+      }
+    }
+
+    return true;
   }
 
   /**
