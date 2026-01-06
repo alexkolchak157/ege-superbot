@@ -121,7 +121,16 @@ class CreateAssignmentRequest(BaseModel):
             elif module.selection_mode == 'specific' and module.question_ids:
                 # Проверка на пересечение вопросов между модулями
                 for qid in module.question_ids:
-                    full_id = f"{module.module_code}_{qid}"
+                    # ИСПРАВЛЕНО: qid может уже содержать префикс модуля (например, "task19_1")
+                    # Не добавляем префикс повторно, используем qid напрямую как full_id
+                    # Если префикса нет, добавляем его
+                    if '_' in str(qid) and str(qid).startswith((module.module_code + '_', 'test_part_', 'task')):
+                        # qid уже содержит префикс модуля
+                        full_id = str(qid)
+                    else:
+                        # qid без префикса, добавляем
+                        full_id = f"{module.module_code}_{qid}"
+
                     if full_id in all_question_ids:
                         raise ValueError(f'Question {qid} appears multiple times across modules')
                     all_question_ids.add(full_id)
