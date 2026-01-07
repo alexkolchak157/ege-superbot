@@ -649,6 +649,18 @@ export class AssignmentForm {
 
     const isValid = this.isFormValid();
 
+    // Отладочное логирование
+    console.log('[updateCreateButton] isValid:', isValid);
+    console.log('[updateCreateButton] state:', {
+      assignmentType: this.state.assignmentType,
+      title: this.state.title,
+      titleLength: this.state.title?.trim()?.length,
+      studentIds: this.state.studentIds,
+      studentIdsLength: this.state.studentIds?.length,
+      modules: this.state.modules,
+      modulesLength: this.state.modules?.length
+    });
+
     createBtn.disabled = !isValid;
     previewBtn.disabled = !isValid;
   }

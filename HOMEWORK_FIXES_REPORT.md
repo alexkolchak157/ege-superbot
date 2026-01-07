@@ -232,10 +232,12 @@ python apply_assignment_indexes.py
 | `core/app.py` | ~20 | Timeout, error handler |
 | `WebApp/teacher/js/utils/validation.js` | ~15 | Валидация modules |
 | `WebApp/teacher/js/components/AssignmentForm.js` | ~40 | isFormValid, renderQuestionBrowser |
+| `api/schemas/assignment.py` | ~10 | Обработка префиксов в question_ids |
+| `api/routes/assignments.py` | ~28 | Логирование выбора вопросов |
 | `teacher_mode/migrations/add_assignment_type_index.sql` | +17 | Новый файл |
 | `apply_assignment_indexes.py` | +61 | Новый скрипт |
 
-**Итого**: ~343 строк кода
+**Итого**: ~381 строк кода
 
 ### Категории улучшений
 
@@ -446,7 +448,71 @@ elif isinstance(error, (NetworkError, TimedOut)):
 
 ---
 
-## 8. Заключение
+## 9. Исправление обработки question_ids с префиксами модулей
+
+**Файлы**:
+- `api/schemas/assignment.py`
+- `api/routes/assignments.py`
+
+**Проблема**:
+- WebApp отправляет question_ids с префиксами модулей (например, `["task19_1", "task19_2"]`)
+- Валидация в схеме добавляла префикс повторно: `task19_task19_1`
+- Отсутствовало логирование для диагностики проблем выбора вопросов
+- Могли возникать ложные срабатывания проверки на дубликаты
+
+**Решение**:
+
+1. **api/schemas/assignment.py - исправлена валидация дубликатов**:
+```python
+# БЫЛО:
+full_id = f"{module.module_code}_{qid}"  # Всегда добавлял префикс
+
+# СТАЛО:
+if '_' in str(qid) and str(qid).startswith((module.module_code + '_', 'test_part_', 'task')):
+    # qid уже содержит префикс модуля
+    full_id = str(qid)
+else:
+    # qid без префикса, добавляем
+    full_id = f"{module.module_code}_{qid}"
+```
+
+2. **api/routes/assignments.py - добавлено подробное логирование**:
+```python
+logger.debug(f"Processing specific selection for {len(question_ids or [])} question IDs")
+
+for qid in (question_ids or []):
+    original_qid = qid
+    # Убираем префикс и конвертируем
+    if '_' in str(qid):
+        qid = qid.split('_')[-1]
+        logger.debug(f"Removed prefix from {original_qid} -> {qid}")
+
+    # Проверяем наличие
+    if qid in topics_by_id:
+        valid_ids.append(qid)
+        logger.debug(f"Question ID {qid} found in topics_by_id")
+    else:
+        logger.warning(f"Question ID {qid} not found. Available keys: {list(topics_by_id.keys())[:10]}")
+
+logger.info(f"Selected {len(valid_ids)} valid questions out of {len(question_ids or [])} requested")
+```
+
+3. **Добавлено логирование загрузки модулей**:
+```python
+logger.info(f"Processing module: {module_code}, selection_mode: {module_selection.selection_mode}")
+logger.info(f"Module {module_code} loaded: {len(module_data.get('topics_by_id', {}))} topics available")
+logger.info(f"Module {module_code}: selected {len(selected_ids)} question(s)")
+```
+
+**Эффект**:
+- ✅ Правильная обработка question_ids с префиксами из WebApp
+- ✅ Корректная проверка дубликатов без ложных срабатываний
+- ✅ Подробные логи для диагностики проблем создания заданий
+- ✅ Видны точные причины, если вопросы не найдены
+
+---
+
+## 10. Заключение
 
 ### Достигнуто
 
