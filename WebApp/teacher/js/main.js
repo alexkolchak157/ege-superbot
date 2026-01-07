@@ -356,6 +356,16 @@ class TeacherApp {
 document.addEventListener('DOMContentLoaded', () => {
   const app = new TeacherApp();
   app.init();
+
+  // Для отладки - сохраняем в window (временно для диагностики)
+  window.teacherApp = app;
+
+  // После инициализации assignmentForm может быть еще undefined
+  // Сохраняем его после полной инициализации
+  setTimeout(() => {
+    window.assignmentForm = app.assignmentForm;
+    console.log('Debug: assignmentForm set to window', !!window.assignmentForm);
+  }, 100);
 });
 
 // Экспортируем для доступа из других модулей
