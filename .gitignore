@@ -175,3 +175,4 @@ cython_debug/
 quiz_async.db
 users.db
 main_database.db
+node_modules/
