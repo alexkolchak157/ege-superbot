@@ -4,7 +4,7 @@ import commonjs from '@rollup/plugin-commonjs';
 export default {
   input: 'js/main.js',
   output: {
-    file: 'bundle.js',
+    file: 'bundle-v2.js',
     format: 'iife',
     name: 'TeacherApp',
     sourcemap: true,
