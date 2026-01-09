@@ -66,6 +66,14 @@ export class AssignmentForm {
       );
       await this.studentSelector.init(this.students);
 
+      // Подписываемся на изменения StudentSelector ПОСЛЕ его создания
+      this.studentSelector.on('change', (selectedIds) => {
+        this.state.studentIds = selectedIds;
+        console.log('[AssignmentForm] Students changed:', selectedIds);
+        this.markAsChanged();
+        this.updateCreateButton();
+      });
+
       this.previewModal = new PreviewModal(
         document.getElementById('preview-modal')
       );
@@ -172,14 +180,7 @@ export class AssignmentForm {
       });
     }
 
-    // Слушаем изменения от StudentSelector
-    if (this.studentSelector) {
-      this.studentSelector.on('change', (selectedIds) => {
-        this.state.studentIds = selectedIds;
-        this.markAsChanged();
-        this.updateCreateButton();
-      });
-    }
+    // УДАЛЕНО: Подписка перенесена в init() после создания studentSelector
   }
 
   /**
