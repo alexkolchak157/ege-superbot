@@ -1907,11 +1907,11 @@ var TeacherApp = (function (exports) {
       }
 
       const html = this.filteredStudents.map(student => `
-      <div class="student-card ${this.selectedIds.has(student.id) ? 'selected' : ''}"
-           data-id="${student.id}">
+      <div class="student-card ${this.selectedIds.has(student.user_id) ? 'selected' : ''}"
+           data-id="${student.user_id}">
         <input type="checkbox"
-               data-id="${student.id}"
-               ${this.selectedIds.has(student.id) ? 'checked' : ''}>
+               data-id="${student.user_id}"
+               ${this.selectedIds.has(student.user_id) ? 'checked' : ''}>
         <div class="student-info">
           <div class="student-name">${this.escapeHTML(student.name || 'Безымянный')}</div>
           ${student.username ? `<div class="student-username">@${student.username}</div>` : ''}
