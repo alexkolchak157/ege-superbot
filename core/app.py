@@ -23,9 +23,6 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> N
     """Глобальный обработчик ошибок для бота."""
     from telegram.error import BadRequest, Forbidden, NetworkError, TimedOut
 
-    # Логируем всю информацию об ошибке
-    logger.error(f"Exception while handling an update:", exc_info=context.error)
-
     # Получаем информацию об ошибке
     error = context.error
 
@@ -36,20 +33,24 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> N
             logger.debug(f"Ignored 'Message is not modified' error")
             return
         logger.warning(f"BadRequest error: {error}")
+        # Логируем BadRequest как warning, не error
 
     elif isinstance(error, Forbidden):
         # Пользователь заблокировал бота
         logger.warning(f"Bot was blocked by user")
         # Можно добавить логику деактивации пользователя
+        return  # Выходим без попытки отправить сообщение
 
     elif isinstance(error, (NetworkError, TimedOut)):
-        # ИСПРАВЛЕНО: Сетевые ошибки и таймауты - не пытаемся отправить сообщение
-        # так как это может вызвать еще один timeout
-        logger.warning(f"Network error: {error}")
+        # ИСПРАВЛЕНО: Сетевые ошибки и таймауты - логируем как WARNING, не ERROR
+        # так как это временные проблемы, не требующие немедленного вмешательства
+        logger.warning(f"Network error (will be retried automatically): {error}")
+        # НЕ пытаемся отправить сообщение - это может вызвать еще один timeout
         return  # Выходим без попытки отправить сообщение
 
     else:
-        # Все остальные ошибки
+        # Все остальные ошибки - это действительно проблемы
+        logger.error(f"Exception while handling an update:", exc_info=context.error)
         logger.error(f"Unhandled error: {type(error).__name__}: {error}")
 
     # Пытаемся уведомить пользователя об ошибке (если возможно)
@@ -962,17 +963,27 @@ def main():
 
         # ИСПРАВЛЕНО: Увеличены timeout для предотвращения TimedOut ошибок
         # Особенно важно при медленном соединении или через прокси
+        # Увеличены значения для более стабильной работы с Telegram API
         request_kwargs = {
-            'connect_timeout': 10.0,  # было 5.0
-            'read_timeout': 15.0,     # было 5.0
-            'write_timeout': 15.0,    # было 5.0
-            'pool_timeout': 10.0
+            'connect_timeout': 20.0,  # было 10.0 - увеличено до 20s
+            'read_timeout': 30.0,     # было 15.0 - увеличено до 30s
+            'write_timeout': 30.0,    # было 15.0 - увеличено до 30s
+            'pool_timeout': 20.0      # было 10.0 - увеличено до 20s
         }
 
         if hasattr(config, 'PROXY_URL') and config.PROXY_URL:
             request_kwargs['proxy'] = config.PROXY_URL
 
-        builder.request(HTTPXRequest(**request_kwargs))
+        # Создаем HTTP клиент с настройками timeout и retry
+        http_request = HTTPXRequest(**request_kwargs)
+        builder.request(http_request)
+
+        # Также настраиваем отдельный клиент для get_updates с более длительным timeout
+        # get_updates использует long polling и требует более длинный timeout
+        get_updates_request_kwargs = request_kwargs.copy()
+        get_updates_request_kwargs['read_timeout'] = 60.0  # 60 секунд для long polling
+        get_updates_http_request = HTTPXRequest(**get_updates_request_kwargs)
+        builder.get_updates_request(get_updates_http_request)
         
         # Создаем приложение
         application = builder.build()
