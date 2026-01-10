@@ -101,6 +101,12 @@ async def create_assignment(
     3. Создание задания в БД
     4. Отправка уведомлений ученикам
     """
+    logger.info(f"📝 Получен запрос на создание задания от учителя {teacher.user_id}")
+    logger.info(f"   Заголовок: {request.title}")
+    logger.info(f"   Тип: {request.assignment_type}")
+    logger.info(f"   Студентов: {len(request.student_ids)}")
+    logger.info(f"   Модулей: {len(request.modules)}")
+
     try:
         # Валидируем что все ученики принадлежат учителю
         async with aiosqlite.connect(DATABASE_FILE) as db:
@@ -212,17 +218,19 @@ async def create_assignment(
 
         # Уведомления будут отправлены через основного бота
         # (API не имеет прямого доступа к Bot instance)
-        notified_count = 0
         logger.info(f"Задание создано. Уведомления будут отправлены ботом.")
 
-        logger.info(f"Создано задание {homework.id} учителем {teacher.user_id} для {len(valid_students)} учеников")
+        logger.info(f"✅ Создано задание {homework.id} учителем {teacher.user_id} для {len(valid_students)} учеников")
+        logger.info(f"   Заголовок: {request.title}")
+        logger.info(f"   Тип: {request.assignment_type}")
+        logger.info(f"   Ученики: {valid_students}")
 
         return CreateAssignmentResponse(
             success=True,
             assignment_id=homework.id,
             created_at=homework.created_at,
             message=f"Задание успешно создано и отправлено {len(valid_students)} ученикам",
-            students_notified=notified_count
+            students_notified=len(valid_students)
         )
 
     except HTTPException:
