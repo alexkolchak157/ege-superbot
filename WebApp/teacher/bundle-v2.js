@@ -2966,7 +2966,7 @@ var TeacherApp = (function (exports) {
      * @returns {Object}
      */
     getAssignmentData() {
-      return {
+      const data = {
         assignment_type: this.state.assignmentType,
         title: this.state.title.trim(),
         description: this.state.description.trim() || null,
@@ -2974,6 +2974,12 @@ var TeacherApp = (function (exports) {
         student_ids: this.state.studentIds,
         modules: this.state.modules
       };
+
+      // Добавляем camelCase версии для PreviewModal
+      data.assignmentType = data.assignment_type;
+      data.studentIds = data.student_ids;
+
+      return data;
     }
 
     /**
