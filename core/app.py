@@ -19,6 +19,52 @@ from payment import init_payment_module
 logger = logging.getLogger(__name__)
 
 
+async def send_message_with_retry(message, text, reply_markup=None, parse_mode=None, max_retries=3, initial_delay=1.0):
+    """
+    Отправляет сообщение с автоматическими повторными попытками при сетевых ошибках.
+
+    Args:
+        message: Telegram Message объект
+        text: Текст сообщения
+        reply_markup: Клавиатура (опционально)
+        parse_mode: Режим парсинга (опционально)
+        max_retries: Максимальное количество повторных попыток
+        initial_delay: Начальная задержка между попытками в секундах
+
+    Returns:
+        Отправленное сообщение или None при неудаче
+    """
+    from telegram.error import TimedOut, NetworkError
+
+    delay = initial_delay
+    last_error = None
+
+    for attempt in range(max_retries):
+        try:
+            return await message.reply_text(
+                text,
+                reply_markup=reply_markup,
+                parse_mode=parse_mode
+            )
+        except (TimedOut, NetworkError) as e:
+            last_error = e
+            if attempt < max_retries - 1:
+                logger.warning(f"Message send failed (attempt {attempt + 1}/{max_retries}): {e}. Retrying in {delay}s...")
+                await asyncio.sleep(delay)
+                delay *= 2  # Экспоненциальная задержка
+            else:
+                logger.error(f"Message send failed after {max_retries} attempts: {e}")
+                raise
+        except Exception as e:
+            # Другие ошибки не retry-им
+            logger.error(f"Non-retryable error while sending message: {e}")
+            raise
+
+    # Если все попытки исчерпаны
+    if last_error:
+        raise last_error
+
+
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Глобальный обработчик ошибок для бота."""
     from telegram.error import BadRequest, Forbidden, NetworkError, TimedOut
@@ -428,7 +474,8 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     [InlineKeyboardButton("🎯 Попробовать!", callback_data="start_onboarding")]
                 ])
 
-                await update.message.reply_text(
+                await send_message_with_retry(
+                    update.message,
                     welcome_text,
                     reply_markup=keyboard,
                     parse_mode=ParseMode.HTML
@@ -454,7 +501,8 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     [InlineKeyboardButton("🚀 Показывай!", callback_data="start_onboarding")]
                 ])
 
-                await update.message.reply_text(
+                await send_message_with_retry(
+                    update.message,
                     welcome_text,
                     reply_markup=keyboard,
                     parse_mode=ParseMode.HTML
@@ -473,17 +521,19 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Обработка возврата после оплаты
         if param.startswith('payment_success_'):
             order_id = param.replace('payment_success_', '')
-            await update.message.reply_text(
+            await send_message_with_retry(
+                update.message,
                 "✅ <b>Спасибо за оплату!</b>\n\n"
                 "Ваша подписка будет активирована в течение нескольких минут.\n"
                 "Используйте /my_subscriptions для проверки статуса.",
                 parse_mode=ParseMode.HTML
             )
             return
-            
+
         elif param.startswith('payment_fail_'):
             order_id = param.replace('payment_fail_', '')
-            await update.message.reply_text(
+            await send_message_with_retry(
+                update.message,
                 "❌ <b>Оплата не прошла</b>\n\n"
                 "Попробуйте оформить подписку еще раз.\n"
                 "Используйте /subscribe для выбора плана.",
@@ -609,8 +659,10 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     # Получаем меню с индикацией доступа (используем оригинальную функцию)
     menu_keyboard = await show_main_menu_with_access(context, user_id)
-    
-    await update.message.reply_text(
+
+    # Используем retry-обертку для надежной отправки сообщения
+    await send_message_with_retry(
+        update.message,
         welcome_text,
         reply_markup=menu_keyboard,
         parse_mode="HTML"
@@ -964,11 +1016,12 @@ def main():
         # ИСПРАВЛЕНО: Увеличены timeout для предотвращения TimedOut ошибок
         # Особенно важно при медленном соединении или через прокси
         # Увеличены значения для более стабильной работы с Telegram API
+        # Установлены максимальные значения для проблемных соединений
         request_kwargs = {
-            'connect_timeout': 20.0,  # было 10.0 - увеличено до 20s
-            'read_timeout': 30.0,     # было 15.0 - увеличено до 30s
-            'write_timeout': 30.0,    # было 15.0 - увеличено до 30s
-            'pool_timeout': 20.0      # было 10.0 - увеличено до 20s
+            'connect_timeout': 30.0,  # было 20.0 - увеличено до 30s
+            'read_timeout': 60.0,     # было 30.0 - увеличено до 60s
+            'write_timeout': 60.0,    # было 30.0 - увеличено до 60s
+            'pool_timeout': 30.0      # было 20.0 - увеличено до 30s
         }
 
         if hasattr(config, 'PROXY_URL') and config.PROXY_URL:
@@ -981,7 +1034,7 @@ def main():
         # Также настраиваем отдельный клиент для get_updates с более длительным timeout
         # get_updates использует long polling и требует более длинный timeout
         get_updates_request_kwargs = request_kwargs.copy()
-        get_updates_request_kwargs['read_timeout'] = 60.0  # 60 секунд для long polling
+        get_updates_request_kwargs['read_timeout'] = 90.0  # 90 секунд для long polling
         get_updates_http_request = HTTPXRequest(**get_updates_request_kwargs)
         builder.get_updates_request(get_updates_http_request)
         
