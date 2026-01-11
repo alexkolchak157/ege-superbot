@@ -22,6 +22,24 @@ from ..utils.datetime_utils import utc_now, parse_datetime_safe, datetime_to_iso
 logger = logging.getLogger(__name__)
 
 
+def _safe_json_loads(json_str: str, default: Any = None) -> Any:
+    """
+    Безопасно парсит JSON строку с fallback на default значение.
+
+    Args:
+        json_str: JSON строка для парсинга
+        default: Значение по умолчанию при ошибке парсинга
+
+    Returns:
+        Распарсенное значение или default
+    """
+    try:
+        return json.loads(json_str)
+    except (json.JSONDecodeError, TypeError, ValueError) as e:
+        logger.warning(f"Ошибка парсинга JSON: {e}, используем default значение")
+        return default
+
+
 async def create_homework_assignment(
     teacher_id: int,
     title: str,
@@ -268,7 +286,7 @@ async def get_homework_by_id(homework_id: int) -> Optional[HomeworkAssignment]:
                 description=row['description'],
                 deadline=parse_datetime_safe(row['deadline']),  # ИСПРАВЛЕНО: безопасный парсинг
                 assignment_type=AssignmentType(row['assignment_type']),
-                assignment_data=json.loads(row['assignment_data']),
+                assignment_data=_safe_json_loads(row['assignment_data'], {}),
                 target_type=TargetType(row['target_type']),
                 status=AssignmentStatus(row['status'])
             )
@@ -312,7 +330,7 @@ async def get_teacher_homeworks(teacher_id: int) -> List[HomeworkAssignment]:
                     description=row['description'],
                     deadline=parse_datetime_safe(row['deadline']),  # ИСПРАВЛЕНО: безопасный парсинг
                     assignment_type=AssignmentType(row['assignment_type']),
-                    assignment_data=json.loads(row['assignment_data']),
+                    assignment_data=_safe_json_loads(row['assignment_data'], {}),
                     target_type=TargetType(row['target_type']),
                     status=AssignmentStatus(row['status'])
                 )
@@ -812,7 +830,7 @@ async def get_student_statistics(teacher_id: int, student_id: int) -> Optional[D
                         'id': assignment_id,
                         'title': row['title'],
                         'assignment_type': row['assignment_type'],
-                        'assignment_data': json.loads(row['assignment_data']),
+                        'assignment_data': _safe_json_loads(row['assignment_data'], {}),
                         'created_at': row['created_at'],
                         'progress': []
                     }

@@ -66,7 +66,11 @@ class DeadlineScheduler:
                 result = []
                 for row in assignments:
                     # Проверяем, завершил ли ученик задание
-                    assignment_data = json.loads(row['assignment_data'])
+                    try:
+                        assignment_data = json.loads(row['assignment_data'])
+                    except (json.JSONDecodeError, TypeError, ValueError) as e:
+                        logger.warning(f"Ошибка парсинга assignment_data для homework {row['homework_id']}: {e}")
+                        continue  # Пропускаем задание с некорректными данными
 
                     # Определяем количество вопросов
                     if assignment_data.get('is_mixed'):
