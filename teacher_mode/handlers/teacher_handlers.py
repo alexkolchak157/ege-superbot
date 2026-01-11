@@ -121,7 +121,7 @@ async def teacher_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
                     # Устанавливаем бессрочную активную подписку для админа (10 лет)
                     # Для teacher_premium это необходимо, так как по умолчанию подписка неактивна
                     if profile:
-                        expires = datetime.now() + timedelta(days=3650)
+                        expires = utc_now() + timedelta(days=3650)
                         await db.execute("""
                             UPDATE teacher_profiles
                             SET has_active_subscription = 1,

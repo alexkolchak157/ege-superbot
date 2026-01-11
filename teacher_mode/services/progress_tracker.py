@@ -9,6 +9,7 @@ import aiosqlite
 
 from core.config import DATABASE_FILE
 from ..models import HomeworkProgress
+from ..utils.datetime_utils import utc_now
 
 logger = logging.getLogger(__name__)
 
@@ -37,7 +38,7 @@ async def save_homework_progress(
     """
     try:
         async with aiosqlite.connect(DATABASE_FILE) as db:
-            now = datetime.now()
+            now = utc_now()
 
             cursor = await db.execute("""
                 INSERT INTO homework_progress

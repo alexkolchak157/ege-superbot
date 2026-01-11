@@ -22,6 +22,15 @@ from ..utils.datetime_utils import utc_now, parse_datetime_safe
 logger = logging.getLogger(__name__)
 
 
+def _safe_json_loads(json_str: str, default=None):
+    """Безопасно парсит JSON с fallback на default значение."""
+    try:
+        return json.loads(json_str)
+    except (json.JSONDecodeError, TypeError, ValueError) as e:
+        logger.warning(f"Ошибка парсинга JSON: {e}, используем default значение")
+        return default
+
+
 # ============================================
 # Работа с квотами
 # ============================================
@@ -497,7 +506,7 @@ async def increment_template_usage(template_id: int):
 
 def _row_to_quick_check(row: aiosqlite.Row) -> QuickCheck:
     """Конвертирует строку БД в QuickCheck"""
-    tags = json.loads(row['tags']) if row['tags'] else None
+    tags = _safe_json_loads(row['tags'], None) if row['tags'] else None
 
     return QuickCheck(
         id=row['id'],
@@ -519,7 +528,7 @@ def _row_to_quick_check(row: aiosqlite.Row) -> QuickCheck:
 
 def _row_to_template(row: aiosqlite.Row) -> QuickCheckTemplate:
     """Конвертирует строку БД в QuickCheckTemplate"""
-    tags = json.loads(row['tags']) if row['tags'] else None
+    tags = _safe_json_loads(row['tags'], None) if row['tags'] else None
 
     return QuickCheckTemplate(
         id=row['id'],

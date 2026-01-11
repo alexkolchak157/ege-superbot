@@ -215,7 +215,7 @@ async def create_promo_code(
                     break
                 code = generate_promo_code()
 
-            now = datetime.now()
+            now = utc_now()
 
             await db.execute("""
                 INSERT INTO gift_promo_codes

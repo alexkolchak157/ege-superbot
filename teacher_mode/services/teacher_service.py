@@ -19,6 +19,15 @@ from ..utils.datetime_utils import utc_now, ensure_timezone_aware, parse_datetim
 logger = logging.getLogger(__name__)
 
 
+def _safe_json_loads(json_str: str, default=None):
+    """Безопасно парсит JSON с fallback на default значение."""
+    try:
+        return json.loads(json_str)
+    except (json.JSONDecodeError, TypeError, ValueError) as e:
+        logger.warning(f"Ошибка парсинга JSON: {e}, используем default значение")
+        return default
+
+
 def generate_teacher_code() -> str:
     """Генерирует уникальный код учителя формата TEACH-XXXXXX"""
     # 6 символов: буквы и цифры
@@ -168,7 +177,7 @@ async def get_teacher_profile(user_id: int) -> Optional[TeacherProfile]:
                 subscription_expires=parse_datetime_safe(row['subscription_expires']),  # ИСПРАВЛЕНО: безопасный парсинг
                 subscription_tier=row['subscription_tier'],
                 created_at=parse_datetime_safe(row['created_at']) or utc_now(),  # ИСПРАВЛЕНО: fallback на текущее время
-                feedback_settings=json.loads(row['feedback_settings']) if row['feedback_settings'] else {}
+                feedback_settings=_safe_json_loads(row['feedback_settings'], {}) if row['feedback_settings'] else {}
             )
 
     except Exception as e:
@@ -208,7 +217,7 @@ async def get_teacher_by_code(teacher_code: str) -> Optional[TeacherProfile]:
                 subscription_expires=parse_datetime_safe(row['subscription_expires']),  # ИСПРАВЛЕНО: безопасный парсинг
                 subscription_tier=row['subscription_tier'],
                 created_at=parse_datetime_safe(row['created_at']) or utc_now(),  # ИСПРАВЛЕНО: fallback на текущее время
-                feedback_settings=json.loads(row['feedback_settings']) if row['feedback_settings'] else {}
+                feedback_settings=_safe_json_loads(row['feedback_settings'], {}) if row['feedback_settings'] else {}
             )
 
     except Exception as e:
