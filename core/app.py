@@ -78,6 +78,10 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> N
             # Это не критичная ошибка - сообщение просто не изменилось
             logger.debug(f"Ignored 'Message is not modified' error")
             return
+        if "Query is too old" in str(error) or "query id is invalid" in str(error):
+            # Старые callback queries при перезапуске бота - не критично
+            logger.debug(f"Ignored old callback query: {error}")
+            return
         logger.warning(f"BadRequest error: {error}")
         # Логируем BadRequest как warning, не error
 
@@ -153,6 +157,16 @@ async def post_init(application: Application) -> None:
         logger.info("Price tables initialized")
     except Exception as e:
         logger.error(f"Failed to initialize price tables: {e}")
+
+    # Регистрируем callback filter middleware ПЕРВЫМ (group=-2)
+    # для фильтрации старых callback queries при перезапуске
+    try:
+        from core.callback_filter_middleware import register_callback_filter_middleware
+        register_callback_filter_middleware(application)
+        logger.info("Callback filter middleware registered")
+    except Exception as e:
+        logger.error(f"Failed to register callback filter middleware: {e}")
+
     try:
         from core.user_middleware import register_user_middleware
         register_user_middleware(application)
