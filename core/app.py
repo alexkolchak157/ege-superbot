@@ -310,6 +310,14 @@ async def post_init(application: Application) -> None:
     except Exception as e:
         logger.error(f"Failed to register notification handlers: {e}")
 
+    # Регистрация streak callback handlers (Phase 2: Notifications)
+    try:
+        from core.streak_handlers import register_streak_handlers
+        register_streak_handlers(application)
+        logger.info("Streak callback handlers registered")
+    except Exception as e:
+        logger.error(f"Failed to register streak handlers: {e}")
+
     # Регистрация middleware для отслеживания кликов по retention уведомлениям
     try:
         from core.retention_click_middleware import register_retention_click_middleware
@@ -367,6 +375,25 @@ async def post_init(application: Application) -> None:
         logger.info("Teacher subscription scheduler initialized")
     except Exception as e:
         logger.error(f"Failed to initialize teacher subscription scheduler: {e}")
+
+    # Инициализация streak reminder scheduler (Phase 2: Notifications)
+    try:
+        from core.streak_reminder_scheduler import get_streak_reminder_scheduler
+
+        streak_scheduler = get_streak_reminder_scheduler()
+        application.bot_data['streak_reminder_scheduler'] = streak_scheduler
+
+        # Запускаем проверку стриков каждый час
+        application.job_queue.run_repeating(
+            streak_scheduler.check_and_send_reminders,
+            interval=3600,  # 1 час в секундах
+            first=300,  # Первый запуск через 5 минут после старта
+            name='streak_reminders_check'
+        )
+
+        logger.info("Streak reminder scheduler initialized and scheduled to run every hour")
+    except Exception as e:
+        logger.error(f"Failed to initialize streak reminder scheduler: {e}")
 
     # Загрузка модулей-плагинов
     try:

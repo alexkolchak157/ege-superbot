@@ -277,6 +277,43 @@ async def apply_streak_system_migration():
             logger.info("✓ daily_activity_calendar table created with indexes")
 
             # ============================================================
+            # ТАБЛИЦА 6: notification_preferences
+            # ============================================================
+            logger.info("Creating notification_preferences table...")
+
+            await db.execute("""
+                CREATE TABLE IF NOT EXISTS notification_preferences (
+                    user_id INTEGER PRIMARY KEY,
+
+                    -- Настройки уведомлений
+                    enabled BOOLEAN DEFAULT 1,
+                    streak_reminders BOOLEAN DEFAULT 1,
+                    milestone_celebrations BOOLEAN DEFAULT 1,
+
+                    -- Время уведомлений
+                    preferred_time_hour INTEGER DEFAULT 18,
+                    timezone TEXT DEFAULT 'Europe/Moscow',
+
+                    -- Деактивация
+                    disabled_at TEXT,
+                    disabled_reason TEXT,
+
+                    -- Timestamps
+                    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+
+                    FOREIGN KEY (user_id) REFERENCES users(user_id)
+                )
+            """)
+
+            await db.execute("""
+                CREATE INDEX IF NOT EXISTS idx_notif_prefs_enabled
+                ON notification_preferences(enabled)
+            """)
+
+            logger.info("✓ notification_preferences table created with indexes")
+
+            # ============================================================
             # МИГРАЦИЯ СУЩЕСТВУЮЩИХ ДАННЫХ
             # ============================================================
             logger.info("Migrating existing streak data...")

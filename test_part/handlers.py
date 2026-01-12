@@ -514,11 +514,17 @@ async def check_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
         current_date = date.today().isoformat()
         last_activity_date = context.user_data.get('last_activity_date')
 
+        # Сохраняем старое значение для проверки milestone
+        old_daily_streak = context.user_data.get('daily_streak', 0)
+        daily_streak_updated = False
+
         if last_activity_date != current_date:
             # Используем новый StreakManager
             daily_current, daily_max, level = await streak_manager.update_daily_streak(user_id)
             context.user_data['last_activity_date'] = current_date
             context.user_data['streak_level'] = level
+            context.user_data['daily_streak'] = daily_current
+            daily_streak_updated = True
             logger.info(f"Daily streak updated for user {user_id}: {daily_current}/{daily_max}, level {level.name}")
         else:
             # Получаем текущие стрики без обновления
@@ -536,6 +542,33 @@ async def check_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
             logger.info(f"Correct streak INCREASED for user {user_id}: {correct_current}/{correct_max}")
         else:
             logger.info(f"Correct streak RESET for user {user_id}, current: {correct_current}, max: {correct_max}")
+
+        # ========== ПРОВЕРКА MILESTONE (Phase 2: Notifications) ==========
+        try:
+            from core.milestone_notification_handler import get_milestone_notification_handler
+            milestone_handler = get_milestone_notification_handler()
+
+            # Проверяем milestone для дневного стрика (если он был обновлен)
+            if daily_streak_updated:
+                await milestone_handler.check_and_notify_milestones(
+                    context.bot,
+                    user_id,
+                    'daily',
+                    daily_current,
+                    old_daily_streak
+                )
+
+            # Проверяем milestone для correct стрика (если увеличился)
+            if correct_current > old_correct_streak:
+                await milestone_handler.check_and_notify_milestones(
+                    context.bot,
+                    user_id,
+                    'correct',
+                    correct_current,
+                    old_correct_streak
+                )
+        except Exception as e:
+            logger.error(f"Error checking milestones: {e}", exc_info=True)
         
         # ========== ПОЛУЧЕНИЕ ДОПОЛНИТЕЛЬНЫХ ДАННЫХ ==========
         last_mode = context.user_data.get('last_mode', 'random')
