@@ -38,9 +38,9 @@ class StreakLevel(Enum):
     MASTER = (5, "Мастер", "🏆", 60)
     LEGEND = (6, "Легенда", "👑", 100)
 
-    def __init__(self, level: int, name: str, emoji: str, days_required: int):
+    def __init__(self, level: int, display_name: str, emoji: str, days_required: int):
         self.level = level
-        self.name = name
+        self.display_name = display_name
         self.emoji = emoji
         self.days_required = days_required
 
@@ -159,7 +159,7 @@ class StreakManager:
                 # Проверяем milestone
                 await self._check_and_grant_milestone(db, user_id, 'daily', current_streak)
 
-                logger.info(f"Updated daily streak for user {user_id}: {current_streak}/{max_streak}, level {level.name}")
+                logger.info(f"Updated daily streak for user {user_id}: {current_streak}/{max_streak}, level {level.display_name}")
 
                 return (current_streak, max_streak, level)
 
@@ -541,7 +541,7 @@ class StreakManager:
         else:
             flames = "🔥"      # Новичок (желтый)
 
-        return f"{flames} {current} {self._pluralize_days(current)} подряд  {level.emoji} {level.name}"
+        return f"{flames} {current} {self._pluralize_days(current)} подряд  {level.emoji} {level.display_name}"
 
     def _pluralize_days(self, days: int) -> str:
         """Склонение слова 'день'"""

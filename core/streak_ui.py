@@ -56,7 +56,7 @@ class StreakUI:
             days_word = self._pluralize_days(current_daily)
 
             # Базовая строка
-            display = f"{flames} <b>{current_daily}</b> {days_word}  {level.emoji} {level.name}"
+            display = f"{flames} <b>{current_daily}</b> {days_word}  {level.emoji} {level.display_name}"
 
             # Добавляем correct streak если есть
             if current_correct > 0:
@@ -101,7 +101,7 @@ class StreakUI:
             filled = int(progress_percent / 10)
             bar = "█" * filled + "░" * (10 - filled)
 
-            return f"{bar} {int(progress_percent)}% до <b>{next_level.emoji} {next_level.name}</b> (еще {days_left} {self._pluralize_days(days_left)})"
+            return f"{bar} {int(progress_percent)}% до <b>{next_level.emoji} {next_level.display_name}</b> (еще {days_left} {self._pluralize_days(days_left)})"
 
         except Exception as e:
             logger.error(f"Error getting progress: {e}")
