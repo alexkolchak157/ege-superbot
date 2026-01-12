@@ -525,7 +525,7 @@ async def check_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
             context.user_data['streak_level'] = level
             context.user_data['daily_streak'] = daily_current
             daily_streak_updated = True
-            logger.info(f"Daily streak updated for user {user_id}: {daily_current}/{daily_max}, level {level.name}")
+            logger.info(f"Daily streak updated for user {user_id}: {daily_current}/{daily_max}, level {level.display_name}")
         else:
             # Получаем текущие стрики без обновления
             streak_info = await streak_manager.get_daily_streak_info(user_id)

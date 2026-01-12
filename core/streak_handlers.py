@@ -80,7 +80,7 @@ async def my_stats_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 🔥 <b>Дневной стрик</b>
 Текущий: <b>{current_daily}</b> {streak_ui._pluralize_days(current_daily)}
 Рекорд: <b>{max_daily}</b> {streak_ui._pluralize_days(max_daily)}
-Уровень: {level.emoji} <b>{level.name}</b>
+Уровень: {level.emoji} <b>{level.display_name}</b>
 
 🎯 <b>Правильные ответы подряд</b>
 Текущий: <b>{current_correct}</b>
