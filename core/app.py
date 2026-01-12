@@ -136,6 +136,17 @@ async def post_init(application: Application) -> None:
     except Exception as e:
         logger.error(f"Failed to apply onboarding migration: {e}")
 
+    # Применяем миграцию улучшенной системы стриков (Phase 1)
+    try:
+        from core.streak_migration import apply_streak_system_migration
+        success = await apply_streak_system_migration()
+        if success:
+            logger.info("✓ Streak system migration applied successfully")
+        else:
+            logger.error("✗ Streak system migration failed")
+    except Exception as e:
+        logger.error(f"Failed to apply streak migration: {e}")
+
     try:
         from core.admin_tools import init_price_tables
         await init_price_tables()
@@ -656,9 +667,26 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             welcome_text += "• 249₽/месяц за полный доступ\n\n"
 
             welcome_text += "👇 Начни тренировку или оформи подписку:"
-    
+
     # Получаем меню с индикацией доступа (используем оригинальную функцию)
     menu_keyboard = await show_main_menu_with_access(context, user_id)
+
+    # ============ НОВОЕ: Добавляем информацию о стриках ============
+    # Информация уже загружена в show_main_menu_with_access
+    streak_display = context.user_data.get('streak_display')
+    streak_progress = context.user_data.get('streak_progress')
+    streak_warning = context.user_data.get('streak_warning')
+
+    # Добавляем информацию о стриках в приветствие
+    if streak_display:
+        welcome_text += f"\n\n{streak_display}"
+
+        if streak_progress:
+            welcome_text += f"\n{streak_progress}"
+
+        if streak_warning:
+            welcome_text += f"\n\n{streak_warning}"
+    # ================================================
 
     # Используем retry-обертку для надежной отправки сообщения
     await send_message_with_retry(
@@ -670,18 +698,41 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def show_main_menu_with_access(context, user_id):
     """
-    ИСПРАВЛЕННАЯ ВЕРСИЯ
     Показывает главное меню с правильной индикацией доступа и системными кнопками.
 
-    Изменения:
-    1. Исправлен callback_data для "Мои подписки": my_subscriptions → my_subscription
-    2. Добавлено добавление системных кнопок в итоговый массив
-    3. Добавлен счетчик домашних заданий для учеников
+    Phase 1 Updates:
+    1. Добавлена информация о стриках
+    2. Progress bar до следующего уровня
+    3. Countdown warning при угрозе потери стрика
+    4. Счетчик домашних заданий для учеников
     """
     from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
     subscription_manager = context.bot_data.get('subscription_manager')
     buttons = []
+
+    # ============ НОВОЕ: Информация о стриках ============
+    try:
+        from core.streak_ui import get_streak_ui
+        streak_ui = get_streak_ui()
+
+        # Получаем информацию о стриках для отображения
+        streak_display = await streak_ui.get_streak_display_for_menu(user_id)
+        progress_display = await streak_ui.get_progress_to_next_level(user_id)
+        countdown_warning = await streak_ui.get_countdown_warning(user_id)
+
+        # Сохраняем в context для использования в start_command
+        context.user_data['streak_display'] = streak_display
+        context.user_data['streak_progress'] = progress_display
+        context.user_data['streak_warning'] = countdown_warning
+
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).debug(f"Streak UI not available: {e}")
+        context.user_data['streak_display'] = None
+        context.user_data['streak_progress'] = None
+        context.user_data['streak_warning'] = None
+    # ================================================
 
     # Получаем список плагинов
     from core import plugin_loader

@@ -506,41 +506,36 @@ async def check_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data['questions_answered'] = questions_answered
         logger.info(f"User {user_id} answered {questions_answered} questions total")
         
-        # ========== ОБНОВЛЕНИЕ СТРИКОВ ==========
+        # ========== ОБНОВЛЕНИЕ СТРИКОВ (Phase 1 Upgrade) ==========
+        from core.streak_manager import get_streak_manager
+        streak_manager = get_streak_manager()
+
         # Обновляем дневной стрик (если еще не обновлен сегодня)
         current_date = date.today().isoformat()
         last_activity_date = context.user_data.get('last_activity_date')
-        
+
         if last_activity_date != current_date:
-            daily_current, daily_max = await db.update_daily_streak(user_id)
+            # Используем новый StreakManager
+            daily_current, daily_max, level = await streak_manager.update_daily_streak(user_id)
             context.user_data['last_activity_date'] = current_date
-            logger.info(f"Daily streak updated for user {user_id}: {daily_current}/{daily_max}")
+            context.user_data['streak_level'] = level
+            logger.info(f"Daily streak updated for user {user_id}: {daily_current}/{daily_max}, level {level.name}")
         else:
             # Получаем текущие стрики без обновления
-            streaks = await db.get_user_streaks(user_id)
-            daily_current = streaks.get('current_daily', 0)
-            daily_max = streaks.get('max_daily', 0)
-        
-        # Логирование стриков ДО изменения correct streak
-        streaks_before = await db.get_user_streaks(user_id)
-        logger.info(f"Streaks BEFORE update for user {user_id}: "
-                   f"daily={streaks_before.get('current_daily', 0)}/{streaks_before.get('max_daily', 0)}, "
-                   f"correct={streaks_before.get('current_correct', 0)}/{streaks_before.get('max_correct', 0)}")
-        
+            streak_info = await streak_manager.get_daily_streak_info(user_id)
+            daily_current = streak_info['current']
+            daily_max = streak_info['max']
+            level = streak_info['level']
+
         # Обновляем стрик правильных ответов
+        old_correct_streak = context.user_data.get('correct_streak', 0)
+        correct_current, correct_max = await streak_manager.update_correct_streak(user_id, is_correct)
+        context.user_data['correct_streak'] = correct_current
+
         if is_correct:
-            correct_current, correct_max = await db.update_correct_streak(user_id)
             logger.info(f"Correct streak INCREASED for user {user_id}: {correct_current}/{correct_max}")
         else:
-            await db.reset_correct_streak(user_id)
-            correct_current = 0
-            streaks_after_reset = await db.get_user_streaks(user_id)
-            correct_max = streaks_after_reset.get('max_correct', 0)
-            logger.info(f"Correct streak RESET for user {user_id}, max remains {correct_max}")
-        
-        # Сохраняем старый стрик для сравнения
-        old_correct_streak = context.user_data.get('correct_streak', 0)
-        context.user_data['correct_streak'] = correct_current
+            logger.info(f"Correct streak RESET for user {user_id}, current: {correct_current}, max: {correct_max}")
         
         # ========== ПОЛУЧЕНИЕ ДОПОЛНИТЕЛЬНЫХ ДАННЫХ ==========
         last_mode = context.user_data.get('last_mode', 'random')
