@@ -206,7 +206,7 @@ async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Показываем анимацию проверки
     thinking_msg = await show_ai_evaluation_animation(
         update.message,
-        "Проверяю ваши ответы"
+        duration=40
     )
 
     # Проверяем ответ через AI
