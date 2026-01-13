@@ -11,7 +11,7 @@ from telegram.ext import ContextTypes, ConversationHandler
 
 from core import states, db
 from core.states import ANSWERING_T22
-from core.error_handler import safe_handler, auto_answer_callback
+from core.error_handler import safe_handler
 from core.plugin_loader import build_main_menu
 from core.utils import safe_edit_message
 from core.menu_handlers import handle_to_main_menu
@@ -57,8 +57,7 @@ async def init_task22_data():
         task22_data = {"tasks": [], "metadata": {}}
 
 
-@safe_handler
-@auto_answer_callback
+@safe_handler()
 async def entry_from_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Вход в модуль задания 22 из главного меню."""
     query = update.callback_query
@@ -68,7 +67,7 @@ async def entry_from_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return states.CHOOSING_MODE
 
 
-@safe_handler
+@safe_handler()
 async def cmd_task22(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Команда /task22 - вход в модуль."""
     await show_main_menu(update, context)
@@ -123,8 +122,7 @@ async def show_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
 
-@safe_handler
-@auto_answer_callback
+@safe_handler()
 async def practice_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Начать практику - выбор случайного задания."""
     query = update.callback_query
@@ -187,7 +185,7 @@ def get_random_task() -> Optional[Dict[str, Any]]:
     return random.choice(tasks)
 
 
-@safe_handler
+@safe_handler()
 async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработка ответа пользователя."""
     user_id = update.effective_user.id
@@ -270,8 +268,7 @@ async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return states.CHOOSING_MODE
 
 
-@safe_handler
-@auto_answer_callback
+@safe_handler()
 async def my_progress(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Показать статистику пользователя."""
     query = update.callback_query
@@ -315,8 +312,7 @@ async def my_progress(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return states.CHOOSING_MODE
 
 
-@safe_handler
-@auto_answer_callback
+@safe_handler()
 async def handle_result_action(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработка действий после результата (новое задание)."""
     query = update.callback_query
@@ -328,22 +324,20 @@ async def handle_result_action(update: Update, context: ContextTypes.DEFAULT_TYP
         return await show_main_menu(update, context)
 
 
-@safe_handler
-@auto_answer_callback
+@safe_handler()
 async def return_to_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Возврат в главное меню задания 22."""
     await show_main_menu(update, context)
     return states.CHOOSING_MODE
 
 
-@safe_handler
-@auto_answer_callback
+@safe_handler()
 async def back_to_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Возврат в главное меню бота."""
     return await handle_to_main_menu(update, context)
 
 
-@safe_handler
+@safe_handler()
 async def cmd_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Команда /cancel - выход из модуля."""
     await update.message.reply_text("Выход из задания 22.")
