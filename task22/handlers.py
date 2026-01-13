@@ -82,7 +82,7 @@ async def show_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Получаем статистику пользователя
     stats = await get_user_stats(user_id)
 
-    greeting = get_personalized_greeting()
+    greeting = get_personalized_greeting(stats)
     text = f"""{greeting}
 
 <b>📝 Задание 22 - Анализ ситуаций</b>
@@ -349,20 +349,23 @@ async def cmd_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def get_user_stats(user_id: int) -> Dict[str, Any]:
     """Получить статистику пользователя."""
     try:
-        result = await db.execute(
+        conn = await db.get_db()
+        cursor = await conn.execute(
             """
             SELECT
                 COUNT(*) as total_attempts,
                 COALESCE(AVG(score), 0) as avg_score
             FROM task22_attempts
-            WHERE user_id = $1
+            WHERE user_id = ?
             """,
-            user_id
+            (user_id,)
         )
 
+        result = await cursor.fetchone()
+
         if result:
-            total_attempts = result[0]['total_attempts']
-            avg_score = float(result[0]['avg_score'])
+            total_attempts = result['total_attempts']
+            avg_score = float(result['avg_score'])
         else:
             total_attempts = 0
             avg_score = 0.0
@@ -387,7 +390,8 @@ async def get_user_stats(user_id: int) -> Dict[str, Any]:
 async def get_detailed_stats(user_id: int) -> Dict[str, int]:
     """Получить детальную статистику по баллам."""
     try:
-        result = await db.execute(
+        conn = await db.get_db()
+        cursor = await conn.execute(
             """
             SELECT
                 SUM(CASE WHEN score = 4 THEN 1 ELSE 0 END) as score_4,
@@ -396,18 +400,20 @@ async def get_detailed_stats(user_id: int) -> Dict[str, int]:
                 SUM(CASE WHEN score = 1 THEN 1 ELSE 0 END) as score_1,
                 SUM(CASE WHEN score = 0 THEN 1 ELSE 0 END) as score_0
             FROM task22_attempts
-            WHERE user_id = $1
+            WHERE user_id = ?
             """,
-            user_id
+            (user_id,)
         )
+
+        result = await cursor.fetchone()
 
         if result:
             return {
-                'score_4': result[0]['score_4'] or 0,
-                'score_3': result[0]['score_3'] or 0,
-                'score_2': result[0]['score_2'] or 0,
-                'score_1': result[0]['score_1'] or 0,
-                'score_0': result[0]['score_0'] or 0,
+                'score_4': result['score_4'] or 0,
+                'score_3': result['score_3'] or 0,
+                'score_2': result['score_2'] or 0,
+                'score_1': result['score_1'] or 0,
+                'score_0': result['score_0'] or 0,
             }
         else:
             return {
@@ -432,13 +438,15 @@ async def get_detailed_stats(user_id: int) -> Dict[str, int]:
 async def save_attempt(user_id: int, task_id: int, answer: str, score: int):
     """Сохранить попытку решения задания."""
     try:
-        await db.execute(
+        conn = await db.get_db()
+        await conn.execute(
             """
             INSERT INTO task22_attempts (user_id, task_id, answer, score, attempted_at)
-            VALUES ($1, $2, $3, $4, NOW())
+            VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
             """,
-            user_id, task_id, answer, score
+            (user_id, task_id, answer, score)
         )
+        await conn.commit()
         logger.info(f"Saved task22 attempt for user {user_id}: task_id={task_id}, score={score}")
 
     except Exception as e:
