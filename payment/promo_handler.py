@@ -1,6 +1,7 @@
 # payment/promo_handler.py
 """Обработчик промокодов для платежного модуля."""
 
+
 import logging
 from typing import Dict, Any, Optional, Tuple, List
 import aiosqlite
