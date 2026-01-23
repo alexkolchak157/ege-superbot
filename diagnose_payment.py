@@ -166,32 +166,22 @@ def diagnose_user_payment(user_id: int):
     print("-" * 80)
     try:
         cursor.execute(
-            """SELECT id, plan_id, is_active, created_at, expires_at,
-                      auto_renewal_enabled, cancellation_requested
+            """SELECT id, plan_id, payment_id, status, starts_at, expires_at,
+                      created_at, activated_at, cancelled_at
                FROM user_subscriptions
                WHERE user_id = ?
                ORDER BY created_at DESC""",
             (user_id,)
         )
         user_subs = cursor.fetchall()
-    except sqlite3.OperationalError:
-        # Таблица может не иметь некоторых колонок, пробуем упрощенный запрос
-        try:
-            cursor.execute(
-                """SELECT * FROM user_subscriptions
-                   WHERE user_id = ?
-                   ORDER BY created_at DESC""",
-                (user_id,)
-            )
-            user_subs = cursor.fetchall()
-        except sqlite3.OperationalError:
-            user_subs = None
-            print("  ⚠️  Таблица user_subscriptions недоступна или имеет другую структуру")
+    except sqlite3.OperationalError as e:
+        user_subs = None
+        print(f"  ⚠️  Ошибка при чтении user_subscriptions: {e}")
 
     if user_subs:
         now = datetime.now()
         for i, sub in enumerate(user_subs, 1):
-            if 'expires_at' in sub.keys() and sub['expires_at']:
+            if sub['expires_at']:
                 expires_at = datetime.fromisoformat(sub['expires_at'].replace('Z', '+00:00'))
                 # Убираем timezone для корректного сравнения
                 if expires_at.tzinfo is not None:
@@ -199,20 +189,22 @@ def diagnose_user_payment(user_id: int):
             else:
                 expires_at = None
 
-            is_active = sub.get('is_active', 1)  # По умолчанию считаем активной
+            # status может быть 'active', 'cancelled', 'expired'
+            is_active = sub['status'] == 'active'
             is_expired = expires_at and expires_at < now
             status_icon = "✅" if is_active and not is_expired else "❌"
 
             print(f"\n  Подписка #{i}: {status_icon}")
-            print(f"    Plan ID: {sub.get('plan_id', 'N/A')}")
-            if 'is_active' in sub.keys():
-                print(f"    Is active: {sub['is_active']}")
-            print(f"    Created: {sub.get('created_at', 'N/A')}")
-            print(f"    Expires: {sub.get('expires_at', 'N/A')}")
-            if 'auto_renewal_enabled' in sub.keys():
-                print(f"    Auto renewal: {sub['auto_renewal_enabled']}")
-            if 'cancellation_requested' in sub.keys():
-                print(f"    Cancellation requested: {sub['cancellation_requested']}")
+            print(f"    Plan ID: {sub['plan_id']}")
+            print(f"    Status: {sub['status']}")
+            print(f"    Payment ID: {sub['payment_id']}")
+            print(f"    Starts: {sub['starts_at']}")
+            print(f"    Expires: {sub['expires_at']}")
+            print(f"    Created: {sub['created_at']}")
+            if sub['activated_at']:
+                print(f"    Activated: {sub['activated_at']}")
+            if sub['cancelled_at']:
+                print(f"    Cancelled: {sub['cancelled_at']}")
             if is_expired:
                 print(f"    ⚠️  ИСТЕКЛА")
     elif user_subs is not None:
