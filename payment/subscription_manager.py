@@ -1491,6 +1491,17 @@ class SubscriptionManager:
                         )
 
                     if success:
+                        # ИСПРАВЛЕНИЕ: Логируем активированные модули для отладки
+                        cursor = await conn.execute(
+                            """SELECT module_code, expires_at FROM module_subscriptions
+                               WHERE user_id = ? AND is_active = 1
+                               ORDER BY module_code""",
+                            (user_id,)
+                        )
+                        active_modules = await cursor.fetchall()
+                        module_list = [m[0] for m in active_modules]
+                        logger.info(f"📦 Activated modules for user {user_id}: {module_list}")
+
                         # Обновляем статус платежа на completed
                         await conn.execute(
                             """
@@ -1786,7 +1797,9 @@ class SubscriptionManager:
                     logger.error(f"❌ Error processing teacher subscription for user {user_id}: {e}")
                     import traceback
                     traceback.print_exc()
-                    # Примечание: Если произошла ошибка и откат не удался, может потребоваться ручное вмешательство
+                    # ИСПРАВЛЕНИЕ: Пробрасываем исключение для отката транзакции
+                    # Иначе подписка активируется без профиля учителя
+                    raise
 
             logger.info(
                 f"✅ SUCCESS: Plan {plan_id} activated for user {user_id} "
