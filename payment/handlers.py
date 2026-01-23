@@ -548,7 +548,11 @@ async def handle_plan_selection(update: Update, context: ContextTypes.DEFAULT_TY
     query = update.callback_query
     await query.answer()
 
-    plan_id = query.data.replace("pay_", "")
+    # Правильно извлекаем plan_id для teacher планов
+    if query.data.startswith("pay_teacher_"):
+        plan_id = query.data.replace("pay_teacher_", "")
+    else:
+        plan_id = query.data.replace("pay_", "")
     logger.info(f"Plan selected: {plan_id}")
 
     # Обработка пробного периода
