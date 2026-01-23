@@ -52,16 +52,17 @@ echo "=========================================="
 echo "Ищем платежи для user_id 974972138 и 1893563949..."
 echo ""
 
-# Пробуем разные варианты названий таблиц
-for table in payments payment Payments Payment PAYMENTS; do
-    result=$(sqlite3 "$DB_FILE" "SELECT COUNT(*) FROM $table WHERE user_id IN (974972138, 1893563949) 2>/dev/null" 2>/dev/null)
-    if [ ! -z "$result" ] && [ "$result" != "0" ]; then
-        echo "✅ Найдено в таблице $table: $result платежей"
-        echo "Детали:"
-        sqlite3 "$DB_FILE" "SELECT order_id, user_id, plan_id, amount, status, created_at FROM $table WHERE user_id IN (974972138, 1893563949) ORDER BY created_at DESC LIMIT 5" 2>/dev/null
-        echo ""
-    fi
-done
+# Проверяем таблицу payments
+result=$(sqlite3 "$DB_FILE" "SELECT COUNT(*) FROM payments WHERE user_id IN (974972138, 1893563949)" 2>/dev/null)
+if [ ! -z "$result" ] && [ "$result" != "0" ]; then
+    echo "✅ Найдено в таблице payments: $result платежей"
+    echo "Детали:"
+    sqlite3 "$DB_FILE" "SELECT order_id, user_id, plan_id, COALESCE(amount, amount_kopecks/100) as amount_rub, status, created_at, completed_at FROM payments WHERE user_id IN (974972138, 1893563949) ORDER BY created_at DESC LIMIT 10"
+    echo ""
+else
+    echo "ℹ️  Платежи для этих пользователей не найдены"
+    echo ""
+fi
 
 echo "=========================================="
 echo "7. ПОИСК ПОДПИСОК ДЛЯ ПОЛЬЗОВАТЕЛЕЙ"
@@ -69,17 +70,19 @@ echo "=========================================="
 echo "Ищем подписки для user_id 974972138 и 1893563949..."
 echo ""
 
-# Пробуем разные варианты названий таблиц
-for table in module_subscriptions subscriptions user_subscriptions Subscriptions; do
-    result=$(sqlite3 "$DB_FILE" "SELECT COUNT(*) FROM $table WHERE user_id IN (974972138, 1893563949) 2>/dev/null" 2>/dev/null)
-    if [ ! -z "$result" ] && [ "$result" != "0" ]; then
-        echo "✅ Найдено в таблице $table: $result подписок"
-        echo "Детали:"
-        sqlite3 "$DB_FILE" "SELECT user_id, module_code, plan_id, is_active, expires_at FROM $table WHERE user_id IN (974972138, 1893563949) ORDER BY created_at DESC LIMIT 10" 2>/dev/null
-        echo ""
-    fi
-done
+# Проверяем таблицу module_subscriptions
+result=$(sqlite3 "$DB_FILE" "SELECT COUNT(*) FROM module_subscriptions WHERE user_id IN (974972138, 1893563949)" 2>/dev/null)
+if [ ! -z "$result" ] && [ "$result" != "0" ]; then
+    echo "✅ Найдено в таблице module_subscriptions: $result подписок"
+    echo "Детали:"
+    sqlite3 "$DB_FILE" "SELECT user_id, module_code, plan_id, is_active, expires_at, created_at FROM module_subscriptions WHERE user_id IN (974972138, 1893563949) ORDER BY created_at DESC LIMIT 20"
+    echo ""
+else
+    echo "ℹ️  Подписки для этих пользователей не найдены"
+    echo ""
+fi
 
 echo "=========================================="
 echo "ГОТОВО!"
 echo "=========================================="
+
