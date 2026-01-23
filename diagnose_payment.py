@@ -99,21 +99,25 @@ def diagnose_user_payment(user_id: int):
             print(f"    Metadata: {payment['metadata']}")
 
             # Проверка webhook logs для этого платежа
-            cursor.execute(
-                """SELECT timestamp, payment_status, raw_data
-                   FROM webhook_logs
-                   WHERE order_id = ?
-                   ORDER BY timestamp DESC""",
-                (payment['order_id'],)
-            )
-            webhooks = cursor.fetchall()
+            try:
+                cursor.execute(
+                    """SELECT created_at, status, payment_id
+                       FROM webhook_logs
+                       WHERE order_id = ?
+                       ORDER BY created_at DESC LIMIT 3""",
+                    (payment['order_id'],)
+                )
+                webhooks = cursor.fetchall()
 
-            if webhooks:
-                print(f"    Webhooks received: {len(webhooks)}")
-                for j, wh in enumerate(webhooks[:3], 1):  # Показываем только последние 3
-                    print(f"      #{j}: {wh['timestamp']} - Status: {wh['payment_status']}")
-            else:
-                print(f"    ⚠️  Webhooks: не найдены")
+                if webhooks:
+                    print(f"    Webhooks received: {len(webhooks)}")
+                    for j, wh in enumerate(webhooks, 1):
+                        print(f"      #{j}: {wh['created_at']} - Status: {wh['status']}")
+                else:
+                    print(f"    ℹ️  Webhooks: не найдены")
+            except sqlite3.OperationalError as e:
+                # Таблица webhook_logs может иметь другую структуру или отсутствовать
+                print(f"    ⚠️  Webhooks: ошибка проверки ({e})")
     else:
         print("  ℹ️  Платежи не найдены")
 
