@@ -137,7 +137,13 @@ def diagnose_user_payment(user_id: int):
     if module_subs:
         now = datetime.now()
         for i, sub in enumerate(module_subs, 1):
-            expires_at = datetime.fromisoformat(sub['expires_at']) if sub['expires_at'] else None
+            if sub['expires_at']:
+                expires_at = datetime.fromisoformat(sub['expires_at'].replace('Z', '+00:00'))
+                # Убираем timezone для корректного сравнения
+                if expires_at.tzinfo is not None:
+                    expires_at = expires_at.replace(tzinfo=None)
+            else:
+                expires_at = None
             is_expired = expires_at and expires_at < now
             status_icon = "✅" if sub['is_active'] and not is_expired else "❌"
 
@@ -171,7 +177,13 @@ def diagnose_user_payment(user_id: int):
     if user_subs:
         now = datetime.now()
         for i, sub in enumerate(user_subs, 1):
-            expires_at = datetime.fromisoformat(sub['expires_at']) if sub['expires_at'] else None
+            if sub['expires_at']:
+                expires_at = datetime.fromisoformat(sub['expires_at'].replace('Z', '+00:00'))
+                # Убираем timezone для корректного сравнения
+                if expires_at.tzinfo is not None:
+                    expires_at = expires_at.replace(tzinfo=None)
+            else:
+                expires_at = None
             is_expired = expires_at and expires_at < now
             status_icon = "✅" if sub['is_active'] and not is_expired else "❌"
 
