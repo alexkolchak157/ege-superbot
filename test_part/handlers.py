@@ -818,11 +818,7 @@ async def handle_next_action(update: Update, context: ContextTypes.DEFAULT_TYPE)
             logger.error(f"Error sending loading message: {e}")
             return states.CHOOSING_NEXT_ACTION
         
-        # ИСПРАВЛЕНИЕ: Передаем chat_id правильно
-        chat_id = query.message.chat_id
-        await utils.purge_old_messages(context, chat_id)
-        
-        # Удаляем предыдущие сообщения используя централизованную функцию
+        # Удаляем предыдущие сообщения, сохраняя loading_msg
         await utils.purge_old_messages(context, query.message.chat_id, keep_id=loading_msg.message_id)
         
         # Очищаем все данные вопросов

@@ -561,7 +561,14 @@ async def purge_old_messages(context: ContextTypes.DEFAULT_TYPE, chat_id: int, k
         answer_id = context.user_data['user_answer_message_id']
         if answer_id != keep_id:
             message_ids_to_delete.append(answer_id)
-    
+
+    # Добавляем сообщение с анимацией проверки
+    if 'checking_message_id' in context.user_data:
+        checking_id = context.user_data['checking_message_id']
+        if checking_id != keep_id:
+            message_ids_to_delete.append(checking_id)
+        context.user_data.pop('checking_message_id', None)
+
     # ИСПРАВЛЕНИЕ: Добавляем обработку feedback_message_id
     if 'feedback_message_id' in context.user_data:
         feedback_id = context.user_data['feedback_message_id']
