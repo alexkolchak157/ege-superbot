@@ -18,7 +18,6 @@ try:
     cursor.execute("""
         SELECT module_code, plan_id, is_active,
                datetime(expires_at) as expires,
-               datetime(activated_at) as activated,
                datetime(created_at) as created
         FROM module_subscriptions
         WHERE user_id = ?
@@ -107,7 +106,28 @@ try:
     main_plan = list(plans.keys())[0] if plans else None
     if main_plan == 'trial_7days':
         print("✅ Plan ID корректный: trial_7days")
-        print("⚠️  Проверьте expires_at - должно быть +7 дней от activated_at")
+
+        # Вычисляем фактическую длительность
+        if plans[main_plan]:
+            from datetime import datetime
+            first_module = plans[main_plan][0]
+            created = datetime.fromisoformat(first_module['created'])
+            expires = datetime.fromisoformat(first_module['expires'])
+            duration_days = (expires - created).days
+
+            print(f"   Created: {first_module['created']}")
+            print(f"   Expires: {first_module['expires']}")
+            print(f"   Фактическая длительность: {duration_days} дней")
+
+            if duration_days > 10:
+                print(f"\n❌ НАЙДЕНА ПРОБЛЕМА!")
+                print(f"   Ожидалось: 7 дней")
+                print(f"   Получено: {duration_days} дней")
+                print(f"\n   При ручной активации была указана неправильная дата expires_at")
+                print(f"   Использовано: datetime('now', '+{duration_days} days')")
+                print(f"   Нужно было: datetime('now', '+7 days')")
+            else:
+                print("   ✅ Длительность корректная (7 дней)")
     elif main_plan == 'package_full':
         print("❌ НАЙДЕНА ПРОБЛЕМА!")
         print("   Plan ID: package_full (30 дней)")
