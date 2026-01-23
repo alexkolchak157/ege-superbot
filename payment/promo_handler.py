@@ -54,14 +54,17 @@ class PromoCodeManager:
                     return None
                 
                 promo_id, code, discount_percent, discount_amount, usage_limit, used_count, is_active = row
-                
+
                 # Проверяем общий лимит использований
                 if usage_limit is not None and used_count >= usage_limit:
                     logger.info(f"Promo code {code} exceeded usage limit")
                     return None
-                
-                # НОВОЕ: Проверяем, использовал ли ЭТОТ пользователь промокод ранее
-                if user_id:
+
+                # ИСПРАВЛЕНО: Проверяем, использовал ли ЭТОТ пользователь промокод ранее
+                # Но ТОЛЬКО если промокод имеет ограничение (usage_limit != NULL)
+                # Промокоды с неограниченным количеством использований (usage_limit = NULL)
+                # могут быть использованы одним пользователем многократно
+                if user_id and usage_limit is not None:
                     cursor = await conn.execute(
                         """
                         SELECT COUNT(*) FROM promo_usage_log
@@ -70,7 +73,7 @@ class PromoCodeManager:
                         (code.upper(), user_id)
                     )
                     used_by_user = await cursor.fetchone()
-                    
+
                     if used_by_user and used_by_user[0] > 0:
                         logger.info(f"Promo code {code} already used by user {user_id}")
                         return None  # Пользователь уже использовал этот промокод
