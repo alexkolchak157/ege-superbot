@@ -213,23 +213,29 @@ def diagnose_user_payment(user_id: int):
     # 5. Профиль учителя (если есть)
     print(f"\n👨‍🏫 5. ПРОФИЛЬ УЧИТЕЛЯ (teacher_profiles)")
     print("-" * 80)
-    cursor.execute(
-        """SELECT teacher_id, name, bio, created_at, updated_at, active_students, total_students
-           FROM teacher_profiles
-           WHERE teacher_id = ?""",
-        (user_id,)
-    )
-    teacher = cursor.fetchone()
+    try:
+        cursor.execute(
+            """SELECT user_id, teacher_code, display_name, has_active_subscription,
+                      subscription_tier, subscription_expires, created_at
+               FROM teacher_profiles
+               WHERE user_id = ?""",
+            (user_id,)
+        )
+        teacher = cursor.fetchone()
 
-    if teacher:
-        print(f"  ✅ Профиль учителя найден")
-        print(f"    Name: {teacher['name']}")
-        print(f"    Bio: {teacher['bio']}")
-        print(f"    Created: {teacher['created_at']}")
-        print(f"    Active students: {teacher['active_students']}")
-        print(f"    Total students: {teacher['total_students']}")
-    else:
-        print("  ℹ️  Профиль учителя не найден")
+        if teacher:
+            print(f"  ✅ Профиль учителя найден")
+            print(f"    User ID: {teacher['user_id']}")
+            print(f"    Teacher Code: {teacher['teacher_code']}")
+            print(f"    Display Name: {teacher['display_name']}")
+            print(f"    Has Active Subscription: {teacher['has_active_subscription']}")
+            print(f"    Subscription Tier: {teacher['subscription_tier']}")
+            print(f"    Subscription Expires: {teacher['subscription_expires']}")
+            print(f"    Created: {teacher['created_at']}")
+        else:
+            print("  ℹ️  Профиль учителя не найден")
+    except sqlite3.OperationalError as e:
+        print(f"  ⚠️  Ошибка при чтении teacher_profiles: {e}")
 
     # 6. Рекуррентные платежи
     print(f"\n🔄 6. РЕКУРРЕНТНЫЕ ПЛАТЕЖИ (recurrent_payments)")

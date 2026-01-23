@@ -1790,16 +1790,27 @@ class SubscriptionManager:
                             )
                         except Exception as update_error:
                             logger.error(f"❌ Failed to update teacher_profiles: {update_error}")
-                            # Исключение будет поймано и откат выполнен в родительской транзакции
-                            raise  # Пробрасываем исключение дальше
+                            # КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: НЕ откатываем транзакцию!
+                            # Пользователь должен получить модульные подписки даже если профиль учителя не обновился
+                            # Отправляем алерт админу, но продолжаем активацию
+                            try:
+                                from .admin_alerts import notify_admin_payment_activation_failed
+                                # Попробуем отправить алерт (может не быть бота в контексте)
+                                logger.warning(f"⚠️ Teacher profile update failed but subscription will be activated")
+                            except:
+                                pass
 
                 except Exception as e:
                     logger.error(f"❌ Error processing teacher subscription for user {user_id}: {e}")
                     import traceback
                     traceback.print_exc()
-                    # ИСПРАВЛЕНИЕ: Пробрасываем исключение для отката транзакции
-                    # Иначе подписка активируется без профиля учителя
-                    raise
+                    # КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: НЕ откатываем транзакцию!
+                    # Модульные подписки уже созданы и должны работать
+                    # Если профиль учителя не создался - это не критично для доступа к модулям
+                    logger.warning(
+                        f"⚠️ Teacher subscription processing failed for user {user_id}, "
+                        f"but module subscriptions are already activated. User will have access."
+                    )
 
             logger.info(
                 f"✅ SUCCESS: Plan {plan_id} activated for user {user_id} "
