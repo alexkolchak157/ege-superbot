@@ -1290,40 +1290,59 @@ async def handle_free_activation(update: Update, context: ContextTypes.DEFAULT_T
     """Активирует подписку бесплатно при 100% скидке."""
     query = update.callback_query
     await query.answer()
-    
+
     user_id = update.effective_user.id
     plan_id = context.user_data.get('selected_plan')
     duration_months = context.user_data.get('duration_months', 1)
     promo_code = context.user_data.get('promo_code')
-    
+
     # Активируем подписку напрямую
     subscription_manager = context.bot_data.get('subscription_manager')
-    
+
     if subscription_manager:
-        # Создаем запись о "платеже" с нулевой суммой
-        order_id = f"free_{user_id}_{int(datetime.now().timestamp())}"
-        
-        # Сохраняем в БД как выполненный платеж
-        success = await subscription_manager.activate_subscription(
-            user_id=user_id,
-            plan_id=plan_id,
-            duration_months=duration_months,
-            order_id=order_id,
-            payment_method="promo_100"
-        )
-        
-        if success:
-            text = f"""🎉 <b>Подписка активирована!</b>
+        try:
+            # Шаг 1: Создаем запись о "платеже" с нулевой суммой
+            # Подготавливаем метаданные
+            metadata = {
+                'promo_code': promo_code,
+                'payment_method': 'promo_100',
+                'is_teacher_plan': context.user_data.get('is_teacher_plan', False)
+            }
+
+            # Создаем запись о платеже
+            payment_data = await subscription_manager.create_payment(
+                user_id=user_id,
+                plan_id=plan_id,
+                amount_kopecks=0,  # Бесплатно
+                duration_months=duration_months,
+                metadata=metadata
+            )
+
+            order_id = payment_data['order_id']
+            logger.info(f"Created free payment record: {order_id} for user {user_id}")
+
+            # Шаг 2: Активируем подписку
+            success = await subscription_manager.activate_subscription(
+                order_id=order_id,
+                payment_id=f"FREE_{promo_code}"
+            )
+
+            if success:
+                text = f"""🎉 <b>Подписка активирована!</b>
 
 ✅ План успешно активирован благодаря промокоду <code>{promo_code}</code>
 📅 Срок действия: {duration_months} месяц(ев)
 
 Используйте /my_subscriptions для просмотра деталей."""
-        else:
+            else:
+                text = "❌ Ошибка при активации подписки. Обратитесь в поддержку."
+
+        except Exception as e:
+            logger.error(f"Error in free activation: {e}", exc_info=True)
             text = "❌ Ошибка при активации подписки. Обратитесь в поддержку."
     else:
         text = "❌ Сервис временно недоступен."
-    
+
     await query.edit_message_text(
         text,
         parse_mode=ParseMode.HTML,
@@ -1331,7 +1350,7 @@ async def handle_free_activation(update: Update, context: ContextTypes.DEFAULT_T
             InlineKeyboardButton("📋 Мои подписки", callback_data="my_subscriptions")
         ]])
     )
-    
+
     return ConversationHandler.END
 
 @safe_handler()
