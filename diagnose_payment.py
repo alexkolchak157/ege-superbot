@@ -1,0 +1,295 @@
+#!/usr/bin/env python3
+"""
+Диагностическая утилита для проверки статуса платежей и подписок пользователей
+"""
+import sqlite3
+import sys
+from datetime import datetime
+
+DATABASE_FILE = 'data/ege_superbot.db'
+
+def diagnose_user_payment(user_id: int):
+    """
+    Диагностика платежей и подписок конкретного пользователя
+    """
+    print(f"\n{'='*80}")
+    print(f"🔍 ДИАГНОСТИКА ПЛАТЕЖЕЙ И ПОДПИСОК ДЛЯ ПОЛЬЗОВАТЕЛЯ {user_id}")
+    print(f"{'='*80}\n")
+
+    conn = sqlite3.connect(DATABASE_FILE)
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+
+    # 1. Информация о пользователе
+    print("📋 1. ИНФОРМАЦИЯ О ПОЛЬЗОВАТЕЛЕ")
+    print("-" * 80)
+    cursor.execute(
+        """SELECT user_id, first_seen, is_subscribed, subscription_expires,
+                  monthly_usage_count, usage_reset_date
+           FROM users WHERE user_id = ?""",
+        (user_id,)
+    )
+    user = cursor.fetchone()
+
+    if user:
+        print(f"  User ID: {user['user_id']}")
+        print(f"  First seen: {user['first_seen']}")
+        print(f"  Is subscribed (legacy): {user['is_subscribed']}")
+        print(f"  Subscription expires (legacy): {user['subscription_expires']}")
+        print(f"  Monthly usage count: {user['monthly_usage_count']}")
+        print(f"  Usage reset date: {user['usage_reset_date']}")
+    else:
+        print(f"  ❌ Пользователь {user_id} не найден в таблице users!")
+        conn.close()
+        return
+
+    # 2. Платежи пользователя
+    print(f"\n💳 2. ПЛАТЕЖИ ПОЛЬЗОВАТЕЛЯ")
+    print("-" * 80)
+    cursor.execute(
+        """SELECT order_id, payment_id, amount, plan_id, status,
+                  created_at, updated_at, metadata
+           FROM payments
+           WHERE user_id = ?
+           ORDER BY created_at DESC""",
+        (user_id,)
+    )
+    payments = cursor.fetchall()
+
+    if payments:
+        for i, payment in enumerate(payments, 1):
+            print(f"\n  Платеж #{i}:")
+            print(f"    Order ID: {payment['order_id']}")
+            print(f"    Payment ID: {payment['payment_id']}")
+            print(f"    Amount: {payment['amount']} руб")
+            print(f"    Plan ID: {payment['plan_id']}")
+            print(f"    Status: {payment['status']}")
+            print(f"    Created: {payment['created_at']}")
+            print(f"    Updated: {payment['updated_at']}")
+            print(f"    Metadata: {payment['metadata']}")
+
+            # Проверка webhook logs для этого платежа
+            cursor.execute(
+                """SELECT timestamp, payment_status, raw_data
+                   FROM webhook_logs
+                   WHERE order_id = ?
+                   ORDER BY timestamp DESC""",
+                (payment['order_id'],)
+            )
+            webhooks = cursor.fetchall()
+
+            if webhooks:
+                print(f"    Webhooks received: {len(webhooks)}")
+                for j, wh in enumerate(webhooks[:3], 1):  # Показываем только последние 3
+                    print(f"      #{j}: {wh['timestamp']} - Status: {wh['payment_status']}")
+            else:
+                print(f"    ⚠️  Webhooks: не найдены")
+    else:
+        print("  ℹ️  Платежи не найдены")
+
+    # 3. Модульные подписки
+    print(f"\n📦 3. МОДУЛЬНЫЕ ПОДПИСКИ (module_subscriptions)")
+    print("-" * 80)
+    cursor.execute(
+        """SELECT id, module_code, plan_id, is_active,
+                  activated_at, expires_at
+           FROM module_subscriptions
+           WHERE user_id = ?
+           ORDER BY activated_at DESC""",
+        (user_id,)
+    )
+    module_subs = cursor.fetchall()
+
+    if module_subs:
+        now = datetime.now()
+        for i, sub in enumerate(module_subs, 1):
+            expires_at = datetime.fromisoformat(sub['expires_at']) if sub['expires_at'] else None
+            is_expired = expires_at and expires_at < now
+            status_icon = "✅" if sub['is_active'] and not is_expired else "❌"
+
+            print(f"\n  Подписка #{i}: {status_icon}")
+            print(f"    Module: {sub['module_code']}")
+            print(f"    Plan ID: {sub['plan_id']}")
+            print(f"    Is active: {sub['is_active']}")
+            print(f"    Activated: {sub['activated_at']}")
+            print(f"    Expires: {sub['expires_at']}")
+            if is_expired:
+                print(f"    ⚠️  ИСТЕКЛА")
+    else:
+        print("  ❌ Модульные подписки не найдены!")
+
+    # 4. Унифицированные подписки (user_subscriptions)
+    print(f"\n🎫 4. УНИФИЦИРОВАННЫЕ ПОДПИСКИ (user_subscriptions)")
+    print("-" * 80)
+    cursor.execute(
+        """SELECT id, plan_id, is_active, activated_at, expires_at,
+                  auto_renewal_enabled, cancellation_requested
+           FROM user_subscriptions
+           WHERE user_id = ?
+           ORDER BY activated_at DESC""",
+        (user_id,)
+    )
+    user_subs = cursor.fetchall()
+
+    if user_subs:
+        now = datetime.now()
+        for i, sub in enumerate(user_subs, 1):
+            expires_at = datetime.fromisoformat(sub['expires_at']) if sub['expires_at'] else None
+            is_expired = expires_at and expires_at < now
+            status_icon = "✅" if sub['is_active'] and not is_expired else "❌"
+
+            print(f"\n  Подписка #{i}: {status_icon}")
+            print(f"    Plan ID: {sub['plan_id']}")
+            print(f"    Is active: {sub['is_active']}")
+            print(f"    Activated: {sub['activated_at']}")
+            print(f"    Expires: {sub['expires_at']}")
+            print(f"    Auto renewal: {sub['auto_renewal_enabled']}")
+            print(f"    Cancellation requested: {sub['cancellation_requested']}")
+            if is_expired:
+                print(f"    ⚠️  ИСТЕКЛА")
+    else:
+        print("  ℹ️  Унифицированные подписки не найдены")
+
+    # 5. Профиль учителя (если есть)
+    print(f"\n👨‍🏫 5. ПРОФИЛЬ УЧИТЕЛЯ (teacher_profiles)")
+    print("-" * 80)
+    cursor.execute(
+        """SELECT teacher_id, name, bio, created_at, updated_at, active_students, total_students
+           FROM teacher_profiles
+           WHERE teacher_id = ?""",
+        (user_id,)
+    )
+    teacher = cursor.fetchone()
+
+    if teacher:
+        print(f"  ✅ Профиль учителя найден")
+        print(f"    Name: {teacher['name']}")
+        print(f"    Bio: {teacher['bio']}")
+        print(f"    Created: {teacher['created_at']}")
+        print(f"    Active students: {teacher['active_students']}")
+        print(f"    Total students: {teacher['total_students']}")
+    else:
+        print("  ℹ️  Профиль учителя не найден")
+
+    # 6. Рекуррентные платежи
+    print(f"\n🔄 6. РЕКУРРЕНТНЫЕ ПЛАТЕЖИ (recurrent_payments)")
+    print("-" * 80)
+    cursor.execute(
+        """SELECT id, rebill_id, status, created_at, next_charge_date,
+                  last_charge_date, failed_attempts
+           FROM recurrent_payments
+           WHERE user_id = ?
+           ORDER BY created_at DESC""",
+        (user_id,)
+    )
+    recurrent = cursor.fetchall()
+
+    if recurrent:
+        for i, rec in enumerate(recurrent, 1):
+            print(f"\n  Рекуррентный платеж #{i}:")
+            print(f"    Rebill ID: {rec['rebill_id']}")
+            print(f"    Status: {rec['status']}")
+            print(f"    Created: {rec['created_at']}")
+            print(f"    Next charge: {rec['next_charge_date']}")
+            print(f"    Last charge: {rec['last_charge_date']}")
+            print(f"    Failed attempts: {rec['failed_attempts']}")
+    else:
+        print("  ℹ️  Рекуррентные платежи не найдены")
+
+    # 7. Проверка доступа к модулям (текущая дата)
+    print(f"\n🔐 7. ТЕКУЩИЙ ДОСТУП К МОДУЛЯМ")
+    print("-" * 80)
+
+    modules_to_check = ['test_part', 'task19', 'task20', 'task21', 'task22',
+                       'task23', 'task24', 'task25', 'teacher_mode']
+
+    for module in modules_to_check:
+        cursor.execute(
+            """SELECT id FROM module_subscriptions
+               WHERE user_id = ?
+                 AND module_code = ?
+                 AND is_active = 1
+                 AND expires_at > datetime('now')""",
+            (user_id, module)
+        )
+        access = cursor.fetchone()
+        status = "✅ ДОСТУП ЕСТЬ" if access else "❌ НЕТ ДОСТУПА"
+        print(f"  {module}: {status}")
+
+    conn.close()
+
+    print(f"\n{'='*80}")
+    print("✅ ДИАГНОСТИКА ЗАВЕРШЕНА")
+    print(f"{'='*80}\n")
+
+
+def check_incomplete_payments():
+    """
+    Находит платежи со статусом 'completed' без активных подписок
+    """
+    print(f"\n{'='*80}")
+    print(f"🔍 ПОИСК НЕСОГЛАСОВАННЫХ ПЛАТЕЖЕЙ")
+    print(f"{'='*80}\n")
+
+    conn = sqlite3.connect(DATABASE_FILE)
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+
+    # Ищем completed платежи без активных подписок
+    cursor.execute(
+        """
+        SELECT DISTINCT p.order_id, p.user_id, p.plan_id, p.amount,
+                        p.created_at, p.updated_at
+        FROM payments p
+        LEFT JOIN module_subscriptions ms
+          ON p.user_id = ms.user_id
+          AND ms.is_active = 1
+          AND ms.expires_at > datetime('now')
+        WHERE p.status = 'completed'
+          AND ms.id IS NULL
+        ORDER BY p.created_at DESC
+        """
+    )
+    payments = cursor.fetchall()
+
+    if payments:
+        print(f"⚠️  Найдено {len(payments)} платежей без активных подписок:\n")
+        for payment in payments:
+            print(f"  User ID: {payment['user_id']}")
+            print(f"  Order ID: {payment['order_id']}")
+            print(f"  Plan: {payment['plan_id']}")
+            print(f"  Amount: {payment['amount']} руб")
+            print(f"  Paid: {payment['created_at']}")
+            print(f"  Updated: {payment['updated_at']}")
+            print("-" * 80)
+    else:
+        print("✅ Все completed платежи имеют активные подписки")
+
+    conn.close()
+    print()
+
+
+def main():
+    if len(sys.argv) < 2:
+        print("Usage:")
+        print("  python diagnose_payment.py <user_id>")
+        print("  python diagnose_payment.py check_incomplete")
+        print("\nExamples:")
+        print("  python diagnose_payment.py 974972138")
+        print("  python diagnose_payment.py 1893563949")
+        print("  python diagnose_payment.py check_incomplete")
+        sys.exit(1)
+
+    if sys.argv[1] == "check_incomplete":
+        check_incomplete_payments()
+    else:
+        try:
+            user_id = int(sys.argv[1])
+            diagnose_user_payment(user_id)
+        except ValueError:
+            print(f"❌ Ошибка: '{sys.argv[1]}' не является корректным user_id")
+            sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()
