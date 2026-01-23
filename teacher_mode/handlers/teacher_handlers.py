@@ -4667,6 +4667,60 @@ async def handle_auto_renewal_choice(update: Update, context: ContextTypes.DEFAU
         return ConversationHandler.END
 
 
+async def handle_free_activation_teacher(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Обработчик бесплатной активации подписки при 100% скидке (wrapper для teacher режима).
+    Перенаправляет на основной обработчик из payment модуля.
+    """
+    query = update.callback_query
+    user_id = update.effective_user.id
+
+    logger.info(f"[Teacher Payment] User {user_id} activating free subscription")
+
+    try:
+        from payment.handlers import handle_free_activation
+
+        # Вызываем основной обработчик бесплатной активации
+        result = await handle_free_activation(update, context)
+
+        logger.info(f"[Teacher Payment] Free activation result: {result}")
+
+        # После активации возвращаем пользователя в меню учителя
+        return ConversationHandler.END
+
+    except Exception as e:
+        logger.error(f"[Teacher Payment] Error in free activation for user {user_id}: {e}", exc_info=True)
+        await query.answer("❌ Произошла ошибка. Попробуйте позже.", show_alert=True)
+        return ConversationHandler.END
+
+
+async def handle_pay_one_ruble_teacher(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Обработчик оплаты 1 рубля (wrapper для teacher режима).
+    Перенаправляет на основной обработчик из payment модуля.
+    """
+    query = update.callback_query
+    user_id = update.effective_user.id
+
+    logger.info(f"[Teacher Payment] User {user_id} choosing to pay 1 ruble")
+
+    try:
+        from payment.handlers import handle_pay_one_ruble
+
+        # Вызываем основной обработчик оплаты 1 рубля
+        result = await handle_pay_one_ruble(update, context)
+
+        logger.info(f"[Teacher Payment] Pay one ruble result: {result}")
+
+        # После выбора оплаты переходим к выбору автопродления
+        return TeacherStates.PAYMENT_AUTO_RENEWAL_CHOICE
+
+    except Exception as e:
+        logger.error(f"[Teacher Payment] Error in pay one ruble for user {user_id}: {e}", exc_info=True)
+        await query.answer("❌ Произошла ошибка. Попробуйте позже.", show_alert=True)
+        return ConversationHandler.END
+
+
 async def handle_back_to_duration(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
     Обработчик возврата к выбору длительности подписки.

@@ -371,6 +371,10 @@ class TeacherModePlugin(BotPlugin):
                     CallbackQueryHandler(teacher_handlers.teacher_menu, pattern="^teacher_menu$"),
                 ],
                 TeacherStates.PAYMENT_AUTO_RENEWAL_CHOICE: [
+                    # Обработчики для бесплатной активации и оплаты 1 рубля
+                    CallbackQueryHandler(teacher_handlers.handle_free_activation_teacher, pattern="^activate_free$"),
+                    CallbackQueryHandler(teacher_handlers.handle_pay_one_ruble_teacher, pattern="^pay_one_ruble$"),
+
                     # Обработка выбора типа оплаты (автопродление или разовая)
                     CallbackQueryHandler(teacher_handlers.handle_auto_renewal_choice, pattern="^choose_auto_renewal$"),
                     CallbackQueryHandler(teacher_handlers.handle_auto_renewal_choice, pattern="^choose_no_auto_renewal$"),
