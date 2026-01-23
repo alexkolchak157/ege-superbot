@@ -47,7 +47,8 @@ def diagnose_user_payment(user_id: int):
     print("-" * 80)
     cursor.execute(
         """SELECT user_id, first_seen, is_subscribed, subscription_expires,
-                  monthly_usage_count, usage_reset_date
+                  monthly_usage_count, username, first_name, last_name,
+                  current_daily_streak, max_daily_streak
            FROM users WHERE user_id = ?""",
         (user_id,)
     )
@@ -55,11 +56,13 @@ def diagnose_user_payment(user_id: int):
 
     if user:
         print(f"  User ID: {user['user_id']}")
+        print(f"  Username: @{user['username']}" if user['username'] else "  Username: None")
+        print(f"  Name: {user['first_name'] or ''} {user['last_name'] or ''}".strip())
         print(f"  First seen: {user['first_seen']}")
         print(f"  Is subscribed (legacy): {user['is_subscribed']}")
         print(f"  Subscription expires (legacy): {user['subscription_expires']}")
         print(f"  Monthly usage count: {user['monthly_usage_count']}")
-        print(f"  Usage reset date: {user['usage_reset_date']}")
+        print(f"  Daily streak: {user['current_daily_streak']} (max: {user['max_daily_streak']})")
     else:
         print(f"  ❌ Пользователь {user_id} не найден в таблице users!")
         conn.close()
@@ -69,8 +72,8 @@ def diagnose_user_payment(user_id: int):
     print(f"\n💳 2. ПЛАТЕЖИ ПОЛЬЗОВАТЕЛЯ")
     print("-" * 80)
     cursor.execute(
-        """SELECT order_id, payment_id, amount, plan_id, status,
-                  created_at, updated_at, metadata
+        """SELECT order_id, payment_id, amount_kopecks, amount, plan_id, status,
+                  created_at, updated_at, completed_at, metadata, promo_code
            FROM payments
            WHERE user_id = ?
            ORDER BY created_at DESC""",
@@ -80,14 +83,19 @@ def diagnose_user_payment(user_id: int):
 
     if payments:
         for i, payment in enumerate(payments, 1):
+            # Используем amount если есть, иначе amount_kopecks / 100
+            amount_rub = payment['amount'] if payment['amount'] else (payment['amount_kopecks'] / 100 if payment['amount_kopecks'] else 0)
+
             print(f"\n  Платеж #{i}:")
             print(f"    Order ID: {payment['order_id']}")
             print(f"    Payment ID: {payment['payment_id']}")
-            print(f"    Amount: {payment['amount']} руб")
+            print(f"    Amount: {amount_rub} руб")
             print(f"    Plan ID: {payment['plan_id']}")
             print(f"    Status: {payment['status']}")
             print(f"    Created: {payment['created_at']}")
-            print(f"    Updated: {payment['updated_at']}")
+            print(f"    Completed: {payment['completed_at']}")
+            if payment['promo_code']:
+                print(f"    Promo code: {payment['promo_code']}")
             print(f"    Metadata: {payment['metadata']}")
 
             # Проверка webhook logs для этого платежа
@@ -113,11 +121,11 @@ def diagnose_user_payment(user_id: int):
     print(f"\n📦 3. МОДУЛЬНЫЕ ПОДПИСКИ (module_subscriptions)")
     print("-" * 80)
     cursor.execute(
-        """SELECT id, module_code, plan_id, is_active,
-                  activated_at, expires_at
+        """SELECT id, module_code, plan_id, is_active, is_trial,
+                  created_at, expires_at, payment_id
            FROM module_subscriptions
            WHERE user_id = ?
-           ORDER BY activated_at DESC""",
+           ORDER BY created_at DESC""",
         (user_id,)
     )
     module_subs = cursor.fetchall()
@@ -133,8 +141,11 @@ def diagnose_user_payment(user_id: int):
             print(f"    Module: {sub['module_code']}")
             print(f"    Plan ID: {sub['plan_id']}")
             print(f"    Is active: {sub['is_active']}")
-            print(f"    Activated: {sub['activated_at']}")
+            print(f"    Is trial: {sub['is_trial']}")
+            print(f"    Created: {sub['created_at']}")
             print(f"    Expires: {sub['expires_at']}")
+            if sub['payment_id']:
+                print(f"    Payment ID: {sub['payment_id']}")
             if is_expired:
                 print(f"    ⚠️  ИСТЕКЛА")
     else:
@@ -144,11 +155,11 @@ def diagnose_user_payment(user_id: int):
     print(f"\n🎫 4. УНИФИЦИРОВАННЫЕ ПОДПИСКИ (user_subscriptions)")
     print("-" * 80)
     cursor.execute(
-        """SELECT id, plan_id, is_active, activated_at, expires_at,
+        """SELECT id, plan_id, is_active, created_at, expires_at,
                   auto_renewal_enabled, cancellation_requested
            FROM user_subscriptions
            WHERE user_id = ?
-           ORDER BY activated_at DESC""",
+           ORDER BY created_at DESC""",
         (user_id,)
     )
     user_subs = cursor.fetchall()
@@ -163,7 +174,7 @@ def diagnose_user_payment(user_id: int):
             print(f"\n  Подписка #{i}: {status_icon}")
             print(f"    Plan ID: {sub['plan_id']}")
             print(f"    Is active: {sub['is_active']}")
-            print(f"    Activated: {sub['activated_at']}")
+            print(f"    Created: {sub['created_at']}")
             print(f"    Expires: {sub['expires_at']}")
             print(f"    Auto renewal: {sub['auto_renewal_enabled']}")
             print(f"    Cancellation requested: {sub['cancellation_requested']}")
@@ -260,8 +271,9 @@ def check_incomplete_payments():
     # Ищем completed платежи без активных подписок
     cursor.execute(
         """
-        SELECT DISTINCT p.order_id, p.user_id, p.plan_id, p.amount,
-                        p.created_at, p.updated_at
+        SELECT DISTINCT p.order_id, p.user_id, p.plan_id,
+                        COALESCE(p.amount, p.amount_kopecks/100) as amount_rub,
+                        p.created_at, p.completed_at
         FROM payments p
         LEFT JOIN module_subscriptions ms
           ON p.user_id = ms.user_id
@@ -280,9 +292,9 @@ def check_incomplete_payments():
             print(f"  User ID: {payment['user_id']}")
             print(f"  Order ID: {payment['order_id']}")
             print(f"  Plan: {payment['plan_id']}")
-            print(f"  Amount: {payment['amount']} руб")
-            print(f"  Paid: {payment['created_at']}")
-            print(f"  Updated: {payment['updated_at']}")
+            print(f"  Amount: {payment['amount_rub']} руб")
+            print(f"  Created: {payment['created_at']}")
+            print(f"  Completed: {payment['completed_at']}")
             print("-" * 80)
     else:
         print("✅ Все completed платежи имеют активные подписки")
