@@ -4,9 +4,31 @@
 """
 import sqlite3
 import sys
+import os
 from datetime import datetime
 
-DATABASE_FILE = 'data/ege_superbot.db'
+# Попытка найти правильный путь к БД
+POSSIBLE_DB_PATHS = [
+    'quiz_async.db',  # Основной путь из core/config.py
+    'data/ege_superbot.db',
+    '/opt/ege-bot/quiz_async.db',
+    '../quiz_async.db',
+]
+
+DATABASE_FILE = None
+for db_path in POSSIBLE_DB_PATHS:
+    if os.path.exists(db_path):
+        DATABASE_FILE = db_path
+        break
+
+if not DATABASE_FILE:
+    print("❌ База данных не найдена!")
+    print("Проверьте следующие пути:")
+    for path in POSSIBLE_DB_PATHS:
+        print(f"  - {os.path.abspath(path)}")
+    sys.exit(1)
+
+print(f"✅ Используется БД: {os.path.abspath(DATABASE_FILE)}\n")
 
 def diagnose_user_payment(user_id: int):
     """
