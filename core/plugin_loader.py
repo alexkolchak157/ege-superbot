@@ -20,7 +20,7 @@ def discover_plugins() -> None:
     for mod in pkgutil.iter_modules():
         # Добавляем все модули плагинов
         # teacher_mode АКТИВИРОВАН для production!
-        if mod.name in ("test_part", "task24", "task19", "task20", "task22", "task25", "personal_cabinet", "teacher_mode"):
+        if mod.name in ("test_part", "task24", "task19", "task20", "task22", "task23", "task25", "personal_cabinet", "teacher_mode"):
             try:
                 logger.info(f"Loading plugin: {mod.name}")
                 plugin_module = importlib.import_module(f"{mod.name}.plugin")

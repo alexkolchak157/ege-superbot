@@ -37,3 +37,6 @@ CONFIRMING_RESET = 2004
 
 # Состояния для task22
 ANSWERING_T22 = 2201
+
+# Состояния для task23
+ANSWERING_T23 = 2301
