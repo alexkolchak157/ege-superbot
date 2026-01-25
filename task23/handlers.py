@@ -305,6 +305,31 @@ async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return states.CHOOSING_MODE
 
+    # Проверка лимитов AI-проверок (freemium система)
+    freemium_manager = context.bot_data.get('freemium_manager')
+    is_premium = False
+
+    if freemium_manager:
+        can_use, remaining, limit_msg = await freemium_manager.check_ai_limit(user_id, 'task23')
+
+        if not can_use:
+            # Показываем paywall с CTA
+            keyboard = [
+                [InlineKeyboardButton("💎 Попробовать за 1₽", callback_data="subscribe_start")],
+                [InlineKeyboardButton("📋 Все тарифы", callback_data="subscribe")],
+                [InlineKeyboardButton("◀️ Назад в меню", callback_data="t23_menu")],
+            ]
+            await update.message.reply_text(
+                limit_msg,
+                reply_markup=InlineKeyboardMarkup(keyboard),
+                parse_mode=ParseMode.HTML
+            )
+            return states.CHOOSING_MODE
+
+        # Получаем информацию о подписке для дифференциации фидбека
+        limit_info = await freemium_manager.get_limit_info(user_id, 'task23')
+        is_premium = limit_info.get('is_premium', False)
+
     # Показываем анимацию проверки
     thinking_msg = await show_ai_evaluation_animation(
         update.message,
@@ -316,8 +341,23 @@ async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
         try:
             result = await evaluator.evaluate(answer, question)
             score = result.total_score
-            feedback = result.feedback
+            detailed_feedback = result.feedback
             suggestions = result.suggestions or []
+
+            # Дифференцируем фидбек для premium/freemium
+            if is_premium:
+                feedback = detailed_feedback
+            else:
+                # Упрощенный фидбек для freemium пользователей
+                if freemium_manager:
+                    feedback = freemium_manager.simplify_feedback_for_freemium(
+                        detailed_feedback,
+                        score,
+                        MAX_SCORE
+                    )
+                else:
+                    feedback = detailed_feedback
+
         except Exception as e:
             logger.error(f"Error evaluating answer: {e}")
             score = 0
@@ -333,6 +373,10 @@ async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await thinking_msg.delete()
     except Exception:
         pass
+
+    # Регистрируем использование AI-проверки
+    if freemium_manager:
+        await db.increment_ai_check_usage(user_id)
 
     # Сохраняем результат в БД
     await save_attempt(user_id, question['id'], answer, score)
@@ -353,6 +397,12 @@ async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
         result_text += "\n\n<b>💡 Рекомендации:</b>\n"
         for i, suggestion in enumerate(suggestions, 1):
             result_text += f"{i}. {suggestion}\n"
+
+    # Добавляем информацию об оставшихся проверках для freemium
+    if freemium_manager and not is_premium:
+        limit_info = await freemium_manager.get_limit_info(user_id, 'task23')
+        remaining_checks = limit_info.get('checks_remaining', 0)
+        result_text += f"\n\n<i>🔋 Осталось бесплатных проверок: {remaining_checks}</i>"
 
     # Добавляем кнопку для показа эталонных ответов
     keyboard = [

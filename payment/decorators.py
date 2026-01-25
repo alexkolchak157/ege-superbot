@@ -174,9 +174,11 @@ def requires_module(module_code: str, send_message: bool = True) -> Callable:
                 module_names = {
                     'test_part': '📝 Тестовая часть',
                     'task19': '🎯 Задание 19',
-                    'task20': '📖 Задание 20', 
-                    'task25': '✍️ Задание 25',
-                    'task24': '💎 Задание 24 (Премиум)'
+                    'task20': '📖 Задание 20',
+                    'task22': '📝 Задание 22',
+                    'task23': '📜 Задание 23 (Конституция РФ)',
+                    'task24': '💎 Задание 24 (Премиум)',
+                    'task25': '✍️ Задание 25'
                 }
                 module_name = module_names.get(module_code, module_code)
                 

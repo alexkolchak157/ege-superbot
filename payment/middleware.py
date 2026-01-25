@@ -71,6 +71,10 @@ class SubscriptionMiddleware:
                 'commands': ['task24'],
                 'callbacks': ['choose_task24', 'to_task24_menu', 't24_'],
             },
+            'task23': {
+                'commands': ['task23'],
+                'callbacks': ['choose_task23', 'to_task23_menu', 't23_', 'task23_'],
+            },
             'task25': {
                 'commands': ['task25'],
                 'callbacks': ['choose_task25', 'to_task25_menu', 't25_', 'task25_'],
