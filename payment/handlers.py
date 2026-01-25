@@ -1328,6 +1328,11 @@ async def handle_free_activation(update: Update, context: ContextTypes.DEFAULT_T
             )
 
             if success:
+                # Шаг 3: Регистрируем использование промокода
+                if promo_code:
+                    from payment.promo_handler import promo_manager
+                    await promo_manager.apply_promo_code(promo_code, user_id, order_id)
+
                 text = f"""🎉 <b>Подписка активирована!</b>
 
 ✅ План успешно активирован благодаря промокоду <code>{promo_code}</code>
