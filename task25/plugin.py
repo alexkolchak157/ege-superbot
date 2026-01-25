@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 class Task25Plugin(BotPlugin):
     code = "task25"
     title = "✍️ Задание 25  (Развёрнутый ответ)"
-    menu_priority = 18  # После task20
+    menu_priority = 20  # После task24 (19)
     
     async def post_init(self, app):
         """Инициализация данных для задания 25."""

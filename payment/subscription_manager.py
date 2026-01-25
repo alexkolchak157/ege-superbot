@@ -1263,36 +1263,61 @@ class SubscriptionManager:
     async def check_module_access(self, user_id: int, module_code: str) -> bool:
         """
         Проверяет доступ пользователя к конкретному модулю.
-        
+
         Args:
             user_id: ID пользователя
             module_code: Код модуля (например, 'test_part', 'task19', etc.)
-        
+
         Returns:
             True если есть доступ, False если нет
         """
         logger.info(f"Checking module access for user {user_id}, module {module_code}")
-        
+
         if SUBSCRIPTION_MODE == 'modular':
             try:
                 async with aiosqlite.connect(DATABASE_FILE, timeout=30.0) as conn:
                     # Проверяем в таблице module_subscriptions
                     cursor = await conn.execute(
                         """
-                        SELECT id FROM module_subscriptions 
-                        WHERE user_id = ? 
-                        AND module_code = ? 
+                        SELECT id FROM module_subscriptions
+                        WHERE user_id = ?
+                        AND module_code = ?
                         AND is_active = 1
                         AND expires_at > datetime('now')
                         """,
                         (user_id, module_code)
                     )
                     result = await cursor.fetchone()
-                    
+
                     if result:
                         logger.info(f"User {user_id} has active module subscription for {module_code}")
                         return True
-                    
+
+                    # ИСПРАВЛЕНИЕ: Проверяем plan_id в module_subscriptions
+                    # Если у пользователя есть подписка с планом, который включает данный модуль,
+                    # но запись для этого модуля не была создана (например, модуль добавлен позже),
+                    # всё равно даём доступ
+                    cursor = await conn.execute(
+                        """
+                        SELECT DISTINCT plan_id FROM module_subscriptions
+                        WHERE user_id = ?
+                        AND is_active = 1
+                        AND expires_at > datetime('now')
+                        """,
+                        (user_id,)
+                    )
+                    user_plans = await cursor.fetchall()
+
+                    for (plan_id_from_db,) in user_plans:
+                        if plan_id_from_db:
+                            # Получаем конфигурацию плана
+                            plan_config = SUBSCRIPTION_PLANS.get(plan_id_from_db, {})
+                            plan_modules = plan_config.get('modules', [])
+
+                            if module_code in plan_modules:
+                                logger.info(f"User {user_id} has access to {module_code} via active plan {plan_id_from_db}")
+                                return True
+
                     # Проверяем общую подписку (некоторые планы дают доступ ко всем модулям)
                     cursor = await conn.execute(
                         """
@@ -1304,25 +1329,25 @@ class SubscriptionManager:
                         (user_id,)
                     )
                     subscription = await cursor.fetchone()
-                    
+
                     if subscription:
                         plan_id = subscription[0]
-                        
+
                         # Полный доступ
                         if plan_id in ['package_full', 'trial_7days']:
                             logger.info(f"User {user_id} has full access plan: {plan_id}")
                             return True
-                        
+
                         # Пакет "Вторая часть"
                         elif plan_id == 'package_second_part' and module_code in ['task19', 'task20', 'task25']:
                             logger.info(f"User {user_id} has second part package, access to {module_code}")
                             return True
-                        
+
                         # Старые планы pro_month и pro_ege (доступ ко всему кроме task24)
                         elif plan_id in ['pro_month', 'pro_ege'] and module_code != 'task24':
                             logger.info(f"User {user_id} has Pro subscription, access to {module_code} granted")
                             return True
-                    
+
             except Exception as e:
                 logger.error(f"Error checking module access: {e}")
                 return False
@@ -1330,7 +1355,7 @@ class SubscriptionManager:
             # В обычном режиме проверяем любую активную подписку
             subscription = await self.check_active_subscription(user_id)
             return bool(subscription)
-        
+
         logger.info(f"User {user_id} has no access to module {module_code}")
         return False
     
