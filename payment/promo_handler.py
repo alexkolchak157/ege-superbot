@@ -88,11 +88,42 @@ class PromoCodeManager:
                     'used_count': used_count,
                     'is_active': is_active
                 }
-                
+
         except Exception as e:
             logger.error(f"Error checking promo code: {e}")
             return None
-    
+
+    def calculate_discount(self, base_price: int, promo_data: Dict[str, Any]) -> Tuple[int, int]:
+        """
+        Рассчитывает финальную цену и размер скидки на основе данных промокода.
+
+        Args:
+            base_price: Базовая цена в рублях
+            promo_data: Данные промокода (discount_percent, discount_amount)
+
+        Returns:
+            (final_price, discount_amount): Финальная цена и размер скидки в рублях
+        """
+        discount_percent = promo_data.get('discount_percent', 0)
+        discount_amount_fixed = promo_data.get('discount_amount', 0)
+
+        # Применяем процентную скидку
+        if discount_percent > 0:
+            discount_amount = int(base_price * discount_percent / 100)
+        # Или фиксированную скидку
+        elif discount_amount_fixed > 0:
+            discount_amount = discount_amount_fixed
+        else:
+            discount_amount = 0
+
+        # Рассчитываем финальную цену (минимум 1 рубль)
+        final_price = max(1, base_price - discount_amount)
+
+        # Корректируем размер скидки, если цена уперлась в минимум
+        discount_amount = base_price - final_price
+
+        return final_price, discount_amount
+
     async def get_user_promo_history(self, user_id: int) -> List[Dict[str, Any]]:
         """
         Получает историю использования промокодов пользователем.
