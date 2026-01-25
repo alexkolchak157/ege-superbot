@@ -324,6 +324,46 @@ async def handle_webhook(request: web.Request) -> web.Response:
                     # Не падаем если трекинг не сработал
                     logger.error(f"Failed to track conversion for {order_id}: {e}")
 
+                # ============ ОБРАБОТКА STREAK ЗАЩИТ (Phase 3) ============
+                try:
+                    if payment_row:
+                        user_id = payment_row[0]
+                        metadata_str = payment_row[1]
+
+                        if metadata_str:
+                            metadata = json.loads(metadata_str)
+                            protection_type = metadata.get('type')
+
+                            if protection_type in ['freeze', 'error_shield', 'repair']:
+                                from core.streak_protection_shop import get_streak_protection_shop
+                                shop = get_streak_protection_shop()
+
+                                if protection_type == 'freeze':
+                                    quantity = metadata.get('quantity', 1)
+                                    success = await shop.grant_freeze(user_id, quantity)
+                                    if success:
+                                        logger.info(f"✅ Granted {quantity} freeze(s) to user {user_id}")
+                                    else:
+                                        logger.error(f"Failed to grant freeze to user {user_id}")
+
+                                elif protection_type == 'error_shield':
+                                    quantity = metadata.get('quantity', 1)
+                                    success = await shop.grant_error_shield(user_id, quantity)
+                                    if success:
+                                        logger.info(f"✅ Granted {quantity} error shield(s) to user {user_id}")
+                                    else:
+                                        logger.error(f"Failed to grant error shield to user {user_id}")
+
+                                elif protection_type == 'repair':
+                                    success = await shop.apply_repair(user_id)
+                                    if success:
+                                        logger.info(f"✅ Applied streak repair for user {user_id}")
+                                    else:
+                                        logger.error(f"Failed to apply streak repair for user {user_id}")
+
+                except Exception as e:
+                    logger.error(f"Failed to process streak protection for {order_id}: {e}", exc_info=True)
+
                 # Отправляем уведомление только если оно еще не было отправлено
                 bot = request.app.get('bot')
                 if bot:

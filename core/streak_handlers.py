@@ -154,7 +154,7 @@ async def about_freeze_callback(update: Update, context: ContextTypes.DEFAULT_TY
 """
 
         keyboard = InlineKeyboardMarkup([
-            [InlineKeyboardButton("💎 Купить заморозку (49₽)", callback_data="buy_freeze")],
+            [InlineKeyboardButton("🛡️ Открыть магазин защит", callback_data="streak_shop")],
             [InlineKeyboardButton("👑 Premium подписка", callback_data="about_premium")],
             [InlineKeyboardButton("✍️ Решить задание", callback_data="start_practice")],
             [InlineKeyboardButton("« Назад", callback_data="to_main_menu")]

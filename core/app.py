@@ -318,6 +318,14 @@ async def post_init(application: Application) -> None:
     except Exception as e:
         logger.error(f"Failed to register streak handlers: {e}")
 
+    # Регистрация protection shop handlers (Phase 3: Protection Mechanics)
+    try:
+        from core.streak_protection_shop import register_protection_shop_handlers
+        register_protection_shop_handlers(application)
+        logger.info("Protection shop handlers registered")
+    except Exception as e:
+        logger.error(f"Failed to register protection shop handlers: {e}")
+
     # Регистрация middleware для отслеживания кликов по retention уведомлениям
     try:
         from core.retention_click_middleware import register_retention_click_middleware

@@ -294,8 +294,8 @@ class StreakUI:
 
         keyboard = InlineKeyboardMarkup([
             [InlineKeyboardButton("✍️ Решить задание СЕЙЧАС", callback_data="start_practice")],
-            [InlineKeyboardButton("❄️ Использовать заморозку", callback_data="use_freeze")],
-            [InlineKeyboardButton("💎 Узнать про Premium", callback_data="about_premium")]
+            [InlineKeyboardButton("🛡️ Магазин защит", callback_data="streak_shop")],
+            [InlineKeyboardButton("👑 Premium подписка", callback_data="about_premium")]
         ])
 
         return {

@@ -122,9 +122,29 @@ class StreakManager:
                             max_streak = max(max_streak, current_streak)
                             logger.info(f"User {user_id} streak continues: {current_streak} days")
                         elif days_diff > 1:
-                            # Пропустили день - сбрасываем
-                            logger.info(f"User {user_id} missed {days_diff-1} days, resetting streak")
-                            current_streak = 1
+                            # Пропустили дни - пробуем применить заморозки (Phase 3)
+                            days_missed = days_diff - 1
+                            freeze_count = await self._get_freeze_count(db, user_id)
+
+                            if freeze_count >= days_missed:
+                                # Применяем заморозки автоматически
+                                await self._apply_freeze(db, user_id, days_missed, current_streak)
+                                logger.info(
+                                    f"User {user_id} missed {days_missed} days, "
+                                    f"applied {days_missed} freeze(s), streak saved: {current_streak}"
+                                )
+                                # Стрик не сбрасывается, но заморозки потрачены
+                            else:
+                                # Заморозок недостаточно - сбрасываем стрик
+                                logger.info(
+                                    f"User {user_id} missed {days_missed} days, "
+                                    f"only {freeze_count} freeze(s) available, resetting streak from {current_streak}"
+                                )
+
+                                # Сохраняем информацию для возможного восстановления
+                                await self._mark_streak_lost(db, user_id, current_streak)
+
+                                current_streak = 1
                     else:
                         # Первая активность
                         current_streak = 1
@@ -490,6 +510,60 @@ class StreakManager:
                 used_at
             ) VALUES (?, 'error_shield', ?, 'correct', 0, 1, 'wrong_answer', ?)
         """, (user_id, streak_saved, datetime.now(timezone.utc).isoformat()))
+
+    async def _get_freeze_count(self, db: aiosqlite.Connection, user_id: int) -> int:
+        """Получает количество доступных заморозок"""
+        cursor = await db.execute("""
+            SELECT freeze_count FROM user_streaks WHERE user_id = ?
+        """, (user_id,))
+        row = await cursor.fetchone()
+        return row[0] if row else 0
+
+    async def _apply_freeze(
+        self,
+        db: aiosqlite.Connection,
+        user_id: int,
+        days_count: int,
+        streak_saved: int
+    ):
+        """Применяет заморозки для сохранения стрика"""
+        # Списываем заморозки
+        await db.execute("""
+            UPDATE user_streaks
+            SET freeze_count = freeze_count - ?
+            WHERE user_id = ?
+        """, (days_count, user_id))
+
+        # Логируем использование
+        await db.execute("""
+            INSERT INTO streak_protection_log (
+                user_id,
+                protection_type,
+                action,
+                quantity,
+                streak_days_affected,
+                created_at
+            ) VALUES (?, 'freeze', 'applied', ?, ?, ?)
+        """, (user_id, days_count, streak_saved, datetime.now(timezone.utc).isoformat()))
+
+        logger.info(f"Applied {days_count} freeze(s) for user {user_id}, saved streak: {streak_saved}")
+
+    async def _mark_streak_lost(
+        self,
+        db: aiosqlite.Connection,
+        user_id: int,
+        lost_streak_value: int
+    ):
+        """Помечает стрик как потерянный для возможного восстановления"""
+        await db.execute("""
+            UPDATE user_streaks
+            SET daily_streak_state = 'lost',
+                daily_streak_before_loss = ?,
+                daily_streak_lost_at = ?
+            WHERE user_id = ?
+        """, (lost_streak_value, datetime.now(timezone.utc).isoformat(), user_id))
+
+        logger.info(f"Marked streak as lost for user {user_id}: {lost_streak_value} days")
 
     # ============================================================
     # HELPER METHODS
