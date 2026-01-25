@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 class Task24Plugin(BotPlugin):
     code = "task24"
     title = "📋 Задание 24 (План)"
-    menu_priority = 17
+    menu_priority = 19  # После task23 (18)
     
     async def post_init(self, app):
         """Загрузка данных планов."""

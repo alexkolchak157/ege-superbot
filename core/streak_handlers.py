@@ -276,8 +276,31 @@ async def start_practice_callback(update: Update, context: ContextTypes.DEFAULT_
         # Переходим в главное меню и автоматически начинаем практику
         from core.app import show_main_menu_with_access
 
-        await query.message.delete()
-        await show_main_menu_with_access(context, user_id)
+        welcome_text = """
+🎓 <b>Подготовка к ЕГЭ по обществознанию</b>
+
+Используйте кнопки ниже для навигации:
+"""
+        kb = await show_main_menu_with_access(context, user_id)
+
+        # Пытаемся отредактировать существующее сообщение
+        try:
+            await query.edit_message_text(
+                welcome_text,
+                reply_markup=kb,
+                parse_mode="HTML"
+            )
+        except Exception:
+            # Если не удалось отредактировать - удаляем и отправляем новое
+            try:
+                await query.message.delete()
+            except Exception:
+                pass
+            await query.message.chat.send_message(
+                welcome_text,
+                reply_markup=kb,
+                parse_mode="HTML"
+            )
 
         logger.info(f"User {user_id} started practice from streak notification")
 
@@ -296,8 +319,31 @@ async def to_main_menu_callback(update: Update, context: ContextTypes.DEFAULT_TY
     try:
         from core.app import show_main_menu_with_access
 
-        await query.message.delete()
-        await show_main_menu_with_access(context, user_id)
+        welcome_text = """
+🎓 <b>Подготовка к ЕГЭ по обществознанию</b>
+
+Используйте кнопки ниже для навигации:
+"""
+        kb = await show_main_menu_with_access(context, user_id)
+
+        # Пытаемся отредактировать существующее сообщение
+        try:
+            await query.edit_message_text(
+                welcome_text,
+                reply_markup=kb,
+                parse_mode="HTML"
+            )
+        except Exception:
+            # Если не удалось отредактировать - удаляем и отправляем новое
+            try:
+                await query.message.delete()
+            except Exception:
+                pass
+            await query.message.chat.send_message(
+                welcome_text,
+                reply_markup=kb,
+                parse_mode="HTML"
+            )
 
         logger.info(f"User {user_id} returned to main menu from streak screen")
 
@@ -336,8 +382,8 @@ def register_streak_handlers(application: Application):
     application.add_handler(
         CallbackQueryHandler(start_practice_callback, pattern="^start_practice$")
     )
-    application.add_handler(
-        CallbackQueryHandler(to_main_menu_callback, pattern="^to_main_menu$")
-    )
+    # ПРИМЕЧАНИЕ: Обработчик to_main_menu НЕ регистрируется здесь,
+    # так как используется глобальный обработчик из menu_handlers.py
+    # который корректно работает со всеми случаями.
 
     logger.info("Streak callback handlers registered")
