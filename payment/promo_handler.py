@@ -141,6 +141,22 @@ class PromoCodeManager:
         """
         try:
             async with aiosqlite.connect(self.database_file) as conn:
+                # Получаем информацию о промокоде
+                cursor = await conn.execute(
+                    """
+                    SELECT usage_limit FROM promo_codes
+                    WHERE code = ?
+                    """,
+                    (code.upper(),)
+                )
+                promo_info = await cursor.fetchone()
+
+                if not promo_info:
+                    logger.error(f"Promo code {code} not found when trying to apply")
+                    return False
+
+                usage_limit = promo_info[0]
+
                 # Увеличиваем счетчик использований промокода
                 await conn.execute(
                     """
@@ -151,14 +167,31 @@ class PromoCodeManager:
                     (code.upper(),)
                 )
 
-                # Записываем в лог использования
-                await conn.execute(
+                # Проверяем, есть ли уже запись в логе
+                cursor = await conn.execute(
                     """
-                    INSERT INTO promo_usage_log (promo_code, user_id, order_id, used_at)
-                    VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+                    SELECT COUNT(*) FROM promo_usage_log
+                    WHERE promo_code = ? AND user_id = ?
                     """,
-                    (code.upper(), user_id, order_id)
+                    (code.upper(), user_id)
                 )
+                existing_count = (await cursor.fetchone())[0]
+
+                # Записываем в лог использования ТОЛЬКО первое использование
+                # Для промокодов без ограничений это позволяет многократно использовать
+                # промокод без нарушения UNIQUE constraint в БД на (promo_code, user_id)
+                if existing_count == 0:
+                    await conn.execute(
+                        """
+                        INSERT INTO promo_usage_log (promo_code, user_id, order_id, used_at)
+                        VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+                        """,
+                        (code.upper(), user_id, order_id)
+                    )
+                    logger.info(f"Added first usage log entry for promo {code} by user {user_id}")
+                else:
+                    # Запись уже существует - просто логируем (не ошибка для промокодов без ограничений)
+                    logger.info(f"Promo {code} already used by user {user_id} before (existing_count={existing_count}), skipping log insert")
 
                 await conn.commit()
                 logger.info(f"Applied promo code {code} for user {user_id}, order {order_id}")
