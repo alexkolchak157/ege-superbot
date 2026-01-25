@@ -124,6 +124,50 @@ class PromoCodeManager:
 
         return final_price, discount_amount
 
+    async def apply_promo_code(self, code: str, user_id: int, order_id: str = None) -> bool:
+        """
+        Применяет промокод - регистрирует использование в БД.
+
+        ВАЖНО: Этот метод должен вызываться ТОЛЬКО после успешной оплаты/активации!
+        Не вызывайте его при вводе промокода, иначе счетчик увеличится без фактической покупки.
+
+        Args:
+            code: Код промокода
+            user_id: ID пользователя
+            order_id: ID заказа (опционально)
+
+        Returns:
+            True если промокод успешно применен
+        """
+        try:
+            async with aiosqlite.connect(self.database_file) as conn:
+                # Увеличиваем счетчик использований промокода
+                await conn.execute(
+                    """
+                    UPDATE promo_codes
+                    SET used_count = used_count + 1
+                    WHERE code = ?
+                    """,
+                    (code.upper(),)
+                )
+
+                # Записываем в лог использования
+                await conn.execute(
+                    """
+                    INSERT INTO promo_usage_log (promo_code, user_id, order_id, used_at)
+                    VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+                    """,
+                    (code.upper(), user_id, order_id)
+                )
+
+                await conn.commit()
+                logger.info(f"Applied promo code {code} for user {user_id}, order {order_id}")
+                return True
+
+        except Exception as e:
+            logger.error(f"Error applying promo code: {e}")
+            return False
+
     async def get_user_promo_history(self, user_id: int) -> List[Dict[str, Any]]:
         """
         Получает историю использования промокодов пользователем.
@@ -298,10 +342,11 @@ async def handle_promo_input(update: Update, context: ContextTypes.DEFAULT_TYPE)
         parse_mode=ParseMode.HTML,
         reply_markup=InlineKeyboardMarkup(keyboard)
     )
-    
-    # Применяем промокод (увеличиваем счетчик)
-    await promo_manager.apply_promo_code(promo_code, user_id)
-    
+
+    # ВАЖНО: НЕ применяем промокод здесь!
+    # Промокод будет применен ТОЛЬКО после успешной оплаты/активации
+    # в момент вызова activate_subscription()
+
     # Переходим к вводу email
     from .handlers import ENTERING_EMAIL
     return ENTERING_EMAIL
@@ -429,10 +474,11 @@ async def handle_promo_input(update: Update, context: ContextTypes.DEFAULT_TYPE)
         parse_mode=ParseMode.HTML,
         reply_markup=InlineKeyboardMarkup(keyboard)
     )
-    
-    # Применяем промокод (увеличиваем счетчик)
-    await promo_manager.apply_promo_code(promo_code, user_id)
-    
+
+    # ВАЖНО: НЕ применяем промокод здесь!
+    # Промокод будет применен ТОЛЬКО после успешной оплаты/активации
+    # в момент вызова activate_subscription()
+
     # Переходим к вводу email
     from .handlers import ENTERING_EMAIL
     return ENTERING_EMAIL
