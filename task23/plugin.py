@@ -57,18 +57,10 @@ class Task23Plugin(BotPlugin):
             ],
             states={
                 states.CHOOSING_MODE: [
-                    # Основные режимы практики
+                    # Практика
                     CallbackQueryHandler(
                         handlers.practice_mode,
                         pattern="^t23_practice$"
-                    ),
-                    CallbackQueryHandler(
-                        handlers.practice_type1,
-                        pattern="^t23_practice_type1$"
-                    ),
-                    CallbackQueryHandler(
-                        handlers.practice_type2,
-                        pattern="^t23_practice_type2$"
                     ),
                     # Статистика
                     CallbackQueryHandler(
@@ -143,8 +135,6 @@ class Task23Plugin(BotPlugin):
         return [
             ("entry", handlers.entry_from_menu),
             ("practice", handlers.practice_mode),
-            ("practice_type1", handlers.practice_type1),
-            ("practice_type2", handlers.practice_type2),
             ("answer", handlers.handle_answer),
             ("progress", handlers.my_progress),
             ("show_answers", handlers.show_model_answers),
