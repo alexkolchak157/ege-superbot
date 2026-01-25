@@ -9,6 +9,7 @@ Phase 2: Notifications
 """
 
 import logging
+from datetime import datetime
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes, CallbackQueryHandler, Application
 from telegram.constants import ParseMode
@@ -94,6 +95,8 @@ async def my_stats_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             text += f"\n{progress}"
 
         keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton("🏅 Мои достижения", callback_data="my_achievements")],
+            [InlineKeyboardButton("📅 Календарь активности", callback_data="activity_calendar")],
             [InlineKeyboardButton("📚 Продолжить занятия", callback_data="to_main_menu")],
             [InlineKeyboardButton("« Назад", callback_data="to_main_menu")]
         ])
@@ -307,6 +310,137 @@ async def to_main_menu_callback(update: Update, context: ContextTypes.DEFAULT_TY
 
 
 # ============================================================
+# ACHIEVEMENTS & CALENDAR CALLBACKS (Phase 4)
+# ============================================================
+
+async def my_achievements_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Показывает достижения пользователя"""
+    query = update.callback_query
+    await query.answer()
+
+    user_id = update.effective_user.id
+
+    try:
+        from core.streak_achievements import get_achievement_system
+        achievement_system = get_achievement_system()
+
+        # Получаем достижения пользователя
+        achievements = await achievement_system.get_user_achievements(user_id)
+        stats = await achievement_system.get_achievement_stats(user_id)
+
+        if not achievements:
+            text = """
+🏅 <b>Достижения</b>
+
+У тебя пока нет достижений!
+
+Начни решать задания, поддерживай стрики и получай badges за свои успехи! 🚀
+
+<b>Доступные категории:</b>
+• 🔥 Стрики (7, 14, 30, 60, 100 дней)
+• 🎯 Точность (5, 10, 20, 50 правильных)
+• 📚 Объём (100, 500, 1000, 5000 заданий)
+• ✨ Специальные достижения
+"""
+        else:
+            text = f"""
+🏅 <b>Твои достижения</b>
+
+Получено: <b>{stats['total_earned']}</b> из {stats['total_available']}
+Прогресс: <b>{stats['completion_percent']}%</b>
+
+<b>Последние достижения:</b>
+
+"""
+            # Показываем последние 5 достижений
+            for achievement in achievements[:5]:
+                rarity_emoji = {'COMMON': '⚪', 'RARE': '🔵', 'EPIC': '🟣', 'LEGENDARY': '🟡'}.get(
+                    achievement['rarity'], '⚪'
+                )
+                earned_date = datetime.fromisoformat(achievement['earned_at']).strftime("%d.%m")
+
+                text += f"{achievement['emoji']} <b>{achievement['title']}</b> {rarity_emoji}\n"
+                text += f"<i>{achievement['description']}</i>\n"
+                text += f"📅 {earned_date}\n\n"
+
+        keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton("📊 Моя статистика", callback_data="my_stats")],
+            [InlineKeyboardButton("📅 Календарь активности", callback_data="activity_calendar")],
+            [InlineKeyboardButton("« Назад", callback_data="to_main_menu")]
+        ])
+
+        await query.edit_message_text(
+            text,
+            reply_markup=keyboard,
+            parse_mode=ParseMode.HTML
+        )
+
+        logger.info(f"Showed achievements for user {user_id}")
+
+    except Exception as e:
+        logger.error(f"Error showing achievements: {e}", exc_info=True)
+        await query.answer("Произошла ошибка при загрузке достижений", show_alert=True)
+
+
+async def activity_calendar_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Показывает календарь активности"""
+    query = update.callback_query
+    await query.answer()
+
+    user_id = update.effective_user.id
+
+    try:
+        from core.activity_calendar import get_activity_calendar
+        calendar = get_activity_calendar()
+
+        # Получаем календарь и статистику
+        calendar_text, period_stats = await calendar.get_calendar_heatmap(user_id, weeks=8)
+        week_stats = await calendar.get_week_stats(user_id)
+        month_stats = await calendar.get_month_stats(user_id)
+        best_day = await calendar.get_best_day(user_id)
+
+        text = calendar_text
+
+        # Статистика за неделю
+        if week_stats:
+            text += f"\n📊 <b>Эта неделя:</b>\n"
+            text += f"Активных дней: {week_stats['days_active']}/7\n"
+            text += f"Решено заданий: {week_stats['total_questions']}\n"
+            text += f"Точность: {week_stats['accuracy_percent']}%\n"
+
+        # Статистика за месяц
+        if month_stats:
+            text += f"\n📆 <b>Этот месяц:</b>\n"
+            text += f"Активных дней: {month_stats['days_active']}/{month_stats['days_in_month']}\n"
+            text += f"Решено заданий: {month_stats['total_questions']}\n"
+            text += f"Точность: {month_stats['accuracy_percent']}%\n"
+
+        # Лучший день
+        if best_day:
+            best_date = datetime.fromisoformat(best_day['date']).strftime("%d.%m.%Y")
+            text += f"\n🏆 <b>Лучший день:</b> {best_date}\n"
+            text += f"Заданий: {best_day['questions_answered']} ({best_day['accuracy']}% точность)\n"
+
+        keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton("🏅 Мои достижения", callback_data="my_achievements")],
+            [InlineKeyboardButton("📊 Детальная статистика", callback_data="my_stats")],
+            [InlineKeyboardButton("« Назад", callback_data="to_main_menu")]
+        ])
+
+        await query.edit_message_text(
+            text,
+            reply_markup=keyboard,
+            parse_mode=ParseMode.HTML
+        )
+
+        logger.info(f"Showed activity calendar for user {user_id}")
+
+    except Exception as e:
+        logger.error(f"Error showing calendar: {e}", exc_info=True)
+        await query.answer("Произошла ошибка при загрузке календаря", show_alert=True)
+
+
+# ============================================================
 # REGISTRATION
 # ============================================================
 
@@ -340,4 +474,12 @@ def register_streak_handlers(application: Application):
         CallbackQueryHandler(to_main_menu_callback, pattern="^to_main_menu$")
     )
 
-    logger.info("Streak callback handlers registered")
+    # Phase 4: Achievements & Calendar callbacks
+    application.add_handler(
+        CallbackQueryHandler(my_achievements_callback, pattern="^my_achievements$")
+    )
+    application.add_handler(
+        CallbackQueryHandler(activity_calendar_callback, pattern="^activity_calendar$")
+    )
+
+    logger.info("Streak callback handlers registered (including Phase 4: Achievements & Calendar)")
