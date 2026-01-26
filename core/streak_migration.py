@@ -314,6 +314,46 @@ async def apply_streak_system_migration():
             logger.info("✓ notification_preferences table created with indexes")
 
             # ============================================================
+            # ТАБЛИЦА 7: user_achievements
+            # ============================================================
+            logger.info("Creating user_achievements table...")
+
+            await db.execute("""
+                CREATE TABLE IF NOT EXISTS user_achievements (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER NOT NULL,
+
+                    -- Achievement Info
+                    achievement_id TEXT NOT NULL,
+                    achievement_name TEXT NOT NULL,
+                    category TEXT NOT NULL,
+                    rarity TEXT NOT NULL,
+
+                    -- Tracking
+                    earned_at TEXT NOT NULL,
+                    notification_sent BOOLEAN DEFAULT 0,
+
+                    -- Timestamps
+                    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+
+                    FOREIGN KEY (user_id) REFERENCES users(user_id),
+                    UNIQUE(user_id, achievement_id)
+                )
+            """)
+
+            await db.execute("""
+                CREATE INDEX IF NOT EXISTS idx_achievements_user
+                ON user_achievements(user_id)
+            """)
+
+            await db.execute("""
+                CREATE INDEX IF NOT EXISTS idx_achievements_category
+                ON user_achievements(user_id, category)
+            """)
+
+            logger.info("✓ user_achievements table created with indexes")
+
+            # ============================================================
             # МИГРАЦИЯ СУЩЕСТВУЮЩИХ ДАННЫХ
             # ============================================================
             logger.info("Migrating existing streak data...")
