@@ -61,6 +61,8 @@ async def init_task21_data() -> None:
             'task21_questions.json'
         )
 
+        logger.info(f"Task21: Loading data from {data_path}")
+
         with open(data_path, 'r', encoding='utf-8') as f:
             data = json.load(f)
             task21_data = data
@@ -265,7 +267,10 @@ def get_random_question() -> Optional[Dict[str, Any]]:
     """Получить случайный вопрос."""
     questions = task21_data.get('questions', [])
 
+    logger.info(f"Task21: get_random_question called, questions count: {len(questions)}, task21_data keys: {list(task21_data.keys())}")
+
     if not questions:
+        logger.warning("Task21: No questions available! task21_data may not be initialized.")
         return None
 
     return random.choice(questions)
