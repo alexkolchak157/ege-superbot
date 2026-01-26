@@ -196,28 +196,41 @@ class Task21Evaluator(BaseAIEvaluator if AI_EVALUATOR_AVAILABLE else object):
         Парсинг ответов пользователя.
 
         Поддерживает форматы:
-        - Нумерованный список (1. ..., 2. ..., 3. ...)
+        - Нумерованный список (1. ..., 2. ..., 3. ...) - в одну строку или с переносами
         - Цельный текст с разделением по строкам
         """
         answers = {}
 
-        # Пробуем найти нумерованные ответы
-        pattern = r'^\s*(\d+)[.)]\s*(.+?)(?=^\s*\d+[.)]|\Z)'
-        matches = list(re.finditer(pattern, answer, re.MULTILINE | re.DOTALL))
+        # Сначала пробуем найти нумерованные ответы (работает и в одну строку)
+        # Паттерн ищет "1." или "1)" и текст до следующего номера или конца
+        pattern = r'(?:^|\s)(\d)[.)]\s*(.+?)(?=(?:\s\d[.)])|$)'
+        matches = list(re.finditer(pattern, answer, re.DOTALL))
 
         if matches:
             for match in matches:
                 num = int(match.group(1))
                 text = match.group(2).strip()
-                if 1 <= num <= 3:
+                if 1 <= num <= 3 and text:
                     answers[num] = text
-        else:
-            # Если не нашли нумерацию, разделяем по переносам строк
+
+        # Если не нашли все 3 ответа, пробуем альтернативный паттерн для многострочного
+        if len(answers) < 3:
+            pattern2 = r'^\s*(\d+)[.)]\s*(.+?)(?=^\s*\d+[.)]|\Z)'
+            matches2 = list(re.finditer(pattern2, answer, re.MULTILINE | re.DOTALL))
+            for match in matches2:
+                num = int(match.group(1))
+                text = match.group(2).strip()
+                if 1 <= num <= 3 and num not in answers and text:
+                    answers[num] = text
+
+        # Если всё ещё не нашли нумерацию, разделяем по переносам строк
+        if not answers:
             lines = [line.strip() for line in answer.split('\n') if line.strip()]
             for i, line in enumerate(lines[:3], 1):
                 # Убираем возможные маркеры
                 clean_line = re.sub(r'^[-–—•]\s*', '', line).strip()
-                answers[i] = clean_line
+                if clean_line:
+                    answers[i] = clean_line
 
         return answers
 
