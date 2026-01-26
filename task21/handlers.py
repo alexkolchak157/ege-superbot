@@ -67,8 +67,9 @@ async def init_task21_data() -> None:
             data = json.load(f)
             task21_data = data
             task21_metadata = data.get('metadata', {})
-            questions_count = len(data.get('questions', []))
-            logger.info(f"Loaded {questions_count} questions for task21")
+            # Поддерживаем оба варианта: 'questions' и 'tasks'
+            questions_count = len(data.get('questions', []) or data.get('tasks', []))
+            logger.info(f"Task21: Loaded {questions_count} questions successfully")
 
     except FileNotFoundError:
         logger.error(f"Task21 data file not found: {data_path}")
@@ -107,7 +108,7 @@ async def show_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     # Получаем статистику пользователя
     stats = await get_user_stats(user_id)
 
-    questions = task21_data.get('questions', [])
+    questions = task21_data.get('questions', []) or task21_data.get('tasks', [])
 
     text = f"""<b>📊 Задание 21 — Графики спроса и предложения</b>
 
@@ -265,9 +266,10 @@ async def practice_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 def get_random_question() -> Optional[Dict[str, Any]]:
     """Получить случайный вопрос."""
-    questions = task21_data.get('questions', [])
+    # Поддерживаем оба варианта ключей: 'questions' и 'tasks'
+    questions = task21_data.get('questions', []) or task21_data.get('tasks', [])
 
-    logger.info(f"Task21: get_random_question called, questions count: {len(questions)}, task21_data keys: {list(task21_data.keys())}")
+    logger.info(f"Task21: get_random_question called, questions count: {len(questions)}")
 
     if not questions:
         logger.warning("Task21: No questions available! task21_data may not be initialized.")
@@ -615,7 +617,7 @@ async def get_user_stats(user_id: int) -> Dict[str, Any]:
             total_attempts = 0
             avg_score = 0.0
 
-        total_tasks = len(task21_data.get('questions', []))
+        total_tasks = len(task21_data.get('questions', []) or task21_data.get('tasks', []))
 
         return {
             'total_attempts': total_attempts,
@@ -628,7 +630,7 @@ async def get_user_stats(user_id: int) -> Dict[str, Any]:
         return {
             'total_attempts': 0,
             'avg_score': 0.0,
-            'total_tasks': len(task21_data.get('questions', []))
+            'total_tasks': len(task21_data.get('questions', []) or task21_data.get('tasks', []))
         }
 
 
