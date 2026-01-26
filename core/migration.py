@@ -240,7 +240,7 @@ def get_migration_status(user_data: dict) -> str:
     lines = ["📊 <b>Статус изоляции данных модулей</b>\n"]
     
     # Статус каждого модуля
-    for module in ['test_part', 'task19', 'task20', 'task22', 'task24', 'task25']:
+    for module in ['test_part', 'task19', 'task20', 'task21', 'task22', 'task23', 'task24', 'task25']:
         status = report[module]
         if status['isolated']:
             emoji = "✅"
