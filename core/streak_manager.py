@@ -71,16 +71,17 @@ class StreakManager:
     # DAILY STREAK MANAGEMENT
     # ============================================================
 
-    async def update_daily_streak(self, user_id: int) -> Tuple[int, int, StreakLevel]:
+    async def update_daily_streak(self, user_id: int) -> Tuple[int, int, StreakLevel, bool]:
         """
         Обновляет дневной стрик пользователя.
 
         Returns:
-            (current_streak, max_streak, streak_level)
+            (current_streak, max_streak, streak_level, freeze_used)
         """
         try:
             async with aiosqlite.connect(self.database_file) as db:
                 today = date.today().isoformat()
+                freeze_used = False  # Флаг использования заморозки
 
                 # Получаем текущие данные
                 cursor = await db.execute("""
@@ -110,7 +111,7 @@ class StreakManager:
                     if last_activity_str == today:
                         # Уже были сегодня
                         level = StreakLevel.get_level_for_days(current_streak)
-                        return (current_streak, max_streak, level)
+                        return (current_streak, max_streak, level, False)
 
                     if last_activity_str:
                         last_activity = date.fromisoformat(last_activity_str)
@@ -129,6 +130,7 @@ class StreakManager:
                             if freeze_count >= days_missed:
                                 # Применяем заморозки автоматически
                                 await self._apply_freeze(db, user_id, days_missed, current_streak)
+                                freeze_used = True  # Флаг для достижения "Защищённый"
                                 logger.info(
                                     f"User {user_id} missed {days_missed} days, "
                                     f"applied {days_missed} freeze(s), streak saved: {current_streak}"
@@ -181,11 +183,11 @@ class StreakManager:
 
                 logger.info(f"Updated daily streak for user {user_id}: {current_streak}/{max_streak}, level {level.display_name}")
 
-                return (current_streak, max_streak, level)
+                return (current_streak, max_streak, level, freeze_used)
 
         except Exception as e:
             logger.error(f"Error updating daily streak for user {user_id}: {e}", exc_info=True)
-            return (0, 0, StreakLevel.NOVICE)
+            return (0, 0, StreakLevel.NOVICE, False)
 
     async def get_daily_streak_info(self, user_id: int) -> Dict:
         """Получает информацию о дневном стрике пользователя"""

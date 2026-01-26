@@ -520,12 +520,30 @@ async def check_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         if last_activity_date != current_date:
             # Используем новый StreakManager
-            daily_current, daily_max, level = await streak_manager.update_daily_streak(user_id)
+            daily_current, daily_max, level, freeze_was_used = await streak_manager.update_daily_streak(user_id)
             context.user_data['last_activity_date'] = current_date
             context.user_data['streak_level'] = level
             context.user_data['daily_streak'] = daily_current
             daily_streak_updated = True
             logger.info(f"Daily streak updated for user {user_id}: {daily_current}/{daily_max}, level {level.display_name}")
+
+            # Проверяем достижение "Защищённый" если заморозка была использована
+            if freeze_was_used:
+                from core.streak_achievements import get_achievement_system
+                achievement_system = get_achievement_system()
+                freeze_achievements = await achievement_system.check_and_grant_achievements(
+                    user_id, 'freeze_used', {}
+                )
+                if freeze_achievements:
+                    for achievement in freeze_achievements:
+                        try:
+                            await context.bot.send_message(
+                                chat_id=user_id,
+                                text=f"🎉 <b>Новое достижение!</b>\n\n{achievement.emoji} <b>{achievement.title}</b>\n<i>{achievement.description}</i>",
+                                parse_mode=ParseMode.HTML
+                            )
+                        except Exception:
+                            pass
         else:
             # Получаем текущие стрики без обновления
             streak_info = await streak_manager.get_daily_streak_info(user_id)
@@ -543,10 +561,14 @@ async def check_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             logger.info(f"Correct streak RESET for user {user_id}, current: {correct_current}, max: {correct_max}")
 
-        # ========== ПРОВЕРКА MILESTONE (Phase 2: Notifications) ==========
+        # ========== ПРОВЕРКА MILESTONE (Phase 2: Notifications & Phase 4: Achievements) ==========
         try:
             from core.milestone_notification_handler import get_milestone_notification_handler
+            from core.streak_achievements import get_achievement_system
+
             milestone_handler = get_milestone_notification_handler()
+            achievement_system = get_achievement_system()
+            new_achievements = []
 
             # Проверяем milestone для дневного стрика (если он был обновлен)
             if daily_streak_updated:
@@ -558,6 +580,12 @@ async def check_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     old_daily_streak
                 )
 
+                # Проверяем достижения для daily streak
+                achievements = await achievement_system.check_and_grant_achievements(
+                    user_id, 'daily_streak_milestone', {'streak_value': daily_current}
+                )
+                new_achievements.extend(achievements)
+
             # Проверяем milestone для correct стрика (если увеличился)
             if correct_current > old_correct_streak:
                 await milestone_handler.check_and_notify_milestones(
@@ -567,9 +595,98 @@ async def check_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     correct_current,
                     old_correct_streak
                 )
+
+                # Проверяем достижения для correct streak
+                achievements = await achievement_system.check_and_grant_achievements(
+                    user_id, 'correct_streak_milestone', {'streak_value': correct_current}
+                )
+                new_achievements.extend(achievements)
+
+            # Отправляем уведомления о достижениях
+            if new_achievements:
+                for achievement in new_achievements:
+                    try:
+                        achievement_text = f"""
+🎉 <b>Новое достижение!</b>
+
+{achievement.emoji} <b>{achievement.title}</b>
+<i>{achievement.description}</i>
+
+{achievement.rarity.emoji} Редкость: {achievement.rarity.display_name}
+"""
+                        if achievement.reward_description:
+                            achievement_text += f"\n🎁 Награда: {achievement.reward_description}"
+
+                        await context.bot.send_message(
+                            chat_id=user_id,
+                            text=achievement_text,
+                            parse_mode=ParseMode.HTML
+                        )
+                        logger.info(f"Sent achievement notification: {achievement.achievement_id} to user {user_id}")
+                    except Exception as notif_err:
+                        logger.error(f"Failed to send achievement notification: {notif_err}")
+
         except Exception as e:
             logger.error(f"Error checking milestones: {e}", exc_info=True)
-        
+
+        # ========== ИНТЕГРАЦИЯ PHASE 4: Activity Calendar & Achievements ==========
+        try:
+            from core.activity_calendar import get_activity_calendar
+            from core.streak_achievements import get_achievement_system
+
+            # Записываем активность в календарь
+            calendar = get_activity_calendar()
+            await calendar.record_activity(
+                user_id=user_id,
+                questions_answered=1,
+                questions_correct=1 if is_correct else 0
+            )
+
+            # Проверяем и выдаем достижения
+            achievement_system = get_achievement_system()
+            new_achievements = []
+
+            # Сохраняем для проверки first_question
+            if questions_answered == 1:
+                achievements = await achievement_system.check_and_grant_achievements(
+                    user_id, 'first_question', {}
+                )
+                new_achievements.extend(achievements)
+
+            # Проверяем total questions milestones
+            if questions_answered in [100, 500, 1000, 5000]:
+                achievements = await achievement_system.check_and_grant_achievements(
+                    user_id, 'total_questions_milestone', {'total_questions': questions_answered}
+                )
+                new_achievements.extend(achievements)
+
+            # Отправляем уведомления о новых достижениях
+            if new_achievements:
+                for achievement in new_achievements:
+                    try:
+                        achievement_text = f"""
+🎉 <b>Новое достижение!</b>
+
+{achievement.emoji} <b>{achievement.title}</b>
+<i>{achievement.description}</i>
+
+{achievement.rarity.emoji} Редкость: {achievement.rarity.display_name}
+"""
+                        if achievement.reward_description:
+                            achievement_text += f"\n🎁 Награда: {achievement.reward_description}"
+
+                        await context.bot.send_message(
+                            chat_id=user_id,
+                            text=achievement_text,
+                            parse_mode=ParseMode.HTML
+                        )
+                        logger.info(f"Sent achievement notification to user {user_id}: {achievement.achievement_id}")
+                    except Exception as notif_err:
+                        logger.error(f"Failed to send achievement notification: {notif_err}")
+
+        except Exception as e:
+            logger.error(f"Error in Phase 4 integration: {e}", exc_info=True)
+
         # ========== ПОЛУЧЕНИЕ ДОПОЛНИТЕЛЬНЫХ ДАННЫХ ==========
         last_mode = context.user_data.get('last_mode', 'random')
         exam_number = context.user_data.get('current_exam_number')
