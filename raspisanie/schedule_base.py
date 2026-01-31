@@ -241,4 +241,4 @@ class Schedule:
             json.dump(self.to_dict(), f, ensure_ascii=False, indent=2)
 
 
-print("✅ Базовые классы данных созданы успешно")
+# Модуль schedule_base загружен

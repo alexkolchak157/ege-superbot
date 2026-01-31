@@ -177,3 +177,6 @@ users.db
 main_database.db
 data/ege_superbot.db
 node_modules/
+
+# Raspisanie generated files
+raspisanie/output/*.json

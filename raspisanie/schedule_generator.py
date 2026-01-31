@@ -3,17 +3,19 @@
 Фаза 1: Размещение практикумов ЕГЭ
 """
 
-from typing import List, Set, Dict, Tuple, Optional
+from typing import List, Set, Dict, Tuple, Optional, TYPE_CHECKING
 from dataclasses import dataclass
 import random
 from schedule_base import *
-from data_loader import DataLoader
+
+if TYPE_CHECKING:
+    from data_loader import DataLoader
 
 
 class ScheduleGenerator:
     """Генератор расписания"""
-    
-    def __init__(self, loader: DataLoader):
+
+    def __init__(self, loader):
         self.loader = loader
         self.schedule = Schedule()
         
@@ -231,26 +233,28 @@ class ScheduleGenerator:
 
 # Тестирование
 if __name__ == "__main__":
-    print("="*100)
+    import sys
+    sys.path.insert(0, '/home/user/ege-superbot/raspisanie')
+
+    from demo_data import DemoDataLoader
+
+    print("=" * 100)
     print(" " * 25 + "ГЕНЕРАТОР РАСПИСАНИЯ - ПРОТОТИП v0.1")
-    print("="*100)
-    
-    # Загружаем данные
-    loader = DataLoader()
-    loader.load_classrooms('/mnt/user-data/uploads/Здания__кабинеты__места__школьные_здания_.xlsx')
-    loader.load_teachers_and_subjects('/mnt/user-data/uploads/Расстановка_кадров_ФЕВРАЛЬ_2025-2026_учебный_год__2_.xlsx')
-    loader.load_students_and_ege_choices('/mnt/user-data/uploads/Список_участников_ГИА-11_ГБОУ_Школа__Покровский_квартал___41_.xlsx')
-    loader.create_ege_practice_groups()
-    
+    print("=" * 100)
+
+    # Загружаем демо-данные
+    loader = DemoDataLoader()
+    loader.load_all()
+
     # Создаем генератор
     generator = ScheduleGenerator(loader)
-    
+
     # Размещаем практикумы ЕГЭ
     generator.place_ege_practices()
-    
+
     # Статистика
     generator.generate_statistics()
-    
+
     # Сохраняем
-    generator.schedule.save_to_json('/home/claude/schedule_phase1.json')
-    print("\n💾 Расписание (Фаза 1) сохранено в schedule_phase1.json")
+    generator.schedule.save_to_json('output/schedule_phase1.json')
+    print("\n💾 Расписание (Фаза 1) сохранено в output/schedule_phase1.json")
