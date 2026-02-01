@@ -1,5 +1,5 @@
 """
-Веб-интерфейс для генератора расписания
+Веб-приложение для автоматического составления расписания
 ГБОУ "Школа Покровский квартал"
 
 Запуск: streamlit run streamlit_app.py
@@ -10,150 +10,437 @@ import pandas as pd
 import json
 from pathlib import Path
 from io import BytesIO
-
-# Импорты модулей расписания
-from schedule_base import Schedule, DayOfWeek, TimeSlot
-from demo_data import DemoDataLoader
-from schedule_generator import ScheduleGenerator
-from phase2_mandatory import Phase2MandatoryPlacer
-from phase3_optimization import Phase3Optimizer
+from typing import Optional
 
 # Настройка страницы
 st.set_page_config(
     page_title="Генератор расписания",
     page_icon="📅",
-    layout="wide"
+    layout="wide",
+    initial_sidebar_state="expanded"
 )
+
+# CSS стили
+st.markdown("""
+<style>
+    .main-header {
+        font-size: 2rem;
+        font-weight: bold;
+        margin-bottom: 0.5rem;
+    }
+    .sub-header {
+        font-size: 1rem;
+        color: #666;
+        margin-bottom: 2rem;
+    }
+    .metric-card {
+        background-color: #f0f2f6;
+        padding: 1rem;
+        border-radius: 0.5rem;
+        margin: 0.5rem 0;
+    }
+    .success-box {
+        background-color: #d4edda;
+        padding: 1rem;
+        border-radius: 0.5rem;
+        border: 1px solid #c3e6cb;
+    }
+    .warning-box {
+        background-color: #fff3cd;
+        padding: 1rem;
+        border-radius: 0.5rem;
+        border: 1px solid #ffeeba;
+    }
+</style>
+""", unsafe_allow_html=True)
 
 
 def main():
-    st.title("📅 Генератор расписания")
-    st.markdown("**ГБОУ \"Школа Покровский квартал\"** (корпус БК)")
-    st.markdown("---")
+    # Заголовок
+    st.markdown('<p class="main-header">📅 Генератор расписания</p>', unsafe_allow_html=True)
+    st.markdown('<p class="sub-header">ГБОУ "Школа Покровский квартал" — автоматическое составление расписания для 11 классов</p>', unsafe_allow_html=True)
 
-    # Боковая панель
+    # Инициализация состояния
+    if 'step' not in st.session_state:
+        st.session_state.step = 1
+    if 'loader' not in st.session_state:
+        st.session_state.loader = None
+    if 'schedule' not in st.session_state:
+        st.session_state.schedule = None
+
+    # Боковая панель - навигация
     with st.sidebar:
-        st.header("⚙️ Настройки")
+        st.header("📋 Этапы работы")
 
-        # Источник данных
-        data_source = st.radio(
-            "Источник данных:",
-            ["Демо-данные", "Загрузить Excel"]
-        )
+        steps = [
+            ("1️⃣", "Загрузка данных", 1),
+            ("2️⃣", "Проверка данных", 2),
+            ("3️⃣", "Генерация расписания", 3),
+            ("4️⃣", "Просмотр и экспорт", 4),
+        ]
 
-        st.markdown("---")
-
-        # Параметры оптимизации
-        st.subheader("Параметры оптимизации")
-        iterations = st.slider(
-            "Количество итераций",
-            min_value=100,
-            max_value=5000,
-            value=1000,
-            step=100
-        )
-
-        run_phase3 = st.checkbox("Запустить оптимизацию (Фаза 3)", value=True)
+        for icon, name, step_num in steps:
+            if st.session_state.step >= step_num:
+                st.success(f"{icon} {name}")
+            else:
+                st.info(f"{icon} {name}")
 
         st.markdown("---")
 
-        # Кнопка генерации
-        generate_button = st.button("🚀 Сгенерировать расписание", type="primary")
+        # Кнопка сброса
+        if st.button("🔄 Начать заново"):
+            for key in list(st.session_state.keys()):
+                del st.session_state[key]
+            st.rerun()
 
-    # Основная область
-    if generate_button:
-        with st.spinner("Генерация расписания..."):
-            schedule, loader, stats = generate_schedule(iterations, run_phase3)
+    # Основной контент в зависимости от шага
+    if st.session_state.step == 1:
+        show_step1_upload()
+    elif st.session_state.step == 2:
+        show_step2_review()
+    elif st.session_state.step == 3:
+        show_step3_generate()
+    elif st.session_state.step == 4:
+        show_step4_export()
 
-            if schedule:
-                st.session_state['schedule'] = schedule
-                st.session_state['loader'] = loader
-                st.session_state['stats'] = stats
-                st.success("✅ Расписание сгенерировано!")
 
-    # Отображение расписания
-    if 'schedule' in st.session_state:
-        schedule = st.session_state['schedule']
-        loader = st.session_state['loader']
-        stats = st.session_state['stats']
+def show_step1_upload():
+    """Шаг 1: Загрузка данных"""
+    st.header("1️⃣ Загрузка данных")
 
-        # Вкладки
-        tab1, tab2, tab3, tab4, tab5 = st.tabs([
-            "📊 Статистика",
-            "📚 По классам",
-            "👨‍🏫 По учителям",
-            "🏫 По кабинетам",
-            "📥 Экспорт"
-        ])
+    st.markdown("""
+    Загрузите Excel-файлы с данными школы или используйте демо-данные для тестирования.
+    """)
 
-        with tab1:
-            show_statistics(schedule, loader, stats)
+    # Выбор источника данных
+    data_source = st.radio(
+        "Выберите источник данных:",
+        ["📁 Загрузить Excel-файлы", "🎮 Использовать демо-данные"],
+        horizontal=True
+    )
 
-        with tab2:
-            show_by_class(schedule, loader)
+    if data_source == "🎮 Использовать демо-данные":
+        st.info("Демо-данные содержат 43 учителя, 29 кабинетов, 10 классов и ~200 учеников с выбором ЕГЭ.")
 
-        with tab3:
-            show_by_teacher(schedule, loader)
-
-        with tab4:
-            show_by_classroom(schedule, loader)
-
-        with tab5:
-            show_export(schedule, loader)
+        if st.button("📥 Загрузить демо-данные", type="primary"):
+            with st.spinner("Создание демо-данных..."):
+                from demo_data import DemoDataLoader
+                loader = DemoDataLoader()
+                loader.load_all()
+                st.session_state.loader = loader
+                st.session_state.step = 2
+                st.rerun()
 
     else:
-        st.info("👆 Нажмите кнопку \"Сгенерировать расписание\" в боковой панели")
+        st.markdown("### Необходимые файлы:")
 
-        # Показываем описание
-        st.markdown("""
-        ### О программе
+        col1, col2, col3 = st.columns(3)
 
-        Эта программа автоматически составляет расписание для 11 классов с учетом:
+        with col1:
+            st.markdown("**🏫 Кабинеты**")
+            classrooms_file = st.file_uploader(
+                "Здания и кабинеты",
+                type=['xlsx', 'xls'],
+                key='classrooms_file',
+                help="Файл с информацией о кабинетах (номер, вместимость, этаж)"
+            )
 
-        - **Практикумы ЕГЭ** — занятия по выбору учеников, проходящие одновременно для всех классов
-        - **Обязательные предметы** — базовые уроки по учебному плану
-        - **Оптимизация** — минимизация окон у учителей и классов
+        with col2:
+            st.markdown("**👨‍🏫 Учителя и предметы**")
+            teachers_file = st.file_uploader(
+                "Расстановка кадров",
+                type=['xlsx', 'xls'],
+                key='teachers_file',
+                help="Файл с распределением учителей по предметам и классам"
+            )
 
-        #### Алгоритм работы
+        with col3:
+            st.markdown("**🎓 Ученики и ЕГЭ**")
+            students_file = st.file_uploader(
+                "Список участников ГИА",
+                type=['xlsx', 'xls'],
+                key='students_file',
+                help="Файл с выбором предметов ЕГЭ учениками"
+            )
 
-        1. **Фаза 1:** Размещение практикумов ЕГЭ в оптимальные слоты
-        2. **Фаза 2:** Размещение обязательных предметов
-        3. **Фаза 3:** Оптимизация методом Simulated Annealing
-        """)
+        # Проверка загруженных файлов
+        if classrooms_file and teachers_file and students_file:
+            if st.button("📤 Загрузить данные", type="primary"):
+                try:
+                    with st.spinner("Загрузка и обработка файлов..."):
+                        loader = load_real_data(classrooms_file, teachers_file, students_file)
+                        st.session_state.loader = loader
+                        st.session_state.step = 2
+                        st.rerun()
+                except Exception as e:
+                    st.error(f"Ошибка при загрузке: {e}")
+                    st.exception(e)
+        else:
+            st.warning("Загрузите все три файла для продолжения")
 
 
-def generate_schedule(iterations: int, run_phase3: bool):
-    """Генерация расписания"""
+def load_real_data(classrooms_file, teachers_file, students_file):
+    """Загрузка реальных данных из Excel"""
+    import tempfile
+    import os
+    from data_loader import DataLoader
 
-    # Прогресс-бар
+    loader = DataLoader()
+
+    # Сохраняем файлы во временную директорию
+    with tempfile.TemporaryDirectory() as tmpdir:
+        # Кабинеты
+        classrooms_path = os.path.join(tmpdir, "classrooms.xlsx")
+        with open(classrooms_path, 'wb') as f:
+            f.write(classrooms_file.getvalue())
+        loader.load_classrooms(classrooms_path)
+
+        # Учителя
+        teachers_path = os.path.join(tmpdir, "teachers.xlsx")
+        with open(teachers_path, 'wb') as f:
+            f.write(teachers_file.getvalue())
+        loader.load_teachers_and_subjects(teachers_path)
+
+        # Ученики
+        students_path = os.path.join(tmpdir, "students.xlsx")
+        with open(students_path, 'wb') as f:
+            f.write(students_file.getvalue())
+        loader.load_students_and_ege_choices(students_path)
+
+        # Создаем группы ЕГЭ
+        loader.create_ege_practice_groups()
+
+    return loader
+
+
+def show_step2_review():
+    """Шаг 2: Проверка данных"""
+    st.header("2️⃣ Проверка загруженных данных")
+
+    loader = st.session_state.loader
+
+    if not loader:
+        st.error("Данные не загружены")
+        st.session_state.step = 1
+        st.rerun()
+        return
+
+    # Общая статистика
+    col1, col2, col3, col4 = st.columns(4)
+
+    with col1:
+        st.metric("👨‍🏫 Учителей", len(loader.teachers))
+    with col2:
+        st.metric("🏫 Кабинетов", len(loader.classrooms))
+    with col3:
+        st.metric("👥 Классов", len(loader.classes))
+    with col4:
+        st.metric("🎓 Учеников", len(loader.students))
+
+    st.markdown("---")
+
+    # Детальная информация по вкладкам
+    tab1, tab2, tab3, tab4 = st.tabs(["👨‍🏫 Учителя", "🏫 Кабинеты", "👥 Классы", "🎯 Практикумы ЕГЭ"])
+
+    with tab1:
+        show_teachers_table(loader)
+
+    with tab2:
+        show_classrooms_table(loader)
+
+    with tab3:
+        show_classes_table(loader)
+
+    with tab4:
+        show_ege_groups_table(loader)
+
+    st.markdown("---")
+
+    # Кнопки навигации
+    col1, col2 = st.columns([1, 1])
+
+    with col1:
+        if st.button("⬅️ Назад к загрузке"):
+            st.session_state.step = 1
+            st.rerun()
+
+    with col2:
+        if st.button("➡️ Перейти к генерации", type="primary"):
+            st.session_state.step = 3
+            st.rerun()
+
+
+def show_teachers_table(loader):
+    """Таблица учителей"""
+    from schedule_base import DayOfWeek
+
+    data = []
+    for name, teacher in loader.teachers.items():
+        unavailable = ", ".join([
+            {"MONDAY": "ПН", "TUESDAY": "ВТ", "WEDNESDAY": "СР",
+             "THURSDAY": "ЧТ", "FRIDAY": "ПТ"}.get(d.name, d.name)
+            for d in teacher.unavailable_days
+        ]) or "—"
+
+        data.append({
+            "ФИО": name,
+            "Предметы": ", ".join(teacher.subjects[:3]) + ("..." if len(teacher.subjects) > 3 else ""),
+            "Кабинет": teacher.home_classroom or "—",
+            "Недоступен": unavailable
+        })
+
+    df = pd.DataFrame(data)
+    st.dataframe(df, use_container_width=True, height=400)
+
+
+def show_classrooms_table(loader):
+    """Таблица кабинетов"""
+    data = []
+    for num, room in loader.classrooms.items():
+        data.append({
+            "Номер": num,
+            "Вместимость": room.capacity,
+            "Этаж": room.floor,
+            "Ответственный": room.responsible_teacher or "—"
+        })
+
+    df = pd.DataFrame(data)
+    st.dataframe(df, use_container_width=True, height=400)
+
+
+def show_classes_table(loader):
+    """Таблица классов"""
+    data = []
+    for name, cls in loader.classes.items():
+        data.append({
+            "Класс": name,
+            "Профиль": cls.profile,
+            "Учеников": cls.student_count
+        })
+
+    df = pd.DataFrame(data)
+    st.dataframe(df, use_container_width=True)
+
+    # Статистика по ЕГЭ
+    st.subheader("📊 Популярность предметов ЕГЭ")
+    from collections import Counter
+    ege_counts = Counter()
+    for student in loader.students.values():
+        ege_counts.update(student.ege_subjects)
+
+    ege_data = [{"Предмет": subj, "Учеников": count}
+                for subj, count in ege_counts.most_common(10)]
+    df_ege = pd.DataFrame(ege_data)
+    st.bar_chart(df_ege.set_index("Предмет"))
+
+
+def show_ege_groups_table(loader):
+    """Таблица групп ЕГЭ"""
+    data = []
+    for group in loader.ege_groups:
+        data.append({
+            "Предмет": group.subject,
+            "Учитель": group.teacher.name,
+            "Учеников": group.student_count,
+            "Часов/нед": group.hours_per_week,
+            "Классы": ", ".join(sorted(group.classes_involved))
+        })
+
+    df = pd.DataFrame(data)
+    df = df.sort_values("Учеников", ascending=False)
+    st.dataframe(df, use_container_width=True, height=400)
+
+
+def show_step3_generate():
+    """Шаг 3: Генерация расписания"""
+    st.header("3️⃣ Генерация расписания")
+
+    loader = st.session_state.loader
+
+    # Параметры генерации
+    st.subheader("⚙️ Параметры")
+
+    col1, col2 = st.columns(2)
+
+    with col1:
+        iterations = st.slider(
+            "Количество итераций оптимизации",
+            min_value=100,
+            max_value=3000,
+            value=1000,
+            step=100,
+            help="Больше итераций = лучше результат, но дольше"
+        )
+
+    with col2:
+        run_optimization = st.checkbox(
+            "Запустить оптимизацию (Фаза 3)",
+            value=True,
+            help="Оптимизация уменьшает количество окон у учителей и классов"
+        )
+
+    st.markdown("---")
+
+    # Описание этапов
+    st.markdown("""
+    ### Этапы генерации:
+
+    1. **Фаза 1:** Размещение практикумов ЕГЭ в оптимальные слоты
+       - Все 11 классы имеют практикумы одновременно
+       - Ученики из разных классов объединяются по предметам
+
+    2. **Фаза 2:** Размещение обязательных предметов
+       - Сложные предметы (математика, русский) на 2-4 уроках
+       - Учет доступности учителей
+
+    3. **Фаза 3:** Оптимизация (Simulated Annealing)
+       - Минимизация окон у учителей
+       - Минимизация окон у классов
+       - Равномерная нагрузка по дням
+    """)
+
+    st.markdown("---")
+
+    # Кнопка генерации
+    col1, col2, col3 = st.columns([1, 2, 1])
+
+    with col2:
+        if st.button("🚀 Сгенерировать расписание", type="primary", use_container_width=True):
+            generate_schedule(loader, iterations, run_optimization)
+
+
+def generate_schedule(loader, iterations, run_optimization):
+    """Генерация расписания с прогресс-баром"""
+    from schedule_generator import ScheduleGenerator
+    from phase2_mandatory import Phase2MandatoryPlacer
+    from phase3_optimization import Phase3Optimizer
+
     progress = st.progress(0)
     status = st.empty()
 
-    # Загрузка данных
-    status.text("📂 Загрузка данных...")
-    loader = DemoDataLoader()
-    loader.load_all()
-    progress.progress(20)
-
     # Фаза 1
-    status.text("🎯 Фаза 1: Размещение практикумов ЕГЭ...")
+    status.info("🎯 Фаза 1: Размещение практикумов ЕГЭ...")
     generator = ScheduleGenerator(loader)
     generator.place_ege_practices()
-    progress.progress(40)
+    progress.progress(33)
+
+    phase1_count = len(generator.schedule.lessons)
 
     # Фаза 2
-    status.text("📚 Фаза 2: Размещение обязательных предметов...")
+    status.info("📚 Фаза 2: Размещение обязательных предметов...")
     phase2 = Phase2MandatoryPlacer(
         schedule=generator.schedule,
         loader=loader,
         ege_slots=generator.ege_slots
     )
     phase2_stats = phase2.place_all_mandatory_subjects()
-    progress.progress(60)
+    progress.progress(66)
+
+    phase2_count = len(generator.schedule.lessons) - phase1_count
 
     # Фаза 3
-    if run_phase3:
-        status.text("🔧 Фаза 3: Оптимизация расписания...")
+    if run_optimization:
+        status.info("🔧 Фаза 3: Оптимизация расписания...")
         optimizer = Phase3Optimizer(
             schedule=generator.schedule,
             loader=loader
@@ -167,39 +454,122 @@ def generate_schedule(iterations: int, run_phase3: bool):
     progress.progress(100)
     status.empty()
 
-    stats = {
-        'phase2': phase2_stats,
-        'phase3': phase3_stats
+    # Сохраняем результат
+    st.session_state.schedule = schedule
+    st.session_state.stats = {
+        'phase1_count': phase1_count,
+        'phase2_stats': phase2_stats,
+        'phase3_stats': phase3_stats
     }
+    st.session_state.step = 4
 
-    return schedule, loader, stats
+    st.success("✅ Расписание успешно сгенерировано!")
+    st.balloons()
+
+    # Автопереход
+    import time
+    time.sleep(1)
+    st.rerun()
 
 
-def show_statistics(schedule: Schedule, loader, stats: dict):
-    """Показать статистику"""
-    st.header("📊 Статистика расписания")
+def show_step4_export():
+    """Шаг 4: Просмотр и экспорт"""
+    st.header("4️⃣ Просмотр и экспорт расписания")
 
-    # Метрики
-    col1, col2, col3, col4 = st.columns(4)
+    schedule = st.session_state.schedule
+    loader = st.session_state.loader
+    stats = st.session_state.stats
 
-    total_lessons = len(schedule.lessons)
-    ege_lessons = sum(1 for l in schedule.lessons if l.is_ege_practice)
-    mandatory_lessons = total_lessons - ege_lessons
+    if not schedule:
+        st.error("Расписание не сгенерировано")
+        st.session_state.step = 3
+        st.rerun()
+        return
 
-    with col1:
-        st.metric("Всего уроков", total_lessons)
-
-    with col2:
-        st.metric("Практикумы ЕГЭ", ege_lessons)
-
-    with col3:
-        st.metric("Обязательные", mandatory_lessons)
-
-    with col4:
-        success_rate = stats['phase2']['placed'] / stats['phase2']['total_required'] * 100
-        st.metric("Успешность", f"{success_rate:.1f}%")
+    # Статистика
+    show_generation_stats(schedule, loader, stats)
 
     st.markdown("---")
+
+    # Просмотр расписания
+    st.subheader("📋 Просмотр расписания")
+
+    view_mode = st.radio(
+        "Режим просмотра:",
+        ["По классам", "По учителям", "По кабинетам"],
+        horizontal=True
+    )
+
+    if view_mode == "По классам":
+        show_schedule_by_class(schedule, loader)
+    elif view_mode == "По учителям":
+        show_schedule_by_teacher(schedule, loader)
+    else:
+        show_schedule_by_classroom(schedule, loader)
+
+    st.markdown("---")
+
+    # Экспорт
+    st.subheader("📥 Экспорт")
+
+    col1, col2, col3 = st.columns(3)
+
+    with col1:
+        # JSON
+        json_data = json.dumps(schedule.to_dict(), ensure_ascii=False, indent=2)
+        st.download_button(
+            "⬇️ Скачать JSON",
+            data=json_data,
+            file_name="raspisanie.json",
+            mime="application/json",
+            use_container_width=True
+        )
+
+    with col2:
+        # Excel
+        excel_data = export_to_excel(schedule, loader)
+        st.download_button(
+            "⬇️ Скачать Excel",
+            data=excel_data,
+            file_name="raspisanie.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            use_container_width=True
+        )
+
+    with col3:
+        # Новая генерация
+        if st.button("🔄 Сгенерировать заново", use_container_width=True):
+            st.session_state.step = 3
+            st.rerun()
+
+
+def show_generation_stats(schedule, loader, stats):
+    """Показать статистику генерации"""
+    from schedule_base import DayOfWeek
+
+    # Основные метрики
+    col1, col2, col3, col4 = st.columns(4)
+
+    total = len(schedule.lessons)
+    ege = sum(1 for l in schedule.lessons if l.is_ege_practice)
+
+    with col1:
+        st.metric("📊 Всего уроков", total)
+
+    with col2:
+        st.metric("🎯 Практикумы ЕГЭ", ege)
+
+    with col3:
+        success_rate = stats['phase2_stats']['placed'] / stats['phase2_stats']['total_required'] * 100
+        st.metric("✅ Успешность", f"{success_rate:.1f}%")
+
+    with col4:
+        if stats['phase3_stats']:
+            improvement = stats['phase3_stats']['initial_metric'] - stats['phase3_stats']['final_metric']
+            pct = improvement / stats['phase3_stats']['initial_metric'] * 100
+            st.metric("📈 Оптимизация", f"+{pct:.1f}%")
+        else:
+            st.metric("📈 Оптимизация", "—")
 
     # Окна
     col1, col2 = st.columns(2)
@@ -212,177 +582,74 @@ def show_statistics(schedule: Schedule, loader, stats: dict):
         class_gaps = sum(schedule.get_class_gaps(c) for c in loader.classes.keys())
         st.metric("🕳️ Окон у классов", class_gaps)
 
-    # Оптимизация
-    if stats['phase3']:
-        st.markdown("---")
-        st.subheader("Результаты оптимизации")
 
-        col1, col2, col3 = st.columns(3)
+def show_schedule_by_class(schedule, loader):
+    """Расписание по классам"""
+    from schedule_base import DayOfWeek
 
-        with col1:
-            st.metric(
-                "Начальная метрика",
-                f"{stats['phase3']['initial_metric']:.1f}"
-            )
-
-        with col2:
-            st.metric(
-                "Финальная метрика",
-                f"{stats['phase3']['final_metric']:.1f}"
-            )
-
-        with col3:
-            improvement = stats['phase3']['initial_metric'] - stats['phase3']['final_metric']
-            pct = improvement / stats['phase3']['initial_metric'] * 100
-            st.metric("Улучшение", f"{pct:.1f}%")
-
-    # Нагрузка по дням
-    st.markdown("---")
-    st.subheader("📅 Нагрузка по дням недели")
-
-    day_names = {
-        DayOfWeek.MONDAY: "Понедельник",
-        DayOfWeek.TUESDAY: "Вторник",
-        DayOfWeek.WEDNESDAY: "Среда",
-        DayOfWeek.THURSDAY: "Четверг",
-        DayOfWeek.FRIDAY: "Пятница"
-    }
-
-    day_data = []
-    for day in DayOfWeek:
-        count = sum(1 for l in schedule.lessons if l.time_slot.day == day)
-        day_data.append({"День": day_names[day], "Уроков": count})
-
-    df = pd.DataFrame(day_data)
-    st.bar_chart(df.set_index("День"))
-
-
-def show_by_class(schedule: Schedule, loader):
-    """Показать расписание по классам"""
-    st.header("📚 Расписание по классам")
-
-    # Выбор класса
     class_names = sorted(loader.classes.keys())
-    selected_class = st.selectbox("Выберите класс:", class_names)
+    selected = st.selectbox("Выберите класс:", class_names)
 
-    if selected_class:
-        # Получаем уроки класса
-        class_lessons = [l for l in schedule.lessons
-                        if selected_class in l.class_or_group]
+    if selected:
+        lessons = [l for l in schedule.lessons if selected in l.class_or_group]
+        df = build_schedule_table(lessons)
+        st.dataframe(df, use_container_width=True, height=350)
 
-        # Строим таблицу расписания
-        df = build_schedule_table(class_lessons)
-        st.dataframe(df, use_container_width=True, height=400)
-
-        # Статистика класса
-        st.markdown("---")
+        # Статистика
         col1, col2, col3 = st.columns(3)
-
         with col1:
-            st.metric("Всего уроков", len(class_lessons))
-
+            st.metric("Уроков", len(lessons))
         with col2:
-            gaps = schedule.get_class_gaps(selected_class)
-            st.metric("Окон", gaps)
-
+            st.metric("Окон", schedule.get_class_gaps(selected))
         with col3:
-            ege = sum(1 for l in class_lessons if l.is_ege_practice)
+            ege = sum(1 for l in lessons if l.is_ege_practice)
             st.metric("Практикумов ЕГЭ", ege)
 
 
-def show_by_teacher(schedule: Schedule, loader):
-    """Показать расписание по учителям"""
-    st.header("👨‍🏫 Расписание по учителям")
-
-    # Выбор учителя
+def show_schedule_by_teacher(schedule, loader):
+    """Расписание по учителям"""
     teacher_names = sorted(loader.teachers.keys())
-    selected_teacher = st.selectbox("Выберите учителя:", teacher_names)
+    selected = st.selectbox("Выберите учителя:", teacher_names)
 
-    if selected_teacher:
-        teacher = loader.teachers[selected_teacher]
+    if selected:
+        lessons = schedule.get_lessons_by_teacher(selected)
+        df = build_schedule_table(lessons, show_class=True)
+        st.dataframe(df, use_container_width=True, height=350)
 
-        # Получаем уроки учителя
-        teacher_lessons = schedule.get_lessons_by_teacher(selected_teacher)
-
-        # Строим таблицу расписания
-        df = build_schedule_table(teacher_lessons, show_class=True)
-        st.dataframe(df, use_container_width=True, height=400)
-
-        # Статистика учителя
-        st.markdown("---")
+        teacher = loader.teachers[selected]
         col1, col2, col3 = st.columns(3)
-
         with col1:
-            st.metric("Всего уроков", len(teacher_lessons))
-
+            st.metric("Уроков", len(lessons))
         with col2:
-            gaps = schedule.get_teacher_gaps(teacher)
-            st.metric("Окон", gaps)
-
+            st.metric("Окон", schedule.get_teacher_gaps(teacher))
         with col3:
             unavailable = len(teacher.unavailable_days)
             st.metric("Недоступных дней", unavailable)
 
 
-def show_by_classroom(schedule: Schedule, loader):
-    """Показать загрузку кабинетов"""
-    st.header("🏫 Загрузка кабинетов")
-
-    # Таблица загрузки
-    classroom_data = []
-
+def show_schedule_by_classroom(schedule, loader):
+    """Загрузка кабинетов"""
+    data = []
     for room_num, classroom in sorted(loader.classrooms.items()):
         lessons = [l for l in schedule.lessons
                   if l.classroom and l.classroom.number == room_num]
+        load_pct = len(lessons) / 35 * 100
 
-        load_pct = len(lessons) / 35 * 100  # 35 слотов в неделю
-
-        classroom_data.append({
+        data.append({
             "Кабинет": room_num,
             "Вместимость": classroom.capacity,
-            "Этаж": classroom.floor,
             "Уроков": len(lessons),
-            "Загрузка %": f"{load_pct:.1f}%"
+            "Загрузка": f"{load_pct:.0f}%"
         })
 
-    df = pd.DataFrame(classroom_data)
-    st.dataframe(df, use_container_width=True)
-
-
-def show_export(schedule: Schedule, loader):
-    """Экспорт расписания"""
-    st.header("📥 Экспорт расписания")
-
-    col1, col2 = st.columns(2)
-
-    with col1:
-        # Экспорт в JSON
-        st.subheader("📄 JSON")
-
-        json_data = json.dumps(schedule.to_dict(), ensure_ascii=False, indent=2)
-        st.download_button(
-            label="⬇️ Скачать JSON",
-            data=json_data,
-            file_name="schedule.json",
-            mime="application/json"
-        )
-
-    with col2:
-        # Экспорт в Excel
-        st.subheader("📊 Excel")
-
-        if st.button("📥 Подготовить Excel"):
-            excel_data = export_to_excel(schedule, loader)
-            st.download_button(
-                label="⬇️ Скачать Excel",
-                data=excel_data,
-                file_name="schedule.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-            )
+    df = pd.DataFrame(data)
+    st.dataframe(df, use_container_width=True, height=400)
 
 
 def build_schedule_table(lessons, show_class=False):
     """Построить таблицу расписания"""
+    from schedule_base import DayOfWeek
+
     day_names = {
         DayOfWeek.MONDAY: "ПН",
         DayOfWeek.TUESDAY: "ВТ",
@@ -391,61 +658,59 @@ def build_schedule_table(lessons, show_class=False):
         DayOfWeek.FRIDAY: "ПТ"
     }
 
-    # Инициализируем таблицу
     data = {day_names[day]: [""] * 7 for day in DayOfWeek}
     data["Урок"] = list(range(1, 8))
 
-    # Заполняем уроками
     for lesson in lessons:
         day_col = day_names[lesson.time_slot.day]
         row = lesson.time_slot.lesson_number - 1
 
         if show_class:
-            cell = f"{lesson.subject}\n({lesson.class_or_group})"
+            cell = f"{lesson.subject} ({lesson.class_or_group})"
         else:
-            cell = f"{lesson.subject}\n{lesson.teacher.name}"
+            cell = f"{lesson.subject}"
 
         if lesson.classroom:
-            cell += f"\nкаб. {lesson.classroom.number}"
+            cell += f" [каб.{lesson.classroom.number}]"
 
-        # Если ячейка уже занята, добавляем
         if data[day_col][row]:
-            data[day_col][row] += "\n---\n" + cell
+            data[day_col][row] += " | " + cell
         else:
             data[day_col][row] = cell
 
     df = pd.DataFrame(data)
-    df = df[["Урок", "ПН", "ВТ", "СР", "ЧТ", "ПТ"]]
-
-    return df
+    return df[["Урок", "ПН", "ВТ", "СР", "ЧТ", "ПТ"]]
 
 
-def export_to_excel(schedule: Schedule, loader) -> bytes:
-    """Экспорт расписания в Excel"""
+def export_to_excel(schedule, loader) -> bytes:
+    """Экспорт в Excel"""
+    from schedule_base import DayOfWeek
+
     output = BytesIO()
 
     with pd.ExcelWriter(output, engine='openpyxl') as writer:
-        # Общий лист
-        all_lessons = []
+        # Лист со всеми уроками
+        all_data = []
         for lesson in schedule.lessons:
-            all_lessons.append({
+            all_data.append({
                 "День": lesson.time_slot.day.name,
                 "Урок": lesson.time_slot.lesson_number,
                 "Предмет": lesson.subject,
                 "Учитель": lesson.teacher.name,
-                "Класс/Группа": lesson.class_or_group,
+                "Класс": lesson.class_or_group,
                 "Кабинет": lesson.classroom.number if lesson.classroom else "",
-                "Практикум ЕГЭ": "Да" if lesson.is_ege_practice else "Нет"
+                "Тип": "Практикум ЕГЭ" if lesson.is_ege_practice else "Обязательный"
             })
 
-        df = pd.DataFrame(all_lessons)
-        df.to_excel(writer, sheet_name="Все уроки", index=False)
+        pd.DataFrame(all_data).to_excel(writer, sheet_name="Все уроки", index=False)
 
         # Листы по классам
         for class_name in sorted(loader.classes.keys()):
-            class_lessons = [l for l in schedule.lessons if class_name in l.class_or_group]
-            df = build_schedule_table(class_lessons)
-            df.to_excel(writer, sheet_name=class_name[:31], index=False)
+            lessons = [l for l in schedule.lessons if class_name in l.class_or_group]
+            df = build_schedule_table(lessons)
+            # Имя листа не более 31 символа
+            sheet_name = class_name[:31]
+            df.to_excel(writer, sheet_name=sheet_name, index=False)
 
     return output.getvalue()
 
