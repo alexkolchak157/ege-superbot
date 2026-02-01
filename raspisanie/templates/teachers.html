@@ -144,10 +144,10 @@
                     <div class="mb-3">
                         <label class="form-label">Недоступные дни</label>
                         <div class="d-flex gap-3">
-                            {% for i, day in enumerate(day_names) %}
+                            {% for day in day_names %}
                             <div class="form-check">
-                                <input class="form-check-input teacher-day" type="checkbox" value="{{ i }}" id="day{{ i }}">
-                                <label class="form-check-label" for="day{{ i }}">{{ day[:2] }}</label>
+                                <input class="form-check-input teacher-day" type="checkbox" value="{{ loop.index0 }}" id="day{{ loop.index0 }}">
+                                <label class="form-check-label" for="day{{ loop.index0 }}">{{ day[:2] }}</label>
                             </div>
                             {% endfor %}
                         </div>
