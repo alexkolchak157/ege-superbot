@@ -922,6 +922,109 @@ def api_import_data():
             except Exception as e:
                 errors.append(f'Строка {idx + 2}: {str(e)}')
 
+    elif import_type == 'subjects':
+        for idx, row in df.iterrows():
+            try:
+                name = str(row.iloc[0]).strip() if pd.notna(row.iloc[0]) else None
+                if not name:
+                    continue
+
+                existing = Subject.query.filter_by(name=name).first()
+                if existing:
+                    if skip_existing:
+                        skipped += 1
+                        continue
+                    subject = existing
+                else:
+                    subject = Subject(name=name)
+                    db.session.add(subject)
+
+                if len(row) > 1 and pd.notna(row.iloc[1]):
+                    subject.short_name = str(row.iloc[1]).strip()
+                if len(row) > 2 and pd.notna(row.iloc[2]):
+                    subject.is_ege = str(row.iloc[2]).lower() in ['да', 'yes', '1', 'true']
+                if len(row) > 3 and pd.notna(row.iloc[3]):
+                    subject.ege_hours = int(row.iloc[3])
+
+                added += 1
+            except Exception as e:
+                errors.append(f'Строка {idx + 2}: {str(e)}')
+
+    elif import_type == 'workload':
+        for idx, row in df.iterrows():
+            try:
+                # Ищем учителя по имени
+                teacher_name = str(row.iloc[0]).strip() if pd.notna(row.iloc[0]) else None
+                if not teacher_name:
+                    continue
+
+                teacher = Teacher.query.filter(Teacher.name.ilike(f'%{teacher_name}%')).first()
+                if not teacher:
+                    errors.append(f'Строка {idx + 2}: Учитель "{teacher_name}" не найден')
+                    continue
+
+                # Ищем предмет
+                subject_name = str(row.iloc[1]).strip() if len(row) > 1 and pd.notna(row.iloc[1]) else None
+                if not subject_name:
+                    continue
+
+                subject = Subject.query.filter(Subject.name.ilike(f'%{subject_name}%')).first()
+                if not subject:
+                    errors.append(f'Строка {idx + 2}: Предмет "{subject_name}" не найден')
+                    continue
+
+                # Ищем класс
+                class_name = str(row.iloc[2]).strip() if len(row) > 2 and pd.notna(row.iloc[2]) else None
+                if not class_name:
+                    continue
+
+                school_class = SchoolClass.query.filter_by(name=class_name).first()
+                if not school_class:
+                    errors.append(f'Строка {idx + 2}: Класс "{class_name}" не найден')
+                    continue
+
+                # Часы в неделю
+                hours = 1
+                if len(row) > 3 and pd.notna(row.iloc[3]):
+                    hours = int(row.iloc[3])
+
+                # Группа
+                is_group = False
+                group_number = None
+                if len(row) > 4 and pd.notna(row.iloc[4]):
+                    group_val = str(row.iloc[4]).strip()
+                    if group_val in ['1', '2']:
+                        is_group = True
+                        group_number = int(group_val)
+
+                # Проверяем дубликаты
+                existing = Workload.query.filter_by(
+                    teacher_id=teacher.id,
+                    subject_id=subject.id,
+                    class_id=school_class.id,
+                    group_number=group_number
+                ).first()
+
+                if existing:
+                    if skip_existing:
+                        skipped += 1
+                        continue
+                    existing.hours_per_week = hours
+                else:
+                    workload = Workload(
+                        teacher_id=teacher.id,
+                        subject_id=subject.id,
+                        class_id=school_class.id,
+                        hours_per_week=hours,
+                        is_group=is_group,
+                        group_number=group_number
+                    )
+                    db.session.add(workload)
+
+                added += 1
+            except Exception as e:
+                errors.append(f'Строка {idx + 2}: {str(e)}')
+
     db.session.commit()
 
     return jsonify({

@@ -122,11 +122,14 @@
                     </thead>
                     <tbody>
                         {% for teacher in teachers %}
-                        {% set total_hours = teacher.workloads.with_entities(db.func.sum(Workload.hours_per_week)).scalar() or 0 %}
-                        {% if total_hours > 0 %}
+                        {% set ns = namespace(total=0) %}
+                        {% for wl in workloads if wl.teacher_id == teacher.id %}
+                            {% set ns.total = ns.total + wl.hours_per_week %}
+                        {% endfor %}
+                        {% if ns.total > 0 %}
                         <tr>
                             <td>{{ teacher.name }}</td>
-                            <td><strong>{{ total_hours }}</strong></td>
+                            <td><strong>{{ ns.total }}</strong></td>
                         </tr>
                         {% endif %}
                         {% endfor %}
@@ -150,11 +153,14 @@
                     </thead>
                     <tbody>
                         {% for cls in classes %}
-                        {% set total_hours = cls.workloads.with_entities(db.func.sum(Workload.hours_per_week)).scalar() or 0 %}
-                        {% if total_hours > 0 %}
+                        {% set ns = namespace(total=0) %}
+                        {% for wl in workloads if wl.class_id == cls.id %}
+                            {% set ns.total = ns.total + wl.hours_per_week %}
+                        {% endfor %}
+                        {% if ns.total > 0 %}
                         <tr>
                             <td>{{ cls.name }}</td>
-                            <td><strong>{{ total_hours }}</strong></td>
+                            <td><strong>{{ ns.total }}</strong></td>
                         </tr>
                         {% endif %}
                         {% endfor %}
