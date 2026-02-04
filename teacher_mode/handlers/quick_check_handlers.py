@@ -107,7 +107,10 @@ async def start_single_check(update: Update, context: ContextTypes.DEFAULT_TYPE)
     keyboard = [
         [InlineKeyboardButton("💡 Задание 19", callback_data="qc_type_task19")],
         [InlineKeyboardButton("⚙️ Задание 20", callback_data="qc_type_task20")],
-        [InlineKeyboardButton("📊 Задание 24", callback_data="qc_type_task24")],
+        [InlineKeyboardButton("📊 Задание 21", callback_data="qc_type_task21")],
+        [InlineKeyboardButton("📝 Задание 22", callback_data="qc_type_task22")],
+        [InlineKeyboardButton("📜 Задание 23", callback_data="qc_type_task23")],
+        [InlineKeyboardButton("📄 Задание 24", callback_data="qc_type_task24")],
         [InlineKeyboardButton("💻 Задание 25", callback_data="qc_type_task25")],
         [InlineKeyboardButton("📝 Произвольное задание", callback_data="qc_type_custom")],
         [InlineKeyboardButton("◀️ Назад", callback_data="quick_check_menu")]
@@ -133,10 +136,13 @@ async def select_task_type(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     context.user_data['qc_mode'] = 'single'  # одиночная проверка
 
     task_names = {
-        QuickCheckTaskType.TASK19: "💡 Задание 19 (рекурсивные алгоритмы)",
-        QuickCheckTaskType.TASK20: "⚙️ Задание 20 (игры и стратегии)",
-        QuickCheckTaskType.TASK24: "📊 Задание 24 (обработка файлов)",
-        QuickCheckTaskType.TASK25: "💻 Задание 25 (программирование)",
+        QuickCheckTaskType.TASK19: "💡 Задание 19 (Примеры)",
+        QuickCheckTaskType.TASK20: "⚙️ Задание 20 (Слова)",
+        QuickCheckTaskType.TASK21: "📊 Задание 21 (Графики)",
+        QuickCheckTaskType.TASK22: "📝 Задание 22 (Анализ ситуаций)",
+        QuickCheckTaskType.TASK23: "📜 Задание 23 (Конституция РФ)",
+        QuickCheckTaskType.TASK24: "📄 Задание 24 (Планы)",
+        QuickCheckTaskType.TASK25: "💻 Задание 25 (Сочинение)",
         QuickCheckTaskType.CUSTOM: "📝 Произвольное задание"
     }
 
@@ -366,7 +372,10 @@ async def start_bulk_check(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     keyboard = [
         [InlineKeyboardButton("💡 Задание 19", callback_data="qc_bulk_task19")],
         [InlineKeyboardButton("⚙️ Задание 20", callback_data="qc_bulk_task20")],
-        [InlineKeyboardButton("📊 Задание 24", callback_data="qc_bulk_task24")],
+        [InlineKeyboardButton("📊 Задание 21", callback_data="qc_bulk_task21")],
+        [InlineKeyboardButton("📝 Задание 22", callback_data="qc_bulk_task22")],
+        [InlineKeyboardButton("📜 Задание 23", callback_data="qc_bulk_task23")],
+        [InlineKeyboardButton("📄 Задание 24", callback_data="qc_bulk_task24")],
         [InlineKeyboardButton("💻 Задание 25", callback_data="qc_bulk_task25")],
         [InlineKeyboardButton("📝 Произвольное", callback_data="qc_bulk_custom")],
         [InlineKeyboardButton("◀️ Назад", callback_data="quick_check_menu")]
@@ -392,7 +401,10 @@ async def select_bulk_task_type(update: Update, context: ContextTypes.DEFAULT_TY
     task_names = {
         QuickCheckTaskType.TASK19: "💡 Задание 19",
         QuickCheckTaskType.TASK20: "⚙️ Задание 20",
-        QuickCheckTaskType.TASK24: "📊 Задание 24",
+        QuickCheckTaskType.TASK21: "📊 Задание 21",
+        QuickCheckTaskType.TASK22: "📝 Задание 22",
+        QuickCheckTaskType.TASK23: "📜 Задание 23",
+        QuickCheckTaskType.TASK24: "📄 Задание 24",
         QuickCheckTaskType.TASK25: "💻 Задание 25",
         QuickCheckTaskType.CUSTOM: "📝 Произвольное"
     }
