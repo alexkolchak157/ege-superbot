@@ -2,7 +2,7 @@
 Интеграция выполнения домашних заданий с существующими evaluators.
 
 Этот модуль связывает систему домашних заданий учителей
-с существующими плагинами (task19, task20, task24, task25).
+с существующими плагинами (task19, task20, task21, task22, task23, task24, task25).
 """
 
 from __future__ import annotations  # Python 3.8 compatibility
@@ -274,6 +274,90 @@ async def evaluate_task20_answer(
         return False, "Ошибка при проверке ответа"
 
 
+async def evaluate_task21_answer(
+    answer: str,
+    question_data: dict,
+) -> tuple[bool, Optional[str]]:
+    """
+    Проверяет ответ через evaluator task21 (Графики спроса и предложения).
+
+    Args:
+        answer: Ответ ученика
+        question_data: Данные вопроса из JSON
+
+    Returns:
+        Tuple (is_correct, feedback)
+    """
+    try:
+        from task21.evaluator import Task21Evaluator
+
+        evaluator = Task21Evaluator()
+        result = await evaluator.evaluate(user_answer=answer, question_data=question_data)
+
+        is_correct = result.total_score >= (result.max_score / 2)
+        return is_correct, result.feedback
+
+    except Exception as e:
+        logger.error(f"Error evaluating task21 answer: {e}")
+        return False, "Ошибка при проверке ответа"
+
+
+async def evaluate_task22_answer(
+    answer: str,
+    question_data: dict,
+) -> tuple[bool, Optional[str]]:
+    """
+    Проверяет ответ через evaluator task22 (Анализ ситуаций).
+
+    Args:
+        answer: Ответ ученика
+        question_data: Данные вопроса (description, questions, correct_answers, etc.)
+
+    Returns:
+        Tuple (is_correct, feedback)
+    """
+    try:
+        from task22.evaluator import Task22AIEvaluator
+
+        evaluator = Task22AIEvaluator()
+        result = await evaluator.evaluate(answer=answer, task_data=question_data)
+
+        is_correct = result.total_score >= (result.max_score / 2)
+        return is_correct, result.feedback
+
+    except Exception as e:
+        logger.error(f"Error evaluating task22 answer: {e}")
+        return False, "Ошибка при проверке ответа"
+
+
+async def evaluate_task23_answer(
+    answer: str,
+    question_data: dict,
+) -> tuple[bool, Optional[str]]:
+    """
+    Проверяет ответ через evaluator task23 (Конституция РФ).
+
+    Args:
+        answer: Ответ ученика
+        question_data: Данные вопроса (model_type, characteristics, model_answers, etc.)
+
+    Returns:
+        Tuple (is_correct, feedback)
+    """
+    try:
+        from task23.evaluator import Task23Evaluator
+
+        evaluator = Task23Evaluator()
+        result = await evaluator.evaluate(user_answer=answer, question_data=question_data)
+
+        is_correct = result.total_score >= (result.max_score / 2)
+        return is_correct, result.feedback
+
+    except Exception as e:
+        logger.error(f"Error evaluating task23 answer: {e}")
+        return False, "Ошибка при проверке ответа"
+
+
 async def evaluate_task24_answer(
     answer: str,
     topic: str,
@@ -379,7 +463,8 @@ async def evaluate_homework_answer(
     Универсальная функция для проверки ответа на вопрос домашнего задания.
 
     Args:
-        task_module: Модуль задания ('task19', 'task20', 'task24', 'task25')
+        task_module: Модуль задания ('task19', 'task20', 'task21', 'task22', 'task23',
+                     'task24', 'task25')
         answer: Ответ ученика
         question_data: Данные вопроса (topic, question_text, и т.д.)
 
@@ -398,6 +483,24 @@ async def evaluate_homework_answer(
             answer,
             question_data.get('topic', ''),
             **question_data
+        )
+
+    elif task_module == 'task21':
+        return await evaluate_task21_answer(
+            answer,
+            question_data,
+        )
+
+    elif task_module == 'task22':
+        return await evaluate_task22_answer(
+            answer,
+            question_data,
+        )
+
+    elif task_module == 'task23':
+        return await evaluate_task23_answer(
+            answer,
+            question_data,
         )
 
     elif task_module == 'task24':

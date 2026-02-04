@@ -18,7 +18,8 @@ async def evaluate_homework_answer(
     Проверяет ответ ученика через AI evaluator соответствующего модуля.
 
     Args:
-        task_module: Название модуля ('task19', 'task20', 'task24', 'task25', 'test_part', 'custom')
+        task_module: Название модуля ('task19', 'task20', 'task21', 'task22', 'task23',
+                     'task24', 'task25', 'test_part', 'custom')
         question_data: Данные вопроса из question_loader или custom_questions
         user_answer: Ответ ученика
         user_id: ID ученика
@@ -40,6 +41,12 @@ async def evaluate_homework_answer(
             return await _evaluate_task19(question_data, user_answer, user_id)
         elif task_module == 'task20':
             return await _evaluate_task20(question_data, user_answer, user_id)
+        elif task_module == 'task21':
+            return await _evaluate_task21(question_data, user_answer, user_id)
+        elif task_module == 'task22':
+            return await _evaluate_task22(question_data, user_answer, user_id)
+        elif task_module == 'task23':
+            return await _evaluate_task23(question_data, user_answer, user_id)
         elif task_module == 'task24':
             return await _evaluate_task24(question_data, user_answer, user_id)
         elif task_module == 'task25':
@@ -138,6 +145,105 @@ async def _evaluate_task20(question_data: Dict, user_answer: str, user_id: int) 
         return True, "✅ Ответ принят (AI проверка недоступна)"
     except Exception as e:
         logger.error(f"Error in task20 evaluation: {e}", exc_info=True)
+        return False, f"❌ Ошибка при проверке: {str(e)}"
+
+
+async def _evaluate_task21(question_data: Dict, user_answer: str, user_id: int) -> Tuple[bool, str]:
+    """Проверка ответа для task21 (графики спроса и предложения)"""
+    try:
+        from task21.evaluator import Task21Evaluator
+        from core.types import EvaluationResult
+
+        evaluator = Task21Evaluator()
+
+        result: EvaluationResult = await evaluator.evaluate(
+            user_answer=user_answer,
+            question_data=question_data
+        )
+
+        is_correct = result.total_score >= (result.max_score / 2)
+
+        feedback = f"📊 <b>Результат проверки:</b>\n\n"
+        feedback += f"Баллы: {result.total_score}/{result.max_score}\n\n"
+        feedback += f"<b>Обратная связь:</b>\n{result.feedback}"
+
+        if result.suggestions:
+            feedback += f"\n\n💡 <b>Рекомендации:</b>\n"
+            feedback += "\n".join(f"• {s}" for s in result.suggestions)
+
+        return is_correct, feedback
+
+    except ImportError as e:
+        logger.warning(f"Task21 evaluator not available: {e}")
+        return True, "✅ Ответ принят (AI проверка недоступна)"
+    except Exception as e:
+        logger.error(f"Error in task21 evaluation: {e}", exc_info=True)
+        return False, f"❌ Ошибка при проверке: {str(e)}"
+
+
+async def _evaluate_task22(question_data: Dict, user_answer: str, user_id: int) -> Tuple[bool, str]:
+    """Проверка ответа для task22 (анализ ситуаций)"""
+    try:
+        from task22.evaluator import Task22AIEvaluator
+        from core.types import EvaluationResult
+
+        evaluator = Task22AIEvaluator()
+
+        result: EvaluationResult = await evaluator.evaluate(
+            answer=user_answer,
+            task_data=question_data
+        )
+
+        is_correct = result.total_score >= (result.max_score / 2)
+
+        feedback = f"📊 <b>Результат проверки:</b>\n\n"
+        feedback += f"Баллы: {result.total_score}/{result.max_score}\n\n"
+        feedback += f"<b>Обратная связь:</b>\n{result.feedback}"
+
+        if result.suggestions:
+            feedback += f"\n\n💡 <b>Рекомендации:</b>\n"
+            feedback += "\n".join(f"• {s}" for s in result.suggestions)
+
+        return is_correct, feedback
+
+    except ImportError as e:
+        logger.warning(f"Task22 evaluator not available: {e}")
+        return True, "✅ Ответ принят (AI проверка недоступна)"
+    except Exception as e:
+        logger.error(f"Error in task22 evaluation: {e}", exc_info=True)
+        return False, f"❌ Ошибка при проверке: {str(e)}"
+
+
+async def _evaluate_task23(question_data: Dict, user_answer: str, user_id: int) -> Tuple[bool, str]:
+    """Проверка ответа для task23 (Конституция РФ)"""
+    try:
+        from task23.evaluator import Task23Evaluator
+        from core.types import EvaluationResult
+
+        evaluator = Task23Evaluator()
+
+        result: EvaluationResult = await evaluator.evaluate(
+            user_answer=user_answer,
+            question_data=question_data
+        )
+
+        is_correct = result.total_score >= (result.max_score / 2)
+
+        feedback = f"📊 <b>Результат проверки:</b>\n\n"
+        feedback += f"Баллы: {result.total_score}/{result.max_score}\n\n"
+        feedback += f"<b>Обратная связь:</b>\n{result.feedback}"
+
+        if result.suggestions:
+            feedback += f"\n\n💡 <b>Рекомендации:</b>\n"
+            feedback += "\n".join(f"• {s}" for s in result.suggestions)
+
+        return is_correct, feedback
+
+    except ImportError as e:
+        logger.warning(f"Task23 evaluator not available: {e}")
+        return True, "✅ Ответ принят (AI проверка недоступна)"
+    except Exception as e:
+        logger.error(f"Error in task23 evaluation: {e}", exc_info=True)
         return False, f"❌ Ошибка при проверке: {str(e)}"
 
 
@@ -285,7 +391,8 @@ async def _evaluate_custom_question(
     Проверка кастомного вопроса с использованием evaluator соответствующего типа.
 
     Args:
-        custom_type: Тип кастомного вопроса ('test_part', 'task19', 'task20', 'task24', 'task25')
+        custom_type: Тип кастомного вопроса ('test_part', 'task19', 'task20', 'task21',
+                     'task22', 'task23', 'task24', 'task25')
         question_data: Данные кастомного вопроса (включая text, type, correct_answer)
         user_answer: Ответ ученика
         user_id: ID ученика
@@ -330,7 +437,7 @@ async def _evaluate_custom_question(
                 )
                 return True, feedback
 
-        # Для заданий 19, 20, 24, 25 используем соответствующие AI evaluators
+        # Для заданий 19-25 используем соответствующие AI evaluators
         elif custom_type == 'task19':
             # Формируем question_data для evaluator
             eval_question_data = {
@@ -354,6 +461,31 @@ async def _evaluate_custom_question(
                 eval_question_data['criteria'] = correct_answer
 
             return await _evaluate_task20(eval_question_data, user_answer, user_id)
+
+        elif custom_type == 'task21':
+            eval_question_data = {
+                'task_text': question_text,
+                'market_name': 'Кастомное задание',
+            }
+            return await _evaluate_task21(eval_question_data, user_answer, user_id)
+
+        elif custom_type == 'task22':
+            eval_question_data = {
+                'description': question_text,
+                'questions': [],
+                'correct_answers': [],
+                'answer_requirements': [],
+                'connected_questions': [],
+            }
+            return await _evaluate_task22(eval_question_data, user_answer, user_id)
+
+        elif custom_type == 'task23':
+            eval_question_data = {
+                'model_type': 1,
+                'characteristics': [question_text],
+                'model_answers': [],
+            }
+            return await _evaluate_task23(eval_question_data, user_answer, user_id)
 
         elif custom_type == 'task24':
             eval_question_data = {

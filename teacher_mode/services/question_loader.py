@@ -15,7 +15,8 @@ def load_question_by_id(task_module: str, question_id) -> Optional[Dict]:
     Загружает конкретный вопрос по ID из указанного модуля.
 
     Args:
-        task_module: Название модуля ('test_part', 'task19', 'task20', 'task24', 'task25')
+        task_module: Название модуля ('test_part', 'task19', 'task20', 'task21',
+                     'task22', 'task23', 'task24', 'task25')
         question_id: ID вопроса (может быть строкой для test_part или числом для остальных)
 
     Returns:
@@ -32,7 +33,19 @@ def load_question_by_id(task_module: str, question_id) -> Optional[Dict]:
         if task_module == 'task24':
             return _load_task24_question(question_id, base_dir)
 
-        # Обработка для остальных модулей
+        # Специальная обработка для task21 (task21_questions.json, формат {"tasks": [...]})
+        if task_module == 'task21':
+            return _load_task21_question(question_id, base_dir)
+
+        # Специальная обработка для task22 (task22_topics.json, формат {"tasks": [...]})
+        if task_module == 'task22':
+            return _load_task22_question(question_id, base_dir)
+
+        # Специальная обработка для task23 (data/task23_questions.json)
+        if task_module == 'task23':
+            return _load_task23_question(question_id, base_dir)
+
+        # Обработка для остальных модулей (task19, task20, task25 — формат [список тем])
         topics_file = os.path.join(base_dir, task_module, f"{task_module}_topics.json")
 
         if not os.path.exists(topics_file):
@@ -52,6 +65,108 @@ def load_question_by_id(task_module: str, question_id) -> Optional[Dict]:
 
     except Exception as e:
         logger.error(f"Error loading question {question_id} from {task_module}: {e}")
+        return None
+
+
+def _load_task21_question(question_id, base_dir: str) -> Optional[Dict]:
+    """
+    Загружает вопрос task21 из task21_questions.json.
+
+    Args:
+        question_id: ID задания (строка вида "task21_003" или число)
+        base_dir: Базовая директория проекта
+
+    Returns:
+        Словарь с данными вопроса или None
+    """
+    try:
+        questions_file = os.path.join(base_dir, 'task21', 'task21_questions.json')
+
+        if not os.path.exists(questions_file):
+            logger.warning(f"Task21 questions file not found: {questions_file}")
+            return None
+
+        with open(questions_file, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+
+        tasks = data.get('tasks', [])
+        for task in tasks:
+            if task.get('id') == question_id:
+                return task
+
+        logger.warning(f"Question {question_id} not found in task21")
+        return None
+
+    except Exception as e:
+        logger.error(f"Error loading task21 question {question_id}: {e}")
+        return None
+
+
+def _load_task22_question(question_id, base_dir: str) -> Optional[Dict]:
+    """
+    Загружает вопрос task22 из task22_topics.json.
+
+    Args:
+        question_id: ID задания (число)
+        base_dir: Базовая директория проекта
+
+    Returns:
+        Словарь с данными вопроса или None
+    """
+    try:
+        topics_file = os.path.join(base_dir, 'task22', 'task22_topics.json')
+
+        if not os.path.exists(topics_file):
+            logger.warning(f"Task22 topics file not found: {topics_file}")
+            return None
+
+        with open(topics_file, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+
+        tasks = data.get('tasks', [])
+        for task in tasks:
+            if task.get('id') == question_id:
+                return task
+
+        logger.warning(f"Question {question_id} not found in task22")
+        return None
+
+    except Exception as e:
+        logger.error(f"Error loading task22 question {question_id}: {e}")
+        return None
+
+
+def _load_task23_question(question_id, base_dir: str) -> Optional[Dict]:
+    """
+    Загружает вопрос task23 из data/task23_questions.json.
+
+    Args:
+        question_id: ID вопроса (число)
+        base_dir: Базовая директория проекта
+
+    Returns:
+        Словарь с данными вопроса или None
+    """
+    try:
+        questions_file = os.path.join(base_dir, 'data', 'task23_questions.json')
+
+        if not os.path.exists(questions_file):
+            logger.warning(f"Task23 questions file not found: {questions_file}")
+            return None
+
+        with open(questions_file, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+
+        questions = data.get('questions', [])
+        for question in questions:
+            if question.get('id') == question_id:
+                return question
+
+        logger.warning(f"Question {question_id} not found in task23")
+        return None
+
+    except Exception as e:
+        logger.error(f"Error loading task23 question {question_id}: {e}")
         return None
 
 
@@ -192,6 +307,39 @@ def format_question_for_display(task_module: str, question_data: Dict) -> str:
 
     elif task_module == 'task20':
         return f"<b>{question_data['title']}</b>\n\n{question_data['task_text']}"
+
+    elif task_module == 'task21':
+        market = question_data.get('market_name', '')
+        text = f"<b>Задание 21 — Рынок {market}</b>\n\n"
+        text += f"{question_data.get('graph_description', '')}\n\n"
+        q1 = question_data.get('question_1', {})
+        q2 = question_data.get('question_2', {})
+        q3 = question_data.get('question_3', {})
+        text += f"1. {q1.get('text', '')}\n"
+        text += f"2. {q2.get('text', '')}\n"
+        text += f"3. {q3.get('text', '')}"
+        return text
+
+    elif task_module == 'task22':
+        text = f"<b>Задание 22</b>\n\n"
+        text += f"{question_data.get('description', '')}\n\n"
+        questions = question_data.get('questions', [])
+        for i, q in enumerate(questions, 1):
+            text += f"{i}. {q}\n"
+        return text
+
+    elif task_module == 'task23':
+        model_type = question_data.get('model_type', 1)
+        characteristics = question_data.get('characteristics', [])
+        text = f"<b>Задание 23 — Конституция РФ</b>\n\n"
+        if model_type == 1 and characteristics:
+            text += f"Характеристика: <i>{characteristics[0]}</i>\n\n"
+            text += "Приведите три объяснения (подтверждения) данной характеристики."
+        elif model_type == 2:
+            text += "Приведите по одному подтверждению каждой характеристики:\n\n"
+            for i, char in enumerate(characteristics, 1):
+                text += f"{i}. {char}\n"
+        return text
 
     elif task_module == 'task24':
         text = f"<b>{question_data['title']}</b>\n\n"

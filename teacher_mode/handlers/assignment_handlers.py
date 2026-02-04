@@ -31,7 +31,7 @@ async def create_assignment_start(update: Update, context: ContextTypes.DEFAULT_
 
 
 async def select_module(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Выбор модуля (task19, task20, task24, task25)"""
+    """Выбор модуля (task19, task20, task21, task22, task23, task24, task25)"""
     query = update.callback_query
     await query.answer()
 
@@ -43,6 +43,9 @@ async def select_module(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
     keyboard = [
         [InlineKeyboardButton("💡 Задание 19 (Примеры)", callback_data="module_task19")],
         [InlineKeyboardButton("🔤 Задание 20 (Слова)", callback_data="module_task20")],
+        [InlineKeyboardButton("📊 Задание 21 (Графики)", callback_data="module_task21")],
+        [InlineKeyboardButton("📝 Задание 22 (Анализ ситуаций)", callback_data="module_task22")],
+        [InlineKeyboardButton("📜 Задание 23 (Конституция РФ)", callback_data="module_task23")],
         [InlineKeyboardButton("📄 Задание 24 (Пропуски)", callback_data="module_task24")],
         [InlineKeyboardButton("✍️ Задание 25 (Сочинение)", callback_data="module_task25")],
         [InlineKeyboardButton("◀️ Назад", callback_data="create_assignment")],
