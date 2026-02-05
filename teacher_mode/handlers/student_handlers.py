@@ -316,8 +316,11 @@ async def view_homework(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         'test_part': '📝 Тестовая часть (1-16)',
         'task19': '💡 Задание 19 (Примеры с обществознанием)',
         'task20': '⚙️ Задание 20 (Логические задачи)',
-        'task24': '📊 Задание 24 (Развернутый план)',
-        'task25': '💻 Задание 25 (Эссе)',
+        'task21': '📊 Задание 21 (Графики)',
+        'task22': '📝 Задание 22 (Анализ ситуаций)',
+        'task23': '📜 Задание 23 (Конституция РФ)',
+        'task24': '📄 Задание 24 (Развернутый план)',
+        'task25': '✍️ Задание 25 (Эссе)',
         'custom': '📝 Кастомное задание'
     }
 
@@ -454,7 +457,7 @@ async def start_homework(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 }
             else:
                 # Загружаем данные для остальных модулей
-                if module_code not in ['task19', 'task20', 'task24', 'task25']:
+                if module_code not in ['task19', 'task20', 'task21', 'task22', 'task23', 'task24', 'task25']:
                     continue
 
                 topics_data_temp = load_topics_for_module(module_code)
@@ -519,8 +522,11 @@ async def start_homework(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         'test_part': '📝 Тестовая часть (1-16)',
         'task19': '💡 Задание 19',
         'task20': '⚙️ Задание 20',
-        'task24': '📊 Задание 24',
-        'task25': '💻 Задание 25',
+        'task21': '📊 Задание 21',
+        'task22': '📝 Задание 22',
+        'task23': '📜 Задание 23',
+        'task24': '📄 Задание 24',
+        'task25': '✍️ Задание 25',
         'mixed': '🔀 Смешанное задание',
         'custom': '📝 Кастомное задание',
         'full_exam': '🎯 Полный вариант ЕГЭ'
