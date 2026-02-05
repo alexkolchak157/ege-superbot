@@ -4,7 +4,7 @@ import logging
 import json
 import random
 from typing import Optional, Dict, Any
-from datetime import datetime
+from datetime import datetime, date
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.constants import ParseMode
 from telegram.ext import ContextTypes, ConversationHandler
@@ -20,9 +20,15 @@ from core.ui_helpers import (
     show_ai_evaluation_animation,
     get_personalized_greeting,
     get_motivational_message,
+    show_streak_notification,
 )
+from core.streak_manager import get_streak_manager
 
 logger = logging.getLogger(__name__)
+
+# Константы
+TASK_CODE = "task22"
+MAX_SCORE = 4
 
 # Глобальные переменные для данных
 task22_data = {}
@@ -234,6 +240,37 @@ async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # Сохраняем результат в БД
     await save_attempt(user_id, task['id'], answer, score)
+
+    # ========== ИНТЕГРАЦИЯ СО СТРИКАМИ И СТАТИСТИКОЙ ==========
+    # Определяем, является ли ответ правильным (для стриков)
+    is_correct = score >= 3  # 3+ балла из 4 считаем правильным
+
+    # Обновляем общую статистику прогресса
+    await db.update_progress(user_id, TASK_CODE, is_correct)
+
+    # Обновляем дневной стрик (только раз в день)
+    current_date = date.today().isoformat()
+    last_activity_date = context.user_data.get('last_activity_date')
+    streak_manager = get_streak_manager()
+
+    daily_current = 0
+    if last_activity_date != current_date:
+        daily_current, daily_max, level = await streak_manager.update_daily_streak(user_id)
+        context.user_data['last_activity_date'] = current_date
+        logger.info(f"[Task22] Daily streak updated for user {user_id}: {daily_current}/{daily_max}")
+
+        # Показываем уведомление о дневном стрике для milestone значений
+        if daily_current in [3, 5, 7, 10, 14, 20, 30, 50, 100]:
+            await show_streak_notification(update, context, 'daily', daily_current)
+
+    # Обновляем стрик правильных ответов
+    correct_current, correct_max = await streak_manager.update_correct_streak(user_id, is_correct)
+    logger.info(f"[Task22] Correct streak for user {user_id}: {correct_current}/{correct_max}")
+
+    # Показываем уведомление о стрике правильных ответов для milestone значений
+    if is_correct and correct_current in [3, 5, 7, 10, 14, 20, 30, 50, 100]:
+        await show_streak_notification(update, context, 'correct', correct_current)
+    # ========== КОНЕЦ ИНТЕГРАЦИИ СО СТРИКАМИ ==========
 
     # Формируем сообщение с результатом
     result_text = f"""<b>✅ Проверка завершена!</b>
