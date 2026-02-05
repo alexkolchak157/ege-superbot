@@ -1226,9 +1226,9 @@ class SubscriptionManager:
                 active_modules = [row[0] for row in modules]
                 
                 # Определяем эквивалентный план
-                if set(active_modules) >= {'test_part', 'task19', 'task20', 'task25', 'task24'}:
+                if set(active_modules) >= {'test_part', 'task19', 'task20', 'task21', 'task22', 'task23', 'task24', 'task25'}:
                     plan_id = 'package_full'
-                elif set(active_modules) >= {'task19', 'task20', 'task25'}:
+                elif set(active_modules) >= {'task19', 'task20', 'task21', 'task22', 'task23', 'task24', 'task25'}:
                     plan_id = 'package_second_part'
                 else:
                     plan_id = 'custom_modules'
@@ -2079,6 +2079,9 @@ class SubscriptionManager:
                 'test': 'test_part',
                 'task19': 'task19',
                 'task20': 'task20',
+                'task21': 'task21',
+                'task22': 'task22',
+                'task23': 'task23',
                 'task24': 'task24',
                 'task25': 'task25',
                 # С префиксом module_
@@ -2086,6 +2089,9 @@ class SubscriptionManager:
                 'module_testpart': 'test_part',
                 'module_task19': 'task19',
                 'module_task20': 'task20',
+                'module_task21': 'task21',
+                'module_task22': 'task22',
+                'module_task23': 'task23',
                 'module_task24': 'task24',
                 'module_task25': 'task25',
             }

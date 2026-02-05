@@ -872,7 +872,7 @@ async def cmd_debug_subscription(update: Update, context: ContextTypes.DEFAULT_T
             text += "📦 <b>Нет активных модулей</b>\n"
         
         text += "\n<b>Проверка доступа к модулям:</b>\n"
-        for module_code in ['test_part', 'task19', 'task20', 'task24', 'task25']:
+        for module_code in ['test_part', 'task19', 'task20', 'task21', 'task22', 'task23', 'task24', 'task25']:
             has_access = await subscription_manager.check_module_access(user_id, module_code)
             text += f"• {module_code}: {'✅' if has_access else '❌'}\n"
     
@@ -2301,7 +2301,7 @@ async def handle_my_subscriptions(update: Update, context: ContextTypes.DEFAULT_
             
             # Детали доступа
             text += "📊 <b>Детали доступа:</b>\n"
-            all_modules = ['test_part', 'task19', 'task20', 'task24', 'task25']
+            all_modules = ['test_part', 'task19', 'task20', 'task21', 'task22', 'task23', 'task24', 'task25']
             inactive_modules = []
             
             for module_code in all_modules:
