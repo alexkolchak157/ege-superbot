@@ -126,9 +126,9 @@ def requires_subscription(
 def requires_module(module_code: str, send_message: bool = True) -> Callable:
     """
     Декоратор для проверки доступа к модулю (модульная система).
-    
+
     Args:
-        module_code: Код модуля ('test_part', 'task19', 'task20', 'task25', 'task24')
+        module_code: Код модуля ('test_part', 'task19', 'task20', 'task21', 'task22', 'task23', 'task24', 'task25')
         send_message: Отправлять ли сообщение о необходимости подписки
     
     Использование:

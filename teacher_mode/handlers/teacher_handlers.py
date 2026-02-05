@@ -463,6 +463,9 @@ async def create_assignment_start(update: Update, context: ContextTypes.DEFAULT_
         [InlineKeyboardButton("📝 Тестовая часть (1-16)", callback_data="assign_task_test_part")],
         [InlineKeyboardButton("💡 Задание 19", callback_data="assign_task_task19")],
         [InlineKeyboardButton("⚙️ Задание 20", callback_data="assign_task_task20")],
+        [InlineKeyboardButton("📊 Задание 21", callback_data="assign_task_task21")],
+        [InlineKeyboardButton("📝 Задание 22", callback_data="assign_task_task22")],
+        [InlineKeyboardButton("📜 Задание 23", callback_data="assign_task_task23")],
         [InlineKeyboardButton("📊 Задание 24", callback_data="assign_task_task24")],
         [InlineKeyboardButton("💻 Задание 25", callback_data="assign_task_task25")],
         [InlineKeyboardButton("🔀 Смешанное задание", callback_data="assign_task_mixed")],
@@ -516,6 +519,9 @@ async def select_task_type(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         'test_part': '📝 Тестовая часть (1-16)',
         'task19': '💡 Задание 19',
         'task20': '⚙️ Задание 20',
+        'task21': '📊 Задание 21',
+        'task22': '📝 Задание 22',
+        'task23': '📜 Задание 23',
         'task24': '📊 Задание 24',
         'task25': '💻 Задание 25'
     }
@@ -590,10 +596,13 @@ async def create_full_exam_variant(update: Update, context: ContextTypes.DEFAULT
         full_exam_questions.extend(test_part_questions)
 
         # 2. Генерируем задания 19, 20, 24, 25 (по 1 заданию каждое)
-        advanced_modules = ['task19', 'task20', 'task24', 'task25']
+        advanced_modules = ['task19', 'task20', 'task21', 'task22', 'task23', 'task24', 'task25']
         module_names = {
             'task19': '💡 Задание 19',
             'task20': '⚙️ Задание 20',
+            'task21': '📊 Задание 21',
+            'task22': '📝 Задание 22',
+            'task23': '📜 Задание 23',
             'task24': '📊 Задание 24',
             'task25': '💻 Задание 25'
         }
@@ -627,6 +636,9 @@ async def create_full_exam_variant(update: Update, context: ContextTypes.DEFAULT
             f"📝 Тестовая часть (1-16): {len(test_part_questions)} заданий\n"
             f"💡 Задание 19: 1 задание\n"
             f"⚙️ Задание 20: 1 задание\n"
+            f"📊 Задание 21: 1 задание\n"
+            f"📝 Задание 22: 1 задание\n"
+            f"📜 Задание 23: 1 задание\n"
             f"📊 Задание 24: 1 задание\n"
             f"💻 Задание 25: 1 задание\n\n"
             "<i>Нажмите 'Продолжить' для выбора студентов</i>"
@@ -689,6 +701,9 @@ async def select_selection_mode(update: Update, context: ContextTypes.DEFAULT_TY
         'test_part': '📝 Тестовая часть (1-16)',
         'task19': '💡 Задание 19',
         'task20': '⚙️ Задание 20',
+        'task21': '📊 Задание 21',
+        'task22': '📝 Задание 22',
+        'task23': '📜 Задание 23',
         'task24': '📊 Задание 24',
         'task25': '💻 Задание 25'
     }
@@ -758,6 +773,9 @@ async def show_manual_numbers_input(update: Update, context: ContextTypes.DEFAUL
         'test_part': '📝 Тестовая часть (1-16)',
         'task19': '💡 Задание 19',
         'task20': '⚙️ Задание 20',
+        'task21': '📊 Задание 21',
+        'task22': '📝 Задание 22',
+        'task23': '📜 Задание 23',
         'task24': '📊 Задание 24',
         'task25': '💻 Задание 25'
     }
@@ -839,6 +857,9 @@ async def show_question_browser(update: Update, context: ContextTypes.DEFAULT_TY
         'test_part': '📝 Тестовая часть',
         'task19': '💡 Задание 19',
         'task20': '⚙️ Задание 20',
+        'task21': '📊 Задание 21',
+        'task22': '📝 Задание 22',
+        'task23': '📜 Задание 23',
         'task24': '📊 Задание 24',
         'task25': '💻 Задание 25'
     }
@@ -975,6 +996,9 @@ async def start_browser_search(update: Update, context: ContextTypes.DEFAULT_TYP
         'test_part': '📝 Тестовая часть',
         'task19': '💡 Задание 19',
         'task20': '⚙️ Задание 20',
+        'task21': '📊 Задание 21',
+        'task22': '📝 Задание 22',
+        'task23': '📜 Задание 23',
         'task24': '📊 Задание 24',
         'task25': '💻 Задание 25'
     }
@@ -1027,6 +1051,9 @@ async def process_browser_search(update: Update, context: ContextTypes.DEFAULT_T
         'test_part': '📝 Тестовая часть',
         'task19': '💡 Задание 19',
         'task20': '⚙️ Задание 20',
+        'task21': '📊 Задание 21',
+        'task22': '📝 Задание 22',
+        'task23': '📜 Задание 23',
         'task24': '📊 Задание 24',
         'task25': '💻 Задание 25'
     }
@@ -1147,6 +1174,9 @@ async def show_numbers_confirmation_from_browser(update: Update, context: Contex
     task_names = {
         'task19': '💡 Задание 19',
         'task20': '⚙️ Задание 20',
+        'task21': '📊 Задание 21',
+        'task22': '📝 Задание 22',
+        'task23': '📜 Задание 23',
         'task24': '📊 Задание 24',
         'task25': '💻 Задание 25',
         'test_part': '📝 Тестовая часть'
@@ -1250,6 +1280,9 @@ async def process_question_numbers_input(update: Update, context: ContextTypes.D
         'test_part': '📝 Тестовая часть (1-16)',
         'task19': '💡 Задание 19',
         'task20': '⚙️ Задание 20',
+        'task21': '📊 Задание 21',
+        'task22': '📝 Задание 22',
+        'task23': '📜 Задание 23',
         'task24': '📊 Задание 24',
         'task25': '💻 Задание 25'
     }
@@ -1353,6 +1386,9 @@ async def show_numbers_confirmation(update: Update, context: ContextTypes.DEFAUL
         'test_part': '📝 Тестовая часть (1-16)',
         'task19': '💡 Задание 19',
         'task20': '⚙️ Задание 20',
+        'task21': '📊 Задание 21',
+        'task22': '📝 Задание 22',
+        'task23': '📜 Задание 23',
         'task24': '📊 Задание 24',
         'task25': '💻 Задание 25'
     }
@@ -1558,6 +1594,9 @@ async def generate_and_show_random_questions(update: Update, context: ContextTyp
         'test_part': '📝 Тестовая часть (1-16)',
         'task19': '💡 Задание 19',
         'task20': '⚙️ Задание 20',
+        'task21': '📊 Задание 21',
+        'task22': '📝 Задание 22',
+        'task23': '📜 Задание 23',
         'task24': '📊 Задание 24',
         'task25': '💻 Задание 25'
     }
@@ -1628,6 +1667,9 @@ async def regenerate_all_tasks(update: Update, context: ContextTypes.DEFAULT_TYP
         'test_part': '📝 Тестовая часть (1-16)',
         'task19': '💡 Задание 19',
         'task20': '⚙️ Задание 20',
+        'task21': '📊 Задание 21',
+        'task22': '📝 Задание 22',
+        'task23': '📜 Задание 23',
         'task24': '📊 Задание 24',
         'task25': '💻 Задание 25'
     }
@@ -1723,6 +1765,9 @@ async def show_topic_blocks_selection(update: Update, context: ContextTypes.DEFA
         'test_part': '📝 Тестовая часть (1-16)',
         'task19': '💡 Задание 19',
         'task20': '⚙️ Задание 20',
+        'task21': '📊 Задание 21',
+        'task22': '📝 Задание 22',
+        'task23': '📜 Задание 23',
         'task24': '📊 Задание 24',
         'task25': '💻 Задание 25'
     }
@@ -1839,6 +1884,9 @@ async def show_topics_selection(update: Update, context: ContextTypes.DEFAULT_TY
         'test_part': '📝 Тестовая часть (1-16)',
         'task19': '💡 Задание 19',
         'task20': '⚙️ Задание 20',
+        'task21': '📊 Задание 21',
+        'task22': '📝 Задание 22',
+        'task23': '📜 Задание 23',
         'task24': '📊 Задание 24',
         'task25': '💻 Задание 25'
     }
@@ -2152,6 +2200,9 @@ async def show_specific_questions_selection(update: Update, context: ContextType
         'test_part': '📝 Тестовая часть (1-16)',
         'task19': '💡 Задание 19',
         'task20': '⚙️ Задание 20',
+        'task21': '📊 Задание 21',
+        'task22': '📝 Задание 22',
+        'task23': '📜 Задание 23',
         'task24': '📊 Задание 24',
         'task25': '💻 Задание 25'
     }
@@ -2311,6 +2362,9 @@ async def proceed_to_student_selection(update: Update, context: ContextTypes.DEF
         'test_part': '📝 Тестовая часть (1-16)',
         'task19': '💡 Задание 19',
         'task20': '⚙️ Задание 20',
+        'task21': '📊 Задание 21',
+        'task22': '📝 Задание 22',
+        'task23': '📜 Задание 23',
         'task24': '📊 Задание 24',
         'task25': '💻 Задание 25'
     }
@@ -2405,6 +2459,9 @@ async def prompt_assignment_title(update: Update, context: ContextTypes.DEFAULT_
         'test_part': '📝 Тестовая часть (1-16)',
         'task19': '💡 Задание 19',
         'task20': '⚙️ Задание 20',
+        'task21': '📊 Задание 21',
+        'task22': '📝 Задание 22',
+        'task23': '📜 Задание 23',
         'task24': '📊 Задание 24',
         'task25': '💻 Задание 25',
         'mixed': '🔀 Смешанное задание',
@@ -2456,6 +2513,9 @@ async def process_assignment_title_input(update: Update, context: ContextTypes.D
             'test_part': '📝 Тестовая часть (1-16)',
             'task19': '💡 Задание 19',
             'task20': '⚙️ Задание 20',
+            'task21': '📊 Задание 21',
+            'task22': '📝 Задание 22',
+            'task23': '📜 Задание 23',
             'task24': '📊 Задание 24',
             'task25': '💻 Задание 25',
             'mixed': '🔀 Смешанное задание',
@@ -2543,6 +2603,9 @@ async def set_assignment_deadline(update: Update, context: ContextTypes.DEFAULT_
         'test_part': '📝 Тестовая часть (1-16)',
         'task19': '💡 Задание 19',
         'task20': '⚙️ Задание 20',
+        'task21': '📊 Задание 21',
+        'task22': '📝 Задание 22',
+        'task23': '📜 Задание 23',
         'task24': '📊 Задание 24',
         'task25': '💻 Задание 25'
     }
@@ -2631,6 +2694,9 @@ async def confirm_and_create_assignment(update: Update, context: ContextTypes.DE
             'test_part': 'Тестовая часть (1-16)',
             'task19': 'Задание 19',
             'task20': 'Задание 20',
+            'task21': 'Задание 21',
+            'task22': 'Задание 22',
+            'task23': 'Задание 23',
             'task24': 'Задание 24',
             'task25': 'Задание 25',
             'mixed': 'Смешанное задание',
@@ -3701,6 +3767,9 @@ async def show_mixed_modules_selection(update: Update, context: ContextTypes.DEF
         'test_part': '📝 Тестовая часть (1-16)',
         'task19': '💡 Задание 19',
         'task20': '⚙️ Задание 20',
+        'task21': '📊 Задание 21',
+        'task22': '📝 Задание 22',
+        'task23': '📜 Задание 23',
         'task24': '📊 Задание 24',
         'task25': '💻 Задание 25'
     }
@@ -3764,6 +3833,9 @@ async def proceed_with_mixed_selection(update: Update, context: ContextTypes.DEF
         'test_part': '📝 Тестовая часть (1-16)',
         'task19': '💡 Задание 19',
         'task20': '⚙️ Задание 20',
+        'task21': '📊 Задание 21',
+        'task22': '📝 Задание 22',
+        'task23': '📜 Задание 23',
         'task24': '📊 Задание 24',
         'task25': '💻 Задание 25'
     }
@@ -3828,6 +3900,9 @@ async def process_mixed_question_counts(update: Update, context: ContextTypes.DE
             'test_part': '📝 Тестовая часть (1-16)',
             'task19': '💡 Задание 19',
             'task20': '⚙️ Задание 20',
+            'task21': '📊 Задание 21',
+            'task22': '📝 Задание 22',
+            'task23': '📜 Задание 23',
             'task24': '📊 Задание 24',
             'task25': '💻 Задание 25'
         }
@@ -3992,6 +4067,9 @@ async def process_custom_question(update: Update, context: ContextTypes.DEFAULT_
         [InlineKeyboardButton("📝 Тестовая часть (короткий ответ)", callback_data="custom_type_test_part")],
         [InlineKeyboardButton("💡 Задание 19 (примеры)", callback_data="custom_type_task19")],
         [InlineKeyboardButton("⚙️ Задание 20 (слова)", callback_data="custom_type_task20")],
+        [InlineKeyboardButton("📊 Задание 21 (графики)", callback_data="custom_type_task21")],
+        [InlineKeyboardButton("📝 Задание 22 (анализ ситуаций)", callback_data="custom_type_task22")],
+        [InlineKeyboardButton("📜 Задание 23 (Конституция РФ)", callback_data="custom_type_task23")],
         [InlineKeyboardButton("📊 Задание 24 (пропуски)", callback_data="custom_type_task24")],
         [InlineKeyboardButton("💻 Задание 25 (сочинение)", callback_data="custom_type_task25")],
         [InlineKeyboardButton("◀️ Отменить вопрос", callback_data="cancel_current_custom_question")]
@@ -4022,6 +4100,9 @@ async def select_custom_question_type(update: Update, context: ContextTypes.DEFA
         'test_part': '📝 Тестовая часть',
         'task19': '💡 Задание 19',
         'task20': '⚙️ Задание 20',
+        'task21': '📊 Задание 21',
+        'task22': '📝 Задание 22',
+        'task23': '📜 Задание 23',
         'task24': '📊 Задание 24',
         'task25': '💻 Задание 25'
     }
@@ -4067,6 +4148,9 @@ async def prompt_custom_question_answer(update: Update, context: ContextTypes.DE
         'test_part': '📝 Тестовая часть',
         'task19': '💡 Задание 19',
         'task20': '⚙️ Задание 20',
+        'task21': '📊 Задание 21',
+        'task22': '📝 Задание 22',
+        'task23': '📜 Задание 23',
         'task24': '📊 Задание 24',
         'task25': '💻 Задание 25'
     }
@@ -4157,6 +4241,9 @@ async def finalize_custom_question(update: Update, context: ContextTypes.DEFAULT
         'test_part': '📝 Тестовая часть',
         'task19': '💡 Задание 19',
         'task20': '⚙️ Задание 20',
+        'task21': '📊 Задание 21',
+        'task22': '📝 Задание 22',
+        'task23': '📜 Задание 23',
         'task24': '📊 Задание 24',
         'task25': '💻 Задание 25'
     }
@@ -4207,6 +4294,9 @@ async def finalize_custom_question_direct(update: Update, context: ContextTypes.
         'test_part': '📝 Тестовая часть',
         'task19': '💡 Задание 19',
         'task20': '⚙️ Задание 20',
+        'task21': '📊 Задание 21',
+        'task22': '📝 Задание 22',
+        'task23': '📜 Задание 23',
         'task24': '📊 Задание 24',
         'task25': '💻 Задание 25'
     }
@@ -4264,6 +4354,9 @@ async def review_custom_questions(update: Update, context: ContextTypes.DEFAULT_
         'test_part': '📝 Тестовая часть',
         'task19': '💡 Задание 19',
         'task20': '⚙️ Задание 20',
+        'task21': '📊 Задание 21',
+        'task22': '📝 Задание 22',
+        'task23': '📜 Задание 23',
         'task24': '📊 Задание 24',
         'task25': '💻 Задание 25'
     }
@@ -4421,6 +4514,9 @@ async def show_student_statistics(update: Update, context: ContextTypes.DEFAULT_
             module_names = {
                 'task19': '💡 Задание 19',
                 'task20': '⚙️ Задание 20',
+                'task21': '📊 Задание 21',
+                'task22': '📝 Задание 22',
+                'task23': '📜 Задание 23',
                 'task24': '📊 Задание 24',
                 'task25': '💻 Задание 25',
                 'custom': '📝 Кастомные',

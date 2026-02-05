@@ -15,7 +15,8 @@ def load_topics_for_module(task_module: str) -> Dict:
     Загружает темы для указанного модуля задания.
 
     Args:
-        task_module: Название модуля ('test_part', 'task19', 'task20', 'task24', 'task25')
+        task_module: Название модуля ('test_part', 'task19', 'task20', 'task21',
+                     'task22', 'task23', 'task24', 'task25')
 
     Returns:
         Словарь с темами в формате:
@@ -35,6 +36,18 @@ def load_topics_for_module(task_module: str) -> Dict:
         # Специальная обработка для test_part
         if task_module == 'test_part':
             return _load_test_part_topics(base_dir)
+
+        # Специальная обработка для task21
+        if task_module == 'task21':
+            return _load_task21_topics(base_dir)
+
+        # Специальная обработка для task22
+        if task_module == 'task22':
+            return _load_task22_topics(base_dir)
+
+        # Специальная обработка для task23
+        if task_module == 'task23':
+            return _load_task23_topics(base_dir)
 
         # Специальная обработка для task24
         if task_module == 'task24':
@@ -216,6 +229,187 @@ def _load_test_part_topics(base_dir: str) -> Dict:
         return {'blocks': {}, 'topics_by_id': {}, 'total_count': 0}
 
 
+def _load_task21_topics(base_dir: str) -> Dict:
+    """
+    Загружает задания для task21 (Графики спроса и предложения).
+
+    Args:
+        base_dir: Базовая директория проекта
+
+    Returns:
+        Словарь в формате, совместимом с load_topics_for_module
+    """
+    try:
+        questions_file = os.path.join(base_dir, 'task21', 'task21_questions.json')
+
+        if not os.path.exists(questions_file):
+            logger.info(f"Questions file not found for task21: {questions_file}")
+            return {'blocks': {}, 'topics_by_id': {}, 'total_count': 0}
+
+        with open(questions_file, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+
+        tasks = data.get('tasks', [])
+        blocks = {'Графики': []}
+        topics_by_id = {}
+
+        for task in tasks:
+            task_id = task.get('id')
+            market_name = task.get('market_name', f'Рынок {task_id}')
+
+            topic_obj = {
+                'id': task_id,
+                'title': f"Рынок {market_name}",
+                'block': 'Графики',
+                'market_name': market_name,
+                'question_1': task.get('question_1', {}),
+                'question_2': task.get('question_2', {}),
+                'question_3': task.get('question_3', {}),
+            }
+
+            topics_by_id[task_id] = topic_obj
+            blocks['Графики'].append({
+                'id': task_id,
+                'title': f"Рынок {market_name}"
+            })
+
+        logger.info(f"Loaded task21 topics: {len(topics_by_id)} tasks")
+
+        return {
+            'blocks': blocks,
+            'topics_by_id': topics_by_id,
+            'total_count': len(topics_by_id)
+        }
+
+    except Exception as e:
+        logger.error(f"Error loading task21 topics: {e}")
+        return {'blocks': {}, 'topics_by_id': {}, 'total_count': 0}
+
+
+def _load_task22_topics(base_dir: str) -> Dict:
+    """
+    Загружает задания для task22 (Анализ ситуаций).
+
+    Args:
+        base_dir: Базовая директория проекта
+
+    Returns:
+        Словарь в формате, совместимом с load_topics_for_module
+    """
+    try:
+        topics_file = os.path.join(base_dir, 'task22', 'task22_topics.json')
+
+        if not os.path.exists(topics_file):
+            logger.info(f"Topics file not found for task22: {topics_file}")
+            return {'blocks': {}, 'topics_by_id': {}, 'total_count': 0}
+
+        with open(topics_file, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+
+        tasks = data.get('tasks', [])
+        blocks = {'Анализ ситуаций': []}
+        topics_by_id = {}
+
+        for task in tasks:
+            task_id = task.get('id')
+            description = task.get('description', '')
+            # Берем первые 60 символов для названия
+            title = description[:60] + '...' if len(description) > 60 else description
+
+            topic_obj = {
+                'id': task_id,
+                'title': title,
+                'block': 'Анализ ситуаций',
+                'description': description,
+                'questions': task.get('questions', []),
+                'correct_answers': task.get('correct_answers', []),
+                'answer_requirements': task.get('answer_requirements', []),
+                'connected_questions': task.get('connected_questions', []),
+            }
+
+            topics_by_id[task_id] = topic_obj
+            blocks['Анализ ситуаций'].append({
+                'id': task_id,
+                'title': f"Задание {task_id}: {title}"
+            })
+
+        logger.info(f"Loaded task22 topics: {len(topics_by_id)} tasks")
+
+        return {
+            'blocks': blocks,
+            'topics_by_id': topics_by_id,
+            'total_count': len(topics_by_id)
+        }
+
+    except Exception as e:
+        logger.error(f"Error loading task22 topics: {e}")
+        return {'blocks': {}, 'topics_by_id': {}, 'total_count': 0}
+
+
+def _load_task23_topics(base_dir: str) -> Dict:
+    """
+    Загружает задания для task23 (Конституция РФ).
+
+    Args:
+        base_dir: Базовая директория проекта
+
+    Returns:
+        Словарь в формате, совместимом с load_topics_for_module
+    """
+    try:
+        questions_file = os.path.join(base_dir, 'data', 'task23_questions.json')
+
+        if not os.path.exists(questions_file):
+            logger.info(f"Questions file not found for task23: {questions_file}")
+            return {'blocks': {}, 'topics_by_id': {}, 'total_count': 0}
+
+        with open(questions_file, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+
+        questions = data.get('questions', [])
+        blocks = {'Конституция РФ': []}
+        topics_by_id = {}
+
+        for question in questions:
+            q_id = question.get('id')
+            model_type = question.get('model_type', 1)
+            characteristics = question.get('characteristics', [])
+
+            # Формируем название из первой характеристики
+            if characteristics:
+                first_char = characteristics[0]
+                title = first_char[:50] + '...' if len(first_char) > 50 else first_char
+            else:
+                title = f"Вопрос {q_id}"
+
+            topic_obj = {
+                'id': q_id,
+                'title': title,
+                'block': 'Конституция РФ',
+                'model_type': model_type,
+                'characteristics': characteristics,
+                'model_answers': question.get('model_answers', {}),
+            }
+
+            topics_by_id[q_id] = topic_obj
+            blocks['Конституция РФ'].append({
+                'id': q_id,
+                'title': f"Вопрос {q_id}: {title}"
+            })
+
+        logger.info(f"Loaded task23 topics: {len(topics_by_id)} questions")
+
+        return {
+            'blocks': blocks,
+            'topics_by_id': topics_by_id,
+            'total_count': len(topics_by_id)
+        }
+
+    except Exception as e:
+        logger.error(f"Error loading task23 topics: {e}")
+        return {'blocks': {}, 'topics_by_id': {}, 'total_count': 0}
+
+
 def _load_task24_plans(base_dir: str) -> Dict:
     """
     Загружает планы для task24 из plans_data_with_blocks.json.
@@ -354,7 +548,8 @@ def module_supports_topics(task_module: str) -> bool:
     Проверяет, поддерживает ли модуль систему тем.
 
     Args:
-        task_module: Название модуля ('test_part', 'task19', 'task20', 'task24', 'task25')
+        task_module: Название модуля ('test_part', 'task19', 'task20', 'task21',
+                     'task22', 'task23', 'task24', 'task25')
 
     Returns:
         True если модуль имеет файл с темами
@@ -364,6 +559,21 @@ def module_supports_topics(task_module: str) -> bool:
     # test_part поддерживает темы через questions.json
     if task_module == 'test_part':
         questions_file = os.path.join(base_dir, 'data', 'questions.json')
+        return os.path.exists(questions_file)
+
+    # Специальная проверка для task21
+    if task_module == 'task21':
+        questions_file = os.path.join(base_dir, 'task21', 'task21_questions.json')
+        return os.path.exists(questions_file)
+
+    # Специальная проверка для task22
+    if task_module == 'task22':
+        topics_file = os.path.join(base_dir, 'task22', 'task22_topics.json')
+        return os.path.exists(topics_file)
+
+    # Специальная проверка для task23
+    if task_module == 'task23':
+        questions_file = os.path.join(base_dir, 'data', 'task23_questions.json')
         return os.path.exists(questions_file)
 
     # Специальная проверка для task24
