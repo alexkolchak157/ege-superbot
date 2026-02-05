@@ -101,6 +101,68 @@ async def cleanup_rate_limit_data():
         except Exception as e:
             logger.error(f"Error in rate limit cleanup: {e}")
 
+async def activate_with_retry(
+    subscription_manager,
+    order_id: str,
+    payment_id: str,
+    max_retries: int = 3,
+    base_delay: float = 1.0
+) -> bool:
+    """
+    Активирует подписку с retry и exponential backoff.
+
+    Args:
+        subscription_manager: Менеджер подписок
+        order_id: ID заказа
+        payment_id: ID платежа
+        max_retries: Максимальное количество попыток
+        base_delay: Базовая задержка между попытками (в секундах)
+
+    Returns:
+        True если активация успешна, False если все попытки неудачны
+    """
+    last_error = None
+
+    for attempt in range(max_retries):
+        try:
+            success = await subscription_manager.activate_subscription(
+                order_id=order_id,
+                payment_id=payment_id
+            )
+
+            if success:
+                if attempt > 0:
+                    logger.info(
+                        f"✅ Subscription activated on retry attempt {attempt + 1} "
+                        f"for order {order_id}"
+                    )
+                return True
+            else:
+                logger.warning(
+                    f"⚠️ Activation attempt {attempt + 1}/{max_retries} failed "
+                    f"for order {order_id}"
+                )
+
+        except Exception as e:
+            last_error = e
+            logger.error(
+                f"❌ Activation attempt {attempt + 1}/{max_retries} raised exception "
+                f"for order {order_id}: {e}"
+            )
+
+        # Exponential backoff: 1s, 2s, 4s
+        if attempt < max_retries - 1:
+            delay = base_delay * (2 ** attempt)
+            logger.info(f"Waiting {delay}s before retry...")
+            await asyncio.sleep(delay)
+
+    logger.error(
+        f"❌ All {max_retries} activation attempts failed for order {order_id}. "
+        f"Last error: {last_error}"
+    )
+    return False
+
+
 class TinkoffStatus(Enum):
     """Статусы платежей Tinkoff"""
     INIT = "INIT"
@@ -262,9 +324,13 @@ async def handle_webhook(request: web.Request) -> web.Response:
                     )
 
             # Активируем подписку (или повторно активируем если предыдущая попытка не удалась)
-            success = await subscription_manager.activate_subscription(
+            # УЛУЧШЕНИЕ: Retry с exponential backoff на нашей стороне
+            success = await activate_with_retry(
+                subscription_manager=subscription_manager,
                 order_id=order_id,
-                payment_id=payment_id
+                payment_id=payment_id,
+                max_retries=3,
+                base_delay=1.0
             )
 
             if success:

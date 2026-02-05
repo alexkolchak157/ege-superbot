@@ -45,6 +45,10 @@ FREE_MODULES = ['test_part', 'personal_cabinet', 'teacher_mode']  # Модули
 # Модули с freemium доступом (3 бесплатных AI-проверки в неделю)
 FREEMIUM_MODULES = ['task19', 'task20', 'task21', 'task22', 'task23', 'task24', 'task25']
 
+# ВСЕ платные модули (используется для планов подписки и проверок доступа)
+# ВАЖНО: При добавлении новых модулей добавляйте их ТОЛЬКО сюда!
+ALL_PAID_MODULES = ['test_part', 'task19', 'task20', 'task21', 'task22', 'task23', 'task24', 'task25']
+
 # ==================== CONFIG VALIDATION ====================
 
 class ConfigValidationError(Exception):

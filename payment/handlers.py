@@ -44,11 +44,11 @@ import aiosqlite
 from core.error_handler import safe_handler
 from .config import (
     SUBSCRIPTION_PLANS,
-    SUBSCRIPTION_PLANS,
     SUBSCRIPTION_MODE,
     DURATION_DISCOUNTS,
     MODULE_PLANS,
     PAYMENT_ADMIN_CHAT_ID,
+    ALL_PAID_MODULES,
     get_plan_price_kopecks,
     get_available_plans
 )
@@ -872,7 +872,7 @@ async def cmd_debug_subscription(update: Update, context: ContextTypes.DEFAULT_T
             text += "📦 <b>Нет активных модулей</b>\n"
         
         text += "\n<b>Проверка доступа к модулям:</b>\n"
-        for module_code in ['test_part', 'task19', 'task20', 'task21', 'task22', 'task23', 'task24', 'task25']:
+        for module_code in ALL_PAID_MODULES:
             has_access = await subscription_manager.check_module_access(user_id, module_code)
             text += f"• {module_code}: {'✅' if has_access else '❌'}\n"
     
@@ -2301,7 +2301,7 @@ async def handle_my_subscriptions(update: Update, context: ContextTypes.DEFAULT_
             
             # Детали доступа
             text += "📊 <b>Детали доступа:</b>\n"
-            all_modules = ['test_part', 'task19', 'task20', 'task21', 'task22', 'task23', 'task24', 'task25']
+            all_modules = ALL_PAID_MODULES
             inactive_modules = []
             
             for module_code in all_modules:

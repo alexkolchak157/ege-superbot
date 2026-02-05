@@ -14,6 +14,7 @@ from core.db import DATABASE_FILE, execute_with_retry
 from .config import (
     SUBSCRIPTION_MODE,
     SUBSCRIPTION_PLANS,
+    ALL_PAID_MODULES,
     get_subscription_end_date,
     get_plan_modules
 )
@@ -1226,9 +1227,10 @@ class SubscriptionManager:
                 active_modules = [row[0] for row in modules]
                 
                 # Определяем эквивалентный план
-                if set(active_modules) >= {'test_part', 'task19', 'task20', 'task21', 'task22', 'task23', 'task24', 'task25'}:
+                # Используем ALL_PAID_MODULES для проверки полного пакета
+                if set(active_modules) >= set(ALL_PAID_MODULES):
                     plan_id = 'package_full'
-                elif set(active_modules) >= {'task19', 'task20', 'task21', 'task22', 'task23', 'task24', 'task25'}:
+                elif set(active_modules) >= set(m for m in ALL_PAID_MODULES if m != 'test_part'):
                     plan_id = 'package_second_part'
                 else:
                     plan_id = 'custom_modules'
@@ -2072,29 +2074,15 @@ class SubscriptionManager:
                 return False
             
             # Нормализуем названия модулей
-            module_mapping = {
-                # Основные модули
-                'test_part': 'test_part',
-                'testpart': 'test_part',
-                'test': 'test_part',
-                'task19': 'task19',
-                'task20': 'task20',
-                'task21': 'task21',
-                'task22': 'task22',
-                'task23': 'task23',
-                'task24': 'task24',
-                'task25': 'task25',
-                # С префиксом module_
-                'module_test_part': 'test_part',
-                'module_testpart': 'test_part',
-                'module_task19': 'task19',
-                'module_task20': 'task20',
-                'module_task21': 'task21',
-                'module_task22': 'task22',
-                'module_task23': 'task23',
-                'module_task24': 'task24',
-                'module_task25': 'task25',
-            }
+            # Динамически генерируем маппинг из ALL_PAID_MODULES
+            module_mapping = {}
+            for mod in ALL_PAID_MODULES:
+                module_mapping[mod] = mod  # task19 -> task19
+                module_mapping[f'module_{mod}'] = mod  # module_task19 -> task19
+            # Дополнительные алиасы
+            module_mapping['testpart'] = 'test_part'
+            module_mapping['test'] = 'test_part'
+            module_mapping['module_testpart'] = 'test_part'
             
             normalized_modules = []
             for module in modules:
