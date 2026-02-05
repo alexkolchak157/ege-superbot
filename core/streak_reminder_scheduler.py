@@ -6,6 +6,7 @@ Phase 2: Notifications
 - Critical warnings (за 2 часа до сброса)
 - Smart timing на основе истории активности
 - Сбалансированный подход (не спамим)
+- Учёт часовых поясов пользователей
 """
 
 import logging
@@ -19,6 +20,7 @@ from telegram.error import Forbidden, BadRequest
 from core.db import DATABASE_FILE
 from core.streak_manager import get_streak_manager, StreakState
 from core.streak_ui import get_streak_ui
+from core.timezone_manager import get_timezone_manager
 
 logger = logging.getLogger(__name__)
 
@@ -30,6 +32,7 @@ class StreakReminderScheduler:
         self.database_file = database_file
         self.streak_manager = get_streak_manager()
         self.streak_ui = get_streak_ui()
+        self.timezone_manager = get_timezone_manager()
 
     # ============================================================
     # MAIN SCHEDULER FUNCTION
@@ -78,6 +81,7 @@ class StreakReminderScheduler:
     async def _send_at_risk_notification(self, bot: Bot, user_id: int) -> bool:
         """
         Отправляет предупреждение 'At Risk' (за ~6 часов до сброса).
+        Учитывает часовой пояс пользователя.
         """
         try:
             # Получаем информацию о стрике
@@ -87,16 +91,17 @@ class StreakReminderScheduler:
             if current_streak == 0:
                 return False
 
-            # Вычисляем оставшееся время
-            hours_left, minutes_left = self._calculate_time_left()
+            # Проверяем, не ночь ли у пользователя (тихие часы)
+            if await self.timezone_manager.is_quiet_hours(user_id):
+                logger.debug(f"Skipping notification for user {user_id}: quiet hours")
+                return False
 
-            # Получаем оптимальное время для уведомления
-            optimal_time = await self._get_optimal_notification_time(user_id)
-            current_hour = datetime.now().hour
+            # Вычисляем оставшееся время до полуночи в часовом поясе пользователя
+            hours_left, minutes_left = await self.timezone_manager.calculate_time_until_midnight_user(user_id)
 
-            # Отправляем только если сейчас оптимальное время (±1 час)
-            if optimal_time and abs(current_hour - optimal_time) > 1:
-                logger.debug(f"Skipping at_risk notification for user {user_id}: not optimal time")
+            # Проверяем, оптимальное ли время для уведомления (±2 часа от 18:00 локального)
+            if not await self.timezone_manager.is_optimal_notification_time(user_id, preferred_hour=18, tolerance=2):
+                logger.debug(f"Skipping at_risk notification for user {user_id}: not optimal time in their timezone")
                 return False
 
             # Формируем сообщение
@@ -145,6 +150,7 @@ class StreakReminderScheduler:
     async def _send_critical_notification(self, bot: Bot, user_id: int) -> bool:
         """
         Отправляет критическое предупреждение (за ~2 часа до сброса).
+        Учитывает часовой пояс пользователя.
         """
         try:
             # Получаем информацию о стрике
@@ -154,8 +160,11 @@ class StreakReminderScheduler:
             if current_streak == 0:
                 return False
 
-            # Вычисляем оставшееся время
-            hours_left, minutes_left = self._calculate_time_left()
+            # Для критических уведомлений НЕ проверяем тихие часы -
+            # это последний шанс сохранить стрик
+
+            # Вычисляем оставшееся время до полуночи в часовом поясе пользователя
+            hours_left, minutes_left = await self.timezone_manager.calculate_time_until_midnight_user(user_id)
 
             # Формируем сообщение
             message_data = self.streak_ui.get_at_risk_warning_message(
@@ -194,13 +203,25 @@ class StreakReminderScheduler:
 
     async def _get_optimal_notification_time(self, user_id: int) -> Optional[int]:
         """
-        Определяет оптимальное время для отправки уведомлений на основе истории активности.
+        Определяет оптимальное время для отправки уведомлений.
+
+        DEPRECATED: Используйте timezone_manager.is_optimal_notification_time()
 
         Returns:
             Час дня (0-23) или None
         """
         try:
             async with aiosqlite.connect(self.database_file) as db:
+                # Проверяем, есть ли у пользователя сохранённый preferred_hour
+                cursor = await db.execute("""
+                    SELECT optimal_notification_hour FROM user_timezone_info
+                    WHERE user_id = ?
+                """, (user_id,))
+                row = await cursor.fetchone()
+
+                if row and row[0]:
+                    return row[0]
+
                 # Анализируем последние 30 дней активности
                 cursor = await db.execute("""
                     SELECT activity_date, time_spent_minutes
@@ -214,19 +235,15 @@ class StreakReminderScheduler:
                 activities = await cursor.fetchall()
 
                 if not activities:
-                    # Нет истории - используем дефолтное время (18:00)
-                    return 18
+                    return 18  # Дефолтное время (после школы)
 
-                # Простая эвристика: среднее время первой активности
-                # (В реальности можно использовать ML модель)
-
-                # Пока возвращаем 18:00 (после школы) как оптимальное время
+                # Возвращаем 18:00 как оптимальное время
                 # TODO: Реализовать ML модель для персонализации
                 return 18
 
         except Exception as e:
             logger.error(f"Error getting optimal time for user {user_id}: {e}")
-            return 18  # Дефолтное время
+            return 18
 
     # ============================================================
     # HELPER METHODS
@@ -234,13 +251,20 @@ class StreakReminderScheduler:
 
     def _calculate_time_left(self) -> Tuple[int, int]:
         """
-        Вычисляет оставшееся время до полуночи (сброса стрика).
+        Вычисляет оставшееся время до полуночи UTC (сброса стрика).
+
+        DEPRECATED: Используйте timezone_manager.calculate_time_until_midnight_user()
 
         Returns:
             (hours_left, minutes_left)
         """
-        now = datetime.now()
-        midnight = datetime.combine(date.today() + timedelta(days=1), time.min)
+        # Используем UTC для консистентности
+        now = datetime.now(timezone.utc)
+        midnight = datetime.combine(
+            date.today() + timedelta(days=1),
+            time.min,
+            tzinfo=timezone.utc
+        )
         time_left = midnight - now
 
         hours_left = int(time_left.total_seconds() // 3600)

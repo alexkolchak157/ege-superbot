@@ -69,6 +69,10 @@ async def apply_streak_system_migration():
                     at_risk_notified BOOLEAN DEFAULT 0,
                     critical_notified BOOLEAN DEFAULT 0,
 
+                    -- Lost Streak Recovery
+                    streak_before_loss INTEGER DEFAULT 0,
+                    streak_lost_at TEXT,
+
                     -- Statistics
                     total_days_active INTEGER DEFAULT 0,
                     total_hours_spent REAL DEFAULT 0.0,

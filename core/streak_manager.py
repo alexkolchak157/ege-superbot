@@ -557,9 +557,9 @@ class StreakManager:
         """Помечает стрик как потерянный для возможного восстановления"""
         await db.execute("""
             UPDATE user_streaks
-            SET daily_streak_state = 'lost',
-                daily_streak_before_loss = ?,
-                daily_streak_lost_at = ?
+            SET streak_state = 'lost',
+                streak_before_loss = ?,
+                streak_lost_at = ?
             WHERE user_id = ?
         """, (lost_streak_value, datetime.now(timezone.utc).isoformat(), user_id))
 

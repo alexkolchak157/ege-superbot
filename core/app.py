@@ -4,7 +4,7 @@ import asyncio
 import logging
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from typing import Optional, Dict, Any
-from datetime import datetime
+from datetime import datetime, timezone
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, PicklePersistence, ContextTypes, PersistenceInput
 from telegram.constants import ParseMode
 import sys
@@ -416,6 +416,59 @@ async def post_init(application: Application) -> None:
         logger.info("Streak reminder scheduler initialized and scheduled to run every hour")
     except Exception as e:
         logger.error(f"Failed to initialize streak reminder scheduler: {e}")
+
+    # Инициализация timezone manager и сброс счётчиков уведомлений
+    try:
+        from core.timezone_manager import get_timezone_manager
+
+        tz_manager = get_timezone_manager()
+        application.bot_data['timezone_manager'] = tz_manager
+
+        # Job для сброса дневных счётчиков уведомлений в 00:00 UTC
+        async def reset_daily_notification_counters(context: ContextTypes.DEFAULT_TYPE):
+            try:
+                tm = context.bot_data.get('timezone_manager')
+                if tm:
+                    reset_count = await tm.reset_daily_notification_counters()
+                    logger.info(f"Daily notification counters reset: {reset_count} users")
+            except Exception as e:
+                logger.error(f"Error resetting daily notification counters: {e}")
+
+        # Запускаем сброс счётчиков в 00:00 UTC каждый день
+        application.job_queue.run_daily(
+            reset_daily_notification_counters,
+            time=dt_time(hour=0, minute=0, second=0, tzinfo=timezone.utc),
+            name='reset_daily_notification_counters'
+        )
+
+        # Job для сброса недельных счётчиков в понедельник 00:00 UTC
+        async def reset_weekly_notification_counters(context: ContextTypes.DEFAULT_TYPE):
+            try:
+                tm = context.bot_data.get('timezone_manager')
+                if tm:
+                    reset_count = await tm.reset_weekly_notification_counters()
+                    logger.info(f"Weekly notification counters reset: {reset_count} users")
+            except Exception as e:
+                logger.error(f"Error resetting weekly notification counters: {e}")
+
+        application.job_queue.run_daily(
+            reset_weekly_notification_counters,
+            time=dt_time(hour=0, minute=5, second=0, tzinfo=timezone.utc),
+            days=(0,),  # 0 = Понедельник
+            name='reset_weekly_notification_counters'
+        )
+
+        logger.info("Timezone manager initialized with daily/weekly counter reset jobs")
+    except Exception as e:
+        logger.error(f"Failed to initialize timezone manager: {e}")
+
+    # Регистрация timezone handlers
+    try:
+        from core.timezone_handlers import register_timezone_handlers
+        register_timezone_handlers(application)
+        logger.info("Timezone handlers registered")
+    except Exception as e:
+        logger.error(f"Failed to register timezone handlers: {e}")
 
     # Загрузка модулей-плагинов
     try:
