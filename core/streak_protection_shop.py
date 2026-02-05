@@ -51,8 +51,8 @@ class StreakProtectionShop:
             async with aiosqlite.connect(self.database_file) as db:
                 cursor = await db.execute("""
                     SELECT
-                        daily_streak_current,
-                        daily_streak_state,
+                        current_daily_streak,
+                        streak_state,
                         freeze_count,
                         error_shield_count
                     FROM user_streaks
@@ -629,10 +629,10 @@ class StreakProtectionShop:
             async with aiosqlite.connect(self.database_file) as db:
                 # Получаем информацию о потерянном стрике
                 cursor = await db.execute("""
-                    SELECT daily_streak_before_loss, daily_streak_max
+                    SELECT streak_before_loss, max_daily_streak
                     FROM user_streaks
                     WHERE user_id = ?
-                      AND daily_streak_state = 'recoverable'
+                      AND streak_state = 'recoverable'
                 """, (user_id,))
 
                 row = await cursor.fetchone()
@@ -646,14 +646,15 @@ class StreakProtectionShop:
                 # Восстанавливаем стрик
                 await db.execute("""
                     UPDATE user_streaks
-                    SET daily_streak_current = ?,
-                        daily_streak_max = ?,
-                        daily_streak_state = 'active',
-                        daily_streak_last_update = ?,
-                        daily_streak_before_loss = NULL
+                    SET current_daily_streak = ?,
+                        max_daily_streak = ?,
+                        streak_state = 'active',
+                        last_activity_date = ?,
+                        streak_before_loss = NULL,
+                        streak_lost_at = NULL
                     WHERE user_id = ?
                 """, (lost_streak, max(max_streak, lost_streak),
-                      datetime.now(timezone.utc).isoformat(), user_id))
+                      datetime.now(timezone.utc).date().isoformat(), user_id))
 
                 # Логируем восстановление
                 repair_price = await self._calculate_repair_price(user_id)
@@ -703,12 +704,12 @@ class StreakProtectionShop:
             async with aiosqlite.connect(self.database_file) as db:
                 cursor = await db.execute("""
                     SELECT
-                        daily_streak_before_loss,
-                        daily_streak_lost_at
+                        streak_before_loss,
+                        streak_lost_at
                     FROM user_streaks
                     WHERE user_id = ?
-                      AND daily_streak_state IN ('lost', 'recoverable')
-                      AND daily_streak_before_loss > 0
+                      AND streak_state IN ('lost', 'recoverable')
+                      AND streak_before_loss > 0
                 """, (user_id,))
 
                 row = await cursor.fetchone()
@@ -716,7 +717,7 @@ class StreakProtectionShop:
                 if not row or not row[1]:
                     return 0, 0
 
-                lost_streak = row[0]
+                lost_streak = row[0] or 0
                 lost_at = datetime.fromisoformat(row[1])
                 hours_ago = int((datetime.now(timezone.utc) - lost_at).total_seconds() / 3600)
 
