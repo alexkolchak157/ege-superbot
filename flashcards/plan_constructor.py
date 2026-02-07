@@ -26,6 +26,7 @@ from core.utils import safe_edit_message
 from core.streak_manager import get_streak_manager
 
 from .quiz_handlers import _truncate
+from .leaderboard import add_xp, XP_PLAN_CORRECT
 
 logger = logging.getLogger(__name__)
 
@@ -402,6 +403,8 @@ async def handle_plan_answer(update: Update, context: ContextTypes.DEFAULT_TYPE)
     if is_correct:
         session['correct'] += 1
         feedback = "✅ Верно!"
+        user_id = query.from_user.id
+        await add_xp(user_id, XP_PLAN_CORRECT, 'plan', f"plan_q_{idx}")
     else:
         session['wrong'] += 1
         feedback = f"❌ Неверно! Ответ: {q['correct_label']}"

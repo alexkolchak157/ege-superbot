@@ -322,6 +322,18 @@ async def get_deck_stats(user_id: int, deck_id: str) -> Dict[str, int]:
         }
 
 
+async def get_card_progress(user_id: int, card_id: str) -> Optional[Dict[str, Any]]:
+    """Возвращает прогресс пользователя по конкретной карточке."""
+    async with aiosqlite.connect(DATABASE_FILE) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute("""
+            SELECT * FROM flashcard_progress
+            WHERE user_id = ? AND card_id = ?
+        """, (user_id, card_id))
+        row = await cursor.fetchone()
+        return dict(row) if row else None
+
+
 async def get_user_overall_stats(user_id: int) -> Dict[str, Any]:
     """Возвращает общую статистику пользователя по всем колодам."""
     async with aiosqlite.connect(DATABASE_FILE) as db:

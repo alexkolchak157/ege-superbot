@@ -20,6 +20,7 @@ from core.utils import safe_edit_message
 from core.streak_manager import get_streak_manager
 
 from . import db as flashcard_db
+from .leaderboard import add_xp, XP_QUIZ_CORRECT
 
 logger = logging.getLogger(__name__)
 
@@ -301,6 +302,9 @@ async def _show_quiz_feedback(
         quiz['correct'] += 1
         emoji = "✅"
         verdict = "Верно!"
+        # XP за правильный ответ
+        user_id = query.from_user.id
+        await add_xp(user_id, XP_QUIZ_CORRECT, 'quiz', f"quiz_{quiz.get('deck_id', '')}")
     else:
         quiz['wrong'] += 1
         emoji = "❌"

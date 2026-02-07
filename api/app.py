@@ -23,6 +23,7 @@ import logging
 import os
 
 from api.routes import teacher, students, modules, questions, assignments, drafts
+from api.routes import flashcards as flashcards_routes
 from core.config import DEBUG
 
 
@@ -121,6 +122,12 @@ app.include_router(
     drafts.router,
     prefix="/api/teacher",
     tags=["drafts"]
+)
+
+app.include_router(
+    flashcards_routes.router,
+    prefix="/api/flashcards",
+    tags=["flashcards"]
 )
 
 
