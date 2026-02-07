@@ -1,10 +1,12 @@
 """
 Плагин карточек (Flashcards) для заучивания материала ЕГЭ.
 
-Поддерживает колоды:
-- Конституция РФ (задание 23)
-- Глоссарий обществознания (по категориям)
-- Интервальное повторение по алгоритму SM-2
+Поддерживает:
+- Колоды карточек (Конституция РФ, глоссарий, ошибки)
+- Интервальное повторение SM-2
+- Quiz-режимы (Верно/Неверно, Выбор из вариантов)
+- Ежедневный челлендж
+- Конструктор планов (задание 24)
 """
 
 import logging
@@ -17,6 +19,9 @@ from telegram.ext import (
 from core.plugin_base import BotPlugin
 from core import states
 from . import handlers
+from . import quiz_handlers
+from . import daily_challenge
+from . import plan_constructor
 
 logger = logging.getLogger(__name__)
 
@@ -46,6 +51,20 @@ class FlashcardsPlugin(BotPlugin):
     def register(self, app) -> None:
         """Регистрация обработчиков в приложении."""
 
+        # Общие навигационные хендлеры (используются во многих состояниях)
+        nav_back_to_decks = CallbackQueryHandler(
+            handlers.back_to_decks,
+            pattern="^fc_back_to_decks$"
+        )
+        nav_main_menu = CallbackQueryHandler(
+            handlers.back_to_main_menu,
+            pattern="^to_main_menu$"
+        )
+        nav_deck = CallbackQueryHandler(
+            handlers.show_deck,
+            pattern=r"^fc_deck_"
+        )
+
         conv_handler = ConversationHandler(
             entry_points=[
                 CallbackQueryHandler(
@@ -55,18 +74,33 @@ class FlashcardsPlugin(BotPlugin):
                 CommandHandler("flashcards", handlers.cmd_flashcards),
             ],
             states={
+                # ── Главное меню карточек ──
                 states.FC_MENU: [
                     # Выбор колоды
                     CallbackQueryHandler(
                         handlers.show_deck,
                         pattern=r"^fc_deck_"
                     ),
-                    # Навигация
+                    # Ежедневный челлендж
                     CallbackQueryHandler(
-                        handlers.back_to_main_menu,
-                        pattern="^to_main_menu$"
+                        daily_challenge.show_daily_menu,
+                        pattern="^fc_daily_menu$"
                     ),
+                    # Конструктор планов
+                    CallbackQueryHandler(
+                        plan_constructor.show_plan_menu,
+                        pattern="^fc_plan_menu$"
+                    ),
+                    # Генерация колоды из ошибок
+                    CallbackQueryHandler(
+                        handlers.generate_mistakes,
+                        pattern="^fc_gen_mistakes$"
+                    ),
+                    # Навигация
+                    nav_main_menu,
                 ],
+
+                # ── Просмотр колоды ──
                 states.FC_DECK_VIEW: [
                     # Начать повторение
                     CallbackQueryHandler(
@@ -77,20 +111,18 @@ class FlashcardsPlugin(BotPlugin):
                         handlers.start_review_all,
                         pattern="^fc_start_review_all$"
                     ),
+                    # Quiz-режим
+                    CallbackQueryHandler(
+                        quiz_handlers.start_quiz,
+                        pattern="^fc_start_quiz$"
+                    ),
                     # Навигация
-                    CallbackQueryHandler(
-                        handlers.back_to_decks,
-                        pattern="^fc_back_to_decks$"
-                    ),
-                    CallbackQueryHandler(
-                        handlers.show_deck,
-                        pattern=r"^fc_deck_"
-                    ),
-                    CallbackQueryHandler(
-                        handlers.back_to_main_menu,
-                        pattern="^to_main_menu$"
-                    ),
+                    nav_back_to_decks,
+                    nav_deck,
+                    nav_main_menu,
                 ],
+
+                # ── Сессия повторения карточек ──
                 states.FC_REVIEWING: [
                     # Показать обратную сторону
                     CallbackQueryHandler(
@@ -117,30 +149,102 @@ class FlashcardsPlugin(BotPlugin):
                         handlers.start_review,
                         pattern="^fc_start_review$"
                     ),
+                    nav_back_to_decks,
+                    nav_deck,
+                    nav_main_menu,
+                ],
+
+                # ── Quiz-режим ──
+                states.FC_QUIZ: [
+                    # True/False ответы
                     CallbackQueryHandler(
-                        handlers.back_to_decks,
-                        pattern="^fc_back_to_decks$"
+                        quiz_handlers.handle_tf_answer,
+                        pattern=r"^fc_quiz_tf_"
                     ),
+                    # Multiple Choice ответы
                     CallbackQueryHandler(
-                        handlers.show_deck,
-                        pattern=r"^fc_deck_"
+                        quiz_handlers.handle_mc_answer,
+                        pattern=r"^fc_quiz_mc_\d"
                     ),
+                    # Следующий вопрос
                     CallbackQueryHandler(
-                        handlers.back_to_main_menu,
-                        pattern="^to_main_menu$"
+                        quiz_handlers.quiz_next,
+                        pattern="^fc_quiz_next$"
                     ),
+                    # Результаты
+                    CallbackQueryHandler(
+                        quiz_handlers.quiz_results,
+                        pattern="^fc_quiz_results$"
+                    ),
+                    # Досрочное завершение
+                    CallbackQueryHandler(
+                        quiz_handlers.quiz_end,
+                        pattern="^fc_quiz_end$"
+                    ),
+                    # Новый quiz (из экрана результатов)
+                    CallbackQueryHandler(
+                        quiz_handlers.start_quiz,
+                        pattern="^fc_start_quiz$"
+                    ),
+                    # Навигация из результатов
+                    nav_back_to_decks,
+                    nav_deck,
+                    nav_main_menu,
+                ],
+
+                # ── Ежедневный челлендж ──
+                states.FC_DAILY: [
+                    # Начать челлендж
+                    CallbackQueryHandler(
+                        daily_challenge.start_daily,
+                        pattern="^fc_daily_start$"
+                    ),
+                    # True/False ответы
+                    CallbackQueryHandler(
+                        daily_challenge.handle_daily_tf,
+                        pattern=r"^fc_daily_tf_"
+                    ),
+                    # Multiple Choice ответы
+                    CallbackQueryHandler(
+                        daily_challenge.handle_daily_mc,
+                        pattern=r"^fc_daily_mc_\d"
+                    ),
+                    # Навигация
+                    nav_back_to_decks,
+                    nav_main_menu,
+                ],
+
+                # ── Конструктор планов ──
+                states.FC_PLAN: [
+                    # Выбор блока → начать сессию
+                    CallbackQueryHandler(
+                        plan_constructor.start_plan_session,
+                        pattern=r"^fc_plan_block_"
+                    ),
+                    # Ответ на вопрос
+                    CallbackQueryHandler(
+                        plan_constructor.handle_plan_answer,
+                        pattern=r"^fc_plan_ans_\d"
+                    ),
+                    # Досрочное завершение
+                    CallbackQueryHandler(
+                        plan_constructor.plan_end,
+                        pattern="^fc_plan_end$"
+                    ),
+                    # Вернуться к меню планов
+                    CallbackQueryHandler(
+                        plan_constructor.show_plan_menu,
+                        pattern="^fc_plan_menu$"
+                    ),
+                    # Навигация
+                    nav_back_to_decks,
+                    nav_main_menu,
                 ],
             },
             fallbacks=[
                 CommandHandler("cancel", handlers.cmd_cancel),
-                CallbackQueryHandler(
-                    handlers.back_to_decks,
-                    pattern="^fc_back_to_decks$"
-                ),
-                CallbackQueryHandler(
-                    handlers.back_to_main_menu,
-                    pattern="^to_main_menu$"
-                ),
+                nav_back_to_decks,
+                nav_main_menu,
             ],
             name="flashcards_conversation",
             persistent=True,
@@ -170,6 +274,9 @@ class FlashcardsPlugin(BotPlugin):
             ("start_review", handlers.start_review),
             ("show_back", handlers.show_card_back),
             ("rate", handlers.rate_card),
+            ("quiz", quiz_handlers.start_quiz),
+            ("daily", daily_challenge.show_daily_menu),
+            ("plans", plan_constructor.show_plan_menu),
             ("back_to_decks", handlers.back_to_decks),
             ("main_menu", handlers.back_to_main_menu),
         ]

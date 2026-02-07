@@ -25,7 +25,8 @@ from core.streak_manager import get_streak_manager
 
 from . import db as flashcard_db
 from .sm2 import review_card
-from .deck_generator import generate_all_decks
+from .deck_generator import generate_all_decks, generate_mistakes_deck
+from .daily_challenge import ensure_challenge_table
 
 logger = logging.getLogger(__name__)
 
@@ -39,6 +40,7 @@ async def init_flashcards_data() -> None:
     """Инициализация: создание таблиц и генерация колод."""
     try:
         await flashcard_db.ensure_tables()
+        await ensure_challenge_table()
         await generate_all_decks()
         logger.info("Flashcards module initialized")
     except Exception as e:
@@ -117,6 +119,16 @@ async def show_decks_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                 callback_data=f"fc_deck_{deck['id']}"
             )])
 
+    # Разделитель — режимы
+    keyboard.append([InlineKeyboardButton(
+        "🏆 Ежедневный челлендж", callback_data="fc_daily_menu"
+    )])
+    keyboard.append([
+        InlineKeyboardButton("📝 Планы (зад. 24)", callback_data="fc_plan_menu"),
+    ])
+    keyboard.append([InlineKeyboardButton(
+        "🔴 Мои ошибки", callback_data="fc_gen_mistakes"
+    )])
     keyboard.append([InlineKeyboardButton(
         "🏠 Главное меню", callback_data="to_main_menu"
     )])
@@ -196,6 +208,12 @@ async def show_deck(update: Update, context: ContextTypes.DEFAULT_TYPE):
         keyboard.append([InlineKeyboardButton(
             "🔄 Повторить все",
             callback_data="fc_start_review_all"
+        )])
+
+    # Quiz-режим (нужно минимум 4 карточки)
+    if total >= 4:
+        keyboard.append([InlineKeyboardButton(
+            "🧩 Quiz-режим", callback_data="fc_start_quiz"
         )])
 
     keyboard.append([InlineKeyboardButton(
@@ -567,6 +585,62 @@ async def back_to_decks(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def back_to_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Возврат в главное меню бота."""
     return await handle_to_main_menu(update, context)
+
+
+@safe_handler()
+async def generate_mistakes(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Генерирует колоду карточек из ошибок пользователя."""
+    query = update.callback_query
+    user_id = query.from_user.id
+
+    await query.answer("⏳ Генерирую карточки из ваших ошибок...", show_alert=False)
+
+    try:
+        count = await generate_mistakes_deck(user_id)
+    except Exception as e:
+        logger.error(f"Failed to generate mistakes deck: {e}", exc_info=True)
+        count = 0
+
+    if count == 0:
+        await query.answer(
+            "У вас пока нет ошибок или не удалось создать карточки. "
+            "Порешайте задания, а потом возвращайтесь!",
+            show_alert=True
+        )
+        return FC_MENU
+
+    # Переходим к созданной колоде
+    deck_id = f"mistakes_{user_id}"
+    context.user_data['fc_current_deck'] = deck_id
+
+    deck = await flashcard_db.get_deck(deck_id)
+    if not deck:
+        await show_decks_menu(update, context)
+        return FC_MENU
+
+    stats = await flashcard_db.get_deck_stats(user_id, deck_id)
+
+    text = f"<b>🔴 Карточки из ошибок</b>\n\n"
+    text += f"Создано <b>{count}</b> карточек на основе ваших ошибок.\n"
+    text += f"Повторяйте их, чтобы не допускать тех же ошибок на экзамене!\n\n"
+    text += f"📋 К повторению: <b>{stats['due_today']}</b>"
+
+    keyboard = [
+        [InlineKeyboardButton(
+            f"🎯 Начать повторение ({stats['due_today']})",
+            callback_data="fc_start_review"
+        )],
+        [InlineKeyboardButton("◀️ Назад к колодам", callback_data="fc_back_to_decks")],
+    ]
+
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await safe_edit_message(
+        query.message, text,
+        reply_markup=reply_markup,
+        parse_mode=ParseMode.HTML
+    )
+
+    return FC_DECK_VIEW
 
 
 @safe_handler()

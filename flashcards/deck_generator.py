@@ -4,12 +4,15 @@
 Источники данных:
 - data/task23_questions.json → Колода "Конституция РФ"
 - WebApp/glossary.json → Колода "Глоссарий обществознания"
+- user_mistakes + questions.json → Персональная колода ошибок
 """
 
 import json
 import logging
 import os
 from typing import List, Dict, Any
+
+import aiosqlite
 
 from . import db as flashcard_db
 
@@ -272,3 +275,96 @@ async def generate_glossary_decks() -> None:
             logger.info(
                 f"Generated {len(cards)} glossary flashcards for {cat_info['title']}"
             )
+
+
+# ============================================================
+# ПЕРСОНАЛЬНЫЕ КАРТОЧКИ ИЗ ОШИБОК
+# ============================================================
+
+async def generate_mistakes_deck(user_id: int) -> int:
+    """
+    Генерирует персональную колоду из ошибок пользователя.
+
+    Берёт question_id из user_mistakes, находит вопрос в questions.json,
+    создаёт карточку из вопроса и его explanation.
+
+    Args:
+        user_id: ID пользователя
+
+    Returns:
+        Количество сгенерированных карточек
+    """
+    from core.db import DATABASE_FILE as MAIN_DB
+
+    # Получаем список ошибок пользователя
+    async with aiosqlite.connect(MAIN_DB) as db:
+        cursor = await db.execute(
+            "SELECT question_id FROM user_mistakes WHERE user_id = ?",
+            (user_id,)
+        )
+        rows = await cursor.fetchall()
+
+    if not rows:
+        return 0
+
+    mistake_ids = {row[0] for row in rows}
+
+    # Загружаем вопросы
+    questions_path = os.path.join(BASE_DIR, 'data', 'questions.json')
+    try:
+        with open(questions_path, 'r', encoding='utf-8') as f:
+            all_questions = json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        logger.warning("questions.json not found for mistakes deck")
+        return 0
+
+    # Индексируем по id
+    questions_map = {}
+    for q in all_questions:
+        qid = q.get('id', '')
+        if qid in mistake_ids:
+            questions_map[qid] = q
+
+    if not questions_map:
+        return 0
+
+    # Создаём/обновляем колоду
+    deck_id = f"mistakes_{user_id}"
+    await flashcard_db.upsert_deck(
+        deck_id=deck_id,
+        title="Мои ошибки",
+        description="Карточки из вопросов, в которых вы ошиблись",
+        category="Персональное",
+        icon="🔴",
+        is_premium=0,
+    )
+
+    cards = []
+    for i, (qid, q) in enumerate(questions_map.items()):
+        question_text = q.get('question', '')
+        explanation = q.get('explanation', '')
+        answer = q.get('answer', '')
+
+        if not question_text or not explanation:
+            continue
+
+        # Лицевая сторона: вопрос
+        front = question_text
+        # Обратная сторона: правильный ответ + объяснение
+        back = f"Ответ: {answer}\n\n{explanation}" if answer else explanation
+
+        cards.append({
+            'id': f"fc_err_{user_id}_{qid}",
+            'deck_id': deck_id,
+            'front_text': front,
+            'back_text': back,
+            'hint': f"Правильный ответ: {answer}" if answer else None,
+            'sort_order': i,
+        })
+
+    if cards:
+        await flashcard_db.bulk_upsert_cards(cards)
+        await flashcard_db.update_deck_card_count(deck_id)
+        logger.info(f"Generated {len(cards)} mistake flashcards for user {user_id}")
+
+    return len(cards)
