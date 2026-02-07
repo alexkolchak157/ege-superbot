@@ -354,3 +354,29 @@ async def get_user_overall_stats(user_id: int) -> Dict[str, Any]:
             'unique_cards': row[2] or 0,
             'decks_touched': row[3] or 0,
         }
+
+
+async def export_all_decks_json() -> list:
+    """
+    Экспортирует все колоды с карточками для статического JSON (WebApp).
+
+    Returns:
+        Список колод, каждая с вложенным списком 'cards'.
+    """
+    async with aiosqlite.connect(DATABASE_FILE) as db:
+        db.row_factory = aiosqlite.Row
+
+        decks_cursor = await db.execute(
+            "SELECT * FROM flashcard_decks ORDER BY category, title"
+        )
+        decks = [dict(row) for row in await decks_cursor.fetchall()]
+
+        for deck in decks:
+            cards_cursor = await db.execute(
+                "SELECT id, front_text, back_text, hint, sort_order "
+                "FROM flashcard_cards WHERE deck_id = ? ORDER BY sort_order",
+                (deck['id'],)
+            )
+            deck['cards'] = [dict(row) for row in await cards_cursor.fetchall()]
+
+    return decks

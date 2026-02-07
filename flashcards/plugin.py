@@ -355,6 +355,12 @@ class FlashcardsPlugin(BotPlugin):
         )
 
         app.add_handler(conv_handler)
+
+        # Обработчик данных из WebApp (sendData) — вне ConversationHandler
+        app.add_handler(MessageHandler(
+            filters.StatusUpdate.WEB_APP_DATA,
+            handlers.handle_webapp_review_data
+        ))
         logger.info(f"Registered handlers for {self.title} plugin")
 
     def get_commands(self):
