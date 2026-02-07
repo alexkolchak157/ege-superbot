@@ -13,7 +13,9 @@ import logging
 from datetime import date, datetime, timezone
 from typing import Dict, Any, List, Optional
 
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from urllib.parse import urlparse
+
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo
 from telegram.constants import ParseMode
 from telegram.ext import ContextTypes, ConversationHandler
 
@@ -229,6 +231,19 @@ async def show_deck(update: Update, context: ContextTypes.DEFAULT_TYPE):
         keyboard.append([InlineKeyboardButton(
             "🧩 Quiz-режим", callback_data="fc_start_quiz"
         )])
+
+    # WebApp Swipe-режим
+    try:
+        from core.config import WEBAPP_URL
+        parsed = urlparse(WEBAPP_URL)
+        base_url = f"{parsed.scheme}://{parsed.netloc}"
+        flashcards_url = f"{base_url}/WebApp/flashcards-app.html?deck_id={deck_id}"
+        keyboard.append([InlineKeyboardButton(
+            "📱 Swipe-режим (WebApp)",
+            web_app=WebAppInfo(url=flashcards_url)
+        )])
+    except Exception:
+        pass  # WebApp URL не настроен — пропускаем кнопку
 
     keyboard.append([InlineKeyboardButton(
         "◀️ Назад к колодам", callback_data="fc_back_to_decks"
