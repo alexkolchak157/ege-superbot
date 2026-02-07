@@ -34,6 +34,7 @@ from .quiz_handlers import (
     generate_multiple_choice,
     _truncate,
 )
+from .leaderboard import add_xp, XP_DAILY_COMPLETE, XP_DAILY_BONUS_PER_CORRECT
 
 logger = logging.getLogger(__name__)
 
@@ -491,6 +492,10 @@ async def _show_daily_results(query, context: ContextTypes.DEFAULT_TYPE) -> None
         context.user_data['last_activity_date'] = current_date
 
     await streak_manager.update_correct_streak(user_id, pct >= 60)
+
+    # Начисляем XP
+    xp_earned = XP_DAILY_COMPLETE + correct * XP_DAILY_BONUS_PER_CORRECT
+    await add_xp(user_id, xp_earned, 'daily', f'challenge_{date.today().isoformat()}')
 
     challenge_streak = await get_challenge_streak(user_id)
 

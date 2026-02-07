@@ -7,6 +7,9 @@
 - Quiz-режимы (Верно/Неверно, Выбор из вариантов)
 - Ежедневный челлендж
 - Конструктор планов (задание 24)
+- Лидерборд (XP-рейтинг)
+- Учительские колоды
+- Дуэли (асинхронные соревнования)
 """
 
 import logging
@@ -14,6 +17,7 @@ from telegram.ext import (
     ConversationHandler,
     CommandHandler,
     CallbackQueryHandler,
+    MessageHandler,
     filters,
 )
 from core.plugin_base import BotPlugin
@@ -22,6 +26,9 @@ from . import handlers
 from . import quiz_handlers
 from . import daily_challenge
 from . import plan_constructor
+from . import leaderboard
+from . import teacher_decks
+from . import duels
 
 logger = logging.getLogger(__name__)
 
@@ -95,6 +102,25 @@ class FlashcardsPlugin(BotPlugin):
                     CallbackQueryHandler(
                         handlers.generate_mistakes,
                         pattern="^fc_gen_mistakes$"
+                    ),
+                    # Лидерборд
+                    CallbackQueryHandler(
+                        leaderboard.show_leaderboard,
+                        pattern="^fc_leaderboard$"
+                    ),
+                    CallbackQueryHandler(
+                        leaderboard.switch_leaderboard_period,
+                        pattern=r"^fc_lb_"
+                    ),
+                    # Дуэли
+                    CallbackQueryHandler(
+                        duels.show_duel_menu,
+                        pattern="^fc_duel_menu$"
+                    ),
+                    # Учительские колоды
+                    CallbackQueryHandler(
+                        teacher_decks.show_teacher_decks_menu,
+                        pattern="^fc_teacher_menu$"
                     ),
                     # Навигация
                     nav_main_menu,
@@ -240,6 +266,80 @@ class FlashcardsPlugin(BotPlugin):
                     nav_back_to_decks,
                     nav_main_menu,
                 ],
+
+                # ── Дуэли ──
+                states.FC_DUEL: [
+                    # Создать дуэль
+                    CallbackQueryHandler(
+                        duels.create_duel_handler,
+                        pattern="^fc_duel_create$"
+                    ),
+                    # Присоединиться (ввод кода)
+                    CallbackQueryHandler(
+                        duels.join_duel_prompt,
+                        pattern="^fc_duel_join$"
+                    ),
+                    # Начать Quiz дуэли
+                    CallbackQueryHandler(
+                        duels.start_duel_quiz,
+                        pattern="^fc_duel_start_quiz$"
+                    ),
+                    CallbackQueryHandler(
+                        duels.start_duel_quiz,
+                        pattern="^fc_duel_go$"
+                    ),
+                    # True/False в дуэли
+                    CallbackQueryHandler(
+                        duels.handle_duel_tf,
+                        pattern=r"^fc_duel_tf_"
+                    ),
+                    # Multiple Choice в дуэли
+                    CallbackQueryHandler(
+                        duels.handle_duel_mc,
+                        pattern=r"^fc_duel_mc_\d"
+                    ),
+                    # Меню дуэлей
+                    CallbackQueryHandler(
+                        duels.show_duel_menu,
+                        pattern="^fc_duel_menu$"
+                    ),
+                    # Текстовый ввод (код приглашения)
+                    MessageHandler(
+                        filters.TEXT & ~filters.COMMAND,
+                        duels.handle_duel_text
+                    ),
+                    # Навигация
+                    nav_back_to_decks,
+                    nav_main_menu,
+                ],
+
+                # ── Учительские колоды (создание) ──
+                states.FC_TEACHER: [
+                    # Начать создание колоды
+                    CallbackQueryHandler(
+                        teacher_decks.start_create_deck,
+                        pattern="^fc_teacher_create$"
+                    ),
+                    # Завершить создание
+                    CallbackQueryHandler(
+                        teacher_decks.finish_create_deck,
+                        pattern="^fc_teacher_finish$"
+                    ),
+                    # Меню учительских колод
+                    CallbackQueryHandler(
+                        teacher_decks.show_teacher_decks_menu,
+                        pattern="^fc_teacher_menu$"
+                    ),
+                    # Текстовый ввод (название, описание, карточки)
+                    MessageHandler(
+                        filters.TEXT & ~filters.COMMAND,
+                        teacher_decks.handle_teacher_text
+                    ),
+                    # Навигация
+                    nav_back_to_decks,
+                    nav_deck,
+                    nav_main_menu,
+                ],
             },
             fallbacks=[
                 CommandHandler("cancel", handlers.cmd_cancel),
@@ -277,6 +377,9 @@ class FlashcardsPlugin(BotPlugin):
             ("quiz", quiz_handlers.start_quiz),
             ("daily", daily_challenge.show_daily_menu),
             ("plans", plan_constructor.show_plan_menu),
+            ("leaderboard", leaderboard.show_leaderboard),
+            ("duels", duels.show_duel_menu),
+            ("teacher_decks", teacher_decks.show_teacher_decks_menu),
             ("back_to_decks", handlers.back_to_decks),
             ("main_menu", handlers.back_to_main_menu),
         ]

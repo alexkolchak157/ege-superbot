@@ -27,6 +27,9 @@ from . import db as flashcard_db
 from .sm2 import review_card
 from .deck_generator import generate_all_decks, generate_mistakes_deck
 from .daily_challenge import ensure_challenge_table
+from .leaderboard import add_xp, ensure_leaderboard_tables, XP_CARD_CORRECT, XP_CARD_WRONG
+from .teacher_decks import ensure_teacher_decks_tables
+from .duels import ensure_duel_tables
 
 logger = logging.getLogger(__name__)
 
@@ -41,6 +44,9 @@ async def init_flashcards_data() -> None:
     try:
         await flashcard_db.ensure_tables()
         await ensure_challenge_table()
+        await ensure_leaderboard_tables()
+        await ensure_teacher_decks_tables()
+        await ensure_duel_tables()
         await generate_all_decks()
         logger.info("Flashcards module initialized")
     except Exception as e:
@@ -128,6 +134,14 @@ async def show_decks_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     ])
     keyboard.append([InlineKeyboardButton(
         "🔴 Мои ошибки", callback_data="fc_gen_mistakes"
+    )])
+    # Социальные элементы
+    keyboard.append([
+        InlineKeyboardButton("🏅 Лидерборд", callback_data="fc_leaderboard"),
+        InlineKeyboardButton("⚔️ Дуэли", callback_data="fc_duel_menu"),
+    ])
+    keyboard.append([InlineKeyboardButton(
+        "📖 Учительские колоды", callback_data="fc_teacher_menu"
     )])
     keyboard.append([InlineKeyboardButton(
         "🏠 Главное меню", callback_data="to_main_menu"
@@ -463,6 +477,10 @@ async def rate_card(update: Update, context: ContextTypes.DEFAULT_TYPE):
         next_review=result.next_review.isoformat(),
         is_correct=is_correct,
     )
+
+    # Начисляем XP
+    xp = XP_CARD_CORRECT if is_correct else XP_CARD_WRONG
+    await add_xp(user_id, xp, 'card_review', f"card_{card['card_id']}")
 
     # Обновляем статистику сессии
     rating_keys = {0: 'again', 1: 'hard', 2: 'good', 3: 'easy'}
