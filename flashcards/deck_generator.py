@@ -27,6 +27,7 @@ async def generate_all_decks() -> None:
 
     await generate_constitution_deck()
     await generate_glossary_decks()
+    await generate_topic_decks()
 
     logger.info("Deck generation complete")
 
@@ -378,3 +379,69 @@ async def generate_mistakes_deck(user_id: int) -> int:
         logger.info(f"Generated {len(cards)} mistake flashcards for user {user_id}")
 
     return len(cards)
+
+
+# ============================================================
+# ТЕМАТИЧЕСКИЕ КОЛОДЫ (Задание 13, издержки, налоги и т.д.)
+# ============================================================
+
+async def generate_topic_decks() -> None:
+    """
+    Генерирует тематические колоды из data/flashcard_topics.json.
+
+    Каждый элемент JSON содержит deck_id, title, description, category, icon
+    и массив cards с полями front/back.
+    """
+    data_path = os.path.join(BASE_DIR, 'data', 'flashcard_topics.json')
+
+    try:
+        with open(data_path, 'r', encoding='utf-8') as f:
+            topics = json.load(f)
+    except FileNotFoundError:
+        logger.warning(f"Topic decks data not found: {data_path}")
+        return
+    except json.JSONDecodeError as e:
+        logger.warning(f"Invalid JSON in flashcard_topics.json: {e}")
+        return
+
+    if not topics:
+        logger.warning("No topic decks found in flashcard_topics.json")
+        return
+
+    for topic in topics:
+        deck_id = topic.get('deck_id', '')
+        if not deck_id:
+            continue
+
+        await flashcard_db.upsert_deck(
+            deck_id=deck_id,
+            title=topic.get('title', ''),
+            description=topic.get('description', ''),
+            category=topic.get('category', 'Темы'),
+            icon=topic.get('icon', '📚'),
+            is_premium=0,
+        )
+
+        raw_cards = topic.get('cards', [])
+        cards = []
+        for i, card_data in enumerate(raw_cards):
+            front = card_data.get('front', '')
+            back = card_data.get('back', '')
+            if not front or not back:
+                continue
+
+            cards.append({
+                'id': f"fc_topic_{deck_id}_{i:03d}",
+                'deck_id': deck_id,
+                'front_text': front,
+                'back_text': back,
+                'hint': card_data.get('hint'),
+                'sort_order': i,
+            })
+
+        if cards:
+            await flashcard_db.bulk_upsert_cards(cards)
+            await flashcard_db.update_deck_card_count(deck_id)
+            logger.info(
+                f"Generated {len(cards)} topic flashcards for '{topic.get('title', deck_id)}'"
+            )
