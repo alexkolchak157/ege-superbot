@@ -30,7 +30,6 @@
             user-select: none;
         }
 
-        /* ── Header ── */
         .header {
             padding: 12px 16px;
             display: flex;
@@ -38,219 +37,89 @@
             justify-content: space-between;
             border-bottom: 1px solid var(--secondary-bg);
         }
-        .header-title {
-            font-size: 17px;
-            font-weight: 600;
-        }
-        .header-stats {
-            font-size: 13px;
-            color: var(--hint);
-        }
-        .xp-badge {
-            display: inline-flex;
-            align-items: center;
-            gap: 4px;
-            background: var(--secondary-bg);
-            padding: 4px 10px;
-            border-radius: 12px;
-            font-size: 13px;
-            font-weight: 500;
-        }
+        .header-title { font-size: 17px; font-weight: 600; }
+        .header-stats { font-size: 13px; color: var(--hint); }
 
-        /* ── Progress bar ── */
-        .progress-bar {
-            height: 4px;
-            background: var(--secondary-bg);
-            position: relative;
-        }
+        .progress-bar { height: 4px; background: var(--secondary-bg); position: relative; }
         .progress-fill {
-            height: 100%;
-            background: var(--btn);
-            transition: width var(--transition);
-            border-radius: 0 2px 2px 0;
+            height: 100%; background: var(--btn);
+            transition: width var(--transition); border-radius: 0 2px 2px 0;
         }
 
-        /* ── Deck selector ── */
-        .deck-selector {
-            padding: 16px;
-        }
-        .deck-list {
-            display: flex;
-            flex-direction: column;
-            gap: 10px;
-        }
+        .deck-selector { padding: 16px; }
+        .deck-list { display: flex; flex-direction: column; gap: 10px; }
         .deck-item {
-            background: var(--secondary-bg);
-            border-radius: var(--card-radius);
-            padding: 14px 16px;
-            display: flex;
-            align-items: center;
-            gap: 12px;
-            cursor: pointer;
-            transition: transform 0.15s, opacity 0.15s;
+            background: var(--secondary-bg); border-radius: var(--card-radius);
+            padding: 14px 16px; display: flex; align-items: center; gap: 12px;
+            cursor: pointer; transition: transform 0.15s, opacity 0.15s;
             -webkit-tap-highlight-color: transparent;
         }
-        .deck-item:active {
-            transform: scale(0.97);
-            opacity: 0.8;
-        }
+        .deck-item:active { transform: scale(0.97); opacity: 0.8; }
         .deck-icon { font-size: 28px; }
         .deck-info { flex: 1; }
         .deck-title { font-size: 15px; font-weight: 600; }
         .deck-meta { font-size: 12px; color: var(--hint); margin-top: 2px; }
-        .deck-due {
-            font-size: 13px;
-            font-weight: 600;
-            color: var(--btn);
-        }
+        .deck-due { font-size: 13px; font-weight: 600; color: var(--btn); }
 
-        /* ── Card area ── */
         .card-area {
-            display: none;
-            flex-direction: column;
-            align-items: center;
-            padding: 16px;
-            min-height: calc(100vh - 100px);
+            display: none; flex-direction: column; align-items: center;
+            padding: 16px; min-height: calc(100vh - 100px);
         }
         .card-area.active { display: flex; }
+        .card-counter { font-size: 14px; color: var(--hint); margin-bottom: 12px; }
 
-        .card-counter {
-            font-size: 14px;
-            color: var(--hint);
-            margin-bottom: 12px;
-        }
-
-        /* ── Swipe card ── */
         .card-stack {
-            position: relative;
-            width: 100%;
-            max-width: 380px;
-            height: 320px;
-            perspective: 1000px;
+            position: relative; width: 100%; max-width: 380px;
+            height: 320px; perspective: 1000px;
         }
-
         .swipe-card {
-            position: absolute;
-            width: 100%;
-            height: 100%;
-            border-radius: var(--card-radius);
-            background: var(--secondary-bg);
-            box-shadow: 0 4px 20px rgba(0,0,0,0.08);
-            cursor: grab;
+            position: absolute; width: 100%; height: 100%;
+            border-radius: var(--card-radius); background: var(--secondary-bg);
+            box-shadow: 0 4px 20px rgba(0,0,0,0.08); cursor: grab;
             transition: transform 0.4s ease, opacity 0.4s ease;
-            touch-action: pan-y;
-            display: flex;
-            flex-direction: column;
-            overflow: hidden;
+            touch-action: pan-y; display: flex; flex-direction: column; overflow: hidden;
         }
-        .swipe-card.dragging {
-            transition: none;
-            cursor: grabbing;
-        }
-        .swipe-card.gone-left {
-            transform: translateX(-150%) rotate(-20deg);
-            opacity: 0;
-        }
-        .swipe-card.gone-right {
-            transform: translateX(150%) rotate(20deg);
-            opacity: 0;
-        }
+        .swipe-card.dragging { transition: none; cursor: grabbing; }
+        .swipe-card.gone-left { transform: translateX(-150%) rotate(-20deg); opacity: 0; }
+        .swipe-card.gone-right { transform: translateX(150%) rotate(20deg); opacity: 0; }
 
         .card-face {
-            flex: 1;
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            justify-content: center;
-            padding: 24px;
-            text-align: center;
+            flex: 1; display: flex; flex-direction: column;
+            align-items: center; justify-content: center; padding: 24px; text-align: center;
         }
         .card-label {
-            font-size: 11px;
-            text-transform: uppercase;
-            letter-spacing: 1px;
-            color: var(--hint);
-            margin-bottom: 12px;
+            font-size: 11px; text-transform: uppercase; letter-spacing: 1px;
+            color: var(--hint); margin-bottom: 12px;
         }
-        .card-text {
-            font-size: 17px;
-            line-height: 1.5;
-            max-height: 200px;
-            overflow-y: auto;
-        }
-        .card-hint-btn {
-            margin-top: 12px;
-            font-size: 13px;
-            color: var(--link);
-            cursor: pointer;
-            padding: 6px 12px;
-        }
+        .card-text { font-size: 17px; line-height: 1.5; max-height: 200px; overflow-y: auto; }
 
-        /* ── Flip ── */
         .card-flipper {
-            width: 100%;
-            height: 100%;
-            position: relative;
-            transform-style: preserve-3d;
-            transition: transform 0.5s;
+            width: 100%; height: 100%; position: relative;
+            transform-style: preserve-3d; transition: transform 0.5s;
         }
-        .card-flipper.flipped {
-            transform: rotateY(180deg);
-        }
+        .card-flipper.flipped { transform: rotateY(180deg); }
         .card-front, .card-back {
-            position: absolute;
-            width: 100%;
-            height: 100%;
-            backface-visibility: hidden;
-            -webkit-backface-visibility: hidden;
-            border-radius: var(--card-radius);
-            background: var(--secondary-bg);
+            position: absolute; width: 100%; height: 100%;
+            backface-visibility: hidden; -webkit-backface-visibility: hidden;
+            border-radius: var(--card-radius); background: var(--secondary-bg);
         }
-        .card-back {
-            transform: rotateY(180deg);
-        }
+        .card-back { transform: rotateY(180deg); }
 
-        /* ── Swipe indicators ── */
         .swipe-indicator {
-            position: absolute;
-            top: 16px;
-            font-size: 36px;
-            font-weight: 700;
-            opacity: 0;
-            transition: opacity 0.15s;
-            pointer-events: none;
-            z-index: 10;
+            position: absolute; top: 16px; font-size: 36px; font-weight: 700;
+            opacity: 0; transition: opacity 0.15s; pointer-events: none; z-index: 10;
         }
-        .indicator-left {
-            left: 16px;
-            color: #e74c3c;
-        }
-        .indicator-right {
-            right: 16px;
-            color: #27ae60;
-        }
+        .indicator-left { left: 16px; color: #e74c3c; }
+        .indicator-right { right: 16px; color: #27ae60; }
 
-        /* ── Rating buttons ── */
         .rating-buttons {
-            display: none;
-            width: 100%;
-            max-width: 380px;
-            margin-top: 16px;
-            gap: 8px;
+            display: none; width: 100%; max-width: 380px; margin-top: 16px; gap: 8px;
         }
-        .rating-buttons.visible {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-        }
+        .rating-buttons.visible { display: grid; grid-template-columns: 1fr 1fr; }
         .rate-btn {
-            padding: 14px 8px;
-            border: none;
-            border-radius: 12px;
-            font-size: 14px;
-            font-weight: 600;
-            cursor: pointer;
-            transition: transform 0.15s, opacity 0.15s;
-            -webkit-tap-highlight-color: transparent;
+            padding: 14px 8px; border: none; border-radius: 12px;
+            font-size: 14px; font-weight: 600; cursor: pointer;
+            transition: transform 0.15s; -webkit-tap-highlight-color: transparent;
         }
         .rate-btn:active { transform: scale(0.95); }
         .rate-btn[data-rating="0"] { background: #fee; color: #c0392b; }
@@ -258,98 +127,58 @@
         .rate-btn[data-rating="2"] { background: #e8f5e9; color: #27ae60; }
         .rate-btn[data-rating="3"] { background: #e3f2fd; color: #2196f3; }
 
-        /* ── Tap to flip hint ── */
-        .tap-hint {
-            font-size: 13px;
-            color: var(--hint);
-            margin-top: 12px;
-            text-align: center;
-        }
+        .tap-hint { font-size: 13px; color: var(--hint); margin-top: 12px; text-align: center; }
 
-        /* ── Results screen ── */
         .results-screen {
-            display: none;
-            flex-direction: column;
-            align-items: center;
-            padding: 32px 16px;
-            text-align: center;
+            display: none; flex-direction: column; align-items: center;
+            padding: 32px 16px; text-align: center;
         }
         .results-screen.active { display: flex; }
         .results-emoji { font-size: 64px; margin-bottom: 16px; }
         .results-title { font-size: 22px; font-weight: 700; margin-bottom: 8px; }
         .results-subtitle { font-size: 15px; color: var(--hint); margin-bottom: 24px; }
         .results-stats {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 12px;
-            width: 100%;
-            max-width: 300px;
-            margin-bottom: 24px;
+            display: grid; grid-template-columns: 1fr 1fr; gap: 12px;
+            width: 100%; max-width: 300px; margin-bottom: 24px;
         }
-        .stat-box {
-            background: var(--secondary-bg);
-            border-radius: 12px;
-            padding: 14px;
-        }
+        .stat-box { background: var(--secondary-bg); border-radius: 12px; padding: 14px; }
         .stat-value { font-size: 24px; font-weight: 700; }
         .stat-label { font-size: 12px; color: var(--hint); margin-top: 2px; }
         .results-btn {
-            width: 100%;
-            max-width: 300px;
-            padding: 14px;
-            border: none;
-            border-radius: 12px;
-            background: var(--btn);
-            color: var(--btn-text);
-            font-size: 16px;
-            font-weight: 600;
-            cursor: pointer;
-            margin-bottom: 10px;
+            width: 100%; max-width: 300px; padding: 14px; border: none;
+            border-radius: 12px; background: var(--btn); color: var(--btn-text);
+            font-size: 16px; font-weight: 600; cursor: pointer; margin-bottom: 10px;
         }
-        .results-btn.secondary {
-            background: var(--secondary-bg);
-            color: var(--text);
-        }
+        .results-btn.secondary { background: var(--secondary-bg); color: var(--text); }
 
-        /* ── Loading ── */
         .loading {
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            min-height: 60vh;
-            font-size: 15px;
-            color: var(--hint);
+            display: flex; align-items: center; justify-content: center;
+            min-height: 60vh; font-size: 15px; color: var(--hint);
         }
         .spinner {
             width: 32px; height: 32px;
-            border: 3px solid var(--secondary-bg);
-            border-top-color: var(--btn);
-            border-radius: 50%;
-            animation: spin 0.8s linear infinite;
-            margin-right: 10px;
+            border: 3px solid var(--secondary-bg); border-top-color: var(--btn);
+            border-radius: 50%; animation: spin 0.8s linear infinite; margin-right: 10px;
         }
         @keyframes spin { to { transform: rotate(360deg); } }
     </style>
 </head>
 <body>
 
-<!-- Loading -->
 <div id="loading" class="loading">
     <div class="spinner"></div>
     Загрузка колод...
 </div>
 
-<!-- Deck selector -->
 <div id="deckSelector" class="deck-selector" style="display:none">
     <div class="header">
         <div class="header-title">🃏 Карточки</div>
-        <div class="xp-badge" id="xpBadge">💰 0 XP</div>
+        <div class="header-stats" id="deckCount"></div>
     </div>
     <div style="height:12px"></div>
     <div class="deck-list" id="deckList"></div>
 </div>
 
-<!-- Card review area -->
 <div id="cardArea" class="card-area">
     <div class="header" style="width:100%;max-width:380px">
         <div class="header-title" id="deckTitle">Колода</div>
@@ -358,7 +187,6 @@
     <div class="progress-bar" style="width:100%;max-width:380px;margin-bottom:16px">
         <div class="progress-fill" id="progressFill" style="width:0%"></div>
     </div>
-
     <div class="card-stack" id="cardStack">
         <div class="swipe-indicator indicator-left">🔴</div>
         <div class="swipe-indicator indicator-right">🟢</div>
@@ -375,9 +203,7 @@
             </div>
         </div>
     </div>
-
     <div class="tap-hint" id="tapHint">Нажмите на карточку, чтобы перевернуть</div>
-
     <div class="rating-buttons" id="ratingButtons">
         <button class="rate-btn" data-rating="0">🔴 Не помню</button>
         <button class="rate-btn" data-rating="1">🟠 Сложно</button>
@@ -386,7 +212,6 @@
     </div>
 </div>
 
-<!-- Results -->
 <div id="resultsScreen" class="results-screen">
     <div class="results-emoji" id="resultsEmoji">🎉</div>
     <div class="results-title" id="resultsTitle">Сессия завершена!</div>
@@ -401,15 +226,16 @@
             <div class="stat-label">Знаю хорошо</div>
         </div>
         <div class="stat-box">
-            <div class="stat-value" id="statXP">+0</div>
-            <div class="stat-label">XP заработано</div>
+            <div class="stat-value" id="statPct">0%</div>
+            <div class="stat-label">Результат</div>
         </div>
         <div class="stat-box">
-            <div class="stat-value" id="statInterval">0д</div>
-            <div class="stat-label">Ср. интервал</div>
+            <div class="stat-value" id="statWrong">0</div>
+            <div class="stat-label">Повторить</div>
         </div>
     </div>
-    <button class="results-btn" id="btnReviewMore">🔄 Повторить ещё</button>
+    <button class="results-btn" id="btnSaveAndClose">💾 Сохранить и выйти</button>
+    <button class="results-btn secondary" id="btnReviewMore">🔄 Повторить ещё</button>
     <button class="results-btn secondary" id="btnBackToDecks">📋 К колодам</button>
 </div>
 
@@ -417,72 +243,69 @@
 (function() {
     'use strict';
 
-    const tg = window.Telegram.WebApp;
+    var tg = window.Telegram.WebApp;
     tg.ready();
     tg.expand();
-    tg.enableClosingConfirmation();
 
-    const API_BASE = window.location.origin + '/api/flashcards';
-    const initData = tg.initData;
+    var allDecks = [];
+    var currentDeck = null;
+    var cards = [];
+    var currentIndex = 0;
+    var reviews = [];
+    var sessionStats = { reviewed: 0, correct: 0 };
+    var isFlipped = false;
 
-    // State
-    let decks = [];
-    let currentDeck = null;
-    let cards = [];
-    let currentIndex = 0;
-    let sessionStats = { reviewed: 0, correct: 0, xpEarned: 0, totalInterval: 0 };
-    let isFlipped = false;
+    var urlParams = new URLSearchParams(window.location.search);
+    var requestedDeckId = urlParams.get('deck_id');
 
-    // ── API helpers ──
-    async function apiGet(path) {
-        const res = await fetch(API_BASE + path, {
-            headers: { 'X-Telegram-Init-Data': initData }
-        });
-        if (!res.ok) throw new Error(`API error: ${res.status}`);
-        return res.json();
+    // ── Load data from static JSON (generated by bot on startup) ──
+    function loadData() {
+        var xhr = new XMLHttpRequest();
+        xhr.open('GET', 'flashcards-data.json?' + Date.now(), true);
+        xhr.onload = function() {
+            if (xhr.status === 200) {
+                try {
+                    allDecks = JSON.parse(xhr.responseText);
+                } catch(e) {
+                    showError('Ошибка парсинга данных.');
+                    return;
+                }
+
+                if (requestedDeckId) {
+                    var deck = null;
+                    for (var i = 0; i < allDecks.length; i++) {
+                        if (allDecks[i].id === requestedDeckId) { deck = allDecks[i]; break; }
+                    }
+                    if (deck && deck.cards && deck.cards.length > 0) {
+                        startReview(deck);
+                        return;
+                    }
+                }
+
+                renderDecks();
+                showScreen('deckSelector');
+            } else {
+                showError('Не удалось загрузить данные карточек.<br>Перезапустите бота и попробуйте снова.');
+            }
+        };
+        xhr.onerror = function() {
+            showError('Ошибка сети при загрузке данных.');
+        };
+        xhr.send();
     }
 
-    async function apiPost(path, body) {
-        const res = await fetch(API_BASE + path, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'X-Telegram-Init-Data': initData,
-            },
-            body: JSON.stringify(body),
-        });
-        if (!res.ok) throw new Error(`API error: ${res.status}`);
-        return res.json();
-    }
-
-    // ── Init ──
-    async function init() {
-        try {
-            const [deckData, stats] = await Promise.all([
-                apiGet('/decks'),
-                apiGet('/stats'),
-            ]);
-            decks = deckData;
-            document.getElementById('xpBadge').textContent =
-                `${stats.level_icon} ${Math.round(stats.total_xp)} XP`;
-            renderDecks();
-            showScreen('deckSelector');
-        } catch (e) {
-            document.getElementById('loading').innerHTML =
-                '<div style="text-align:center;padding:20px">Не удалось загрузить данные.<br>Попробуйте позже.</div>';
-            console.error(e);
-        }
+    function showError(msg) {
+        document.getElementById('loading').innerHTML =
+            '<div style="text-align:center;padding:20px;line-height:1.6">' + msg + '</div>';
     }
 
     function showScreen(id) {
-        ['loading', 'deckSelector', 'cardArea', 'resultsScreen'].forEach(s => {
-            const el = document.getElementById(s);
-            if (el) {
-                el.style.display = 'none';
-                el.classList.remove('active');
-            }
-        });
-        const target = document.getElementById(id);
+        var screens = ['loading', 'deckSelector', 'cardArea', 'resultsScreen'];
+        for (var i = 0; i < screens.length; i++) {
+            var el = document.getElementById(screens[i]);
+            if (el) { el.style.display = 'none'; el.classList.remove('active'); }
+        }
+        var target = document.getElementById(id);
         if (target) {
             target.style.display = id === 'deckSelector' ? 'block' : 'flex';
             target.classList.add('active');
@@ -491,84 +314,80 @@
 
     // ── Deck list ──
     function renderDecks() {
-        const list = document.getElementById('deckList');
+        var list = document.getElementById('deckList');
         list.innerHTML = '';
-        decks.forEach(deck => {
-            const el = document.createElement('div');
+        var totalCards = 0;
+
+        for (var i = 0; i < allDecks.length; i++) {
+            var deck = allDecks[i];
+            var numCards = (deck.cards || []).length;
+            totalCards += numCards;
+            if (numCards === 0) continue;
+
+            var el = document.createElement('div');
             el.className = 'deck-item';
-            const pct = deck.total > 0 ? Math.round(deck.mastered / deck.total * 100) : 0;
-            const due = deck.due_today;
-            el.innerHTML = `
-                <div class="deck-icon">${deck.icon}</div>
-                <div class="deck-info">
-                    <div class="deck-title">${deck.title}</div>
-                    <div class="deck-meta">${deck.card_count} карт. · ${pct}% выучено</div>
-                </div>
-                <div class="deck-due">${due > 0 ? due + ' к повт.' : '✅'}</div>
-            `;
-            el.addEventListener('click', () => startReview(deck));
+            el.innerHTML =
+                '<div class="deck-icon">' + (deck.icon || '🃏') + '</div>' +
+                '<div class="deck-info">' +
+                    '<div class="deck-title">' + escHtml(deck.title) + '</div>' +
+                    '<div class="deck-meta">' + numCards + ' карточек</div>' +
+                '</div>' +
+                '<div class="deck-due">' + numCards + ' →</div>';
+            el.addEventListener('click', (function(d) {
+                return function() { startReview(d); };
+            })(deck));
             list.appendChild(el);
-        });
+        }
+
+        document.getElementById('deckCount').textContent = totalCards + ' карточек';
+    }
+
+    function escHtml(s) {
+        var d = document.createElement('div');
+        d.textContent = s;
+        return d.innerHTML;
     }
 
     // ── Start review ──
-    async function startReview(deck) {
+    function startReview(deck) {
         currentDeck = deck;
+        cards = (deck.cards || []).slice();
         currentIndex = 0;
-        sessionStats = { reviewed: 0, correct: 0, xpEarned: 0, totalInterval: 0 };
+        reviews = [];
+        sessionStats = { reviewed: 0, correct: 0 };
         isFlipped = false;
 
-        document.getElementById('deckTitle').textContent = deck.icon + ' ' + deck.title;
+        document.getElementById('deckTitle').textContent =
+            (deck.icon || '🃏') + ' ' + deck.title;
         showScreen('cardArea');
-
-        try {
-            const mode = deck.due_today > 0 ? 'due' : 'all';
-            cards = await apiGet(`/decks/${deck.id}/cards?mode=${mode}&limit=30`);
-            if (!cards.length) {
-                tg.showAlert('В колоде нет карточек для повторения');
-                showScreen('deckSelector');
-                return;
-            }
-            showCard();
-        } catch (e) {
-            tg.showAlert('Ошибка загрузки карточек');
-            showScreen('deckSelector');
-        }
+        showCard();
     }
 
     // ── Show card ──
     function showCard() {
-        if (currentIndex >= cards.length) {
-            showResults();
-            return;
-        }
+        if (currentIndex >= cards.length) { showResults(); return; }
 
-        const card = cards[currentIndex];
+        var card = cards[currentIndex];
         document.getElementById('frontText').textContent = card.front_text;
         document.getElementById('backText').textContent = card.back_text;
         document.getElementById('cardCounter').textContent =
-            `${currentIndex + 1}/${cards.length}`;
+            (currentIndex + 1) + '/' + cards.length;
+        document.getElementById('progressFill').style.width =
+            (cards.length > 0 ? (currentIndex / cards.length * 100) : 0) + '%';
 
-        const pct = cards.length > 0 ? (currentIndex / cards.length * 100) : 0;
-        document.getElementById('progressFill').style.width = pct + '%';
-
-        // Reset flip
         isFlipped = false;
         document.getElementById('cardFlipper').classList.remove('flipped');
         document.getElementById('ratingButtons').classList.remove('visible');
         document.getElementById('tapHint').style.display = 'block';
 
-        // Reset card position
-        const mainCard = document.getElementById('mainCard');
+        var mainCard = document.getElementById('mainCard');
         mainCard.className = 'swipe-card';
         mainCard.style.transform = '';
         mainCard.style.opacity = '';
 
-        // Haptic
         if (tg.HapticFeedback) tg.HapticFeedback.impactOccurred('light');
     }
 
-    // ── Flip card ──
     function flipCard() {
         if (isFlipped) return;
         isFlipped = true;
@@ -578,91 +397,85 @@
         if (tg.HapticFeedback) tg.HapticFeedback.impactOccurred('medium');
     }
 
-    // ── Rate card ──
-    async function rateCard(rating) {
-        const card = cards[currentIndex];
+    function rateCard(rating) {
+        var card = cards[currentIndex];
         if (!card) return;
 
-        // Animate swipe out
-        const mainCard = document.getElementById('mainCard');
+        var mainCard = document.getElementById('mainCard');
         mainCard.classList.add(rating >= 2 ? 'gone-right' : 'gone-left');
         if (tg.HapticFeedback) tg.HapticFeedback.notificationOccurred(
             rating >= 2 ? 'success' : 'warning'
         );
 
-        // Send to API (fire and forget for speed)
-        apiPost(`/cards/${card.id}/review?deck_id=${currentDeck.id}`, { rating })
-            .then(res => {
-                sessionStats.xpEarned += res.xp_earned || 0;
-                sessionStats.totalInterval += res.interval_days || 0;
-            })
-            .catch(e => console.error('Review error:', e));
-
+        reviews.push({ card_id: card.id, rating: rating });
         sessionStats.reviewed++;
         if (rating >= 2) sessionStats.correct++;
 
-        // Next card after animation
-        setTimeout(() => {
-            currentIndex++;
-            showCard();
-        }, 350);
+        setTimeout(function() { currentIndex++; showCard(); }, 350);
     }
 
     // ── Results ──
     function showResults() {
         showScreen('resultsScreen');
-        const { reviewed, correct, xpEarned, totalInterval } = sessionStats;
-        const pct = reviewed > 0 ? Math.round(correct / reviewed * 100) : 0;
+        var reviewed = sessionStats.reviewed;
+        var correct = sessionStats.correct;
+        var pct = reviewed > 0 ? Math.round(correct / reviewed * 100) : 0;
 
         document.getElementById('statReviewed').textContent = reviewed;
         document.getElementById('statCorrect').textContent = correct;
-        document.getElementById('statXP').textContent = '+' + Math.round(xpEarned);
-        document.getElementById('statInterval').textContent =
-            reviewed > 0 ? Math.round(totalInterval / reviewed) + 'д' : '0д';
+        document.getElementById('statPct').textContent = pct + '%';
+        document.getElementById('statWrong').textContent = reviewed - correct;
 
         if (pct >= 80) {
             document.getElementById('resultsEmoji').textContent = '🌟';
             document.getElementById('resultsTitle').textContent = 'Отличный результат!';
-            document.getElementById('resultsSubtitle').textContent = `${pct}% — вы отлично знаете материал`;
+            document.getElementById('resultsSubtitle').textContent = pct + '% — вы отлично знаете материал';
         } else if (pct >= 50) {
             document.getElementById('resultsEmoji').textContent = '👍';
             document.getElementById('resultsTitle').textContent = 'Хороший прогресс!';
-            document.getElementById('resultsSubtitle').textContent = `${pct}% — продолжайте повторять`;
+            document.getElementById('resultsSubtitle').textContent = pct + '% — продолжайте повторять';
         } else {
             document.getElementById('resultsEmoji').textContent = '💪';
             document.getElementById('resultsTitle').textContent = 'Не сдавайтесь!';
-            document.getElementById('resultsSubtitle').textContent = `${pct}% — регулярное повторение поможет`;
+            document.getElementById('resultsSubtitle').textContent = pct + '% — регулярное повторение поможет';
         }
 
         if (tg.HapticFeedback) tg.HapticFeedback.notificationOccurred('success');
     }
 
+    function saveResults() {
+        if (reviews.length === 0) { tg.close(); return; }
+        try {
+            tg.sendData(JSON.stringify({
+                action: 'review_results',
+                deck_id: currentDeck ? currentDeck.id : '',
+                reviews: reviews
+            }));
+        } catch(e) {
+            tg.close();
+        }
+    }
+
     // ── Touch / swipe ──
-    let startX = 0, startY = 0, currentX = 0, isDragging = false;
+    var startX = 0, currentX = 0, isDragging = false;
 
     function onTouchStart(e) {
-        if (!isFlipped) {
-            flipCard();
-            return;
-        }
-        const touch = e.touches ? e.touches[0] : e;
+        if (!isFlipped) { flipCard(); return; }
+        var touch = e.touches ? e.touches[0] : e;
         startX = touch.clientX;
-        startY = touch.clientY;
         isDragging = true;
         document.getElementById('mainCard').classList.add('dragging');
     }
 
     function onTouchMove(e) {
         if (!isDragging || !isFlipped) return;
-        const touch = e.touches ? e.touches[0] : e;
+        var touch = e.touches ? e.touches[0] : e;
         currentX = touch.clientX - startX;
 
-        const card = document.getElementById('mainCard');
-        const rotate = currentX * 0.08;
-        card.style.transform = `translateX(${currentX}px) rotate(${rotate}deg)`;
+        var card = document.getElementById('mainCard');
+        card.style.transform = 'translateX(' + currentX + 'px) rotate(' + (currentX * 0.08) + 'deg)';
 
-        // Indicators
-        const threshold = 60;
+        var threshold = 60;
         document.querySelector('.indicator-left').style.opacity =
             currentX < -threshold ? Math.min(1, (-currentX - threshold) / 60) : 0;
         document.querySelector('.indicator-right').style.opacity =
@@ -673,27 +486,18 @@
         if (!isDragging) return;
         isDragging = false;
 
-        const card = document.getElementById('mainCard');
+        var card = document.getElementById('mainCard');
         card.classList.remove('dragging');
-
-        // Hide indicators
         document.querySelector('.indicator-left').style.opacity = 0;
         document.querySelector('.indicator-right').style.opacity = 0;
 
-        const threshold = 80;
-        if (currentX > threshold) {
-            rateCard(2); // Помню (swipe right)
-        } else if (currentX < -threshold) {
-            rateCard(0); // Не помню (swipe left)
-        } else {
-            // Snap back
-            card.style.transform = '';
-        }
+        if (currentX > 80) { rateCard(2); }
+        else if (currentX < -80) { rateCard(0); }
+        else { card.style.transform = ''; }
         currentX = 0;
     }
 
-    // ── Event listeners ──
-    const cardStack = document.getElementById('cardStack');
+    var cardStack = document.getElementById('cardStack');
     cardStack.addEventListener('touchstart', onTouchStart, { passive: true });
     cardStack.addEventListener('touchmove', onTouchMove, { passive: true });
     cardStack.addEventListener('touchend', onTouchEnd);
@@ -701,59 +505,38 @@
     document.addEventListener('mousemove', onTouchMove);
     document.addEventListener('mouseup', onTouchEnd);
 
-    // Click to flip (no drag)
-    cardStack.addEventListener('click', (e) => {
+    cardStack.addEventListener('click', function() {
         if (Math.abs(currentX) < 5 && !isFlipped) flipCard();
     });
 
-    // Rating buttons
-    document.querySelectorAll('.rate-btn').forEach(btn => {
-        btn.addEventListener('click', () => {
-            const rating = parseInt(btn.dataset.rating);
-            rateCard(rating);
-        });
+    document.querySelectorAll('.rate-btn').forEach(function(btn) {
+        btn.addEventListener('click', function() { rateCard(parseInt(btn.dataset.rating)); });
     });
 
-    // Results buttons
-    document.getElementById('btnReviewMore').addEventListener('click', () => {
+    document.getElementById('btnSaveAndClose').addEventListener('click', saveResults);
+    document.getElementById('btnReviewMore').addEventListener('click', function() {
         if (currentDeck) startReview(currentDeck);
     });
-    document.getElementById('btnBackToDecks').addEventListener('click', async () => {
-        try {
-            const [deckData, stats] = await Promise.all([
-                apiGet('/decks'),
-                apiGet('/stats'),
-            ]);
-            decks = deckData;
-            document.getElementById('xpBadge').textContent =
-                `${stats.level_icon} ${Math.round(stats.total_xp)} XP`;
-            renderDecks();
-        } catch(e) {}
+    document.getElementById('btnBackToDecks').addEventListener('click', function() {
+        renderDecks();
         showScreen('deckSelector');
     });
 
-    // Back button
-    tg.BackButton.onClick(() => {
-        if (document.getElementById('resultsScreen').classList.contains('active') ||
-            document.getElementById('cardArea').classList.contains('active')) {
-            showScreen('deckSelector');
-            tg.BackButton.hide();
-        } else {
-            tg.close();
-        }
+    tg.BackButton.onClick(function() {
+        var inCard = document.getElementById('cardArea').classList.contains('active');
+        var inResults = document.getElementById('resultsScreen').classList.contains('active');
+        if (inCard || inResults) {
+            renderDecks(); showScreen('deckSelector'); tg.BackButton.hide();
+        } else { tg.close(); }
     });
 
-    // Show back button when in review
-    const observer = new MutationObserver(() => {
-        const inDecks = document.getElementById('deckSelector').style.display !== 'none';
-        if (inDecks) tg.BackButton.hide();
-        else tg.BackButton.show();
+    var observer = new MutationObserver(function() {
+        var inDecks = document.getElementById('deckSelector').style.display !== 'none';
+        if (inDecks) tg.BackButton.hide(); else tg.BackButton.show();
     });
     observer.observe(document.getElementById('deckSelector'), { attributes: true });
 
-    // ── Start ──
-    init();
-
+    loadData();
 })();
 </script>
 </body>

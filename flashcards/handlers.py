@@ -9,7 +9,9 @@ Telegram-хендлеры для модуля карточек (Flashcards).
 5. Итоги сессии повторения
 """
 
+import json
 import logging
+import os
 from datetime import date, datetime, timezone
 from typing import Dict, Any, List, Optional
 
@@ -50,9 +52,24 @@ async def init_flashcards_data() -> None:
         await ensure_teacher_decks_tables()
         await ensure_duel_tables()
         await generate_all_decks()
+        # Экспортируем данные в статический JSON для WebApp
+        await _export_webapp_json()
         logger.info("Flashcards module initialized")
     except Exception as e:
         logger.error(f"Failed to initialize flashcards: {e}", exc_info=True)
+
+
+async def _export_webapp_json() -> None:
+    """Генерирует flashcards-data.json для WebApp (чтобы не зависеть от API)."""
+    try:
+        data = await flashcard_db.export_all_decks_json()
+        base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        json_path = os.path.join(base_dir, 'WebApp', 'flashcards-data.json')
+        with open(json_path, 'w', encoding='utf-8') as f:
+            json.dump(data, f, ensure_ascii=False)
+        logger.info(f"Exported {len(data)} decks to {json_path}")
+    except Exception as e:
+        logger.warning(f"Could not export webapp JSON: {e}")
 
 
 # ============================================================
@@ -681,3 +698,96 @@ async def cmd_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Команда /cancel — выход из модуля."""
     await update.message.reply_text("Выход из карточек.")
     return ConversationHandler.END
+
+
+# ============================================================
+# ОБРАБОТКА ДАННЫХ ИЗ WEBAPP (sendData)
+# ============================================================
+
+async def handle_webapp_review_data(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Обрабатывает результаты сессии повторения из WebApp.
+
+    WebApp отправляет JSON:
+    {
+        "action": "review_results",
+        "deck_id": "...",
+        "reviews": [{"card_id": "...", "rating": 0-3}, ...]
+    }
+    """
+    try:
+        data = json.loads(update.effective_message.web_app_data.data)
+    except (json.JSONDecodeError, AttributeError):
+        return
+
+    if data.get('action') != 'review_results':
+        return
+
+    user_id = update.effective_user.id
+    deck_id = data.get('deck_id', '')
+    reviews = data.get('reviews', [])
+
+    if not reviews:
+        return
+
+    correct_count = 0
+    total_count = len(reviews)
+
+    for rev in reviews:
+        card_id = rev.get('card_id', '')
+        rating = rev.get('rating', 0)
+        if not card_id:
+            continue
+
+        # SM-2
+        progress = await flashcard_db.get_card_progress(user_id, card_id)
+        rep_number = progress.get('repetition_number', 0) if progress else 0
+        ef = progress.get('easiness_factor', 2.5) if progress else 2.5
+        interval = progress.get('interval_days', 0) if progress else 0
+
+        result = review_card(
+            quality=rating,
+            repetition_number=rep_number,
+            easiness_factor=ef,
+            interval_days=interval,
+        )
+
+        is_correct = rating >= 2
+        if is_correct:
+            correct_count += 1
+
+        await flashcard_db.update_card_progress(
+            user_id=user_id,
+            card_id=card_id,
+            deck_id=deck_id,
+            easiness_factor=result.easiness_factor,
+            interval_days=result.interval_days,
+            repetition_number=result.repetition_number,
+            next_review=result.next_review.isoformat(),
+            is_correct=is_correct,
+        )
+
+        # XP
+        xp = XP_CARD_CORRECT if is_correct else XP_CARD_WRONG
+        await add_xp(user_id, xp, 'card_review', f'webapp_{card_id}')
+
+    # Обновляем стрик
+    streak_manager = get_streak_manager()
+    current_date = date.today().isoformat()
+    last_activity = context.user_data.get('last_activity_date')
+    if last_activity != current_date:
+        await streak_manager.update_daily_streak(user_id)
+        context.user_data['last_activity_date'] = current_date
+
+    if total_count > 0:
+        is_good = correct_count / total_count >= 0.5
+        await streak_manager.update_correct_streak(user_id, is_good)
+
+    # Подтверждение
+    pct = round(correct_count / total_count * 100) if total_count > 0 else 0
+    await update.effective_message.reply_text(
+        f"✅ Результаты из WebApp сохранены!\n\n"
+        f"Повторено: {total_count} карточек\n"
+        f"Знание: {pct}%",
+        parse_mode=ParseMode.HTML,
+    )
