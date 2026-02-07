@@ -211,13 +211,23 @@ async def generate_glossary_decks() -> None:
 
     Разбивает термины по категориям (Экономика, Право, Политика, Человек и общество).
     """
-    data_path = os.path.join(BASE_DIR, 'WebApp', 'glossary.json')
+    # Ищем glossary.json в нескольких местах (WebApp может быть не задеплоен)
+    possible_paths = [
+        os.path.join(BASE_DIR, 'data', 'glossary.json'),
+        os.path.join(BASE_DIR, 'WebApp', 'glossary.json'),
+    ]
 
-    try:
-        with open(data_path, 'r', encoding='utf-8') as f:
-            terms = json.load(f)
-    except FileNotFoundError:
-        logger.warning(f"Glossary data not found: {data_path}")
+    terms = None
+    for data_path in possible_paths:
+        try:
+            with open(data_path, 'r', encoding='utf-8') as f:
+                terms = json.load(f)
+            break
+        except FileNotFoundError:
+            continue
+
+    if terms is None:
+        logger.warning(f"Glossary data not found in: {possible_paths}")
         return
 
     if not terms:
