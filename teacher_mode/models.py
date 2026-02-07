@@ -26,6 +26,7 @@ class AssignmentType(str, Enum):
     EXISTING_TOPICS = "existing_topics"  # Из существующих тем (task19, task20, etc.)
     CUSTOM = "custom"  # Кастомное задание (для будущего)
     TEST_PART = "test_part"  # Из тестовой части
+    FULL_EXAM = "full_exam"  # Полный вариант ЕГЭ (1-16 + 19-25)
 
 
 class AssignmentStatus(str, Enum):

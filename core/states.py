@@ -43,3 +43,10 @@ ANSWERING_T22 = 2201
 
 # Состояния для task23
 ANSWERING_T23 = 2301
+
+# Состояния для full_exam (полный вариант ЕГЭ)
+FULL_EXAM_OVERVIEW = 3001       # Обзор варианта с навигацией
+FULL_EXAM_TEST_PART = 3002      # Ответ на задание тестовой части
+FULL_EXAM_PART2_ANSWER = 3003   # Ответ на задание второй части (AI-проверка)
+FULL_EXAM_RESULTS = 3004        # Итоговые результаты
+FULL_EXAM_TASK_REVIEW = 3005    # Просмотр задания/ответа
