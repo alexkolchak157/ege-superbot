@@ -47,7 +47,7 @@ FREEMIUM_MODULES = ['task19', 'task20', 'task21', 'task22', 'task23', 'task24', 
 
 # ВСЕ платные модули (используется для планов подписки и проверок доступа)
 # ВАЖНО: При добавлении новых модулей добавляйте их ТОЛЬКО сюда!
-ALL_PAID_MODULES = ['test_part', 'task19', 'task20', 'task21', 'task22', 'task23', 'task24', 'task25']
+ALL_PAID_MODULES = ['test_part', 'task19', 'task20', 'task21', 'task22', 'task23', 'task24', 'task25', 'full_exam']
 
 # ==================== CONFIG VALIDATION ====================
 
@@ -151,7 +151,7 @@ MODULE_PLANS = {
         ],
         'price_rub': 1,
         'duration_days': 7,
-        'modules': ['test_part', 'task19', 'task20', 'task21', 'task22', 'task23', 'task24', 'task25'],
+        'modules': ['test_part', 'task19', 'task20', 'task21', 'task22', 'task23', 'task24', 'task25', 'full_exam'],
         'type': 'trial',
         'features': [
             '✅ Все задания второй части',
@@ -167,7 +167,7 @@ MODULE_PLANS = {
         'description': 'Полный доступ ко всем заданиям',
         'price_rub': 249,
         'duration_days': 30,
-        'modules': ['test_part', 'task19', 'task20', 'task21', 'task22', 'task23', 'task24', 'task25'],
+        'modules': ['test_part', 'task19', 'task20', 'task21', 'task22', 'task23', 'task24', 'task25', 'full_exam'],
         'type': 'package',
         'features': [
             '✅ Все задания второй части с проверкой ИИ',
@@ -198,7 +198,7 @@ MODULE_PLANS = {
         'description': 'Попробуйте режим учителя с одним учеником',
         'price_rub': 0,
         'duration_days': 36500,  # ~100 лет - фактически бессрочно
-        'modules': ['test_part', 'task19', 'task20', 'task21', 'task22', 'task23', 'task24', 'task25'],
+        'modules': ['test_part', 'task19', 'task20', 'task21', 'task22', 'task23', 'task24', 'task25', 'full_exam'],
         'type': 'teacher',
         'max_students': 1,
         'features': [
@@ -223,7 +223,7 @@ MODULE_PLANS = {
         'description': 'Специальная цена для учеников от учителя',
         'price_rub': 149,
         'duration_days': 30,
-        'modules': ['test_part', 'task19', 'task20', 'task21', 'task22', 'task23', 'task24', 'task25'],
+        'modules': ['test_part', 'task19', 'task20', 'task21', 'task22', 'task23', 'task24', 'task25', 'full_exam'],
         'type': 'student',
         'features': [
             '✅ Все задания с проверкой ИИ',
@@ -247,7 +247,7 @@ MODULE_PLANS = {
         'description': 'Протестируйте все функции за 1 рубль',
         'price_rub': 1,
         'duration_days': 7,
-        'modules': ['test_part', 'task19', 'task20', 'task21', 'task22', 'task23', 'task24', 'task25'],
+        'modules': ['test_part', 'task19', 'task20', 'task21', 'task22', 'task23', 'task24', 'task25', 'full_exam'],
         'type': 'teacher',
         'max_students': 3,
         'features': [
@@ -274,7 +274,7 @@ MODULE_PLANS = {
         'description': 'Для репетиторов до 10 учеников',
         'price_rub': 249,
         'duration_days': 30,
-        'modules': ['test_part', 'task19', 'task20', 'task21', 'task22', 'task23', 'task24', 'task25'],
+        'modules': ['test_part', 'task19', 'task20', 'task21', 'task22', 'task23', 'task24', 'task25', 'full_exam'],
         'type': 'teacher',
         'max_students': 10,
         'features': [
@@ -301,7 +301,7 @@ MODULE_PLANS = {
         'description': 'Для опытных репетиторов до 20 учеников',
         'price_rub': 449,
         'duration_days': 30,
-        'modules': ['test_part', 'task19', 'task20', 'task21', 'task22', 'task23', 'task24', 'task25'],
+        'modules': ['test_part', 'task19', 'task20', 'task21', 'task22', 'task23', 'task24', 'task25', 'full_exam'],
         'type': 'teacher',
         'max_students': 20,
         'features': [
@@ -330,7 +330,7 @@ MODULE_PLANS = {
         'description': 'Безлимитный тариф для школ и курсов',
         'price_rub': 699,
         'duration_days': 30,
-        'modules': ['test_part', 'task19', 'task20', 'task21', 'task22', 'task23', 'task24', 'task25'],
+        'modules': ['test_part', 'task19', 'task20', 'task21', 'task22', 'task23', 'task24', 'task25', 'full_exam'],
         'type': 'teacher',
         'max_students': -1,  # Безлимит
         'features': [
@@ -370,7 +370,7 @@ MODULE_PLANS = {
         ],
         'price_rub': 1,
         'duration_days': 7,
-        'modules': ['test_part', 'task19', 'task20', 'task21', 'task22', 'task23', 'task24', 'task25'],
+        'modules': ['test_part', 'task19', 'task20', 'task21', 'task22', 'task23', 'task24', 'task25', 'full_exam'],
         'type': 'trial',
         'is_test': True,
         'features': [
@@ -387,7 +387,7 @@ MODULE_PLANS = {
         'description': 'Полный доступ ко всем заданиям',
         'price_rub': 1,
         'duration_days': 30,
-        'modules': ['test_part', 'task19', 'task20', 'task21', 'task22', 'task23', 'task24', 'task25'],
+        'modules': ['test_part', 'task19', 'task20', 'task21', 'task22', 'task23', 'task24', 'task25', 'full_exam'],
         'type': 'package',
         'is_test': True,
         'features': [
@@ -416,7 +416,7 @@ MODULE_PLANS = {
         'description': 'Специальная цена для учеников от учителя',
         'price_rub': 1,
         'duration_days': 30,
-        'modules': ['test_part', 'task19', 'task20', 'task21', 'task22', 'task23', 'task24', 'task25'],
+        'modules': ['test_part', 'task19', 'task20', 'task21', 'task22', 'task23', 'task24', 'task25', 'full_exam'],
         'type': 'student',
         'is_test': True,
         'features': [
@@ -441,7 +441,7 @@ MODULE_PLANS = {
         'description': 'Протестируйте все функции за 1 рубль',
         'price_rub': 1,
         'duration_days': 7,
-        'modules': ['test_part', 'task19', 'task20', 'task21', 'task22', 'task23', 'task24', 'task25'],
+        'modules': ['test_part', 'task19', 'task20', 'task21', 'task22', 'task23', 'task24', 'task25', 'full_exam'],
         'type': 'teacher',
         'max_students': 3,
         'is_test': True,
@@ -469,7 +469,7 @@ MODULE_PLANS = {
         'description': 'Для репетиторов до 10 учеников',
         'price_rub': 1,
         'duration_days': 30,
-        'modules': ['test_part', 'task19', 'task20', 'task21', 'task22', 'task23', 'task24', 'task25'],
+        'modules': ['test_part', 'task19', 'task20', 'task21', 'task22', 'task23', 'task24', 'task25', 'full_exam'],
         'type': 'teacher',
         'max_students': 10,
         'is_test': True,
@@ -497,7 +497,7 @@ MODULE_PLANS = {
         'description': 'Для опытных репетиторов до 20 учеников',
         'price_rub': 1,
         'duration_days': 30,
-        'modules': ['test_part', 'task19', 'task20', 'task21', 'task22', 'task23', 'task24', 'task25'],
+        'modules': ['test_part', 'task19', 'task20', 'task21', 'task22', 'task23', 'task24', 'task25', 'full_exam'],
         'type': 'teacher',
         'max_students': 20,
         'is_test': True,
@@ -527,7 +527,7 @@ MODULE_PLANS = {
         'description': 'Безлимитный тариф для школ и курсов',
         'price_rub': 1,
         'duration_days': 30,
-        'modules': ['test_part', 'task19', 'task20', 'task21', 'task22', 'task23', 'task24', 'task25'],
+        'modules': ['test_part', 'task19', 'task20', 'task21', 'task22', 'task23', 'task24', 'task25', 'full_exam'],
         'type': 'teacher',
         'max_students': -1,  # Безлимит
         'is_test': True,
@@ -691,6 +691,20 @@ MODULE_DESCRIPTIONS = {
             'ИИ оценит твоё обоснование',
             'Конкретизируй точно и чётко',
             'Получай развёрнутую обратную связь'
+        ],
+        'is_free': False
+    },
+    'full_exam': {
+        'emoji': '📋',
+        'short_name': 'Полный вариант',
+        'full_name': 'Полный вариант ЕГЭ',
+        'description': 'Пройди полный вариант ЕГЭ из 23 заданий с проверкой ИИ',
+        'features': [
+            '16 заданий тестовой части',
+            '7 заданий с развёрнутым ответом (19-25)',
+            'ИИ-проверка второй части',
+            'Подсчёт первичных и вторичных баллов',
+            'Свободная навигация между заданиями'
         ],
         'is_free': False
     }
