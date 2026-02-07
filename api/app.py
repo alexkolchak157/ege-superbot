@@ -23,8 +23,14 @@ import logging
 import os
 
 from api.routes import teacher, students, modules, questions, assignments, drafts
-from api.routes import flashcards as flashcards_routes
 from core.config import DEBUG
+
+# Flashcards-роуты загружаем отдельно — если импорт упадёт, остальное API продолжит работать
+try:
+    from api.routes import flashcards as flashcards_routes
+except Exception as _fc_err:
+    flashcards_routes = None
+    logging.getLogger(__name__).error(f"Failed to import flashcards routes: {_fc_err}")
 
 
 class ProxyHeadersMiddleware(BaseHTTPMiddleware):
@@ -124,11 +130,12 @@ app.include_router(
     tags=["drafts"]
 )
 
-app.include_router(
-    flashcards_routes.router,
-    prefix="/api/flashcards",
-    tags=["flashcards"]
-)
+if flashcards_routes:
+    app.include_router(
+        flashcards_routes.router,
+        prefix="/api/flashcards",
+        tags=["flashcards"]
+    )
 
 
 # Корневой endpoint
