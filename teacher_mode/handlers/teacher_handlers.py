@@ -3463,20 +3463,42 @@ async def view_student_progress(update: Update, context: ContextTypes.DEFAULT_TY
     return TeacherStates.TEACHER_MENU
 
 
+async def _verify_teacher_owns_homework(teacher_id: int, homework_id: int) -> bool:
+    """Проверяет, что учитель является владельцем задания."""
+    homework = await assignment_service.get_homework_by_id(homework_id)
+    return homework is not None and homework.teacher_id == teacher_id
+
+
+async def _verify_teacher_owns_progress(teacher_id: int, progress_id: int):
+    """
+    Проверяет, что учитель является владельцем ответа (через homework).
+    Возвращает (progress_data, homework) или (None, None) если нет доступа.
+    """
+    progress_data = await assignment_service.get_question_progress_by_id(progress_id)
+    if not progress_data:
+        return None, None
+    homework = await assignment_service.get_homework_by_id(progress_data['homework_id'])
+    if not homework or homework.teacher_id != teacher_id:
+        return None, None
+    return progress_data, homework
+
+
 async def view_answer_detail(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Просмотр конкретного ответа ученика с возможностью добавить комментарий"""
     query = update.callback_query
     await query.answer()
 
+    user_id = update.effective_user.id
+
     # Парсим callback_data: view_answer:progress_id
     progress_id = int(query.data.split(':')[1])
 
-    # Получаем прогресс по ID
-    progress_data = await assignment_service.get_question_progress_by_id(progress_id)
+    # Проверяем права доступа учителя к ответу
+    progress_data, homework = await _verify_teacher_owns_progress(user_id, progress_id)
 
     if not progress_data:
         await query.message.edit_text(
-            "❌ Ответ не найден.",
+            "❌ Ответ не найден или у вас нет доступа.",
             reply_markup=InlineKeyboardMarkup([[
                 InlineKeyboardButton("◀️ Назад", callback_data="teacher_my_assignments")
             ]]),
@@ -3487,9 +3509,6 @@ async def view_answer_detail(update: Update, context: ContextTypes.DEFAULT_TYPE)
     homework_id = progress_data['homework_id']
     student_id = progress_data['student_id']
     question_id = progress_data['question_id']
-
-    # Получаем задание
-    homework = await assignment_service.get_homework_by_id(homework_id)
 
     # Получаем имя ученика
     student_names = await teacher_service.get_users_display_names([student_id])
@@ -3561,8 +3580,22 @@ async def initiate_comment_entry(update: Update, context: ContextTypes.DEFAULT_T
     query = update.callback_query
     await query.answer()
 
+    user_id = update.effective_user.id
+
     # Извлекаем progress_id из callback_data
     progress_id = int(query.data.split(':')[1])
+
+    # Проверяем права доступа учителя к ответу
+    progress_data, homework = await _verify_teacher_owns_progress(user_id, progress_id)
+    if not progress_data:
+        await query.message.edit_text(
+            "❌ У вас нет доступа к этому ответу.",
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("◀️ Назад", callback_data="teacher_my_assignments")
+            ]]),
+            parse_mode='HTML'
+        )
+        return TeacherStates.TEACHER_MENU
 
     # Сохраняем в контексте
     context.user_data['commenting_progress_id'] = progress_id
@@ -3671,16 +3704,17 @@ async def initiate_score_override(update: Update, context: ContextTypes.DEFAULT_
     query = update.callback_query
     await query.answer()
 
+    user_id = update.effective_user.id
+
     # Извлекаем progress_id из callback_data
     progress_id = int(query.data.split(':')[1])
 
-    # Получаем данные ответа
-    from ..services import assignment_service
-    progress_data = await assignment_service.get_question_progress_by_id(progress_id)
+    # Проверяем права доступа учителя к ответу
+    progress_data, homework = await _verify_teacher_owns_progress(user_id, progress_id)
 
     if not progress_data:
         await query.message.edit_text(
-            "❌ Ошибка: ответ не найден.",
+            "❌ Ответ не найден или у вас нет доступа.",
             parse_mode='HTML'
         )
         return TeacherStates.TEACHER_MENU
@@ -3717,10 +3751,24 @@ async def process_score_override(update: Update, context: ContextTypes.DEFAULT_T
     query = update.callback_query
     await query.answer()
 
+    user_id = update.effective_user.id
+
     # Извлекаем action и progress_id из callback_data
     parts = query.data.split(':')
     action = parts[0]  # set_score_accept или set_score_reject
     progress_id = int(parts[1])
+
+    # Проверяем права доступа учителя к ответу
+    progress_data, homework = await _verify_teacher_owns_progress(user_id, progress_id)
+    if not progress_data:
+        await query.message.edit_text(
+            "❌ У вас нет доступа к этому ответу.",
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("◀️ Назад", callback_data="teacher_my_assignments")
+            ]]),
+            parse_mode='HTML'
+        )
+        return TeacherStates.TEACHER_MENU
 
     # Определяем новый статус
     new_is_correct = (action == "set_score_accept")
@@ -4463,6 +4511,18 @@ async def show_student_statistics(update: Update, context: ContextTypes.DEFAULT_
 
     # Извлекаем student_id из callback_data
     student_id = int(query.data.split(':')[1])
+
+    # Проверяем, что ученик принадлежит этому учителю
+    student_ids = await teacher_service.get_teacher_students(user_id)
+    if student_id not in student_ids:
+        await query.message.edit_text(
+            "❌ У вас нет доступа к статистике этого ученика.",
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("◀️ Назад", callback_data="teacher_students")
+            ]]),
+            parse_mode='HTML'
+        )
+        return TeacherStates.TEACHER_MENU
 
     # Получаем статистику
     from ..services import assignment_service, teacher_service
