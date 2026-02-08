@@ -1356,7 +1356,31 @@ class SubscriptionManager:
         else:
             # В обычном режиме проверяем любую активную подписку
             subscription = await self.check_active_subscription(user_id)
-            return bool(subscription)
+            if subscription:
+                return True
+
+        # Проверяем подаренные подписки (от учителей через промокоды)
+        # Подаренная подписка даёт полный доступ ко всем модулям
+        try:
+            async with aiosqlite.connect(DATABASE_FILE, timeout=30.0) as conn:
+                cursor = await conn.execute(
+                    """
+                    SELECT id FROM gifted_subscriptions
+                    WHERE recipient_id = ?
+                      AND status = 'active'
+                      AND expires_at > datetime('now')
+                    LIMIT 1
+                    """,
+                    (user_id,)
+                )
+                gifted = await cursor.fetchone()
+                if gifted:
+                    logger.info(
+                        f"User {user_id} has active gifted subscription, granting access to {module_code}"
+                    )
+                    return True
+        except Exception as e:
+            logger.error(f"Error checking gifted subscription access: {e}")
 
         logger.info(f"User {user_id} has no access to module {module_code}")
         return False

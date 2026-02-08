@@ -191,6 +191,9 @@ async def create_promo_code(
     """
     Создает промокод для подписки.
 
+    Для создания промокода учитель должен иметь тариф teacher_premium
+    (или быть администратором).
+
     Args:
         creator_id: ID создателя (обычно учитель)
         duration_days: На сколько дней дается подписка
@@ -199,8 +202,38 @@ async def create_promo_code(
 
     Returns:
         PromoCode или None
+
+    Raises:
+        PermissionError: если у учителя нет прав на создание промокодов
     """
     try:
+        # Проверяем права учителя на уровне сервиса
+        is_admin = False
+        try:
+            from core.config import ADMIN_IDS
+            is_admin = creator_id in ADMIN_IDS
+        except ImportError:
+            pass
+
+        if not is_admin:
+            async with aiosqlite.connect(DATABASE_FILE) as db:
+                cursor = await db.execute(
+                    "SELECT subscription_tier FROM teacher_profiles WHERE user_id = ?",
+                    (creator_id,)
+                )
+                row = await cursor.fetchone()
+                if not row:
+                    logger.warning(f"Teacher {creator_id} not found when creating promo code")
+                    raise PermissionError("Профиль учителя не найден")
+                tier = row[0]
+                if tier != 'teacher_premium':
+                    logger.warning(
+                        f"Teacher {creator_id} with tier '{tier}' tried to create promo code"
+                    )
+                    raise PermissionError(
+                        "Создание промокодов доступно только на тарифе Teacher Premium"
+                    )
+
         async with aiosqlite.connect(DATABASE_FILE) as db:
             # Генерируем уникальный код
             code = generate_promo_code()
