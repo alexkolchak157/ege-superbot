@@ -37,6 +37,36 @@ from .duels import ensure_duel_tables
 
 logger = logging.getLogger(__name__)
 
+
+# ============================================================
+# ПРОВЕРКА ПОДПИСКИ
+# ============================================================
+
+async def _has_subscription(user_id: int, context: ContextTypes.DEFAULT_TYPE) -> bool:
+    """Проверяет, есть ли у пользователя активная подписка (любая)."""
+    try:
+        # Проверяем админов — у них всегда есть доступ
+        from core import config
+        admin_ids = []
+        if hasattr(config, 'ADMIN_IDS') and config.ADMIN_IDS:
+            if isinstance(config.ADMIN_IDS, str):
+                admin_ids = [int(x.strip()) for x in config.ADMIN_IDS.split(',') if x.strip()]
+            elif isinstance(config.ADMIN_IDS, list):
+                admin_ids = config.ADMIN_IDS
+        if user_id in admin_ids:
+            return True
+
+        subscription_manager = context.bot_data.get('subscription_manager')
+        if not subscription_manager:
+            from payment.subscription_manager import SubscriptionManager
+            subscription_manager = SubscriptionManager()
+        result = await subscription_manager.check_active_subscription(user_id)
+        return result is not None
+    except Exception as e:
+        logger.warning(f"Error checking subscription for user {user_id}: {e}")
+        return True  # При ошибке даём доступ, чтобы не блокировать
+
+
 # Константы состояний
 FC_MENU = states.FC_MENU
 FC_DECK_VIEW = states.FC_DECK_VIEW
@@ -95,12 +125,17 @@ async def show_decks_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     query = update.callback_query
     user_id = query.from_user.id if query else update.effective_user.id
 
+    has_sub = await _has_subscription(user_id, context)
+
     decks = await flashcard_db.get_all_decks()
     overall = await flashcard_db.get_user_overall_stats(user_id)
 
     text = "<b>🃏 Карточки для заучивания</b>\n\n"
     text += "Выберите колоду для повторения.\n"
     text += "Система запоминает, что вы знаете хорошо, а что нужно повторить чаще.\n\n"
+
+    if not has_sub:
+        text += "🔒 <i>Карточки доступны по подписке</i>\n\n"
 
     if overall['total_reviews'] > 0:
         text += f"<b>📊 Ваш прогресс:</b>\n"
@@ -124,20 +159,23 @@ async def show_decks_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             mastered = deck_stats['mastered']
 
             # Индикатор прогресса
-            if total > 0:
-                pct = int(mastered / total * 100)
-                if pct >= 80:
-                    progress = "✅"
-                elif pct >= 40:
-                    progress = "📗"
-                elif mastered > 0:
-                    progress = "📘"
+            if has_sub:
+                if total > 0:
+                    pct = int(mastered / total * 100)
+                    if pct >= 80:
+                        progress = "✅"
+                    elif pct >= 40:
+                        progress = "📗"
+                    elif mastered > 0:
+                        progress = "📘"
+                    else:
+                        progress = "🆕"
                 else:
                     progress = "🆕"
             else:
-                progress = "🆕"
+                progress = "🔒"
 
-            due_label = f" ({due} к повт.)" if due > 0 else ""
+            due_label = f" ({due} к повт.)" if due > 0 and has_sub else ""
 
             keyboard.append([InlineKeyboardButton(
                 f"{deck['icon']} {deck['title']} {progress}{due_label}",
@@ -197,6 +235,26 @@ async def show_deck(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not deck:
         await query.answer("Колода не найдена", show_alert=True)
         return FC_MENU
+
+    # --- Проверка подписки ---
+    has_sub = await _has_subscription(user_id, context)
+    if not has_sub:
+        text = f"<b>🔒 {deck['icon']} {deck['title']}</b>\n\n"
+        text += f"{deck.get('description', '')}\n\n"
+        text += "Для доступа к карточкам необходима подписка.\n"
+        text += "Оформите подписку, чтобы учить материал с помощью карточек!"
+
+        keyboard = [
+            [InlineKeyboardButton("💳 Оформить подписку", callback_data="subscribe")],
+            [InlineKeyboardButton("◀️ Назад к колодам", callback_data="fc_back_to_decks")],
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        await safe_edit_message(
+            query.message, text,
+            reply_markup=reply_markup,
+            parse_mode=ParseMode.HTML
+        )
+        return FC_DECK_VIEW
 
     stats = await flashcard_db.get_deck_stats(user_id, deck_id)
 
