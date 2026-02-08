@@ -13,7 +13,7 @@
 """
 
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Tuple
 
 
@@ -115,7 +115,7 @@ def review_card(
         quality, repetition_number, easiness_factor, interval_days
     )
 
-    next_review = datetime.utcnow() + timedelta(days=new_interval)
+    next_review = datetime.now(timezone.utc) + timedelta(days=new_interval)
 
     return ReviewResult(
         interval_days=new_interval,

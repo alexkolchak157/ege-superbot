@@ -80,7 +80,7 @@ class StreakManager:
         """
         try:
             async with aiosqlite.connect(self.database_file) as db:
-                today = date.today().isoformat()
+                today = datetime.now(timezone.utc).date().isoformat()
 
                 # Получаем текущие данные
                 cursor = await db.execute("""
@@ -114,7 +114,7 @@ class StreakManager:
 
                     if last_activity_str:
                         last_activity = date.fromisoformat(last_activity_str)
-                        days_diff = (date.today() - last_activity).days
+                        days_diff = (datetime.now(timezone.utc).date() - last_activity).days
 
                         if days_diff == 1:
                             # Вчера были - продолжаем стрик
@@ -337,7 +337,7 @@ class StreakManager:
                 """)
 
                 users = await cursor.fetchall()
-                now = datetime.now()
+                now = datetime.now(timezone.utc)
 
                 for row in users:
                     user_id = row[0]

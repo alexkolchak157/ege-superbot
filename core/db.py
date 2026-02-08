@@ -364,7 +364,11 @@ async def init_db():
                 'current_correct_streak': 'INTEGER DEFAULT 0',
                 'max_correct_streak': 'INTEGER DEFAULT 0',
                 'last_activity_date': 'DATE NULL',
-                'reminders_enabled': 'BOOLEAN DEFAULT TRUE'
+                'reminders_enabled': 'BOOLEAN DEFAULT TRUE',
+                'username': 'TEXT NULL',
+                'first_name': 'TEXT NULL',
+                'last_name': 'TEXT NULL',
+                'created_at': 'DATETIME DEFAULT CURRENT_TIMESTAMP'
             }
 
             for col_name, col_def in columns_to_add.items():
@@ -1096,21 +1100,6 @@ async def update_correct_streak(user_id: int) -> tuple[int, int]:
         logger.error(f"Error updating correct streak for user {user_id}: {e}", exc_info=True)
         return (0, 0)
 
-
-async def reset_correct_streak(user_id: int):
-    """Сбрасывает стрик правильных ответов."""
-    if not isinstance(user_id, int) or user_id <= 0:
-        return
-    
-    try:
-        async with aiosqlite.connect(DATABASE_FILE) as db:
-            await db.execute(
-                f"UPDATE {TABLE_USERS} SET current_correct_streak = 0 WHERE user_id = ?",
-                (user_id,)
-            )
-            await db.commit()
-    except Exception as e:
-        logger.exception(f"Ошибка сброса стрика правильных ответов: {e}")
 
 async def reset_user_progress(user_id: int):
     """Полностью сбрасывает прогресс пользователя. Защищено от SQL injection."""

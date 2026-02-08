@@ -174,7 +174,10 @@ class UserSegmentClassifier:
                     expired_row = await cursor.fetchone()
 
                     if expired_row:
-                        end_date = datetime.fromisoformat(expired_row[1].replace('Z', '+00:00'))
+                        try:
+                            end_date = datetime.fromisoformat(expired_row[1].replace('Z', '+00:00'))
+                        except (ValueError, AttributeError):
+                            return {'has_subscription': False, 'had_subscription': False}
                         # Если дата timezone-naive, добавляем UTC
                         if end_date.tzinfo is None:
                             end_date = end_date.replace(tzinfo=timezone.utc)
@@ -192,12 +195,18 @@ class UserSegmentClassifier:
                 # Парсим активную подписку
                 sub_id, user_id, plan_id, start_date, end_date, auto_renew = row
 
-                start_dt = datetime.fromisoformat(start_date.replace('Z', '+00:00'))
+                try:
+                    start_dt = datetime.fromisoformat(start_date.replace('Z', '+00:00'))
+                except (ValueError, AttributeError):
+                    return {'has_subscription': False, 'had_subscription': False}
                 # Если дата timezone-naive, добавляем UTC
                 if start_dt.tzinfo is None:
                     start_dt = start_dt.replace(tzinfo=timezone.utc)
 
-                end_dt = datetime.fromisoformat(end_date.replace('Z', '+00:00'))
+                try:
+                    end_dt = datetime.fromisoformat(end_date.replace('Z', '+00:00'))
+                except (ValueError, AttributeError):
+                    return {'has_subscription': False, 'had_subscription': False}
                 # Если дата timezone-naive, добавляем UTC
                 if end_dt.tzinfo is None:
                     end_dt = end_dt.replace(tzinfo=timezone.utc)
@@ -206,7 +215,7 @@ class UserSegmentClassifier:
                 days_since_start = (datetime.now(timezone.utc) - start_dt).days
 
                 # Определяем is_trial
-                is_trial = plan_id == 'trial_7days' or 'trial' in plan_id.lower()
+                is_trial = plan_id == 'trial_7days' or (plan_id and 'trial' in plan_id.lower())
 
                 return {
                     'has_subscription': True,

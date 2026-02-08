@@ -280,7 +280,7 @@ async def get_campaign_stats(
             db.row_factory = aiosqlite.Row
 
             # Базовый запрос
-            where_clause = "WHERE us.created_at >= datetime('now', ?))"
+            where_clause = "WHERE us.created_at >= datetime('now', ?)"
             params = [f'-{days} days']
 
             if campaign_name:

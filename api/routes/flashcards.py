@@ -144,7 +144,7 @@ async def get_stats(user_id: int = Depends(get_current_user_id)):
     """Возвращает XP-статистику пользователя."""
     xp_data = await get_user_xp(user_id)
     rank_data = await get_user_rank(user_id)
-    level = get_xp_level(xp_data.get('total_xp', 0))
+    level = get_xp_level(xp_data.get('total_xp', 0)) or {'name': 'Новичок', 'icon': '🌱'}
 
     return UserStatsSchema(
         total_xp=xp_data.get('total_xp', 0),

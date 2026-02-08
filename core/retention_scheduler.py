@@ -153,11 +153,11 @@ class RetentionScheduler:
             # СМЯГЧЕНО: Уменьшили периоды проверки для повторных отправок
             days_check = 2 if is_critical else 5  # Было: 3 и 7
 
-            cursor = await db.execute(f"""
+            cursor = await db.execute("""
                 SELECT id FROM notification_log
                 WHERE user_id = ? AND trigger = ?
-                AND sent_at > datetime('now', '-{days_check} days')
-            """, (user_id, trigger.value))
+                AND sent_at > datetime('now', ? || ' days')
+            """, (user_id, trigger.value, f'-{days_check}'))
             recent = await cursor.fetchone()
 
             if recent:

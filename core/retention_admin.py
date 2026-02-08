@@ -130,8 +130,11 @@ async def retention_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 msg += "🕐 <b>Последние 5 уведомлений:</b>\n"
                 for segment, trigger, sent_at, clicked, converted in recent:
                     # Парсим дату
-                    sent_dt = datetime.fromisoformat(sent_at)
-                    time_str = sent_dt.strftime("%d.%m %H:%M")
+                    try:
+                        sent_dt = datetime.fromisoformat(sent_at)
+                        time_str = sent_dt.strftime("%d.%m %H:%M")
+                    except (ValueError, AttributeError):
+                        time_str = "???"
 
                     status = "✅" if converted else ("👆" if clicked else "📤")
                     msg += f"{status} {time_str} | {segment[:12]} | {trigger[:20]}\n"
