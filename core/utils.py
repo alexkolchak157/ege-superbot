@@ -73,13 +73,21 @@ async def check_subscription(
     if check_paid:
         # Импортируем только когда нужно, чтобы избежать циклического импорта
         from payment.subscription_manager import SubscriptionManager
-        
+
         subscription_manager = SubscriptionManager()
         subscription_info = await subscription_manager.get_subscription_info(user_id)
-        
+
         if subscription_info['is_active']:
             return True
-    
+
+    # Проверяем подаренные подписки (от учителей через промокоды)
+    try:
+        from teacher_mode.services.gift_service import has_active_gifted_subscription
+        if await has_active_gifted_subscription(user_id):
+            return True
+    except Exception as e:
+        logger.error(f"Ошибка при проверке подаренной подписки: {e}")
+
     # Опционально проверяем подписку на канал (для обратной совместимости)
     if check_channel and channel:
         try:
@@ -88,7 +96,7 @@ async def check_subscription(
                 return True
         except Exception as e:
             logger.error(f"Ошибка при проверке подписки на канал: {e}")
-    
+
     return False
 
 async def safe_menu_transition(query, text, keyboard, parse_mode="HTML"):

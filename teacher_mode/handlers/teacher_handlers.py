@@ -3248,12 +3248,20 @@ async def create_promo_code_handler(update: Update, context: ContextTypes.DEFAUL
 
     from ..services import gift_service
 
-    promo = await gift_service.create_promo_code(
-        creator_id=user_id,
-        duration_days=duration_days,
-        max_uses=max_uses,
-        expires_at=None
-    )
+    try:
+        promo = await gift_service.create_promo_code(
+            creator_id=user_id,
+            duration_days=duration_days,
+            max_uses=max_uses,
+            expires_at=None
+        )
+    except PermissionError as e:
+        text = f"❌ <b>Нет доступа</b>\n\n{e}"
+        keyboard = [[InlineKeyboardButton("◀️ Назад", callback_data="teacher_gift_menu")]]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        await query.message.edit_text(text, reply_markup=reply_markup, parse_mode='HTML')
+        context.user_data.pop('promo_duration', None)
+        return TeacherStates.TEACHER_MENU
 
     if promo:
         uses_text = f"{max_uses} раз" if max_uses else "Неограниченно"

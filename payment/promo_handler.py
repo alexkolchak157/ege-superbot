@@ -42,30 +42,33 @@ class PromoCodeManager:
                 # Проверяем существование и активность промокода
                 cursor = await conn.execute(
                     """
-                    SELECT id, code, discount_percent, discount_amount, 
-                           usage_limit, used_count, is_active
+                    SELECT id, code, discount_percent, discount_amount,
+                           usage_limit, used_count, is_active,
+                           first_purchase_only, min_duration_months
                     FROM promo_codes
                     WHERE code = ? AND is_active = 1
                     """,
                     (code.upper(),)
                 )
                 row = await cursor.fetchone()
-                
+
                 if not row:
                     return None
-                
-                promo_id, code, discount_percent, discount_amount, usage_limit, used_count, is_active = row
+
+                (promo_id, code, discount_percent, discount_amount,
+                 usage_limit, used_count, is_active,
+                 first_purchase_only, min_duration_months) = row
 
                 # Проверяем общий лимит использований
                 if usage_limit is not None and used_count >= usage_limit:
                     logger.info(f"Promo code {code} exceeded usage limit")
                     return None
 
-                # ИСПРАВЛЕНО: Проверяем, использовал ли ЭТОТ пользователь промокод ранее
-                # Но ТОЛЬКО если промокод имеет ограничение (usage_limit != NULL)
-                # Промокоды с неограниченным количеством использований (usage_limit = NULL)
-                # могут быть использованы одним пользователем многократно
-                if user_id and usage_limit is not None:
+                # Проверяем, использовал ли ЭТОТ пользователь промокод ранее.
+                # Каждый пользователь может использовать любой промокод только ОДИН раз,
+                # независимо от usage_limit (usage_limit ограничивает общее число использований,
+                # а не повторные использования одним пользователем).
+                if user_id:
                     cursor = await conn.execute(
                         """
                         SELECT COUNT(*) FROM promo_usage_log
@@ -86,7 +89,9 @@ class PromoCodeManager:
                     'discount_amount': discount_amount or 0,
                     'usage_limit': usage_limit,
                     'used_count': used_count,
-                    'is_active': is_active
+                    'is_active': is_active,
+                    'first_purchase_only': bool(first_purchase_only),
+                    'min_duration_months': min_duration_months or 0
                 }
 
         except Exception as e:
@@ -123,6 +128,47 @@ class PromoCodeManager:
         discount_amount = base_price - final_price
 
         return final_price, discount_amount
+
+    async def check_promo_conditions(
+        self, promo_data: Dict[str, Any], user_id: int, duration_months: int = 1
+    ) -> Tuple[bool, str]:
+        """
+        Проверяет дополнительные условия промокода.
+
+        Args:
+            promo_data: Данные промокода из check_promo_code()
+            user_id: ID пользователя
+            duration_months: Выбранная длительность подписки в месяцах
+
+        Returns:
+            (ok, error_message): True если условия выполнены
+        """
+        # Условие: только для первой покупки
+        if promo_data.get('first_purchase_only'):
+            try:
+                async with aiosqlite.connect(self.database_file) as conn:
+                    cursor = await conn.execute(
+                        """
+                        SELECT COUNT(*) FROM payments
+                        WHERE user_id = ? AND status = 'completed'
+                        """,
+                        (user_id,)
+                    )
+                    row = await cursor.fetchone()
+                    if row and row[0] > 0:
+                        return False, "Этот промокод действует только на первую покупку."
+            except Exception as e:
+                logger.error(f"Error checking first purchase condition: {e}")
+
+        # Условие: минимальная длительность подписки
+        min_months = promo_data.get('min_duration_months', 0)
+        if min_months and duration_months < min_months:
+            month_word = "месяца" if min_months in (2, 3, 4) else "месяцев"
+            return False, (
+                f"Этот промокод действует только при покупке от {min_months} {month_word}."
+            )
+
+        return True, ""
 
     async def apply_promo_code(self, code: str, user_id: int, order_id: str = None) -> bool:
         """
@@ -167,31 +213,15 @@ class PromoCodeManager:
                     (code.upper(),)
                 )
 
-                # Проверяем, есть ли уже запись в логе
-                cursor = await conn.execute(
+                # Записываем в лог использования (каждый промокод — один раз на пользователя)
+                await conn.execute(
                     """
-                    SELECT COUNT(*) FROM promo_usage_log
-                    WHERE promo_code = ? AND user_id = ?
+                    INSERT OR IGNORE INTO promo_usage_log (promo_code, user_id, order_id, used_at)
+                    VALUES (?, ?, ?, CURRENT_TIMESTAMP)
                     """,
-                    (code.upper(), user_id)
+                    (code.upper(), user_id, order_id)
                 )
-                existing_count = (await cursor.fetchone())[0]
-
-                # Записываем в лог использования ТОЛЬКО первое использование
-                # Для промокодов без ограничений это позволяет многократно использовать
-                # промокод без нарушения UNIQUE constraint в БД на (promo_code, user_id)
-                if existing_count == 0:
-                    await conn.execute(
-                        """
-                        INSERT INTO promo_usage_log (promo_code, user_id, order_id, used_at)
-                        VALUES (?, ?, ?, CURRENT_TIMESTAMP)
-                        """,
-                        (code.upper(), user_id, order_id)
-                    )
-                    logger.info(f"Added first usage log entry for promo {code} by user {user_id}")
-                else:
-                    # Запись уже существует - просто логируем (не ошибка для промокодов без ограничений)
-                    logger.info(f"Promo {code} already used by user {user_id} before (existing_count={existing_count}), skipping log insert")
+                logger.info(f"Recorded usage of promo {code} by user {user_id}")
 
                 await conn.commit()
                 logger.info(f"Applied promo code {code} for user {user_id}, order {order_id}")
@@ -290,101 +320,6 @@ class PromoCodeManager:
             return False, "Ошибка проверки промокода"
 
 
-# Обновленный обработчик ввода промокода
-@safe_handler()
-async def handle_promo_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обрабатывает ввод промокода с проверкой повторного использования."""
-    promo_code = update.message.text.strip().upper()
-    user_id = update.effective_user.id
-    
-    # Проверяем доступность для пользователя
-    is_available, error_message = await promo_manager.is_promo_available_for_user(promo_code, user_id)
-    
-    if not is_available:
-        # Специальное сообщение для разных типов ошибок
-        if "уже использовали" in error_message:
-            text = f"""❌ <b>Промокод уже использован</b>
-
-Вы уже применяли промокод <code>{promo_code}</code> ранее.
-Каждый промокод можно использовать только один раз.
-
-Попробуйте другой промокод или продолжите без скидки."""
-        else:
-            text = f"""❌ <b>Промокод недействителен</b>
-
-{error_message}
-
-Попробуйте другой промокод или продолжите без скидки."""
-        
-        keyboard = [
-            [InlineKeyboardButton("🔄 Попробовать другой", callback_data="retry_promo")],
-            [InlineKeyboardButton("➡️ Продолжить без промокода", callback_data="skip_promo")],
-            [InlineKeyboardButton("❌ Отменить", callback_data="cancel_payment")]
-        ]
-        
-        await update.message.reply_text(
-            text,
-            parse_mode=ParseMode.HTML,
-            reply_markup=InlineKeyboardMarkup(keyboard)
-        )
-        return PROMO_INPUT
-    
-    # Получаем данные промокода (уже проверено что он доступен)
-    promo_data = await promo_manager.check_promo_code(promo_code, user_id)
-    
-    # Промокод валиден - рассчитываем скидку
-    base_price = context.user_data.get('total_price', 0)
-    final_price, discount_amount = promo_manager.calculate_discount(base_price, promo_data)
-    
-    # Сохраняем данные промокода в контексте
-    context.user_data['promo_code'] = promo_code
-    context.user_data['promo_discount'] = discount_amount
-    context.user_data['original_price'] = base_price
-    context.user_data['total_price'] = final_price  # Обновляем цену со скидкой
-    context.user_data['promo_data'] = promo_data
-    
-    # Формируем текст с информацией о скидке
-    if promo_data['discount_percent'] > 0:
-        discount_text = f"{promo_data['discount_percent']}%"
-    else:
-        discount_text = f"{promo_data['discount_amount']} ₽"
-    
-    plan_name = context.user_data.get('plan_name', 'Подписка')
-    duration = context.user_data.get('duration_months', 1)
-    
-    text = f"""✅ <b>Промокод применен!</b>
-
-🎁 Промокод: <code>{promo_code}</code>
-💸 Скидка: <b>{discount_text}</b>
-
-📦 План: <b>{plan_name}</b>
-⏱ Срок: <b>{duration} мес.</b>
-
-💰 Стоимость: <s>{base_price} ₽</s>
-🎯 Со скидкой: <b>{final_price} ₽</b>
-📉 Ваша выгода: <b>{discount_amount} ₽</b>
-
-Для продолжения введите ваш email:"""
-    
-    keyboard = [
-        [InlineKeyboardButton("❌ Отменить", callback_data="cancel_payment")]
-    ]
-    
-    await update.message.reply_text(
-        text,
-        parse_mode=ParseMode.HTML,
-        reply_markup=InlineKeyboardMarkup(keyboard)
-    )
-
-    # ВАЖНО: НЕ применяем промокод здесь!
-    # Промокод будет применен ТОЛЬКО после успешной оплаты/активации
-    # в момент вызова activate_subscription()
-
-    # Переходим к вводу email
-    from .handlers import ENTERING_EMAIL
-    return ENTERING_EMAIL
-
-
 # Инициализируем менеджер промокодов
 promo_manager = PromoCodeManager()
 
@@ -440,24 +375,72 @@ async def show_promo_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 @safe_handler()
 async def handle_promo_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обрабатывает ввод промокода."""
+    """Обрабатывает ввод промокода с проверкой повторного использования."""
     promo_code = update.message.text.strip().upper()
     user_id = update.effective_user.id
-    
-    # Проверяем промокод
-    promo_data = await promo_manager.check_promo_code(promo_code, user_id)
-    
-    if not promo_data:
-        # Неверный промокод
+
+    # Сначала проверяем доступность с детальным сообщением об ошибке
+    is_available, error_message = await promo_manager.is_promo_available_for_user(promo_code, user_id)
+
+    if not is_available:
         keyboard = [
-            [InlineKeyboardButton("🔄 Попробовать еще раз", callback_data="retry_promo")],
+            [InlineKeyboardButton("🔄 Попробовать другой", callback_data="retry_promo")],
             [InlineKeyboardButton("➡️ Продолжить без промокода", callback_data="skip_promo")],
             [InlineKeyboardButton("❌ Отменить", callback_data="cancel_payment")]
         ]
-        
+
+        if "уже использовали" in error_message:
+            text = (
+                f"❌ <b>Промокод уже использован</b>\n\n"
+                f"Вы уже применяли промокод <code>{promo_code}</code> ранее.\n"
+                "Каждый промокод можно использовать только один раз.\n\n"
+                "Попробуйте другой промокод или продолжите без скидки."
+            )
+        else:
+            text = (
+                f"❌ <b>Промокод недействителен</b>\n\n"
+                f"{error_message}\n\n"
+                "Попробуйте другой промокод или продолжите без скидки."
+            )
+
+        await update.message.reply_text(
+            text,
+            parse_mode=ParseMode.HTML,
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+        return PROMO_INPUT
+
+    # Проверяем условия промокода (первая покупка, мин. длительность)
+    promo_data = await promo_manager.check_promo_code(promo_code, user_id)
+    if not promo_data:
+        # На случай гонки между is_promo_available_for_user и check_promo_code
+        keyboard = [
+            [InlineKeyboardButton("🔄 Попробовать другой", callback_data="retry_promo")],
+            [InlineKeyboardButton("➡️ Продолжить без промокода", callback_data="skip_promo")],
+            [InlineKeyboardButton("❌ Отменить", callback_data="cancel_payment")]
+        ]
         await update.message.reply_text(
             f"❌ <b>Промокод недействителен</b>\n\n"
             f"Промокод <code>{promo_code}</code> не найден или уже использован.\n\n"
+            "Попробуйте другой промокод или продолжите без скидки.",
+            parse_mode=ParseMode.HTML,
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+        return PROMO_INPUT
+
+    # Проверяем условия промокода
+    duration_months = context.user_data.get('duration_months', 1)
+    condition_ok, condition_msg = await promo_manager.check_promo_conditions(
+        promo_data, user_id, duration_months
+    )
+    if not condition_ok:
+        keyboard = [
+            [InlineKeyboardButton("🔄 Попробовать другой", callback_data="retry_promo")],
+            [InlineKeyboardButton("➡️ Продолжить без промокода", callback_data="skip_promo")],
+            [InlineKeyboardButton("❌ Отменить", callback_data="cancel_payment")]
+        ]
+        await update.message.reply_text(
+            f"❌ <b>Промокод нельзя применить</b>\n\n{condition_msg}\n\n"
             "Попробуйте другой промокод или продолжите без скидки.",
             parse_mode=ParseMode.HTML,
             reply_markup=InlineKeyboardMarkup(keyboard)
@@ -546,7 +529,7 @@ async def retry_promo(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def init_promo_tables():
     """Создает таблицы для промокодов если их нет."""
     async with aiosqlite.connect(DATABASE_FILE) as conn:
-        # Таблица промокодов (уже существует)
+        # Таблица промокодов
         await conn.execute("""
             CREATE TABLE IF NOT EXISTS promo_codes (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -556,10 +539,28 @@ async def init_promo_tables():
                 usage_limit INTEGER,
                 used_count INTEGER DEFAULT 0,
                 is_active BOOLEAN DEFAULT 1,
+                first_purchase_only BOOLEAN DEFAULT 0,
+                min_duration_months INTEGER DEFAULT 0,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
-        
+
+        # Миграция: добавляем новые колонки для условий, если их нет
+        cursor = await conn.execute("PRAGMA table_info(promo_codes)")
+        columns = {col[1] for col in await cursor.fetchall()}
+
+        if 'first_purchase_only' not in columns:
+            await conn.execute(
+                "ALTER TABLE promo_codes ADD COLUMN first_purchase_only BOOLEAN DEFAULT 0"
+            )
+            logger.info("Added first_purchase_only column to promo_codes")
+
+        if 'min_duration_months' not in columns:
+            await conn.execute(
+                "ALTER TABLE promo_codes ADD COLUMN min_duration_months INTEGER DEFAULT 0"
+            )
+            logger.info("Added min_duration_months column to promo_codes")
+
         # Таблица логов использования промокодов
         await conn.execute("""
             CREATE TABLE IF NOT EXISTS promo_usage_log (
@@ -572,17 +573,23 @@ async def init_promo_tables():
                 FOREIGN KEY (promo_code) REFERENCES promo_codes(code)
             )
         """)
-        
+
+        # Уникальный индекс: один промокод — одно использование на пользователя
+        await conn.execute("""
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_promo_usage_unique
+            ON promo_usage_log(promo_code, user_id)
+        """)
+
         # Индексы для оптимизации
         await conn.execute("""
-            CREATE INDEX IF NOT EXISTS idx_promo_code 
+            CREATE INDEX IF NOT EXISTS idx_promo_code
             ON promo_codes(code, is_active)
         """)
-        
+
         await conn.execute("""
-            CREATE INDEX IF NOT EXISTS idx_promo_usage_user 
+            CREATE INDEX IF NOT EXISTS idx_promo_usage_user
             ON promo_usage_log(user_id, used_at)
         """)
-        
+
         await conn.commit()
         logger.info("Promo code tables initialized")
