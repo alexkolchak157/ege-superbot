@@ -1346,9 +1346,17 @@ class SubscriptionManager:
                             return True
 
                         # Старые планы pro_month и pro_ege (доступ ко всему кроме task24)
-                        elif plan_id in ['pro_month', 'pro_ege'] and module_code != 'task24':
+                        elif plan_id in ['pro_month', 'pro_ege'] and module_code not in ['task24']:
                             logger.info(f"User {user_id} has Pro subscription, access to {module_code} granted")
                             return True
+
+                        # Любой другой активный план — проверяем через конфигурацию
+                        else:
+                            plan_config = SUBSCRIPTION_PLANS.get(plan_id, {})
+                            plan_modules = plan_config.get('modules', [])
+                            if module_code in plan_modules:
+                                logger.info(f"User {user_id} has access to {module_code} via plan {plan_id}")
+                                return True
 
             except Exception as e:
                 logger.error(f"Error checking module access: {e}")
