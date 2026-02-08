@@ -59,8 +59,7 @@ def get_overview_keyboard(
     row = []
     for num in range(1, 17):
         if num in answered:
-            is_correct = current_scores.get(num, 0) > 0
-            icon = "✅" if is_correct else "❌"
+            icon = "✔️"
         else:
             icon = str(num)
         row.append(InlineKeyboardButton(icon, callback_data=f"fe_goto_{num}"))
@@ -76,12 +75,10 @@ def get_overview_keyboard(
     )])
     for num in sorted(PART2_MAX_SCORES):
         label = TASK_LABELS.get(num, str(num))
-        max_score = PART2_MAX_SCORES[num]
         if num in answered:
-            earned = current_scores.get(num, 0)
-            text = f"{'✅' if earned > 0 else '📝'} №{num} {label} [{earned}/{max_score}]"
+            text = f"✔️ №{num} {label} — ответ дан"
         else:
-            text = f"📋 №{num} {label} [0/{max_score}]"
+            text = f"📋 №{num} {label}"
         buttons.append([InlineKeyboardButton(text, callback_data=f"fe_goto_{num}")])
 
     # ── Управление ──
