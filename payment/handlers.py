@@ -55,31 +55,22 @@ from .config import (
 from .subscription_manager import SubscriptionManager
 from .tinkoff import TinkoffPayment
 
-# Состояния для ConversationHandler
-CHOOSING_PLAN = 1
-CHOOSING_MODULES = 2
-CHOOSING_DURATION = 3
-CONFIRMING = 4
-ENTERING_EMAIL = 5
-CHOOSING_AUTO_RENEWAL = 6
-FINAL_CONFIRMATION = 7
-
-logger = logging.getLogger(__name__)
-
-# Состояния для платежного процесса
+# Состояния для платежного процесса (строковые для ConversationHandler)
 PROMO_INPUT = "promo_input"
 CHOOSING_PLAN = "choosing_plan"
-CHOOSING_DURATION = "choosing_duration"  
+CHOOSING_DURATION = "choosing_duration"
 ENTERING_EMAIL = "entering_email"
 CONFIRMING = "confirming"
-CHOOSING_MODULES = "choosing_modules"  # Новое состояние
-AUTO_RENEWAL_CHOICE = "auto_renewal_choice"  # НОВОЕ
-FINAL_CONSENT = "final_consent"              # НОВОЕ
+CHOOSING_MODULES = "choosing_modules"
+AUTO_RENEWAL_CHOICE = "auto_renewal_choice"
+FINAL_CONSENT = "final_consent"
 PAYMENT_STATES = [
-    CHOOSING_PLAN, CHOOSING_MODULES, CHOOSING_DURATION, 
-    PROMO_INPUT,  # НОВОЕ состояние
+    CHOOSING_PLAN, CHOOSING_MODULES, CHOOSING_DURATION,
+    PROMO_INPUT,
     ENTERING_EMAIL, FINAL_CONSENT, AUTO_RENEWAL_CHOICE, CONFIRMING
 ]
+
+logger = logging.getLogger(__name__)
 
 # Инициализация менеджеров
 subscription_manager = SubscriptionManager()

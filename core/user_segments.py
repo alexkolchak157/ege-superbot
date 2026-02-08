@@ -206,7 +206,7 @@ class UserSegmentClassifier:
                 days_since_start = (datetime.now(timezone.utc) - start_dt).days
 
                 # Определяем is_trial
-                is_trial = plan_id == 'trial_7days' or 'trial' in plan_id.lower()
+                is_trial = plan_id == 'trial_7days' or (plan_id and 'trial' in plan_id.lower())
 
                 return {
                     'has_subscription': True,

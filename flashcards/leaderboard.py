@@ -258,10 +258,12 @@ async def get_user_rank(user_id: int, period: str = "all") -> Dict[str, Any]:
 
     if period == "week":
         xp_field = "weekly_xp"
-        where_clause = f"AND week_start = '{week_start}'"
+        where_clause = "AND week_start = ?"
+        where_params = [week_start]
     else:
         xp_field = "total_xp"
         where_clause = ""
+        where_params = []
 
     async with aiosqlite.connect(DATABASE_FILE) as db:
         # Получаем XP пользователя
@@ -276,7 +278,7 @@ async def get_user_rank(user_id: int, period: str = "all") -> Dict[str, Any]:
         cursor = await db.execute(f"""
             SELECT COUNT(*) FROM flashcard_xp
             WHERE {xp_field} > ? {where_clause}
-        """, (user_xp,))
+        """, (user_xp, *where_params))
         row = await cursor.fetchone()
         rank = row[0] + 1 if row else 1
 
@@ -284,7 +286,7 @@ async def get_user_rank(user_id: int, period: str = "all") -> Dict[str, Any]:
         cursor = await db.execute(f"""
             SELECT COUNT(*) FROM flashcard_xp
             WHERE {xp_field} > 0 {where_clause}
-        """)
+        """, tuple(where_params))
         row = await cursor.fetchone()
         total_users = row[0] if row else 0
 

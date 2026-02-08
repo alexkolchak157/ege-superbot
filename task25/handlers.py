@@ -1861,10 +1861,12 @@ def save_result(context: ContextTypes.DEFAULT_TYPE, topic: Dict, score: int):
     # Обновляем также practice_stats для обратной совместимости
     if 'practice_stats' not in context.user_data:
         context.user_data['practice_stats'] = {}
-    
+
     topic_id_str = str(topic.get('id', 0))
-    
+
     # Инициализируем статистику по теме если её нет
+    if 'task25_practice_stats' not in context.user_data:
+        context.user_data['task25_practice_stats'] = {}
     if topic_id_str not in context.user_data['task25_practice_stats']:
         context.user_data['task25_practice_stats'][topic_id_str] = {
             'attempts': 0,
