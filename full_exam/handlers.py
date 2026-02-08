@@ -245,26 +245,23 @@ async def _show_overview(message, context: ContextTypes.DEFAULT_TYPE, edit: bool
         return states.FULL_EXAM_OVERVIEW
 
     answered = _get_answered(context)
-    scores = _get_scores(context)
 
     total = len(variant.tasks)
     done = len(answered)
 
-    # Считаем текущий набор баллов
-    part1_correct = {n: (scores.get(n, 0) > 0) for n in range(1, 17) if n in answered}
-    p1_score, p1_max = calculate_part1_score(part1_correct)
-    part2_scores = {n: scores.get(n, 0) for n in range(19, 26) if n in answered}
-    p2_score, p2_max = calculate_part2_score(part2_scores)
+    part1_done = len([n for n in range(1, 17) if n in answered])
+    part2_done = len([n for n in range(19, 26) if n in answered])
 
     text = (
         f"📝 <b>Вариант {variant.variant_id}</b>\n\n"
         f"Выполнено: {done}/{total} заданий\n"
-        f"Часть 1: {p1_score}/{p1_max} баллов\n"
-        f"Часть 2: {p2_score}/{p2_max} баллов\n\n"
+        f"Часть 1: {part1_done}/16\n"
+        f"Часть 2: {part2_done}/7\n\n"
+        "Результаты будут показаны после завершения варианта.\n"
         "Нажмите на задание, чтобы перейти к нему:"
     )
 
-    kb = keyboards.get_overview_keyboard(answered, scores)
+    kb = keyboards.get_overview_keyboard(answered)
 
     if edit:
         await message.edit_text(text, parse_mode=ParseMode.HTML, reply_markup=kb)
@@ -444,37 +441,20 @@ async def _show_part2_task(message, context, exam_num: int, task: ExamTask, edit
 # ──────────────────────────────────────────────────────────────
 
 async def _show_answered_task(message, context, exam_num: int, task: ExamTask, edit: bool = True):
-    """Показ задания, на которое уже дан ответ."""
-    scores = _get_scores(context)
-    earned = scores.get(exam_num, 0)
-    max_s = get_max_score_for_task(exam_num)
+    """Показ задания, на которое уже дан ответ (без раскрытия результата)."""
     user_answers = context.user_data.get("fe_user_answers", {})
     user_answer = user_answers.get(str(exam_num), "—")
-    feedbacks = context.user_data.get("fe_feedbacks", {})
-    feedback = feedbacks.get(str(exam_num), "")
 
-    icon = "✅" if earned > 0 else "❌"
     name = TASK_NAMES.get(exam_num, f"Задание {exam_num}")
     if 1 <= exam_num <= 16:
-        name = f"Тестовая часть"
+        name = "Тестовая часть"
 
     text = (
-        f"{icon} <b>Задание №{exam_num} — {name}</b>\n"
-        f"Балл: {earned}/{max_s}\n"
+        f"✔️ <b>Задание №{exam_num} — {name}</b>\n"
         f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"<b>Ваш ответ:</b>\n{user_answer[:500]}\n\n"
+        f"<i>Результат будет показан после завершения варианта.</i>"
     )
-
-    if 1 <= exam_num <= 16:
-        correct_answer = task.task_data.get("answer", "")
-        text += f"Ваш ответ: <b>{user_answer}</b>\n"
-        text += f"Правильный ответ: <b>{correct_answer}</b>\n"
-        explanation = task.task_data.get("explanation", "")
-        if explanation:
-            text += f"\n💡 {explanation}"
-    else:
-        text += f"<b>Ваш ответ:</b>\n{user_answer[:500]}\n"
-        if feedback:
-            text += f"\n<b>Оценка ИИ:</b>\n{feedback[:1500]}"
 
     kb = keyboards.get_after_answer_keyboard(exam_num)
     if edit:
@@ -518,25 +498,16 @@ async def check_test_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
     max_score = get_max_score_for_task(exam_num)
     earned = max_score if is_correct else 0
 
-    # Сохраняем результат
+    # Сохраняем результат (баллы скрыты до завершения)
     _mark_answered(context, exam_num, earned)
     answers = context.user_data.get("fe_user_answers", {})
     answers[str(exam_num)] = user_answer
     context.user_data["fe_user_answers"] = answers
 
-    # Формируем ответ
-    if is_correct:
-        text = f"✅ <b>Правильно!</b> (+{earned} б.)\n"
-    else:
-        text = f"❌ <b>Неправильно</b>\n"
-        text += f"Ваш ответ: {user_answer}\n"
-        text += f"Правильный ответ: <b>{correct}</b>\n"
+    answered = _get_answered(context)
+    total = len(ALL_TASK_NUMS)
 
-    explanation = q.get("explanation", "")
-    if explanation:
-        text += f"\n💡 {explanation}"
-
-    text += f"\n\n📊 Задание №{exam_num}: {earned}/{max_score}"
+    text = f"✅ Ответ принят ({len(answered)}/{total})"
 
     kb = keyboards.get_after_answer_keyboard(exam_num)
     await update.message.reply_text(text, parse_mode=ParseMode.HTML, reply_markup=kb)
@@ -579,36 +550,31 @@ async def check_part2_answer(update: Update, context: ContextTypes.DEFAULT_TYPE)
     if not task:
         return await _show_overview(update.message, context, edit=False)
 
-    # Показываем анимацию «думаю»
-    thinking_msg = await update.message.reply_text("🤔 Проверяю ваш ответ...")
+    # Показываем подтверждение приёма
+    thinking_msg = await update.message.reply_text("⏳ Сохраняю ваш ответ...")
 
-    # Вызываем AI-оценку
+    # Вызываем AI-оценку (результат скрыт до завершения)
     try:
         score, feedback = await _evaluate_part2(exam_num, task, user_answer, context)
     except Exception as e:
         logger.error(f"Ошибка AI-оценки задания {exam_num}: {e}")
         score = 0
-        feedback = "⚠️ Не удалось получить оценку ИИ. Балл будет обновлён позже."
+        feedback = "⚠️ Не удалось получить оценку ИИ."
 
     max_score = PART2_MAX_SCORES.get(exam_num, 0)
     score = min(score, max_score)
 
-    # Сохраняем
+    # Сохраняем (скрыто от пользователя до завершения)
     _mark_answered(context, exam_num, score)
     answers = context.user_data.get("fe_user_answers", {})
     answers[str(exam_num)] = user_answer
     context.user_data["fe_user_answers"] = answers
     _save_feedback(context, exam_num, feedback)
 
-    # Формируем текст результата
-    name = TASK_NAMES.get(exam_num, f"Задание {exam_num}")
-    bar = "█" * score + "░" * (max_score - score)
-    text = (
-        f"📝 <b>Задание №{exam_num} — {name}</b>\n"
-        f"Балл: {bar} {score}/{max_score}\n\n"
-    )
-    if feedback:
-        text += f"<b>Оценка ИИ:</b>\n{feedback[:2000]}"
+    answered = _get_answered(context)
+    total = len(ALL_TASK_NUMS)
+
+    text = f"✅ Ответ принят ({len(answered)}/{total})"
 
     kb = keyboards.get_after_answer_keyboard(exam_num)
 
