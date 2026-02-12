@@ -1889,3 +1889,5 @@ async def apply_onboarding_migration(db: aiosqlite.Connection):
     except Exception as e:
         logger.exception(f"Ошибка при применении миграции onboarding: {e}")
         raise
+
+
