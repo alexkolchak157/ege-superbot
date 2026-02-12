@@ -3719,11 +3719,16 @@ async def handle_answer_photo_task25(update: Update, context: ContextTypes.DEFAU
         await update.message.reply_text("❌ Ошибка: тема не выбрана.")
         return states.CHOOSING_MODE
 
+    # Формируем контекст для улучшения OCR-коррекции
+    topic_title = topic.get('title', '') if isinstance(topic, dict) else str(topic)
+    ocr_context = f"ЕГЭ обществознание, задание 25 (развернутый ответ), тема: {topic_title}"
+
     # Обрабатываем фото через OCR
     extracted_text = await process_photo_message(
         update,
         context.application.bot,
-        task_name="развернутый ответ"
+        task_name="развернутый ответ",
+        task_context=ocr_context
     )
 
     if not extracted_text:

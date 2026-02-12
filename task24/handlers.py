@@ -1089,11 +1089,16 @@ async def handle_plan_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return ConversationHandler.END
 
+    # Формируем контекст для улучшения OCR-коррекции
+    topic_str = topic_name if isinstance(topic_name, str) else str(topic_name)
+    ocr_context = f"ЕГЭ обществознание, задание 24 (составление плана), тема: {topic_str}"
+
     # Обрабатываем фото через OCR
     extracted_text = await process_photo_message(
         update,
         context.application.bot,
-        task_name="план"
+        task_name="план",
+        task_context=ocr_context
     )
 
     if not extracted_text:
