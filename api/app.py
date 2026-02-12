@@ -22,7 +22,7 @@ from starlette.requests import Request
 import logging
 import os
 
-from api.routes import teacher, students, modules, questions, assignments, drafts
+from api.routes import teacher, students, modules, questions, assignments, drafts, b2b
 from core.config import DEBUG
 
 # Flashcards-роуты загружаем отдельно — если импорт упадёт, остальное API продолжит работать
@@ -77,7 +77,9 @@ app.add_middleware(
     ] if DEBUG else [
         "https://t.me",
         "https://web.telegram.org",
-        "https://telegram.org"
+        "https://telegram.org",
+        # B2B API — серверные запросы не ограничены по origin
+        "*"
     ],
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE"],
@@ -128,6 +130,13 @@ app.include_router(
     drafts.router,
     prefix="/api/teacher",
     tags=["drafts"]
+)
+
+# B2B API v1 для онлайн-школ (аутентификация по API-ключу)
+app.include_router(
+    b2b.router,
+    prefix="/api/v1",
+    tags=["b2b"]
 )
 
 if flashcards_routes:

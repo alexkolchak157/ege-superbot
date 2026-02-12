@@ -408,6 +408,9 @@ async def init_db():
             # --- 5. Применение миграций для режима учителя ---
             await apply_teacher_mode_migration(db)
 
+            # --- 6. Применение миграций для B2B API ---
+            await apply_b2b_api_migration(db)
+
     except Exception as e:
         logger.exception(f"Ошибка при инициализации БД: {e}")
         raise
@@ -1888,4 +1891,118 @@ async def apply_onboarding_migration(db: aiosqlite.Connection):
 
     except Exception as e:
         logger.exception(f"Ошибка при применении миграции onboarding: {e}")
+        raise
+
+
+async def apply_b2b_api_migration(db: aiosqlite.Connection):
+    """
+    Применяет миграцию для B2B API.
+
+    Создаёт таблицы:
+    - schools (организации/онлайн-школы)
+    - b2b_api_keys (API-ключи для B2B-клиентов)
+    - b2b_check_log (лог всех проверок через API — для аналитики и биллинга)
+
+    Args:
+        db: Соединение с БД
+    """
+    try:
+        logger.info("Применение миграции B2B API...")
+
+        # 1. Таблица школ/организаций
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS schools (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                contact_email TEXT,
+                contact_name TEXT,
+                settings TEXT DEFAULT '{}',
+                branding TEXT DEFAULT '{}',
+                is_active BOOLEAN DEFAULT TRUE,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        logger.info("✓ Таблица schools готова")
+
+        # 2. API-ключи для B2B-клиентов
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS b2b_api_keys (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                key_hash TEXT UNIQUE NOT NULL,
+                key_prefix TEXT NOT NULL,
+                school_id INTEGER,
+                name TEXT NOT NULL,
+                rate_limit_per_minute INTEGER DEFAULT 60,
+                monthly_check_limit INTEGER DEFAULT 1000,
+                checks_used_this_month INTEGER DEFAULT 0,
+                current_month_start DATE,
+                is_active BOOLEAN DEFAULT TRUE,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                last_used_at DATETIME,
+                FOREIGN KEY (school_id) REFERENCES schools(id)
+            )
+        """)
+        logger.info("✓ Таблица b2b_api_keys готова")
+
+        # 3. Лог проверок через B2B API
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS b2b_check_log (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                api_key_id INTEGER NOT NULL,
+                school_id INTEGER,
+                task_type TEXT NOT NULL,
+                task_text TEXT NOT NULL,
+                student_answer TEXT NOT NULL,
+                score INTEGER,
+                max_score INTEGER,
+                feedback TEXT,
+                status TEXT DEFAULT 'pending' CHECK(
+                    status IN ('pending', 'processing', 'completed', 'error')
+                ),
+                error_message TEXT,
+                processing_time_ms INTEGER,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                completed_at DATETIME,
+                FOREIGN KEY (api_key_id) REFERENCES b2b_api_keys(id),
+                FOREIGN KEY (school_id) REFERENCES schools(id)
+            )
+        """)
+        logger.info("✓ Таблица b2b_check_log готова")
+
+        # Связь teacher_profiles -> schools (опциональная)
+        try:
+            await db.execute("""
+                ALTER TABLE teacher_profiles ADD COLUMN school_id INTEGER
+                    REFERENCES schools(id)
+            """)
+            logger.info("✓ Колонка school_id добавлена в teacher_profiles")
+        except Exception:
+            pass  # Колонка уже существует
+
+        # Индексы
+        await db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_b2b_api_keys_hash ON b2b_api_keys(key_hash)"
+        )
+        await db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_b2b_check_log_key ON b2b_check_log(api_key_id)"
+        )
+        await db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_b2b_check_log_school ON b2b_check_log(school_id)"
+        )
+        await db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_b2b_check_log_status ON b2b_check_log(status)"
+        )
+        await db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_b2b_check_log_created ON b2b_check_log(created_at)"
+        )
+        await db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_schools_active ON schools(is_active)"
+        )
+        logger.info("✓ Индексы B2B API созданы")
+
+        await db.commit()
+        logger.info("Миграция B2B API успешно применена")
+
+    except Exception as e:
+        logger.exception(f"Ошибка при применении миграции B2B API: {e}")
         raise
