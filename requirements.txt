@@ -45,6 +45,9 @@ certifi>=2023.7.22  # Required by httpx/telegram
 fastapi>=0.104.0
 uvicorn[standard]>=0.24.0
 
+# Image preprocessing for OCR
+Pillow>=10.0.0
+
 # Optional dependencies
 pymorphy2>=0.9.1  # Для лемматизации в task24
 pymorphy2-dicts-ru>=2.4.417127  # Словари для pymorphy2

@@ -420,8 +420,9 @@ class TeacherModePlugin(BotPlugin):
                     CallbackQueryHandler(quick_check_handlers.quick_check_menu, pattern="^quick_check_menu$"),
                 ],
                 TeacherStates.QUICK_CHECK_ENTER_ANSWER: [
-                    # Ввод ответа ученика (одиночная проверка)
+                    # Ввод ответа ученика (одиночная проверка) — текст или фото
                     MessageHandler(filters.TEXT & ~filters.COMMAND, quick_check_handlers.process_single_answer),
+                    MessageHandler(filters.PHOTO, quick_check_handlers.process_single_answer_photo),
                     CallbackQueryHandler(quick_check_handlers.quick_check_menu, pattern="^quick_check_menu$"),
                 ],
                 TeacherStates.QUICK_CHECK_ENTER_ANSWERS_BULK: [
