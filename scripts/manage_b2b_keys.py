@@ -1,18 +1,21 @@
 #!/usr/bin/env python3
 """
-Утилита для управления B2B API-ключами.
+Утилита для управления B2B клиентами и API-ключами.
+
+Работает с существующим модулем b2b_api (таблицы b2b_clients, b2b_api_keys и т.д.).
 
 Использование:
-  python scripts/manage_b2b_keys.py create --name "Школа Плюс" --school-id 1
-  python scripts/manage_b2b_keys.py create --name "Test Key" --limit 500
-  python scripts/manage_b2b_keys.py list
-  python scripts/manage_b2b_keys.py deactivate --key-id 3
-  python scripts/manage_b2b_keys.py create-school --name "Онлайн-школа Плюс" --email admin@school.ru
+  python scripts/manage_b2b_keys.py create-client --name "Онлайн-школа Плюс" --email admin@school.ru --contact "Иванов Иван"
+  python scripts/manage_b2b_keys.py create-key --client-id cli_xxx --name "Production"
+  python scripts/manage_b2b_keys.py list-clients
+  python scripts/manage_b2b_keys.py list-keys
+  python scripts/manage_b2b_keys.py deactivate-key --key-id key_xxx
+  python scripts/manage_b2b_keys.py stats
+  python scripts/manage_b2b_keys.py apply-migration
 """
 
 import argparse
 import asyncio
-import hashlib
 import secrets
 import sys
 import os
@@ -22,69 +25,160 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import aiosqlite
 from core.config import DATABASE_FILE
+from b2b_api.middleware.api_key_auth import generate_api_key
 
 
-def generate_api_key() -> str:
-    """Генерирует безопасный API-ключ: egb2b_XXXX...XXXX (48 символов)."""
-    return f"egb2b_{secrets.token_hex(24)}"
+async def apply_migration():
+    """Применяет миграцию B2B таблиц."""
+    from b2b_api.migrations.apply_migration import apply_b2b_migration
+    success = await apply_b2b_migration()
+    if success:
+        print("Migration applied successfully.")
+    else:
+        print("Migration failed! Check logs.")
 
 
-def hash_key(key: str) -> str:
-    return hashlib.sha256(key.encode()).hexdigest()
-
-
-async def create_school(name: str, email: str = None, contact_name: str = None):
-    """Создаёт запись школы."""
-    async with aiosqlite.connect(DATABASE_FILE) as db:
-        cursor = await db.execute(
-            """
-            INSERT INTO schools (name, contact_email, contact_name)
-            VALUES (?, ?, ?)
-            """,
-            (name, email, contact_name),
-        )
-        school_id = cursor.lastrowid
-        await db.commit()
-        print(f"School created: id={school_id}, name='{name}'")
-        return school_id
-
-
-async def create_key(
-    name: str,
-    school_id: int = None,
-    rate_limit: int = 60,
-    monthly_limit: int = 1000,
+async def create_client(
+    company_name: str,
+    contact_email: str,
+    contact_name: str,
+    tier: str = "trial",
+    phone: str = None,
+    website: str = None,
 ):
-    """Создаёт новый API-ключ."""
-    raw_key = generate_api_key()
-    key_h = hash_key(raw_key)
-    prefix = raw_key[:12]
+    """Создаёт нового B2B-клиента и API-ключ для него."""
+    from datetime import datetime, timezone, timedelta
+
+    client_id = f"cli_{secrets.token_hex(8)}"
+    raw_key, key_hash = generate_api_key()
+    key_id = f"key_{secrets.token_hex(8)}"
 
     async with aiosqlite.connect(DATABASE_FILE) as db:
-        cursor = await db.execute(
+        await db.execute(
             """
-            INSERT INTO b2b_api_keys
-                (key_hash, key_prefix, school_id, name,
-                 rate_limit_per_minute, monthly_check_limit)
-            VALUES (?, ?, ?, ?, ?, ?)
+            INSERT INTO b2b_clients (
+                client_id, company_name, contact_email, contact_name,
+                contact_phone, website, status, tier, trial_expires_at
+            ) VALUES (?, ?, ?, ?, ?, ?, 'trial', ?, ?)
             """,
-            (key_h, prefix, school_id, name, rate_limit, monthly_limit),
+            (
+                client_id,
+                company_name,
+                contact_email,
+                contact_name,
+                phone,
+                website,
+                tier,
+                (datetime.now(timezone.utc) + timedelta(days=14)).isoformat(),
+            ),
         )
-        key_id = cursor.lastrowid
+
+        await db.execute(
+            """
+            INSERT INTO b2b_api_keys (
+                key_id, client_id, key_hash, key_prefix, name, scopes, is_active
+            ) VALUES (?, ?, ?, ?, ?, ?, 1)
+            """,
+            (
+                key_id,
+                client_id,
+                key_hash,
+                raw_key[:16],
+                "Production API Key",
+                "check:create,check:read,questions:read",
+            ),
+        )
         await db.commit()
 
     print("=" * 60)
-    print(f"API Key created successfully!")
-    print(f"  ID:            {key_id}")
-    print(f"  Name:          {name}")
-    print(f"  School ID:     {school_id or '(none)'}")
-    print(f"  Rate limit:    {rate_limit} req/min")
-    print(f"  Monthly limit: {monthly_limit} checks")
+    print("B2B Client created successfully!")
+    print(f"  Client ID:     {client_id}")
+    print(f"  Company:       {company_name}")
+    print(f"  Contact:       {contact_name} ({contact_email})")
+    print(f"  Tier:          {tier}")
     print()
-    print(f"  API KEY: {raw_key}")
+    print(f"  API Key ID:    {key_id}")
+    print(f"  API KEY:       {raw_key}")
     print()
-    print("  IMPORTANT: Save this key now! It cannot be retrieved later.")
+    print("  IMPORTANT: Save this API key now! It cannot be retrieved later.")
     print("=" * 60)
+
+
+async def create_key(client_id: str, name: str = "API Key", scopes: str = None):
+    """Создаёт дополнительный API-ключ для существующего клиента."""
+    if scopes is None:
+        scopes = "check:create,check:read,questions:read"
+
+    raw_key, key_hash = generate_api_key()
+    key_id = f"key_{secrets.token_hex(8)}"
+
+    async with aiosqlite.connect(DATABASE_FILE) as db:
+        # Проверяем, что клиент существует
+        cursor = await db.execute(
+            "SELECT company_name FROM b2b_clients WHERE client_id = ?",
+            (client_id,),
+        )
+        row = await cursor.fetchone()
+        if not row:
+            print(f"Error: Client '{client_id}' not found.")
+            return
+
+        await db.execute(
+            """
+            INSERT INTO b2b_api_keys (
+                key_id, client_id, key_hash, key_prefix, name, scopes, is_active
+            ) VALUES (?, ?, ?, ?, ?, ?, 1)
+            """,
+            (key_id, client_id, key_hash, raw_key[:16], name, scopes),
+        )
+        await db.commit()
+
+    print("=" * 60)
+    print("API Key created successfully!")
+    print(f"  Key ID:        {key_id}")
+    print(f"  Client:        {client_id} ({row[0]})")
+    print(f"  Name:          {name}")
+    print(f"  Scopes:        {scopes}")
+    print()
+    print(f"  API KEY:       {raw_key}")
+    print()
+    print("  IMPORTANT: Save this API key now! It cannot be retrieved later.")
+    print("=" * 60)
+
+
+async def list_clients():
+    """Показывает всех B2B-клиентов."""
+    async with aiosqlite.connect(DATABASE_FILE) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute(
+            """
+            SELECT c.*,
+                   (SELECT COUNT(*) FROM b2b_api_keys
+                    WHERE client_id = c.client_id AND is_active = 1) as active_keys
+            FROM b2b_clients c
+            ORDER BY c.created_at DESC
+            """
+        )
+        rows = await cursor.fetchall()
+
+    if not rows:
+        print("No B2B clients found.")
+        return
+
+    print(
+        f"{'Client ID':<20} | {'Company':<25} | {'Tier':<10} | "
+        f"{'Status':<10} | {'Month':>6} | {'Quota':>6} | {'Keys':>4}"
+    )
+    print("-" * 100)
+
+    for r in rows:
+        print(
+            f"{r['client_id']:<20} | {r['company_name'][:25]:<25} | "
+            f"{r['tier']:<10} | {r['status']:<10} | "
+            f"{r['checks_this_month']:>6} | "
+            f"{(r['monthly_quota'] or '-'):>6} | "
+            f"{r['active_keys']:>4}"
+        )
 
 
 async def list_keys():
@@ -93,9 +187,9 @@ async def list_keys():
         db.row_factory = aiosqlite.Row
         cursor = await db.execute(
             """
-            SELECT k.*, s.name as school_name
+            SELECT k.*, c.company_name
             FROM b2b_api_keys k
-            LEFT JOIN schools s ON k.school_id = s.id
+            LEFT JOIN b2b_clients c ON k.client_id = c.client_id
             ORDER BY k.created_at DESC
             """
         )
@@ -105,74 +199,59 @@ async def list_keys():
         print("No API keys found.")
         return
 
-    print(f"{'ID':>4} | {'Prefix':<14} | {'Name':<25} | {'School':<20} | "
-          f"{'Used':>6} | {'Limit':>6} | {'Active':>6}")
+    print(
+        f"{'Key ID':<20} | {'Prefix':<18} | {'Name':<20} | "
+        f"{'Client':<20} | {'Used':>6} | {'Active':>6}"
+    )
     print("-" * 100)
 
     for r in rows:
         print(
-            f"{r['id']:>4} | {r['key_prefix']:<14} | {r['name']:<25} | "
-            f"{(r['school_name'] or '-'):<20} | "
-            f"{r['checks_used_this_month']:>6} | {r['monthly_check_limit']:>6} | "
+            f"{r['key_id']:<20} | {r['key_prefix']:<18} | "
+            f"{r['name'][:20]:<20} | "
+            f"{(r['company_name'] or '-')[:20]:<20} | "
+            f"{r['usage_count']:>6} | "
             f"{'Yes' if r['is_active'] else 'No':>6}"
         )
 
 
-async def list_schools():
-    """Показывает все школы."""
-    async with aiosqlite.connect(DATABASE_FILE) as db:
-        db.row_factory = aiosqlite.Row
-        cursor = await db.execute("SELECT * FROM schools ORDER BY id")
-        rows = await cursor.fetchall()
-
-    if not rows:
-        print("No schools found.")
-        return
-
-    print(f"{'ID':>4} | {'Name':<30} | {'Email':<25} | {'Active':>6}")
-    print("-" * 75)
-    for r in rows:
-        print(
-            f"{r['id']:>4} | {r['name']:<30} | "
-            f"{(r['contact_email'] or '-'):<25} | "
-            f"{'Yes' if r['is_active'] else 'No':>6}"
-        )
-
-
-async def deactivate_key(key_id: int):
+async def deactivate_key(key_id: str):
     """Деактивирует API-ключ."""
     async with aiosqlite.connect(DATABASE_FILE) as db:
-        await db.execute(
-            "UPDATE b2b_api_keys SET is_active = FALSE WHERE id = ?",
+        cursor = await db.execute(
+            "UPDATE b2b_api_keys SET is_active = 0 WHERE key_id = ?",
             (key_id,),
         )
+        if cursor.rowcount == 0:
+            print(f"Error: Key '{key_id}' not found.")
+            return
         await db.commit()
-    print(f"API key {key_id} deactivated.")
+    print(f"API key '{key_id}' deactivated.")
 
 
-async def show_stats(key_id: int = None):
+async def show_stats(client_id: str = None):
     """Показывает статистику проверок."""
     async with aiosqlite.connect(DATABASE_FILE) as db:
         db.row_factory = aiosqlite.Row
 
-        if key_id:
+        if client_id:
             cursor = await db.execute(
                 """
-                SELECT task_type, status, COUNT(*) as cnt,
+                SELECT task_number, status, COUNT(*) as cnt,
                        AVG(processing_time_ms) as avg_time
-                FROM b2b_check_log
-                WHERE api_key_id = ?
-                GROUP BY task_type, status
+                FROM b2b_checks
+                WHERE client_id = ?
+                GROUP BY task_number, status
                 """,
-                (key_id,),
+                (client_id,),
             )
         else:
             cursor = await db.execute(
                 """
-                SELECT task_type, status, COUNT(*) as cnt,
+                SELECT task_number, status, COUNT(*) as cnt,
                        AVG(processing_time_ms) as avg_time
-                FROM b2b_check_log
-                GROUP BY task_type, status
+                FROM b2b_checks
+                GROUP BY task_number, status
                 """
             )
 
@@ -182,41 +261,49 @@ async def show_stats(key_id: int = None):
         print("No checks found.")
         return
 
-    print(f"{'Task Type':<12} | {'Status':<12} | {'Count':>6} | {'Avg Time (ms)':>14}")
-    print("-" * 55)
+    print(f"{'Task #':<8} | {'Status':<12} | {'Count':>6} | {'Avg Time (ms)':>14}")
+    print("-" * 50)
     for r in rows:
         avg_time = f"{r['avg_time']:.0f}" if r['avg_time'] else "-"
-        print(f"{r['task_type']:<12} | {r['status']:<12} | {r['cnt']:>6} | {avg_time:>14}")
+        print(
+            f"{r['task_number']:<8} | {r['status']:<12} | "
+            f"{r['cnt']:>6} | {avg_time:>14}"
+        )
 
 
 def main():
-    parser = argparse.ArgumentParser(description="B2B API Key Management")
+    parser = argparse.ArgumentParser(description="B2B API Client & Key Management")
     subparsers = parser.add_subparsers(dest="command")
 
-    # create key
-    p_create = subparsers.add_parser("create", help="Create new API key")
-    p_create.add_argument("--name", required=True, help="Key name/description")
-    p_create.add_argument("--school-id", type=int, default=None, help="School ID")
-    p_create.add_argument("--rate-limit", type=int, default=60, help="Requests per minute")
-    p_create.add_argument("--limit", type=int, default=1000, help="Monthly check limit")
+    # apply migration
+    subparsers.add_parser("apply-migration", help="Apply B2B database migration")
 
-    # create school
-    p_school = subparsers.add_parser("create-school", help="Create new school")
-    p_school.add_argument("--name", required=True, help="School name")
-    p_school.add_argument("--email", default=None, help="Contact email")
-    p_school.add_argument("--contact", default=None, help="Contact person name")
+    # create client
+    p_client = subparsers.add_parser("create-client", help="Create new B2B client with API key")
+    p_client.add_argument("--name", required=True, help="Company name")
+    p_client.add_argument("--email", required=True, help="Contact email")
+    p_client.add_argument("--contact", required=True, help="Contact person name")
+    p_client.add_argument("--tier", default="trial", help="Tier: free/trial/basic/standard/premium/enterprise")
+    p_client.add_argument("--phone", default=None, help="Contact phone")
+    p_client.add_argument("--website", default=None, help="Company website")
+
+    # create key
+    p_key = subparsers.add_parser("create-key", help="Create additional API key for existing client")
+    p_key.add_argument("--client-id", required=True, help="Client ID (cli_xxx)")
+    p_key.add_argument("--name", default="API Key", help="Key name/description")
+    p_key.add_argument("--scopes", default=None, help="Scopes (comma-separated)")
 
     # list
-    subparsers.add_parser("list", help="List all API keys")
-    subparsers.add_parser("list-schools", help="List all schools")
+    subparsers.add_parser("list-clients", help="List all B2B clients")
+    subparsers.add_parser("list-keys", help="List all API keys")
 
-    # deactivate
-    p_deact = subparsers.add_parser("deactivate", help="Deactivate an API key")
-    p_deact.add_argument("--key-id", type=int, required=True, help="Key ID to deactivate")
+    # deactivate key
+    p_deact = subparsers.add_parser("deactivate-key", help="Deactivate an API key")
+    p_deact.add_argument("--key-id", required=True, help="Key ID to deactivate (key_xxx)")
 
     # stats
     p_stats = subparsers.add_parser("stats", help="Show check statistics")
-    p_stats.add_argument("--key-id", type=int, default=None, help="Filter by key ID")
+    p_stats.add_argument("--client-id", default=None, help="Filter by client ID")
 
     args = parser.parse_args()
 
@@ -224,18 +311,22 @@ def main():
         parser.print_help()
         return
 
-    if args.command == "create":
-        asyncio.run(create_key(args.name, args.school_id, args.rate_limit, args.limit))
-    elif args.command == "create-school":
-        asyncio.run(create_school(args.name, args.email, args.contact))
-    elif args.command == "list":
+    if args.command == "apply-migration":
+        asyncio.run(apply_migration())
+    elif args.command == "create-client":
+        asyncio.run(
+            create_client(args.name, args.email, args.contact, args.tier, args.phone, args.website)
+        )
+    elif args.command == "create-key":
+        asyncio.run(create_key(args.client_id, args.name, args.scopes))
+    elif args.command == "list-clients":
+        asyncio.run(list_clients())
+    elif args.command == "list-keys":
         asyncio.run(list_keys())
-    elif args.command == "list-schools":
-        asyncio.run(list_schools())
-    elif args.command == "deactivate":
+    elif args.command == "deactivate-key":
         asyncio.run(deactivate_key(args.key_id))
     elif args.command == "stats":
-        asyncio.run(show_stats(args.key_id))
+        asyncio.run(show_stats(args.client_id))
 
 
 if __name__ == "__main__":
