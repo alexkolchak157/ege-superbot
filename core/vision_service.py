@@ -1,7 +1,8 @@
 """
 Vision service для распознавания текста с изображений.
 
-Использует Yandex Vision API для OCR.
+Использует Yandex Vision API для OCR с предобработкой изображений
+и LLM-коррекцией для улучшения распознавания рукописного текста.
 """
 
 import os
@@ -14,7 +15,14 @@ from typing import Dict, Any, Optional, List
 from telegram import PhotoSize, Bot
 from dataclasses import dataclass
 
+from core.image_preprocessor import preprocess_for_ocr, preprocess_for_ocr_enhanced
+
 logger = logging.getLogger(__name__)
+
+# Порог уверенности для применения LLM-коррекции
+OCR_LLM_CORRECTION_THRESHOLD = 0.82
+# Порог уверенности для повторной попытки с усиленной обработкой
+OCR_ENHANCED_RETRY_THRESHOLD = 0.55
 
 
 @dataclass
@@ -102,7 +110,7 @@ class VisionService:
         bot: Bot
     ) -> Dict[str, Any]:
         """
-        Обработка фотографии от Telegram.
+        Обработка фотографии от Telegram с предобработкой и LLM-коррекцией.
 
         Args:
             photo: Объект фотографии от Telegram
@@ -116,6 +124,7 @@ class VisionService:
                 'confidence': float,  # Средняя уверенность (0-1)
                 'error': str,  # Ошибка если success=False
                 'warning': str  # Предупреждение если нужно
+                'corrected': bool  # Был ли текст скорректирован LLM
             }
         """
         if not self.is_available:
@@ -130,10 +139,46 @@ class VisionService:
             # Скачиваем фото
             logger.info(f"Downloading photo: {photo.file_id}")
             file = await bot.get_file(photo.file_id)
-            photo_bytes = await file.download_as_bytearray()
+            photo_bytes = bytes(await file.download_as_bytearray())
 
-            # Распознаем текст
-            result = await self._recognize_text(photo_bytes)
+            # Шаг 1: Предобработка изображения
+            preprocessed_bytes = preprocess_for_ocr(photo_bytes)
+            logger.info("Image preprocessed for OCR")
+
+            # Шаг 2: Распознаем текст
+            result = await self._recognize_text(preprocessed_bytes)
+
+            if not result['success']:
+                return result
+
+            # Шаг 3: Если уверенность низкая — повторная попытка с усиленной обработкой
+            if result['confidence'] < OCR_ENHANCED_RETRY_THRESHOLD and result['text']:
+                logger.info(
+                    f"Low confidence ({result['confidence']:.2f}), "
+                    "retrying with enhanced preprocessing"
+                )
+                enhanced_bytes = preprocess_for_ocr_enhanced(photo_bytes)
+                enhanced_result = await self._recognize_text(enhanced_bytes)
+
+                if (enhanced_result['success'] and
+                        enhanced_result['confidence'] > result['confidence']):
+                    logger.info(
+                        f"Enhanced result better: {enhanced_result['confidence']:.2f} "
+                        f"vs {result['confidence']:.2f}"
+                    )
+                    result = enhanced_result
+
+            # Шаг 4: LLM-коррекция для рукописного текста
+            if result['success'] and result['confidence'] < OCR_LLM_CORRECTION_THRESHOLD:
+                corrected_text = await self._correct_ocr_with_llm(result['text'])
+                if corrected_text:
+                    result['text'] = corrected_text
+                    result['corrected'] = True
+                    logger.info("OCR text corrected by LLM")
+                else:
+                    result['corrected'] = False
+            else:
+                result['corrected'] = False
 
             return result
 
@@ -334,6 +379,82 @@ class VisionService:
             logger.error(f"Error extracting text from Vision API response: {e}", exc_info=True)
             return '', 0.0
 
+    async def _correct_ocr_with_llm(self, ocr_text: str) -> Optional[str]:
+        """
+        Коррекция распознанного текста с помощью YandexGPT.
+
+        Исправляет типичные ошибки OCR для рукописного русского текста:
+        - Перепутанные похожие буквы (м↔ш, п↔н, и↔н, т↔г, е↔с и др.)
+        - Неправильно разделённые/склеенные слова
+        - Пропущенные буквы и окончания
+        - Проблемы с пунктуацией
+
+        Args:
+            ocr_text: Исходный текст после OCR
+
+        Returns:
+            Скорректированный текст или None при ошибке
+        """
+        try:
+            from core.ai_service import get_ai_service
+
+            ai_service = get_ai_service()
+
+            system_prompt = (
+                "Ты — специалист по коррекции текстов, распознанных с рукописных изображений (OCR). "
+                "Тебе дан текст, распознанный с фотографии рукописного ответа ученика. "
+                "OCR мог допустить ошибки при чтении почерка.\n\n"
+                "ТВОЯ ЗАДАЧА: Исправить только явные ошибки OCR-распознавания, "
+                "НЕ меняя смысл и содержание текста.\n\n"
+                "ТИПИЧНЫЕ ОШИБКИ OCR ПРИ ЧТЕНИИ РУССКОГО РУКОПИСНОГО ТЕКСТА:\n"
+                "- Путаница похожих букв: м↔ш, п↔н, и↔н, т↔г, е↔с, а↔о, ь↔б, з↔э, "
+                "ц↔щ, к↔н, д↔л, в↔б, р↔г, ж↔к\n"
+                "- Склеивание или разрыв слов\n"
+                "- Пропуск букв, особенно в окончаниях\n"
+                "- Замена строчных на прописные и наоборот\n"
+                "- Неправильная пунктуация\n"
+                "- Путаница цифр: 1↔7, 4↔9, 3↔8, 6↔0\n\n"
+                "ПРАВИЛА:\n"
+                "1. Исправляй ТОЛЬКО явные ошибки распознавания\n"
+                "2. НЕ меняй смысл, стиль и содержание текста\n"
+                "3. НЕ добавляй новую информацию\n"
+                "4. НЕ улучшай грамматику автора — исправляй только артефакты OCR\n"
+                "5. Сохраняй оригинальную структуру (абзацы, нумерацию, переносы строк)\n"
+                "6. Если слово выглядит бессмысленным, попробуй подобрать близкое по написанию осмысленное слово\n"
+                "7. Ответ должен содержать ТОЛЬКО исправленный текст, ничего более"
+            )
+
+            prompt = (
+                f"Исправь ошибки OCR-распознавания в следующем рукописном тексте. "
+                f"Верни ТОЛЬКО исправленный текст:\n\n{ocr_text}"
+            )
+
+            result = await ai_service.get_completion(
+                prompt=prompt,
+                system_prompt=system_prompt,
+                temperature=0.1,
+                max_tokens=len(ocr_text) * 2 + 200
+            )
+
+            if result.get('success') and result.get('text'):
+                corrected = result['text'].strip()
+                # Проверяем что LLM не вернул пустоту и не слишком изменил текст
+                if corrected and len(corrected) > len(ocr_text) * 0.3:
+                    logger.info(
+                        f"LLM OCR correction: {len(ocr_text)} -> {len(corrected)} chars"
+                    )
+                    return corrected
+                else:
+                    logger.warning("LLM returned too short correction, keeping original")
+                    return None
+            else:
+                logger.warning(f"LLM correction failed: {result.get('error', 'unknown')}")
+                return None
+
+        except Exception as e:
+            logger.error(f"LLM OCR correction error: {e}", exc_info=True)
+            return None
+
 
 # Глобальный экземпляр сервиса
 _vision_service_instance: Optional[VisionService] = None
@@ -357,6 +478,9 @@ async def process_photo_message(
 ) -> Optional[str]:
     """
     Удобная функция для обработки фотографий в обработчиках.
+
+    Поддерживает предобработку изображений и LLM-коррекцию
+    для улучшения распознавания рукописного текста.
 
     Args:
         update: Update объект
@@ -383,8 +507,8 @@ async def process_photo_message(
 
     # Показываем процесс
     processing_msg = await update.message.reply_text(
-        "📸 Распознаю текст с фотографии...\n"
-        "Это может занять несколько секунд."
+        "📸 Распознаю рукописный текст с фотографии...\n"
+        "Обработка изображения и распознавание."
     )
 
     try:
@@ -413,6 +537,7 @@ async def process_photo_message(
         # Успешно распознали
         text = result['text']
         confidence = result['confidence']
+        corrected = result.get('corrected', False)
 
         # Формируем сообщение с предпросмотром
         if len(text) > 500:
@@ -426,11 +551,16 @@ async def process_photo_message(
         confidence_emoji = "✅" if confidence > 0.8 else "⚠️" if confidence > 0.5 else "❌"
         confidence_text = f"{confidence * 100:.0f}%"
 
+        correction_note = ""
+        if corrected:
+            correction_note = "\n🔧 <i>Текст скорректирован AI для исправления ошибок распознавания</i>\n"
+
         await update.message.reply_text(
             f"✅ Текст распознан!\n\n"
             f"📝 <b>Распознанный текст (предпросмотр):</b>\n"
             f"<code>{preview_escaped}</code>\n\n"
-            f"{confidence_emoji} <b>Уверенность:</b> {confidence_text}\n\n"
+            f"{confidence_emoji} <b>Уверенность OCR:</b> {confidence_text}"
+            f"{correction_note}\n\n"
             f"🔍 Проверяю {task_name}...",
             parse_mode='HTML'
         )

@@ -194,7 +194,7 @@ async def process_task_condition(update: Update, context: ContextTypes.DEFAULT_T
         text = (
             "✅ Условие сохранено!\n\n"
             "Теперь введите <b>ответ ученика</b> на это задание.\n\n"
-            "💡 Можно вставить ответ как текстом, так и числом."
+            "💡 Можно вставить ответ текстом или отправить <b>фото рукописного ответа</b>."
         )
 
         keyboard = [[InlineKeyboardButton("◀️ Отмена", callback_data="quick_check_menu")]]
@@ -226,8 +226,7 @@ async def process_task_condition(update: Update, context: ContextTypes.DEFAULT_T
 
 
 async def process_single_answer(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Обработка ответа ученика и запуск проверки"""
-    user_id = update.effective_user.id
+    """Обработка текстового ответа ученика и запуск проверки"""
     answer = update.message.text.strip()
 
     # Валидация
@@ -244,6 +243,38 @@ async def process_single_answer(update: Update, context: ContextTypes.DEFAULT_TY
             "Попробуйте сократить или /cancel для отмены."
         )
         return TeacherStates.QUICK_CHECK_ENTER_ANSWER
+
+    return await _run_single_check(update, context, answer)
+
+
+async def process_single_answer_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Обработка фото с рукописным ответом ученика для быстрой проверки"""
+    from core.vision_service import process_photo_message
+
+    user_id = update.effective_user.id
+
+    # Распознаём текст с фотографии
+    extracted_text = await process_photo_message(
+        update,
+        context.application.bot,
+        task_name="ответ ученика"
+    )
+
+    if not extracted_text:
+        await update.message.reply_text(
+            "Попробуйте отправить фото ещё раз или введите ответ текстом."
+        )
+        return TeacherStates.QUICK_CHECK_ENTER_ANSWER
+
+    # Сохраняем распознанный текст как ответ и запускаем проверку
+    # Имитируем текстовый ввод — переиспользуем логику process_single_answer
+    context.user_data['_ocr_answer'] = extracted_text
+    return await _run_single_check(update, context, extracted_text)
+
+
+async def _run_single_check(update: Update, context: ContextTypes.DEFAULT_TYPE, answer: str) -> int:
+    """Общая логика проверки одиночного ответа (текст или OCR)"""
+    user_id = update.effective_user.id
 
     # Извлекаем данные из контекста
     task_type = context.user_data.get('qc_task_type')
@@ -292,12 +323,16 @@ async def process_single_answer(update: Update, context: ContextTypes.DEFAULT_TY
             is_correct=is_correct
         )
 
-        # Формируем результат (без дублирующего заголовка - AI feedback уже содержит оценку)
+        # Формируем результат
+        import html as html_module
+        answer_escaped = html_module.escape(answer[:200])
+        condition_escaped = html_module.escape(condition[:200])
+
         text = (
             f"<b>🔍 Быстрая проверка</b>\n\n"
             f"<b>Тип задания:</b> {task_type.value}\n\n"
-            f"<b>Условие:</b>\n{condition[:200]}{'...' if len(condition) > 200 else ''}\n\n"
-            f"<b>Ответ ученика:</b>\n<code>{answer[:200]}</code>\n\n"
+            f"<b>Условие:</b>\n{condition_escaped}{'...' if len(condition) > 200 else ''}\n\n"
+            f"<b>Ответ ученика:</b>\n<code>{answer_escaped}</code>\n\n"
             f"{ai_feedback}\n\n"
             f"💡 Осталось проверок: {quota.remaining_checks - 1}"
         )
@@ -315,6 +350,7 @@ async def process_single_answer(update: Update, context: ContextTypes.DEFAULT_TY
         context.user_data.pop('qc_task_type', None)
         context.user_data.pop('qc_condition', None)
         context.user_data.pop('qc_mode', None)
+        context.user_data.pop('_ocr_answer', None)
 
         return TeacherStates.QUICK_CHECK_MENU
 
