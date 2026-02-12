@@ -11,6 +11,7 @@ from enum import Enum
 class ClientTier(str, Enum):
     """Тарифный план клиента"""
     FREE = "free"          # Бесплатный (ограниченный)
+    TRIAL = "trial"        # Пробный период
     BASIC = "basic"        # Базовый
     STANDARD = "standard"  # Стандартный
     PREMIUM = "premium"    # Премиум
