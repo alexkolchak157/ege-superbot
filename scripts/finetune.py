@@ -3,14 +3,17 @@
 CLI-скрипт для дообучения YandexGPT на экспертных оценках ЕГЭ.
 
 Использование:
-    # Просмотр доступных данных
+    # Создать шаблон файла экспертных оценок
+    python scripts/finetune.py template --output scores.csv
+
+    # Импорт сканов работ + экспертные оценки → JSONL
+    python scripts/finetune.py import --scans-dir data/scans --scores scores.csv
+
+    # Просмотр доступных данных (из БД)
     python scripts/finetune.py stats
 
-    # Экспорт обучающих данных
+    # Экспорт данных из БД в JSONL
     python scripts/finetune.py export --output-dir data/training
-
-    # Экспорт только для определённых заданий
-    python scripts/finetune.py export --output-dir data/training --task-types task25 task19
 
     # Запуск дообучения (требует S3 credentials)
     python scripts/finetune.py train --train-file data/training/train_*.jsonl
@@ -35,6 +38,7 @@ from dotenv import load_dotenv
 load_dotenv(project_root / ".env")
 
 from core.finetuning.data_exporter import TrainingDataExporter
+from core.finetuning.expert_import import ExpertDataImporter
 from core.finetuning.tuning_service import (
     YandexGPTTuningService,
     TuningJobConfig,
@@ -46,6 +50,93 @@ logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
 )
 logger = logging.getLogger("finetune")
+
+
+async def cmd_template(args: argparse.Namespace) -> None:
+    """Создать шаблон файла экспертных оценок."""
+    fmt = "json" if args.output.endswith(".json") else "csv"
+    ExpertDataImporter.generate_scores_template(args.output, format=fmt)
+
+    print(f"\nШаблон создан: {args.output}")
+    print(f"Формат: {fmt.upper()}")
+    print()
+    print("Заполните файл данными ваших экспертных оценок:")
+    print("  filename     — имя файла скана (work_01.jpg)")
+    print("  task_type    — тип задания (task19, task20, task24, task25)")
+    print("  topic        — тема задания")
+    print("  k1_score     — балл по критерию К1")
+    print("  k2_score     — балл по критерию К2 (если применимо)")
+    print("  k3_score     — балл по критерию К3 (если применимо)")
+    print("  expert_comment — комментарий эксперта")
+    print()
+    print("Затем запустите импорт:")
+    print(f"  python scripts/finetune.py import --scans-dir <папка_со_сканами> --scores {args.output}")
+
+
+async def cmd_import(args: argparse.Namespace) -> None:
+    """Импорт сканов работ с экспертными оценками."""
+    importer = ExpertDataImporter()
+
+    print(f"\n=== Импорт экспертных данных ===\n")
+    print(f"Сканы:  {args.scans_dir}")
+    print(f"Оценки: {args.scores}")
+    print(f"Выход:  {args.output_dir}")
+    print()
+
+    # Предварительная проверка
+    records = importer.load_expert_scores(args.scores)
+    print(f"Загружено записей с оценками: {len(records)}")
+
+    # Проверяем наличие файлов сканов
+    found = 0
+    missing = []
+    for r in records:
+        path = os.path.join(args.scans_dir, r["filename"])
+        if os.path.exists(path):
+            found += 1
+        else:
+            missing.append(r["filename"])
+
+    print(f"Найдено сканов: {found}/{len(records)}")
+    if missing:
+        print(f"Не найдены ({len(missing)}):")
+        for m in missing[:5]:
+            print(f"  - {m}")
+        if len(missing) > 5:
+            print(f"  ... и ещё {len(missing) - 5}")
+    print()
+
+    if found == 0:
+        print("Нет файлов для обработки. Проверьте путь к директории со сканами.")
+        return
+
+    print("Запуск OCR и формирование обучающих данных...\n")
+
+    stats = await importer.import_expert_data(
+        scans_dir=args.scans_dir,
+        scores_path=args.scores,
+        output_dir=args.output_dir,
+        validation_split=args.val_split,
+    )
+
+    print(f"\n=== Результат импорта ===\n")
+    print(f"Всего записей:       {stats['total_records']}")
+    print(f"Обработано успешно:  {stats['processed']}")
+    print(f"OCR не удался:       {stats.get('ocr_failed', 0)}")
+    print(f"Файлы не найдены:    {stats.get('missing_files', 0)}")
+    print()
+
+    if stats.get("train_path"):
+        print(f"Обучающая выборка:    {stats.get('train_samples', 0)} примеров")
+        print(f"Валидационная выборка: {stats.get('val_samples', 0)} примеров")
+        print()
+        print(f"Обучающий файл:       {stats['train_path']}")
+        print(f"Валидационный файл:   {stats['val_path']}")
+        print()
+        print("Следующий шаг — запуск дообучения:")
+        print(f"  python scripts/finetune.py train --train-file {stats['train_path']} --wait")
+    else:
+        print("Не удалось создать обучающие данные.")
 
 
 async def cmd_stats(args: argparse.Namespace) -> None:
@@ -223,8 +314,34 @@ def main():
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
+    # template
+    template_parser = subparsers.add_parser(
+        "template", help="Создать шаблон файла экспертных оценок"
+    )
+    template_parser.add_argument(
+        "--output", default="expert_scores.csv",
+        help="Путь для шаблона (.csv или .json)"
+    )
+
+    # import
+    import_parser = subparsers.add_parser(
+        "import", help="Импорт сканов работ с экспертными оценками"
+    )
+    import_parser.add_argument(
+        "--scans-dir", required=True, help="Директория со сканами работ"
+    )
+    import_parser.add_argument(
+        "--scores", required=True, help="CSV/JSON с экспертными оценками"
+    )
+    import_parser.add_argument(
+        "--output-dir", default="data/training", help="Директория для JSONL"
+    )
+    import_parser.add_argument(
+        "--val-split", type=float, default=0.1, help="Доля валидации (0.0-1.0)"
+    )
+
     # stats
-    subparsers.add_parser("stats", help="Статистика доступных данных")
+    subparsers.add_parser("stats", help="Статистика доступных данных (из БД)")
 
     # export
     export_parser = subparsers.add_parser("export", help="Экспорт данных в JSONL")
@@ -267,6 +384,8 @@ def main():
     args = parser.parse_args()
 
     commands = {
+        "template": cmd_template,
+        "import": cmd_import,
         "stats": cmd_stats,
         "export": cmd_export,
         "train": cmd_train,
