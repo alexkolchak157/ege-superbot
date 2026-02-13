@@ -253,11 +253,17 @@ async def process_single_answer_photo(update: Update, context: ContextTypes.DEFA
 
     user_id = update.effective_user.id
 
+    # Формируем контекст для улучшения OCR-коррекции
+    task_type = context.user_data.get('qc_task_type', '')
+    condition = context.user_data.get('qc_condition', '')
+    ocr_context = f"ЕГЭ обществознание, {task_type}, условие задания: {condition}" if condition else None
+
     # Распознаём текст с фотографии
     extracted_text = await process_photo_message(
         update,
         context.application.bot,
-        task_name="ответ ученика"
+        task_name="ответ ученика",
+        task_context=ocr_context
     )
 
     if not extracted_text:

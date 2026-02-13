@@ -663,9 +663,14 @@ async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
             vision_service = get_vision_service()
             photo = update.message.photo[-1]  # Берем самое большое фото
             
+            # Формируем контекст для улучшения OCR-коррекции
+            topic_title = topic.get('title', '') if isinstance(topic, dict) else str(topic)
+            ocr_context = f"ЕГЭ обществознание, задание 19 (примеры к терминам/понятиям), тема: {topic_title}"
+
             result = await vision_service.process_telegram_photo(
-                photo, 
-                context.bot
+                photo,
+                context.bot,
+                task_context=ocr_context
             )
             
             if result['success']:
@@ -1238,11 +1243,16 @@ async def handle_answer_photo_task19(update: Update, context: ContextTypes.DEFAU
             )
             return ConversationHandler.END
 
+    # Формируем контекст для улучшения OCR-коррекции
+    topic_title = topic.get('title', '') if isinstance(topic, dict) else str(topic)
+    ocr_context = f"ЕГЭ обществознание, задание 19 (примеры к терминам/понятиям), тема: {topic_title}"
+
     # Обрабатываем фото через OCR
     extracted_text = await process_photo_message(
         update,
         context.application.bot,
-        task_name="примеры"
+        task_name="примеры",
+        task_context=ocr_context
     )
 
     if not extracted_text:
