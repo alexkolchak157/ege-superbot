@@ -9,9 +9,10 @@ Middleware для фильтрации старых callback queries при за
 "Query is too old and response timeout expired or query id is invalid"
 
 Решение:
-Этот middleware проверяет возраст callback query и игнорирует те,
-которые старше CALLBACK_MAX_AGE секунд. Это предотвращает задержки
-при запуске и ошибки в логах.
+Этот middleware фильтрует callback queries от сообщений, созданных ДО
+запуска бота (BOT_START_TIME). Такие callback'и остались от прошлой сессии
+и не должны обрабатываться. Callback'и от сообщений текущей сессии
+обрабатываются без ограничений по времени.
 """
 
 import logging
@@ -21,9 +22,6 @@ from telegram.ext import ContextTypes, CallbackQueryHandler, BaseHandler
 from telegram.error import BadRequest
 
 logger = logging.getLogger(__name__)
-
-# Максимальный возраст callback query в секундах (30 секунд - безопасное значение)
-CALLBACK_MAX_AGE = 30
 
 # Время запуска бота (устанавливается при регистрации middleware)
 BOT_START_TIME = None
@@ -43,15 +41,17 @@ async def filter_old_callbacks(update: Update, context: ContextTypes.DEFAULT_TYP
 
     callback_query = update.callback_query
 
-    # Получаем время создания callback query
-    # callback_query.message.date содержит время создания сообщения с кнопкой
-    if callback_query.message and callback_query.message.date:
+    # Проверяем, был ли callback создан ДО запуска бота
+    # callback_query.message.date содержит время создания сообщения с кнопкой,
+    # а не время нажатия. Поэтому фильтруем только callback'и от сообщений,
+    # созданных до текущего запуска бота (они остались от прошлой сессии).
+    if callback_query.message and callback_query.message.date and BOT_START_TIME:
         callback_time = callback_query.message.date.timestamp()
         current_time = time.time()
         age = current_time - callback_time
 
-        # Если callback старше максимального возраста, игнорируем его
-        if age > CALLBACK_MAX_AGE:
+        # Игнорируем только callback'и от сообщений, созданных до запуска бота
+        if callback_time < BOT_START_TIME:
             logger.info(
                 f"Ignoring old callback query (age: {age:.1f}s, "
                 f"user: {update.effective_user.id}, "
@@ -96,5 +96,5 @@ def register_callback_filter_middleware(app):
 
     logger.info(
         f"Callback filter middleware registered "
-        f"(max age: {CALLBACK_MAX_AGE}s)"
+        f"(filtering callbacks from before bot start: {BOT_START_TIME:.0f})"
     )
