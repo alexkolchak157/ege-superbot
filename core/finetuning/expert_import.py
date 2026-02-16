@@ -8,9 +8,9 @@
 4. Формирует обучающие примеры в формате JSONL для дообучения YandexGPT
 
 Формат CSV с экспертными оценками:
-    filename,task_type,topic,k1_score,k2_score,k3_score,expert_comment
-    work_01.jpg,task25,Функции государства,2,1,3,Хорошее обоснование но примеры слабые
-    work_02.png,task19,Социальные институты,3,,,Все три примера корректны
+    filename,task_type,topic,task_text,k1_score,k2_score,k3_score,expert_comment
+    work_01.jpg,task25,Функции государства,"Обоснуйте необходимость...",2,1,3,Хорошее обоснование но примеры слабые
+    work_02.png,task19,Социальные институты,"Приведите три примера...",3,,,Все три примера корректны
 
 Формат JSON:
     [
@@ -18,6 +18,7 @@
             "filename": "work_01.jpg",
             "task_type": "task25",
             "topic": "Функции государства",
+            "task_text": "Обоснуйте необходимость выполнения государством...",
             "scores": {"К1": 2, "К2": 1, "К3": 3},
             "expert_comment": "Хорошее обоснование, но примеры слабые"
         }
@@ -123,6 +124,7 @@ class ExpertDataImporter:
                     "filename": row["filename"].strip(),
                     "task_type": row["task_type"].strip(),
                     "topic": row["topic"].strip(),
+                    "task_text": row.get("task_text", "").strip(),
                     "scores": scores,
                     "expert_comment": row.get("expert_comment", "").strip(),
                 }
@@ -149,6 +151,7 @@ class ExpertDataImporter:
                 "filename": item["filename"],
                 "task_type": item["task_type"],
                 "topic": item.get("topic", ""),
+                "task_text": item.get("task_text", ""),
                 "scores": item.get("scores", {}),
                 "expert_comment": item.get("expert_comment", ""),
             }
@@ -294,6 +297,7 @@ class ExpertDataImporter:
                 student_answer=student_answer,
                 scores=record["scores"],
                 expert_comment=record["expert_comment"],
+                task_text=record.get("task_text", ""),
             )
 
             if sample:
@@ -338,6 +342,7 @@ class ExpertDataImporter:
         student_answer: str,
         scores: Dict[str, int],
         expert_comment: str,
+        task_text: str = "",
     ) -> Optional[Dict[str, Any]]:
         """Формирует один обучающий пример из экспертной оценки."""
         system_prompt = TrainingDataExporter.SYSTEM_PROMPTS.get(
@@ -348,8 +353,14 @@ class ExpertDataImporter:
         max_scores = {"task19": 3, "task20": 3, "task24": 4, "task25": 6}
         max_score = max_scores.get(task_type, 6)
 
+        # Формируем блок с текстом задания (если есть)
+        task_text_block = ""
+        if task_text:
+            task_text_block = f"Текст задания:\n{task_text}\n\n"
+
         user_prompt = (
             f'Проверь ответ на задание по теме: "{topic}"\n\n'
+            f"{task_text_block}"
             f"Ответ ученика:\n{student_answer}\n\n"
             f"Оцени ответ по критериям ЕГЭ (максимум {max_score} баллов). "
             f"Верни структурированный JSON с полями: score, criteria_scores, "
@@ -407,23 +418,31 @@ class ExpertDataImporter:
             with open(output_path, "w", encoding="utf-8", newline="") as f:
                 writer = csv.writer(f)
                 writer.writerow([
-                    "filename", "task_type", "topic",
+                    "filename", "task_type", "topic", "task_text",
                     "k1_score", "k2_score", "k3_score",
                     "expert_comment",
                 ])
                 # Примеры
                 writer.writerow([
                     "work_01.jpg", "task25", "Функции государства",
+                    "Обоснуйте необходимость выполнения государством функции "
+                    "поддержания общественного порядка. Приведите три примера "
+                    "реализации данной функции.",
                     "2", "1", "3",
                     "Обоснование корректное, но примеры недостаточно развёрнуты",
                 ])
                 writer.writerow([
                     "work_02.png", "task19", "Социальные институты",
+                    "Приведите три примера, иллюстрирующих функции "
+                    "социальных институтов в обществе.",
                     "3", "", "",
                     "Все три примера конкретны и соответствуют теме",
                 ])
                 writer.writerow([
                     "work_03.jpg", "task20", "Рыночная экономика",
+                    "Используя обществоведческие знания, сформулируйте два "
+                    "суждения о преимуществах рыночной экономики и одно "
+                    "суждение о её недостатках.",
                     "2", "", "",
                     "Второе суждение слишком абстрактное",
                 ])
@@ -433,6 +452,11 @@ class ExpertDataImporter:
                     "filename": "work_01.jpg",
                     "task_type": "task25",
                     "topic": "Функции государства",
+                    "task_text": (
+                        "Обоснуйте необходимость выполнения государством функции "
+                        "поддержания общественного порядка. Приведите три примера "
+                        "реализации данной функции."
+                    ),
                     "scores": {"К1": 2, "К2": 1, "К3": 3},
                     "expert_comment": "Обоснование корректное, но примеры недостаточно развёрнуты",
                 },
@@ -440,6 +464,10 @@ class ExpertDataImporter:
                     "filename": "work_02.png",
                     "task_type": "task19",
                     "topic": "Социальные институты",
+                    "task_text": (
+                        "Приведите три примера, иллюстрирующих функции "
+                        "социальных институтов в обществе."
+                    ),
                     "scores": {"К1": 3},
                     "expert_comment": "Все три примера конкретны и соответствуют теме",
                 },
@@ -447,6 +475,11 @@ class ExpertDataImporter:
                     "filename": "work_03.jpg",
                     "task_type": "task20",
                     "topic": "Рыночная экономика",
+                    "task_text": (
+                        "Используя обществоведческие знания, сформулируйте два "
+                        "суждения о преимуществах рыночной экономики и одно "
+                        "суждение о её недостатках."
+                    ),
                     "scores": {"К1": 2},
                     "expert_comment": "Второе суждение слишком абстрактное",
                 },
