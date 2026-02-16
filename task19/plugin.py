@@ -162,10 +162,12 @@ class Task19Plugin(BotPlugin):
             fallbacks=[
                 CommandHandler("cancel", handlers.cmd_cancel),
                 CallbackQueryHandler(handlers.return_to_menu, pattern="^t19_menu$"),
+                CallbackQueryHandler(handlers.back_to_main_menu, pattern="^to_main_menu$"),
                 CallbackQueryHandler(handle_processing, pattern="^t19_"),
             ],
             name="task19_conversation",
             persistent=True,
+            allow_reentry=True,
             per_chat=True,
             per_user=True,
             per_message=False
