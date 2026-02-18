@@ -1,8 +1,14 @@
 """
 Vision service для распознавания текста с изображений.
 
-Использует Yandex Vision API для OCR с предобработкой изображений
-и LLM-коррекцией для улучшения распознавания рукописного текста.
+Поддерживает два режима OCR:
+1. Claude Vision API (приоритетный) — мультимодальная LLM, отлично
+   читает рукописный текст напрямую с изображения
+2. Yandex Vision API (фоллбек) — традиционный OCR с LLM-коррекцией
+   через YandexGPT
+
+Режим выбирается автоматически: если задан ANTHROPIC_API_KEY —
+используется Claude Vision, иначе — Yandex Vision.
 """
 
 import os
@@ -19,37 +25,49 @@ from core.image_preprocessor import preprocess_for_ocr, preprocess_for_ocr_enhan
 
 logger = logging.getLogger(__name__)
 
-# Порог уверенности для применения LLM-коррекции
-# Повышен до 0.97: даже при высокой уверенности OCR часто путает похожие
-# рукописные буквы (м↔ш, п↔н, е↔с), поэтому LLM-коррекция нужна почти всегда
+# Порог уверенности для применения LLM-коррекции (Yandex Vision фоллбек)
 OCR_LLM_CORRECTION_THRESHOLD = 0.97
 # Порог уверенности для повторной попытки с усиленной обработкой
 OCR_ENHANCED_RETRY_THRESHOLD = 0.55
 
+# Claude Vision API
+CLAUDE_API_URL = "https://api.anthropic.com/v1/messages"
+CLAUDE_MODEL = "claude-sonnet-4-5-20250929"
+CLAUDE_MAX_TOKENS = 4096
+
 
 @dataclass
 class VisionConfig:
-    """Конфигурация для Yandex Vision API"""
+    """Конфигурация для Vision сервисов"""
     api_key: str
     folder_id: str
     timeout: int = 30
     retries: int = 3
     retry_delay: float = 2.0
+    anthropic_api_key: Optional[str] = None
 
     @classmethod
     def from_env(cls):
         """Создание конфигурации из переменных окружения"""
-        # Используем те же ключи что и для YandexGPT
+        # Yandex Vision / YandexGPT
         api_key = os.getenv('YANDEX_GPT_API_KEY')
         folder_id = os.getenv('YANDEX_GPT_FOLDER_ID')
 
+        # Claude Vision (приоритетный OCR)
+        anthropic_api_key = os.getenv('ANTHROPIC_API_KEY')
+
         if not api_key or not folder_id:
-            logger.warning(
-                "Yandex Vision API credentials not found. "
-                "OCR functionality will be disabled. "
-                "Set YANDEX_GPT_API_KEY and YANDEX_GPT_FOLDER_ID to enable."
-            )
-            return None
+            if not anthropic_api_key:
+                logger.warning(
+                    "No Vision API credentials found. "
+                    "OCR functionality will be disabled. "
+                    "Set ANTHROPIC_API_KEY for Claude Vision or "
+                    "YANDEX_GPT_API_KEY and YANDEX_GPT_FOLDER_ID for Yandex Vision."
+                )
+                return None
+            # Если есть только Anthropic — создаём конфиг с заглушками для Yandex
+            api_key = api_key or ""
+            folder_id = folder_id or ""
 
         timeout = int(os.getenv('YANDEX_VISION_TIMEOUT', '30'))
         retries = int(os.getenv('YANDEX_VISION_RETRIES', '3'))
@@ -60,12 +78,17 @@ class VisionConfig:
             folder_id=folder_id,
             timeout=timeout,
             retries=retries,
-            retry_delay=retry_delay
+            retry_delay=retry_delay,
+            anthropic_api_key=anthropic_api_key,
         )
 
 
 class VisionService:
-    """Сервис для распознавания текста с изображений через Yandex Vision API"""
+    """
+    Сервис для распознавания текста с изображений.
+
+    Приоритет: Claude Vision API > Yandex Vision API + YandexGPT коррекция.
+    """
 
     VISION_API_URL = "https://vision.api.cloud.yandex.net/vision/v1/batchAnalyze"
 
@@ -84,13 +107,27 @@ class VisionService:
 
         if self.config is None:
             logger.warning("VisionService initialized without credentials - OCR disabled")
+        elif self.config.anthropic_api_key:
+            logger.info("VisionService initialized with Claude Vision API (primary)")
         else:
-            logger.info("VisionService initialized successfully with Yandex Vision API")
+            logger.info("VisionService initialized with Yandex Vision API (fallback)")
 
     @property
     def is_available(self) -> bool:
         """Проверка доступности OCR"""
         return self.config is not None
+
+    @property
+    def _has_claude(self) -> bool:
+        """Проверка доступности Claude Vision"""
+        return self.config is not None and bool(self.config.anthropic_api_key)
+
+    @property
+    def _has_yandex(self) -> bool:
+        """Проверка доступности Yandex Vision"""
+        return (self.config is not None
+                and bool(self.config.api_key)
+                and bool(self.config.folder_id))
 
     async def _ensure_session(self):
         """Создает сессию если её нет"""
@@ -113,24 +150,20 @@ class VisionService:
         task_context: Optional[str] = None
     ) -> Dict[str, Any]:
         """
-        Обработка фотографии от Telegram с предобработкой и LLM-коррекцией.
+        Обработка фотографии от Telegram.
+
+        Стратегия:
+        1. Если доступен Claude Vision — отправляем изображение напрямую
+           в мультимодальную LLM (лучшее качество для рукописного текста)
+        2. Иначе — Yandex Vision OCR + LLM-коррекция через YandexGPT
 
         Args:
             photo: Объект фотографии от Telegram
             bot: Экземпляр бота для загрузки фото
             task_context: Предметный контекст для улучшения коррекции
-                (например: "задание 19, обществознание, тема: Формы государства")
 
         Returns:
-            Словарь с результатом обработки:
-            {
-                'success': bool,
-                'text': str,  # Распознанный текст
-                'confidence': float,  # Средняя уверенность (0-1)
-                'error': str,  # Ошибка если success=False
-                'warning': str  # Предупреждение если нужно
-                'corrected': bool  # Был ли текст скорректирован LLM
-            }
+            Словарь с результатом обработки
         """
         if not self.is_available:
             return {
@@ -146,46 +179,24 @@ class VisionService:
             file = await bot.get_file(photo.file_id)
             photo_bytes = bytes(await file.download_as_bytearray())
 
-            # Шаг 1: Предобработка изображения
-            preprocessed_bytes = preprocess_for_ocr(photo_bytes)
-            logger.info("Image preprocessed for OCR")
+            # === Путь 1: Claude Vision (приоритетный) ===
+            if self._has_claude:
+                logger.info("Using Claude Vision API for handwriting recognition")
+                result = await self._recognize_with_claude(photo_bytes, task_context)
 
-            # Шаг 2: Распознаем текст
-            result = await self._recognize_text(preprocessed_bytes)
+                if result['success']:
+                    return result
 
-            if not result['success']:
-                return result
-
-            # Шаг 3: Если уверенность низкая — повторная попытка с усиленной обработкой
-            if result['confidence'] < OCR_ENHANCED_RETRY_THRESHOLD and result['text']:
-                logger.info(
-                    f"Low confidence ({result['confidence']:.2f}), "
-                    "retrying with enhanced preprocessing"
+                # Claude не смог — пробуем Yandex как фоллбек
+                logger.warning(
+                    f"Claude Vision failed: {result.get('error')}, "
+                    "falling back to Yandex Vision"
                 )
-                enhanced_bytes = preprocess_for_ocr_enhanced(photo_bytes)
-                enhanced_result = await self._recognize_text(enhanced_bytes)
+                if not self._has_yandex:
+                    return result
 
-                if (enhanced_result['success'] and
-                        enhanced_result['confidence'] > result['confidence']):
-                    logger.info(
-                        f"Enhanced result better: {enhanced_result['confidence']:.2f} "
-                        f"vs {result['confidence']:.2f}"
-                    )
-                    result = enhanced_result
-
-            # Шаг 4: LLM-коррекция для рукописного текста
-            if result['success'] and result['confidence'] < OCR_LLM_CORRECTION_THRESHOLD:
-                corrected_text = await self._correct_ocr_with_llm(result['text'], task_context)
-                if corrected_text:
-                    result['text'] = corrected_text
-                    result['corrected'] = True
-                    logger.info("OCR text corrected by LLM")
-                else:
-                    result['corrected'] = False
-            else:
-                result['corrected'] = False
-
-            return result
+            # === Путь 2: Yandex Vision OCR + LLM-коррекция (фоллбек) ===
+            return await self._process_with_yandex(photo_bytes, task_context)
 
         except Exception as e:
             logger.error(f"Error processing photo: {e}", exc_info=True)
@@ -195,6 +206,248 @@ class VisionService:
                 'text': '',
                 'confidence': 0.0
             }
+
+    async def _process_with_yandex(
+        self,
+        photo_bytes: bytes,
+        task_context: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """Обработка через Yandex Vision OCR + LLM-коррекция."""
+        # Шаг 1: Предобработка изображения
+        preprocessed_bytes = preprocess_for_ocr(photo_bytes)
+        logger.info("Image preprocessed for Yandex OCR")
+
+        # Шаг 2: Распознаём текст
+        result = await self._recognize_text(preprocessed_bytes)
+
+        if not result['success']:
+            return result
+
+        # Шаг 3: Низкая уверенность — повтор с усиленной обработкой
+        if result['confidence'] < OCR_ENHANCED_RETRY_THRESHOLD and result['text']:
+            logger.info(
+                f"Low confidence ({result['confidence']:.2f}), "
+                "retrying with enhanced preprocessing"
+            )
+            enhanced_bytes = preprocess_for_ocr_enhanced(photo_bytes)
+            enhanced_result = await self._recognize_text(enhanced_bytes)
+
+            if (enhanced_result['success'] and
+                    enhanced_result['confidence'] > result['confidence']):
+                logger.info(
+                    f"Enhanced result better: {enhanced_result['confidence']:.2f} "
+                    f"vs {result['confidence']:.2f}"
+                )
+                result = enhanced_result
+
+        # Шаг 4: LLM-коррекция
+        if result['success'] and result['confidence'] < OCR_LLM_CORRECTION_THRESHOLD:
+            corrected_text = await self._correct_ocr_with_llm(result['text'], task_context)
+            if corrected_text:
+                result['text'] = corrected_text
+                result['corrected'] = True
+                logger.info("OCR text corrected by LLM")
+            else:
+                result['corrected'] = False
+        else:
+            result['corrected'] = False
+
+        return result
+
+    # ================================================================
+    # Claude Vision API — распознавание рукописного текста напрямую
+    # ================================================================
+
+    async def _recognize_with_claude(
+        self,
+        image_bytes: bytes,
+        task_context: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Распознавание рукописного текста через Claude Vision API.
+
+        Отправляет изображение напрямую в мультимодальную LLM —
+        Claude видит картинку и читает почерк значительно лучше
+        традиционного OCR.
+
+        Args:
+            image_bytes: Исходные байты изображения (без предобработки)
+            task_context: Предметный контекст
+
+        Returns:
+            Результат распознавания
+        """
+        await self._ensure_session()
+
+        image_base64 = base64.b64encode(image_bytes).decode('utf-8')
+
+        # Определяем MIME-тип по сигнатуре файла
+        media_type = "image/jpeg"
+        if image_bytes[:8] == b'\x89PNG\r\n\x1a\n':
+            media_type = "image/png"
+        elif image_bytes[:4] == b'RIFF' and image_bytes[8:12] == b'WEBP':
+            media_type = "image/webp"
+
+        # Формируем промпт с контекстом
+        context_hint = ""
+        if task_context:
+            context_hint = (
+                f"\n\nКонтекст: {task_context}. "
+                "Используй этот контекст для правильной интерпретации терминов."
+            )
+
+        user_prompt = (
+            "На этой фотографии — рукописный ответ ученика на задание ЕГЭ по обществознанию. "
+            "Внимательно прочитай весь рукописный текст на изображении и перепиши его "
+            "максимально точно, сохраняя:\n"
+            "- оригинальную структуру (абзацы, нумерацию, пункты)\n"
+            "- авторскую пунктуацию и орфографию\n"
+            "- все сокращения и пометки\n\n"
+            "ВАЖНО:\n"
+            "- НЕ исправляй грамматические ошибки ученика — перепиши как есть\n"
+            "- НЕ добавляй от себя текст, которого нет на фото\n"
+            "- НЕ пропускай слова или предложения\n"
+            "- Если слово трудно разобрать, выбери наиболее вероятный вариант "
+            "по контексту предложения\n\n"
+            "Верни ТОЛЬКО распознанный текст, без комментариев и пояснений."
+            f"{context_hint}"
+        )
+
+        payload = {
+            "model": CLAUDE_MODEL,
+            "max_tokens": CLAUDE_MAX_TOKENS,
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "image",
+                            "source": {
+                                "type": "base64",
+                                "media_type": media_type,
+                                "data": image_base64,
+                            }
+                        },
+                        {
+                            "type": "text",
+                            "text": user_prompt
+                        }
+                    ]
+                }
+            ]
+        }
+
+        headers = {
+            "x-api-key": self.config.anthropic_api_key,
+            "anthropic-version": "2023-06-01",
+            "content-type": "application/json",
+        }
+
+        for attempt in range(self.config.retries):
+            try:
+                timeout = aiohttp.ClientTimeout(total=self.config.timeout)
+                async with self._session.post(
+                    CLAUDE_API_URL,
+                    json=payload,
+                    headers=headers,
+                    timeout=timeout,
+                ) as response:
+
+                    if response.status != 200:
+                        error_text = await response.text()
+                        logger.error(
+                            f"Claude Vision API error: {response.status} - {error_text}"
+                        )
+
+                        if response.status in (401, 403):
+                            return {
+                                'success': False,
+                                'error': 'Ошибка авторизации Claude Vision API',
+                                'text': '',
+                                'confidence': 0.0,
+                            }
+
+                        # Для серверных ошибок — ретрай
+                        if response.status >= 500 or response.status == 429:
+                            if attempt < self.config.retries - 1:
+                                await asyncio.sleep(
+                                    self.config.retry_delay * (attempt + 1)
+                                )
+                                continue
+
+                        return {
+                            'success': False,
+                            'error': f'Ошибка Claude Vision API: {response.status}',
+                            'text': '',
+                            'confidence': 0.0,
+                        }
+
+                    response_data = await response.json()
+                    text = self._extract_claude_text(response_data)
+
+                    if not text:
+                        return {
+                            'success': False,
+                            'error': 'Текст на изображении не обнаружен',
+                            'warning': 'Убедитесь, что фото чёткое и текст хорошо виден',
+                            'text': '',
+                            'confidence': 0.0,
+                        }
+
+                    logger.info(
+                        f"Claude Vision OCR successful: {len(text)} chars"
+                    )
+
+                    return {
+                        'success': True,
+                        'text': text,
+                        'confidence': 0.95,
+                        'corrected': False,
+                        'error': None,
+                    }
+
+            except asyncio.TimeoutError:
+                logger.warning(
+                    f"Claude Vision API timeout "
+                    f"(attempt {attempt + 1}/{self.config.retries})"
+                )
+                if attempt < self.config.retries - 1:
+                    await asyncio.sleep(self.config.retry_delay * (attempt + 1))
+                    continue
+                return {
+                    'success': False,
+                    'error': 'Превышено время ожидания. Попробуйте ещё раз.',
+                    'text': '',
+                    'confidence': 0.0,
+                }
+
+            except Exception as e:
+                logger.error(
+                    f"Claude Vision API request error: {e}", exc_info=True
+                )
+                if attempt < self.config.retries - 1:
+                    await asyncio.sleep(self.config.retry_delay * (attempt + 1))
+                    continue
+                return {
+                    'success': False,
+                    'error': f'Ошибка запроса: {str(e)}',
+                    'text': '',
+                    'confidence': 0.0,
+                }
+
+    @staticmethod
+    def _extract_claude_text(response_data: Dict[str, Any]) -> str:
+        """Извлечение текста из ответа Claude API."""
+        try:
+            content_blocks = response_data.get('content', [])
+            text_parts = []
+            for block in content_blocks:
+                if block.get('type') == 'text':
+                    text_parts.append(block.get('text', ''))
+            return '\n'.join(text_parts).strip()
+        except Exception as e:
+            logger.error(f"Error extracting Claude response: {e}", exc_info=True)
+            return ''
 
     async def _recognize_text(self, image_bytes: bytes) -> Dict[str, Any]:
         """
