@@ -146,7 +146,8 @@ class VisionService:
     async def _ensure_session(self):
         """Создает сессию если её нет"""
         if self._session is None or self._session.closed:
-            self._session = aiohttp.ClientSession()
+            connector = aiohttp.TCPConnector(force_close=True)
+            self._session = aiohttp.ClientSession(connector=connector)
 
     async def _close_session(self):
         """Закрывает сессию если она открыта"""
@@ -374,10 +375,13 @@ class VisionService:
         if use_streaming:
             payload["stream"] = True
 
+        logger.info(f"Claude Vision API request to {api_url} (stream={use_streaming})")
+
         for attempt in range(self.config.retries):
             try:
                 timeout = aiohttp.ClientTimeout(
-                    total=self.config.claude_vision_timeout
+                    total=self.config.claude_vision_timeout,
+                    sock_connect=30,  # TCP connect timeout отдельно
                 )
                 async with self._session.post(
                     api_url,
@@ -456,6 +460,21 @@ class VisionService:
                 return {
                     'success': False,
                     'error': 'Превышено время ожидания. Попробуйте ещё раз.',
+                    'text': '',
+                    'confidence': 0.0,
+                }
+
+            except aiohttp.ClientError as e:
+                logger.error(
+                    f"Claude Vision API connection error: {e} "
+                    f"(attempt {attempt + 1}/{self.config.retries}, url={api_url})"
+                )
+                if attempt < self.config.retries - 1:
+                    await asyncio.sleep(self.config.retry_delay * (attempt + 1))
+                    continue
+                return {
+                    'success': False,
+                    'error': f'Ошибка подключения к API: {str(e)}',
                     'text': '',
                     'confidence': 0.0,
                 }
