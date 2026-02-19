@@ -108,7 +108,11 @@ class VisionService:
         if self.config is None:
             logger.warning("VisionService initialized without credentials - OCR disabled")
         elif self.config.anthropic_api_key:
-            logger.info("VisionService initialized with Claude Vision API (primary)")
+            key = self.config.anthropic_api_key
+            logger.info(
+                f"VisionService initialized with Claude Vision API (primary), "
+                f"key: {key[:10]}...{key[-4:]} (len={len(key)})"
+            )
         else:
             logger.info("VisionService initialized with Yandex Vision API (fallback)")
 
@@ -355,14 +359,16 @@ class VisionService:
 
                     if response.status != 200:
                         error_text = await response.text()
+                        key = self.config.anthropic_api_key or ""
                         logger.error(
-                            f"Claude Vision API error: {response.status} - {error_text}"
+                            f"Claude Vision API error: {response.status} - {error_text}. "
+                            f"Key prefix: {key[:10]}..., model: {CLAUDE_MODEL}"
                         )
 
                         if response.status in (401, 403):
                             return {
                                 'success': False,
-                                'error': 'Ошибка авторизации Claude Vision API',
+                                'error': f'Ошибка авторизации Claude Vision API ({response.status})',
                                 'text': '',
                                 'confidence': 0.0,
                             }
