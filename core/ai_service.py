@@ -120,14 +120,21 @@ class ClaudeService:
         if self._client is None:
             try:
                 import anthropic
-                self._client = anthropic.AsyncAnthropic(
-                    api_key=self.config.api_key,
-                    timeout=self.config.timeout,
+            except ImportError as e:
+                import sys
+                logger.error(
+                    f"anthropic import failed: {e}. "
+                    f"Python: {sys.executable} (v{sys.version.split()[0]}), "
+                    f"path: {sys.path[:3]}"
                 )
-            except ImportError:
                 raise ImportError(
-                    "Для использования Claude установите пакет: pip install anthropic"
+                    f"Для использования Claude установите пакет: pip install anthropic "
+                    f"(Python: {sys.executable}, ошибка: {e})"
                 )
+            self._client = anthropic.AsyncAnthropic(
+                api_key=self.config.api_key,
+                timeout=self.config.timeout,
+            )
 
     async def __aenter__(self):
         return self
