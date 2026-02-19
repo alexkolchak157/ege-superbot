@@ -196,12 +196,21 @@ async def entry_from_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     kb = AdaptiveKeyboards.create_menu_keyboard(user_stats, module_code="t19")
     
     # Показываем меню
-    await query.edit_message_text(
-        text,
-        reply_markup=kb,
-        parse_mode=ParseMode.HTML
-    )
-    
+    try:
+        await query.edit_message_text(
+            text,
+            reply_markup=kb,
+            parse_mode=ParseMode.HTML
+        )
+    except BadRequest as e:
+        # Если не удалось отредактировать (старое сообщение, удалено и т.д.) — отправляем новое
+        logger.debug(f"edit_message_text failed in entry_from_menu: {e}, sending new message")
+        await query.message.chat.send_message(
+            text,
+            reply_markup=kb,
+            parse_mode=ParseMode.HTML
+        )
+
     # Возвращаем состояние CHOOSING_MODE для работы с меню
     return states.CHOOSING_MODE
 
@@ -1540,6 +1549,13 @@ async def handle_result_action(update: Update, context: ContextTypes.DEFAULT_TYP
         # Неизвестное действие
         await query.answer("Неизвестное действие", show_alert=True)
         return states.CHOOSING_MODE
+
+@safe_handler()
+async def back_to_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Возврат в главное меню бота."""
+    from core.menu_handlers import handle_to_main_menu
+    return await handle_to_main_menu(update, context)
+
 
 @safe_handler()
 async def cmd_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):

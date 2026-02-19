@@ -305,6 +305,7 @@ class YandexGPTConfig:
     retries: int = 3
     retry_delay: float = 2.0
     timeout: int = 60
+    finetuned_model_uri: Optional[str] = None  # URI дообученной модели (ds://...)
 
     @classmethod
     def from_env(cls):
@@ -320,6 +321,7 @@ class YandexGPTConfig:
         retries = int(os.getenv('YANDEX_GPT_RETRIES', '3'))
         retry_delay = float(os.getenv('YANDEX_GPT_RETRY_DELAY', '2'))
         timeout = int(os.getenv('YANDEX_GPT_TIMEOUT', '60'))
+        finetuned_uri = os.getenv('YANDEX_GPT_FINETUNED_MODEL_URI')
 
         return cls(
             api_key=api_key,
@@ -327,6 +329,7 @@ class YandexGPTConfig:
             retries=retries,
             retry_delay=retry_delay,
             timeout=timeout,
+            finetuned_model_uri=finetuned_uri,
         )
 
 
@@ -355,23 +358,60 @@ class YandexGPTService:
 
     async def cleanup(self):
         await self._close_session()
+    def _get_model_uri(self, use_finetuned: bool = False) -> str:
+        """
+        Возвращает URI модели для запроса.
+
+        Args:
+            use_finetuned: Использовать дообученную модель, если доступна
+
+        Returns:
+            URI модели (gpt://... или ds://...)
+        """
+        if use_finetuned and self.config.finetuned_model_uri:
+            return self.config.finetuned_model_uri
+        return f"gpt://{self.config.folder_id}/{self.config.model.value}"
 
     async def get_completion(
         self,
         prompt: str,
         system_prompt: Optional[str] = None,
         temperature: Optional[float] = None,
-        max_tokens: Optional[int] = None
+        max_tokens: Optional[int] = None,
+        use_finetuned: bool = False
     ) -> Dict[str, Any]:
+        """
+        Получение ответа от YandexGPT
+
+        Args:
+            prompt: Основной запрос
+            system_prompt: Системный промпт (роль)
+            temperature: Температура генерации
+            max_tokens: Максимальное количество токенов
+            use_finetuned: Использовать дообученную модель (если настроена)
+
+        Returns:
+            Словарь с ответом и метаданными
+        """
         await self._ensure_session()
 
         messages = []
+
         if system_prompt:
-            messages.append({"role": "system", "text": system_prompt})
-        messages.append({"role": "user", "text": prompt})
+            messages.append({
+                "role": "system",
+                "text": system_prompt
+            })
+
+        messages.append({
+            "role": "user",
+            "text": prompt
+        })
+
+        model_uri = self._get_model_uri(use_finetuned=use_finetuned)
 
         payload = {
-            "modelUri": f"gpt://{self.config.folder_id}/{self.config.model.value}",
+            "modelUri": model_uri,
             "completionOptions": {
                 "stream": False,
                 "temperature": temperature or self.config.temperature,
