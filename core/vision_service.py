@@ -12,6 +12,7 @@ Vision service для распознавания текста с изображ�
 """
 
 import os
+import json
 import logging
 import base64
 import asyncio
@@ -47,6 +48,7 @@ class VisionConfig:
     anthropic_api_key: Optional[str] = None
     anthropic_proxy_url: Optional[str] = None    # Reverse proxy base URL
     anthropic_http_proxy: Optional[str] = None   # Standard HTTP proxy
+    claude_vision_timeout: int = 120             # Отдельный таймаут для Claude Vision
 
     @classmethod
     def from_env(cls):
@@ -76,6 +78,7 @@ class VisionConfig:
         timeout = int(os.getenv('YANDEX_VISION_TIMEOUT', '30'))
         retries = int(os.getenv('YANDEX_VISION_RETRIES', '3'))
         retry_delay = float(os.getenv('YANDEX_VISION_RETRY_DELAY', '2.0'))
+        claude_vision_timeout = int(os.getenv('CLAUDE_VISION_TIMEOUT', '120'))
 
         return cls(
             api_key=api_key,
@@ -86,6 +89,7 @@ class VisionConfig:
             anthropic_api_key=anthropic_api_key,
             anthropic_proxy_url=anthropic_proxy_url,
             anthropic_http_proxy=anthropic_http_proxy,
+            claude_vision_timeout=claude_vision_timeout,
         )
 
 
@@ -363,9 +367,18 @@ class VisionService:
         # HTTP-прокси для aiohttp
         http_proxy = self.config.anthropic_http_proxy
 
+        # Через прокси используем streaming (не даём CF Worker таймаутнуть)
+        use_streaming = bool(
+            self.config.anthropic_proxy_url or self.config.anthropic_http_proxy
+        )
+        if use_streaming:
+            payload["stream"] = True
+
         for attempt in range(self.config.retries):
             try:
-                timeout = aiohttp.ClientTimeout(total=self.config.timeout)
+                timeout = aiohttp.ClientTimeout(
+                    total=self.config.claude_vision_timeout
+                )
                 async with self._session.post(
                     api_url,
                     json=payload,
@@ -405,7 +418,10 @@ class VisionService:
                             'confidence': 0.0,
                         }
 
-                    response_data = await response.json()
+                    if use_streaming:
+                        response_data = await self._read_sse_stream(response)
+                    else:
+                        response_data = await response.json()
                     text = self._extract_claude_text(response_data)
 
                     if not text:
@@ -457,6 +473,53 @@ class VisionService:
                     'text': '',
                     'confidence': 0.0,
                 }
+
+    @staticmethod
+    async def _read_sse_stream(response) -> Dict[str, Any]:
+        """Читает SSE-поток от Claude API и собирает финальный ответ."""
+        text_parts = []
+        input_tokens = 0
+        output_tokens = 0
+        model = ""
+
+        async for line_bytes in response.content:
+            line = line_bytes.decode('utf-8', errors='replace').strip()
+            if not line.startswith('data: '):
+                continue
+            data_str = line[6:]  # убираем "data: "
+            if data_str == '[DONE]':
+                break
+            try:
+                event = json.loads(data_str)
+            except json.JSONDecodeError:
+                continue
+
+            event_type = event.get('type', '')
+
+            if event_type == 'message_start':
+                msg = event.get('message', {})
+                model = msg.get('model', '')
+                usage = msg.get('usage', {})
+                input_tokens = usage.get('input_tokens', 0)
+
+            elif event_type == 'content_block_delta':
+                delta = event.get('delta', {})
+                if delta.get('type') == 'text_delta':
+                    text_parts.append(delta.get('text', ''))
+
+            elif event_type == 'message_delta':
+                usage = event.get('usage', {})
+                output_tokens = usage.get('output_tokens', 0)
+
+        # Собираем в формат, совместимый с _extract_claude_text
+        return {
+            "content": [{"type": "text", "text": "".join(text_parts)}],
+            "model": model,
+            "usage": {
+                "input_tokens": input_tokens,
+                "output_tokens": output_tokens,
+            },
+        }
 
     @staticmethod
     def _extract_claude_text(response_data: Dict[str, Any]) -> str:
