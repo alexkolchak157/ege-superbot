@@ -45,6 +45,8 @@ class VisionConfig:
     retries: int = 3
     retry_delay: float = 2.0
     anthropic_api_key: Optional[str] = None
+    anthropic_proxy_url: Optional[str] = None    # Reverse proxy base URL
+    anthropic_http_proxy: Optional[str] = None   # Standard HTTP proxy
 
     @classmethod
     def from_env(cls):
@@ -55,6 +57,8 @@ class VisionConfig:
 
         # Claude Vision (приоритетный OCR)
         anthropic_api_key = os.getenv('ANTHROPIC_API_KEY')
+        anthropic_proxy_url = os.getenv('ANTHROPIC_PROXY_URL')
+        anthropic_http_proxy = os.getenv('ANTHROPIC_HTTP_PROXY')
 
         if not api_key or not folder_id:
             if not anthropic_api_key:
@@ -80,6 +84,8 @@ class VisionConfig:
             retries=retries,
             retry_delay=retry_delay,
             anthropic_api_key=anthropic_api_key,
+            anthropic_proxy_url=anthropic_proxy_url,
+            anthropic_http_proxy=anthropic_http_proxy,
         )
 
 
@@ -347,14 +353,25 @@ class VisionService:
             "content-type": "application/json",
         }
 
+        # Если настроен прокси — используем его как base URL
+        api_url = self.config.anthropic_proxy_url or CLAUDE_API_URL
+        if self.config.anthropic_proxy_url:
+            # Прокси-URL может быть как полным, так и только base URL
+            if '/v1/messages' not in api_url:
+                api_url = api_url.rstrip('/') + '/v1/messages'
+
+        # HTTP-прокси для aiohttp
+        http_proxy = self.config.anthropic_http_proxy
+
         for attempt in range(self.config.retries):
             try:
                 timeout = aiohttp.ClientTimeout(total=self.config.timeout)
                 async with self._session.post(
-                    CLAUDE_API_URL,
+                    api_url,
                     json=payload,
                     headers=headers,
                     timeout=timeout,
+                    proxy=http_proxy,
                 ) as response:
 
                     if response.status != 200:
