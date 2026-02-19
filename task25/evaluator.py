@@ -1,4 +1,4 @@
-"""AI-проверка для задания 25 через YandexGPT.
+"""AI-проверка для задания 25.
 
 Обновленная версия с оптимизированными промптами для критериев К1, К2, К3.
 Включает детальную проверку российского контекста и связи между критериями.
@@ -25,8 +25,7 @@ try:
     from core.ai_evaluator import (
         BaseAIEvaluator,
     )
-    # ВАЖНО: Импортируем YandexGPTModel из core.ai_service
-    from core.ai_service import YandexGPTService, YandexGPTConfig, YandexGPTModel
+    from core.ai_service import create_ai_service, AIServiceConfig, AIModel
     AI_EVALUATOR_AVAILABLE = True
 except ImportError as e:
     logger.warning(f"AI evaluator components not available: {e}")
@@ -36,18 +35,16 @@ except ImportError as e:
     class BaseAIEvaluator:
         def __init__(self, requirements: TaskRequirements):
             self.requirements = requirements
-    
-    class YandexGPTService:
+
+    def create_ai_service(config):
+        return None
+
+    class AIServiceConfig:
         pass
-    
-    class YandexGPTConfig:
-        pass
-    
-    # Заглушка для Enum когда AI недоступен
-    from enum import Enum
-    class YandexGPTModel(Enum):
-        LITE = "yandexgpt-lite"
-        PRO = "yandexgpt"
+
+    class AIModel:
+        LITE = "lite"
+        PRO = "pro"
 
 
 class Task25EvaluationResult(EvaluationResult if AI_EVALUATOR_AVAILABLE else object):
@@ -156,25 +153,12 @@ class Task25AIEvaluator:
             return
         
         try:
-            # Получаем API ключи из переменных окружения
-            api_key = os.getenv("YANDEX_GPT_API_KEY")
-            folder_id = os.getenv("YANDEX_GPT_FOLDER_ID")
-            
-            if not api_key or not folder_id:
-                logger.error("YANDEX_GPT_API_KEY и YANDEX_GPT_FOLDER_ID должны быть установлены")
-                self.ai_service = None
-                return
-            
-            # Настраиваем YandexGPT
-            config = YandexGPTConfig(
-                api_key=api_key,
-                folder_id=folder_id,
-                model=YandexGPTModel.PRO,
-                temperature=self._get_temperature(),
-                max_tokens=3000,
-            )
+            config = AIServiceConfig.from_env()
+            config.model = AIModel.PRO
+            config.temperature = self._get_temperature()
+            config.max_tokens = 3000
 
-            self.ai_service = YandexGPTService(config)
+            self.ai_service = create_ai_service(config)
             logger.info(
                 f"Task25 AI service initialized with {self.strictness.value} strictness"
             )

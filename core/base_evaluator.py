@@ -9,7 +9,7 @@ from abc import ABC, abstractmethod
 from typing import Dict, Any, Optional, List
 from enum import Enum
 
-from core.ai_service import YandexGPTService, YandexGPTConfig, YandexGPTModel
+from core.ai_service import create_ai_service, AIServiceConfig, AIModel
 from core.types import EvaluationResult, EvaluationCriteria, TaskRequirements
 
 logger = logging.getLogger(__name__)
@@ -29,29 +29,18 @@ class BaseAIEvaluator(ABC):
     def __init__(self, requirements: TaskRequirements, strictness: StrictnessLevel = StrictnessLevel.STANDARD):
         self.requirements = requirements
         self.strictness = strictness
-        self.ai_service: Optional[YandexGPTService] = None
+        self.ai_service = None
         self._init_ai_service()
-    
+
     def _init_ai_service(self):
         """Инициализация AI сервиса."""
         try:
-            api_key = os.getenv("YANDEX_GPT_API_KEY")
-            folder_id = os.getenv("YANDEX_GPT_FOLDER_ID")
-            
-            if not api_key or not folder_id:
-                logger.error("YANDEX_GPT_API_KEY и YANDEX_GPT_FOLDER_ID должны быть установлены")
-                self.ai_service = None
-                return
-            
-            config = YandexGPTConfig(
-                api_key=api_key,
-                folder_id=folder_id,
-                model=YandexGPTModel.PRO,
-                temperature=self._get_temperature(),
-                max_tokens=3000,
-            )
-            
-            self.ai_service = YandexGPTService(config)
+            config = AIServiceConfig.from_env()
+            config.model = AIModel.PRO
+            config.temperature = self._get_temperature()
+            config.max_tokens = 3000
+
+            self.ai_service = create_ai_service(config)
             logger.info(
                 f"{self.requirements.task_name} AI service initialized "
                 f"with {self.strictness.value} strictness"

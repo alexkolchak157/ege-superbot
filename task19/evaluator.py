@@ -1,4 +1,4 @@
-"""AI-проверка для задания 19 через YandexGPT - ФИНАЛЬНАЯ ВЕРСИЯ V2.1."""
+"""AI-проверка для задания 19 - ФИНАЛЬНАЯ ВЕРСИЯ V2.1."""
 
 import logging
 import os
@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 # Безопасный импорт
 try:
     from core.ai_evaluator import BaseAIEvaluator
-    from core.ai_service import YandexGPTService, YandexGPTConfig, YandexGPTModel
+    from core.ai_service import create_ai_service, AIServiceConfig, AIModel
     AI_EVALUATOR_AVAILABLE = True
 except ImportError as e:
     logger.warning(f"AI evaluator components not available: {e}")
@@ -28,12 +28,16 @@ except ImportError as e:
     class BaseAIEvaluator:
         def __init__(self, requirements: TaskRequirements):
             self.requirements = requirements
-    
-    class YandexGPTService:
+
+    def create_ai_service(config):
+        return None
+
+    class AIServiceConfig:
         pass
-    
-    class YandexGPTConfig:
-        pass
+
+    class AIModel:
+        LITE = "lite"
+        PRO = "pro"
 
 
 class StrictnessLevel(Enum):
@@ -78,11 +82,11 @@ class Task19AIEvaluator(BaseAIEvaluator if AI_EVALUATOR_AVAILABLE else object):
         self.ai_service = None
         if AI_EVALUATOR_AVAILABLE:
             try:
-                config = YandexGPTConfig.from_env()
+                config = AIServiceConfig.from_env()
                 if strictness in [StrictnessLevel.STRICT, StrictnessLevel.EXPERT]:
-                    config.model = YandexGPTModel.PRO
+                    config.model = AIModel.PRO
                 else:
-                    config.model = YandexGPTModel.LITE
+                    config.model = AIModel.LITE
                 
                 if strictness == StrictnessLevel.LENIENT:
                     config.temperature = 0.4
@@ -355,7 +359,7 @@ class Task19AIEvaluator(BaseAIEvaluator if AI_EVALUATOR_AVAILABLE else object):
         return base_prompt
 
     async def evaluate(self, answer: str, topic: str, **kwargs) -> EvaluationResult:
-        """Оценка ответа через YandexGPT с улучшенной проверкой."""
+        """Оценка ответа через AI с улучшенной проверкой."""
         task_text = kwargs.get('task_text', '')
 
         if not AI_EVALUATOR_AVAILABLE or not self.config:
@@ -506,7 +510,7 @@ class Task19AIEvaluator(BaseAIEvaluator if AI_EVALUATOR_AVAILABLE else object):
 7. Будь максимально строг к конкретности!"""
 
         try:
-            async with YandexGPTService(self.config) as service:
+            async with create_ai_service(self.config) as service:
                 result = await service.get_json_completion(
                     prompt=evaluation_prompt,
                     system_prompt=self.get_system_prompt(),
@@ -516,7 +520,7 @@ class Task19AIEvaluator(BaseAIEvaluator if AI_EVALUATOR_AVAILABLE else object):
                 if result:
                     return self._parse_response(result, answer, topic, requires_russia, structure_type)
 
-                logger.error("Failed to get JSON response from YandexGPT")
+                logger.error("Failed to get JSON response from AI")
                 return self._basic_evaluation(answer, topic)
 
         except Exception as e:
