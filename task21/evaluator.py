@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 # Безопасный импорт AI сервисов
 try:
     from core.ai_evaluator import BaseAIEvaluator
-    from core.ai_service import YandexGPTService, YandexGPTConfig, YandexGPTModel
+    from core.ai_service import create_ai_service, AIServiceConfig, AIModel
     AI_EVALUATOR_AVAILABLE = True
 except ImportError as e:
     logger.warning(f"AI evaluator components not available: {e}")
@@ -28,15 +28,15 @@ except ImportError as e:
         def __init__(self, requirements: TaskRequirements):
             self.requirements = requirements
 
-    class YandexGPTService:
+    def create_ai_service(config):
+        return None
+
+    class AIServiceConfig:
         pass
 
-    class YandexGPTConfig:
-        pass
-
-    class YandexGPTModel:
-        LITE = "yandexgpt-lite"
-        PRO = "yandexgpt"
+    class AIModel:
+        LITE = "lite"
+        PRO = "pro"
 
 
 @dataclass
@@ -82,8 +82,8 @@ class Task21Evaluator(BaseAIEvaluator if AI_EVALUATOR_AVAILABLE else object):
 
         if AI_EVALUATOR_AVAILABLE:
             try:
-                config = YandexGPTConfig.from_env()
-                config.model = YandexGPTModel.PRO
+                config = AIServiceConfig.from_env()
+                config.model = AIModel.LITE  # Sonnet достаточен для задания 21
                 config.temperature = 0.2
                 self.config = config
                 logger.info("Task21 AI evaluator configured")
@@ -323,7 +323,7 @@ class Task21Evaluator(BaseAIEvaluator if AI_EVALUATOR_AVAILABLE else object):
         prompt = self._build_q2_prompt(user_answer, q2_data, question_data)
 
         try:
-            async with YandexGPTService(self.config) as service:
+            async with create_ai_service(self.config) as service:
                 result = await service.get_json_completion(
                     prompt=prompt,
                     system_prompt=self.get_system_prompt(),

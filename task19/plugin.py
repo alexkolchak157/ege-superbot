@@ -64,7 +64,6 @@ class Task19Plugin(BotPlugin):
                     CallbackQueryHandler(handlers.examples_bank, pattern="^t19_examples$"),
                     CallbackQueryHandler(handlers.show_progress_enhanced, pattern="^t19_progress$"),
                     CallbackQueryHandler(handlers.settings_mode, pattern="^t19_settings$"),
-                    CallbackQueryHandler(handlers.strictness_menu, pattern="^t19_strictness_menu$"),
                     CallbackQueryHandler(handlers.noop, pattern="^noop$"),
 
                     CallbackQueryHandler(
@@ -99,9 +98,6 @@ class Task19Plugin(BotPlugin):
                     CallbackQueryHandler(handlers.bank_navigation, pattern="^t19_bank_nav:"),
                     CallbackQueryHandler(handlers.bank_search, pattern="^t19_bank_search$"),
                     
-                    # Настройки
-                    CallbackQueryHandler(handlers.apply_strictness, pattern="^t19_set_strictness:"),
-                    
                     # Статистика
                     CallbackQueryHandler(handlers.detailed_progress, pattern="^t19_detailed_progress$"),
                     CallbackQueryHandler(handlers.export_results, pattern="^t19_export$"),
@@ -112,9 +108,6 @@ class Task19Plugin(BotPlugin):
                     # Работа над ошибками
                     CallbackQueryHandler(handlers.retry_topic, pattern="^t19_retry_topic:"),
                     CallbackQueryHandler(handlers.mistakes_mode, pattern="^t19_mistakes$"),
-
-                    # Настройки строгости
-                    CallbackQueryHandler(handlers.apply_strictness, pattern="^t19_strict:"),
 
                     # Детали достижений
                     CallbackQueryHandler(handlers.show_achievement_details, pattern="^t19_achievement:"),

@@ -1,4 +1,4 @@
-"""AI-проверка для задания 22 через YandexGPT."""
+"""AI-проверка для задания 22."""
 
 import logging
 import re
@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 # Безопасный импорт
 try:
     from core.ai_evaluator import BaseAIEvaluator
-    from core.ai_service import YandexGPTService, YandexGPTConfig, YandexGPTModel
+    from core.ai_service import create_ai_service, AIServiceConfig, AIModel
     AI_EVALUATOR_AVAILABLE = True
 except ImportError as e:
     logger.warning(f"AI evaluator components not available: {e}")
@@ -24,15 +24,15 @@ except ImportError as e:
         def __init__(self, requirements: TaskRequirements):
             self.requirements = requirements
 
-    class YandexGPTService:
+    def create_ai_service(config):
+        return None
+
+    class AIServiceConfig:
         pass
 
-    class YandexGPTConfig:
-        pass
-
-    class YandexGPTModel:
-        LITE = "yandexgpt-lite"
-        PRO = "yandexgpt"
+    class AIModel:
+        LITE = "lite"
+        PRO = "pro"
 
 
 class Task22AIEvaluator(BaseAIEvaluator if AI_EVALUATOR_AVAILABLE else object):
@@ -67,8 +67,8 @@ class Task22AIEvaluator(BaseAIEvaluator if AI_EVALUATOR_AVAILABLE else object):
         self.ai_service = None
         if AI_EVALUATOR_AVAILABLE:
             try:
-                config = YandexGPTConfig.from_env()
-                config.model = YandexGPTModel.PRO  # Используем PRO для более точной проверки
+                config = AIServiceConfig.from_env()
+                config.model = AIModel.LITE  # Sonnet достаточен для задания 22
                 config.temperature = 0.2  # Низкая температура для строгой проверки
                 self.config = config
                 logger.info("Task22 AI evaluator configured")
@@ -77,7 +77,7 @@ class Task22AIEvaluator(BaseAIEvaluator if AI_EVALUATOR_AVAILABLE else object):
                 self.config = None
 
     def get_system_prompt(self) -> str:
-        """Системный промпт для YandexGPT."""
+        """Системный промпт для AI."""
         return """Ты - опытный эксперт ЕГЭ по обществознанию, специализирующийся на проверке задания 22.
 
 ВАЖНЫЕ ПРАВИЛА ДЛЯ ЗАДАНИЯ 22:
@@ -122,7 +122,7 @@ class Task22AIEvaluator(BaseAIEvaluator if AI_EVALUATOR_AVAILABLE else object):
         task_data: Dict[str, Any],
         **kwargs
     ) -> EvaluationResult:
-        """Оценка ответа через YandexGPT."""
+        """Оценка ответа через AI."""
 
         # Если AI недоступен, используем базовую оценку
         if not AI_EVALUATOR_AVAILABLE or not self.config:
@@ -137,8 +137,8 @@ class Task22AIEvaluator(BaseAIEvaluator if AI_EVALUATOR_AVAILABLE else object):
         )
 
         try:
-            # Используем сервис YandexGPT
-            async with YandexGPTService(self.config) as service:
+            # Используем сервис AI
+            async with create_ai_service(self.config) as service:
                 result = await service.get_json_completion(
                     prompt=evaluation_prompt,
                     system_prompt=self.get_system_prompt(),
@@ -148,7 +148,7 @@ class Task22AIEvaluator(BaseAIEvaluator if AI_EVALUATOR_AVAILABLE else object):
                 if result:
                     return self._parse_response(result, task_data, user_answers)
                 else:
-                    logger.error("Failed to get JSON response from YandexGPT")
+                    logger.error("Failed to get JSON response from AI")
                     return self._basic_evaluation(answer, task_data)
 
         except Exception as e:
@@ -282,7 +282,7 @@ class Task22AIEvaluator(BaseAIEvaluator if AI_EVALUATOR_AVAILABLE else object):
         task_data: Dict[str, Any],
         user_answers: List[str]
     ) -> EvaluationResult:
-        """Парсинг ответа от YandexGPT."""
+        """Парсинг ответа от AI."""
         try:
             score = response.get("score", 0)
             correct_count = response.get("correct_answers_count", 0)
@@ -316,5 +316,5 @@ class Task22AIEvaluator(BaseAIEvaluator if AI_EVALUATOR_AVAILABLE else object):
             )
 
         except Exception as e:
-            logger.error(f"Error parsing YandexGPT response: {e}")
+            logger.error(f"Error parsing AI response: {e}")
             return self._basic_evaluation("", task_data)

@@ -63,11 +63,11 @@ async def evaluate_homework_answer(
 async def _evaluate_task19(question_data: Dict, user_answer: str, user_id: int) -> Tuple[bool, str]:
     """Проверка ответа для task19 (примеры с обществознанием)"""
     try:
-        from task19.evaluator import Task19AIEvaluator, StrictnessLevel
+        from task19.evaluator import Task19AIEvaluator
         from core.types import EvaluationResult
 
         # Создаем evaluator
-        evaluator = Task19AIEvaluator(strictness=StrictnessLevel.STANDARD)
+        evaluator = Task19AIEvaluator()
 
         # Вызываем проверку
         topic = question_data.get('title', 'Неизвестная тема')

@@ -1,9 +1,8 @@
-"""AI-проверка для задания 20 через YandexGPT."""
+"""AI-проверка для задания 20."""
 
 import logging
 import os
 import json
-from enum import Enum
 from typing import Dict, List, Any, Optional
 from core.types import (
     UserID,
@@ -20,7 +19,7 @@ try:
     from core.ai_evaluator import (
         BaseAIEvaluator,
     )
-    from core.ai_service import YandexGPTService, YandexGPTConfig, YandexGPTModel
+    from core.ai_service import create_ai_service, AIServiceConfig, AIModel
     AI_EVALUATOR_AVAILABLE = True
 except ImportError as e:
     logger.warning(f"AI evaluator components not available: {e}")
@@ -31,32 +30,22 @@ except ImportError as e:
     class BaseAIEvaluator:
         def __init__(self, requirements: TaskRequirements):
             self.requirements = requirements
-    
-    class YandexGPTService:
-        pass
-    
-    class YandexGPTConfig:
-        pass
-    
-    class YandexGPTModel:
-        LITE = "yandexgpt-lite"
-        PRO = "yandexgpt"
 
+    def create_ai_service(config):
+        return None
 
-class StrictnessLevel(Enum):
-    """Уровни строгости проверки."""
-    LENIENT = "Мягкий"
-    STANDARD = "Стандартный" 
-    STRICT = "Строгий"
-    EXPERT = "Экспертный"
+    class AIServiceConfig:
+        pass
+
+    class AIModel:
+        LITE = "lite"
+        PRO = "pro"
 
 
 class Task20AIEvaluator(BaseAIEvaluator if AI_EVALUATOR_AVAILABLE else object):
-    """AI-проверщик для задания 20 с настраиваемой строгостью."""
-    
-    def __init__(self, strictness: StrictnessLevel = StrictnessLevel.STANDARD):
-        self.strictness = strictness
-        
+    """AI-проверщик для задания 20."""
+
+    def __init__(self):
         if AI_EVALUATOR_AVAILABLE:
             requirements = TaskRequirements(
                 task_number=20,
@@ -80,34 +69,22 @@ class Task20AIEvaluator(BaseAIEvaluator if AI_EVALUATOR_AVAILABLE else object):
                 criteria=[{"name": "К1", "max_score": 3, "description": "Корректность суждений"}],
                 description="Сформулируйте три суждения..."
             )
-        
+
         # Инициализируем сервис если доступен
         self.ai_service = None
         if AI_EVALUATOR_AVAILABLE:
             try:
-                config = YandexGPTConfig.from_env()
-                # Выбираем модель в зависимости от строгости
-                if strictness in [StrictnessLevel.STRICT, StrictnessLevel.EXPERT]:
-                    config.model = YandexGPTModel.PRO
-                else:
-                    config.model = YandexGPTModel.LITE
-                
-                # Настройка температуры
-                if strictness == StrictnessLevel.LENIENT:
-                    config.temperature = 0.4
-                elif strictness == StrictnessLevel.STANDARD:
-                    config.temperature = 0.3
-                else:
-                    config.temperature = 0.2
-                    
+                config = AIServiceConfig.from_env()
+                config.model = AIModel.PRO
+                config.temperature = 0.2
                 self.config = config
-                logger.info(f"Task20 AI evaluator configured with {strictness.value} strictness")
+                logger.info("Task20 AI evaluator configured")
             except Exception as e:
                 logger.error(f"Failed to configure AI service: {e}")
                 self.config = None
     
     def get_system_prompt(self) -> str:
-        """Системный промпт для YandexGPT."""
+        """Системный промпт для AI."""
         base_prompt = """Ты - опытный эксперт ЕГЭ по обществознанию, специализирующийся на проверке задания 20.
 
 ВАЖНЫЕ ПРАВИЛА ДЛЯ ЗАДАНИЯ 20:
@@ -209,20 +186,10 @@ class Task20AIEvaluator(BaseAIEvaluator if AI_EVALUATOR_AVAILABLE else object):
 - Не используй общие фразы типа "нужно больше стараться"
 - Для каждого неудачного суждения предложи, как его переформулировать"""
 
-        # Модификация в зависимости от уровня строгости
-        if self.strictness == StrictnessLevel.LENIENT:
-            base_prompt += "\n\nУРОВЕНЬ: МЯГКИЙ - засчитывай суждения с небольшими недочётами."
-        elif self.strictness == StrictnessLevel.STANDARD:
-            base_prompt += "\n\nУРОВЕНЬ: СТАНДАРТНЫЙ - следуй критериям, но прощай мелкие недочёты."
-        elif self.strictness == StrictnessLevel.STRICT:
-            base_prompt += "\n\nУРОВЕНЬ: СТРОГИЙ - требуй полного соответствия критериям ФИПИ."
-        elif self.strictness == StrictnessLevel.EXPERT:
-            base_prompt += "\n\nУРОВЕНЬ: ЭКСПЕРТНЫЙ - максимальная строгость, как на реальном экзамене."
-        
         return base_prompt
     
     async def evaluate(self, answer: str, topic: str, **kwargs) -> EvaluationResult:
-        """Оценка ответа через YandexGPT."""
+        """Оценка ответа через AI."""
         task_text = kwargs.get('task_text', '')
         
         # Если AI недоступен, используем базовую оценку
@@ -294,8 +261,8 @@ class Task20AIEvaluator(BaseAIEvaluator if AI_EVALUATOR_AVAILABLE else object):
 ВАЖНО: Верни ТОЛЬКО валидный JSON в блоке кода, без дополнительного текста."""
 
         try:
-            # Используем сервис YandexGPT
-            async with YandexGPTService(self.config) as service:
+            # Используем сервис AI
+            async with create_ai_service(self.config) as service:
                 result = await service.get_json_completion(
                     prompt=evaluation_prompt,
                     system_prompt=self.get_system_prompt(),
@@ -305,7 +272,7 @@ class Task20AIEvaluator(BaseAIEvaluator if AI_EVALUATOR_AVAILABLE else object):
                 if result:
                     return self._parse_response(result, answer, topic)
                 else:
-                    logger.error("Failed to get JSON response from YandexGPT")
+                    logger.error("Failed to get JSON response from AI")
                     return self._basic_evaluation(answer, topic)
                     
         except Exception as e:
@@ -346,7 +313,7 @@ class Task20AIEvaluator(BaseAIEvaluator if AI_EVALUATOR_AVAILABLE else object):
         )
     
     def _parse_response(self, response: Dict[str, Any], answer: str, topic: str) -> EvaluationResult:
-            """Парсинг ответа от YandexGPT."""
+            """Парсинг ответа от AI."""
             try:
                 score = response.get("score", 0)
                 
@@ -382,5 +349,5 @@ class Task20AIEvaluator(BaseAIEvaluator if AI_EVALUATOR_AVAILABLE else object):
                 )
                 
             except Exception as e:
-                logger.error(f"Error parsing YandexGPT response: {e}")
+                logger.error(f"Error parsing AI response: {e}")
                 return self._basic_evaluation(answer, topic)

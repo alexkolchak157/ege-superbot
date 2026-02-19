@@ -80,8 +80,6 @@ class Task20Plugin(BotPlugin):
                     CallbackQueryHandler(handlers.detailed_progress, pattern="^t20_detailed_progress$"),
                     
                     # Настройки
-                    CallbackQueryHandler(handlers.strictness_menu, pattern="^t20_strictness_menu$"),
-                    CallbackQueryHandler(handlers.set_strictness, pattern=r"^t20_set_strictness:\w+$"),
                     CallbackQueryHandler(handlers.handle_settings_actions, pattern="^t20_(reset_progress|confirm_reset)$"),
                     CallbackQueryHandler(handlers.reset_progress, pattern="^t20_reset_progress$"),
                     CallbackQueryHandler(handlers.confirm_reset, pattern="^t20_confirm_reset$"),

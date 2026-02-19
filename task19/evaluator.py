@@ -1,10 +1,9 @@
-"""AI-проверка для задания 19 через YandexGPT - ФИНАЛЬНАЯ ВЕРСИЯ V2.1."""
+"""AI-проверка для задания 19 - ФИНАЛЬНАЯ ВЕРСИЯ V2.1."""
 
 import logging
 import os
 import json
 import re
-from enum import Enum
 from typing import Dict, List, Any, Optional
 from core.types import (
     UserID,
@@ -19,7 +18,7 @@ logger = logging.getLogger(__name__)
 # Безопасный импорт
 try:
     from core.ai_evaluator import BaseAIEvaluator
-    from core.ai_service import YandexGPTService, YandexGPTConfig, YandexGPTModel
+    from core.ai_service import create_ai_service, AIServiceConfig, AIModel
     AI_EVALUATOR_AVAILABLE = True
 except ImportError as e:
     logger.warning(f"AI evaluator components not available: {e}")
@@ -28,28 +27,22 @@ except ImportError as e:
     class BaseAIEvaluator:
         def __init__(self, requirements: TaskRequirements):
             self.requirements = requirements
-    
-    class YandexGPTService:
-        pass
-    
-    class YandexGPTConfig:
+
+    def create_ai_service(config):
+        return None
+
+    class AIServiceConfig:
         pass
 
-
-class StrictnessLevel(Enum):
-    """Уровни строгости проверки."""
-    LENIENT = "Мягкий"
-    STANDARD = "Стандартный" 
-    STRICT = "Строгий"
-    EXPERT = "Экспертный"
+    class AIModel:
+        LITE = "lite"
+        PRO = "pro"
 
 
 class Task19AIEvaluator(BaseAIEvaluator if AI_EVALUATOR_AVAILABLE else object):
     """AI-проверщик для задания 19 с улучшенной проверкой конкретности."""
-    
-    def __init__(self, strictness: StrictnessLevel = StrictnessLevel.STANDARD):
-        self.strictness = strictness
-        
+
+    def __init__(self):
         if AI_EVALUATOR_AVAILABLE:
             requirements = TaskRequirements(
                 task_number=19,
@@ -73,26 +66,16 @@ class Task19AIEvaluator(BaseAIEvaluator if AI_EVALUATOR_AVAILABLE else object):
                 criteria=[{"name": "К1", "max_score": 3, "description": "Корректность примеров"}],
                 description="Приведите три примера, иллюстрирующие обществоведческое положение"
             )
-        
+
         # Инициализируем сервис если доступен
         self.ai_service = None
         if AI_EVALUATOR_AVAILABLE:
             try:
-                config = YandexGPTConfig.from_env()
-                if strictness in [StrictnessLevel.STRICT, StrictnessLevel.EXPERT]:
-                    config.model = YandexGPTModel.PRO
-                else:
-                    config.model = YandexGPTModel.LITE
-                
-                if strictness == StrictnessLevel.LENIENT:
-                    config.temperature = 0.4
-                elif strictness == StrictnessLevel.STANDARD:
-                    config.temperature = 0.3
-                else:
-                    config.temperature = 0.2
-                    
+                config = AIServiceConfig.from_env()
+                config.model = AIModel.PRO
+                config.temperature = 0.2
                 self.config = config
-                logger.info(f"Task19 AI evaluator configured with {strictness.value} strictness")
+                logger.info("Task19 AI evaluator configured")
             except Exception as e:
                 logger.error(f"Failed to configure AI service: {e}")
                 self.config = None
@@ -369,20 +352,10 @@ class Task19AIEvaluator(BaseAIEvaluator if AI_EVALUATOR_AVAILABLE else object):
 НЕ отвергай её автоматически. Она может существовать в учебниках ФПУ или научной литературе.
 Снижай балл ТОЛЬКО если УВЕРЕН, что информация фактически ошибочна."""
 
-        # Модификация по уровню строгости
-        if self.strictness == StrictnessLevel.LENIENT:
-            base_prompt += "\n\nУРОВЕНЬ: МЯГКИЙ - засчитывай примеры с небольшими недочётами в деталях, но ТРЕБУЙ конкретности."
-        elif self.strictness == StrictnessLevel.STANDARD:
-            base_prompt += "\n\nУРОВЕНЬ: СТАНДАРТНЫЙ - следуй критериям, СТРОГО проверяй конкретность."
-        elif self.strictness == StrictnessLevel.STRICT:
-            base_prompt += "\n\nУРОВЕНЬ: СТРОГИЙ - требуй ПОЛНОГО соответствия критериям ФИПИ, особенно конкретности."
-        elif self.strictness == StrictnessLevel.EXPERT:
-            base_prompt += "\n\nУРОВЕНЬ: ЭКСПЕРТНЫЙ - максимальная строгость. НЕ засчитывай даже слегка абстрактные примеры."
-
         return base_prompt
 
     async def evaluate(self, answer: str, topic: str, **kwargs) -> EvaluationResult:
-        """Оценка ответа через YandexGPT с улучшенной проверкой."""
+        """Оценка ответа через AI с улучшенной проверкой."""
         task_text = kwargs.get('task_text', '')
 
         if not AI_EVALUATOR_AVAILABLE or not self.config:
@@ -544,7 +517,7 @@ class Task19AIEvaluator(BaseAIEvaluator if AI_EVALUATOR_AVAILABLE else object):
 7. Будь максимально строг к конкретности!"""
 
         try:
-            async with YandexGPTService(self.config) as service:
+            async with create_ai_service(self.config) as service:
                 result = await service.get_json_completion(
                     prompt=evaluation_prompt,
                     system_prompt=self.get_system_prompt(),
@@ -554,7 +527,7 @@ class Task19AIEvaluator(BaseAIEvaluator if AI_EVALUATOR_AVAILABLE else object):
                 if result:
                     return self._parse_response(result, answer, topic, requires_russia, structure_type)
 
-                logger.error("Failed to get JSON response from YandexGPT")
+                logger.error("Failed to get JSON response from AI")
                 return self._basic_evaluation(answer, topic)
 
         except Exception as e:
@@ -701,4 +674,4 @@ class Task19AIEvaluator(BaseAIEvaluator if AI_EVALUATOR_AVAILABLE else object):
 
 
 # Экспорт для обратной совместимости
-__all__ = ['Task19AIEvaluator', 'StrictnessLevel']
+__all__ = ['Task19AIEvaluator']
