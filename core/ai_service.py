@@ -31,14 +31,14 @@ class AIProvider(Enum):
 
 class AIModel(Enum):
     """Унифицированный уровень модели"""
-    LITE = "lite"   # Быстрая и дешёвая (Claude Haiku / YandexGPT Lite)
-    PRO = "pro"     # Качественная (Claude Sonnet / YandexGPT Pro)
+    LITE = "lite"   # Быстрая, но умная (Claude Sonnet / YandexGPT Lite)
+    PRO = "pro"     # Максимальное качество рассуждений (Claude Opus / YandexGPT Pro)
 
 
 # Маппинг на конкретные model ID
 CLAUDE_MODELS = {
-    AIModel.LITE: "claude-haiku-4-5-20251001",
-    AIModel.PRO: "claude-sonnet-4-5-20250929",
+    AIModel.LITE: "claude-sonnet-4-5-20250929",
+    AIModel.PRO: "claude-opus-4-20250514",
 }
 
 YANDEX_MODELS = {
