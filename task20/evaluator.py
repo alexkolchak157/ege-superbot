@@ -3,7 +3,6 @@
 import logging
 import os
 import json
-from enum import Enum
 from typing import Dict, List, Any, Optional
 from core.types import (
     UserID,
@@ -43,20 +42,10 @@ except ImportError as e:
         PRO = "pro"
 
 
-class StrictnessLevel(Enum):
-    """Уровни строгости проверки."""
-    LENIENT = "Мягкий"
-    STANDARD = "Стандартный" 
-    STRICT = "Строгий"
-    EXPERT = "Экспертный"
-
-
 class Task20AIEvaluator(BaseAIEvaluator if AI_EVALUATOR_AVAILABLE else object):
-    """AI-проверщик для задания 20 с настраиваемой строгостью."""
-    
-    def __init__(self, strictness: StrictnessLevel = StrictnessLevel.STANDARD):
-        self.strictness = strictness
-        
+    """AI-проверщик для задания 20."""
+
+    def __init__(self):
         if AI_EVALUATOR_AVAILABLE:
             requirements = TaskRequirements(
                 task_number=20,
@@ -80,28 +69,16 @@ class Task20AIEvaluator(BaseAIEvaluator if AI_EVALUATOR_AVAILABLE else object):
                 criteria=[{"name": "К1", "max_score": 3, "description": "Корректность суждений"}],
                 description="Сформулируйте три суждения..."
             )
-        
+
         # Инициализируем сервис если доступен
         self.ai_service = None
         if AI_EVALUATOR_AVAILABLE:
             try:
                 config = AIServiceConfig.from_env()
-                # Выбираем модель в зависимости от строгости
-                if strictness in [StrictnessLevel.STRICT, StrictnessLevel.EXPERT]:
-                    config.model = AIModel.PRO
-                else:
-                    config.model = AIModel.LITE
-                
-                # Настройка температуры
-                if strictness == StrictnessLevel.LENIENT:
-                    config.temperature = 0.4
-                elif strictness == StrictnessLevel.STANDARD:
-                    config.temperature = 0.3
-                else:
-                    config.temperature = 0.2
-                    
+                config.model = AIModel.PRO
+                config.temperature = 0.2
                 self.config = config
-                logger.info(f"Task20 AI evaluator configured with {strictness.value} strictness")
+                logger.info("Task20 AI evaluator configured")
             except Exception as e:
                 logger.error(f"Failed to configure AI service: {e}")
                 self.config = None
@@ -175,16 +152,6 @@ class Task20AIEvaluator(BaseAIEvaluator if AI_EVALUATOR_AVAILABLE else object):
 - Не используй общие фразы типа "нужно больше стараться"
 - Для каждого неудачного суждения предложи, как его переформулировать"""
 
-        # Модификация в зависимости от уровня строгости
-        if self.strictness == StrictnessLevel.LENIENT:
-            base_prompt += "\n\nУРОВЕНЬ: МЯГКИЙ - засчитывай суждения с небольшими недочётами."
-        elif self.strictness == StrictnessLevel.STANDARD:
-            base_prompt += "\n\nУРОВЕНЬ: СТАНДАРТНЫЙ - следуй критериям, но прощай мелкие недочёты."
-        elif self.strictness == StrictnessLevel.STRICT:
-            base_prompt += "\n\nУРОВЕНЬ: СТРОГИЙ - требуй полного соответствия критериям ФИПИ."
-        elif self.strictness == StrictnessLevel.EXPERT:
-            base_prompt += "\n\nУРОВЕНЬ: ЭКСПЕРТНЫЙ - максимальная строгость, как на реальном экзамене."
-        
         return base_prompt
     
     async def evaluate(self, answer: str, topic: str, **kwargs) -> EvaluationResult:

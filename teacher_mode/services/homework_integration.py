@@ -229,9 +229,9 @@ async def evaluate_task19_answer(
         Tuple (is_correct, feedback)
     """
     try:
-        from task19.evaluator import Task19AIEvaluator, StrictnessLevel
+        from task19.evaluator import Task19AIEvaluator
 
-        evaluator = Task19AIEvaluator(strictness=StrictnessLevel.STRICT)
+        evaluator = Task19AIEvaluator()
         result = await evaluator.evaluate(answer, topic, **kwargs)
 
         # Считаем корректным если набрано >= 50% баллов
@@ -260,9 +260,9 @@ async def evaluate_task20_answer(
         Tuple (is_correct, feedback)
     """
     try:
-        from task20.evaluator import Task20AIEvaluator, StrictnessLevel
+        from task20.evaluator import Task20AIEvaluator
 
-        evaluator = Task20AIEvaluator(strictness=StrictnessLevel.STRICT)
+        evaluator = Task20AIEvaluator()
         result = await evaluator.evaluate(answer, topic, **kwargs)
 
         # Считаем корректным если набрано >= 50% баллов

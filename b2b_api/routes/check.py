@@ -40,14 +40,8 @@ def get_evaluator(task_number: int, strictness: str = "standard"):
 
     try:
         if task_number == 19:
-            from task19.evaluator import Task19AIEvaluator, StrictnessLevel
-            strictness_map = {
-                "lenient": StrictnessLevel.LENIENT,
-                "standard": StrictnessLevel.STANDARD,
-                "strict": StrictnessLevel.STRICT,
-                "expert": StrictnessLevel.EXPERT
-            }
-            return Task19AIEvaluator(strictness_map.get(strictness, StrictnessLevel.STANDARD))
+            from task19.evaluator import Task19AIEvaluator
+            return Task19AIEvaluator()
 
         elif task_number == 20:
             from task20.evaluator import Task20AIEvaluator

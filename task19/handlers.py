@@ -23,7 +23,7 @@ from datetime import datetime, date
 import io
 from core.vision_service import get_vision_service
 from core.freemium_manager import get_freemium_manager
-from .evaluator import StrictnessLevel, Task19AIEvaluator, AI_EVALUATOR_AVAILABLE
+from .evaluator import Task19AIEvaluator, AI_EVALUATOR_AVAILABLE
 from core.universal_ui import UniversalUIComponents, AdaptiveKeyboards, MessageFormatter
 from core.ui_helpers import (
     show_thinking_animation,
@@ -39,9 +39,7 @@ from core.migration import ensure_module_migration
 from core.error_handler import safe_handler
 from core.state_validator import validate_state_transition, state_validator
 
-TASK19_STRICTNESS = os.getenv('TASK19_STRICTNESS', 'STRICT').upper()
-
-# Глобальный evaluator с настройками
+# Глобальный evaluator
 evaluator = None
 
 logger = logging.getLogger(__name__)
@@ -49,16 +47,11 @@ logger = logging.getLogger(__name__)
 # Глобальное хранилище для данных задания 19
 task19_data = {}
 
-# Инициализируем evaluator если еще не создан
+# Инициализируем evaluator
 if not evaluator:
     try:
-        strictness_level = StrictnessLevel[os.getenv('TASK19_STRICTNESS', 'STRICT').upper()]
-    except KeyError:
-        strictness_level = StrictnessLevel.STRICT
-    
-    try:
-        evaluator = Task19AIEvaluator(strictness=strictness_level)
-        logger.info(f"Task19 AI evaluator initialized with {strictness_level.value} strictness")
+        evaluator = Task19AIEvaluator()
+        logger.info("Task19 AI evaluator initialized")
     except Exception as e:
         logger.warning(f"Failed to initialize AI evaluator: {e}")
         evaluator = None
@@ -104,48 +97,6 @@ async def delete_previous_messages(context: ContextTypes.DEFAULT_TYPE, chat_id: 
         context.user_data.pop(key, None)
 
     logger.info(f"Task19: Deleted {deleted_count}/{len(messages_to_delete)} messages")
-
-# Меню выбора уровня строгости (только для админов)
-@safe_handler()
-async def strictness_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Показывает меню выбора уровня строгости проверки."""
-    query = update.callback_query
-    
-    # Проверяем, что пользователь админ
-    if not admin_manager.is_admin(query.from_user.id):
-        await query.answer("❌ Недостаточно прав", show_alert=True)
-        return states.CHOOSING_MODE
-    
-    # Безопасно получаем текущий уровень строгости
-    current_strictness = StrictnessLevel.STRICT  # значение по умолчанию
-    if evaluator and hasattr(evaluator, 'strictness'):
-        current_strictness = evaluator.strictness
-    
-    kb = InlineKeyboardMarkup([
-        [InlineKeyboardButton("🟢 Мягкий", callback_data="t19_strict:lenient")],
-        [InlineKeyboardButton("🟡 Стандартный", callback_data="t19_strict:standard")],
-        [InlineKeyboardButton("🔴 Строгий (ФИПИ)", callback_data="t19_strict:strict")],
-        [InlineKeyboardButton("⬅️ Назад", callback_data="t19_menu")]
-    ])
-    
-    # Безопасное получение текущего уровня
-    if evaluator and hasattr(evaluator, 'strictness'):
-        current = evaluator.strictness.value
-    else:
-        current = "не установлен"
-    
-    await query.edit_message_text(
-        f"⚙️ <b>Настройка строгости проверки</b>\n\n"
-        f"Текущий уровень: <b>{current}</b>\n\n"
-        "🟢 <b>Мягкий</b> - для начальной тренировки\n"
-        "🟡 <b>Стандартный</b> - баланс строгости\n"
-        "🔴 <b>Строгий</b> - полное соответствие ФИПИ\n\n"
-        "Выберите уровень:",
-        reply_markup=kb,
-        parse_mode=ParseMode.HTML
-    )
-    
-    return states.CHOOSING_MODE
 
 # Оптимизированная загрузка данных с кэшированием
 _topics_cache = None
@@ -2248,47 +2199,21 @@ async def detailed_progress(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def settings_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Настройки проверки."""
     query = update.callback_query
-    
-    current_level = evaluator.strictness if evaluator else StrictnessLevel.STRICT
-    
-    text = f"""⚙️ <b>Настройки проверки</b>
 
-<b>Текущий уровень:</b> {current_level.value}
+    results = context.user_data.get('task19_results', [])
+    achievements = context.user_data.get('task19_achievements', [])
 
-<b>Описание уровней:</b>
+    text = """⚙️ <b>Настройки задания 19</b>
 
-🟢 <b>Мягкий</b>
-• Проверка наличия 3 примеров
-• Базовая проверка соответствия теме
-• Подходит для начинающих
+<b>Проверка:</b> экспертный уровень (критерии ФИПИ)
 
-🟡 <b>Стандартный</b>
-• Проверка развернутости примеров
-• Выявление очевидных ошибок
-• Рекомендуется для подготовки
+Используйте кнопки ниже для управления прогрессом."""
 
-🔴 <b>Строгий</b> (рекомендуется)
-• Детальная проверка фактов
-• Проверка соответствия законодательству РФ
-• Выявление всех типов ошибок
+    kb_buttons = [
+        [InlineKeyboardButton("🔄 Сбросить прогресс", callback_data="t19_reset_progress")],
+        [InlineKeyboardButton("⬅️ Назад", callback_data="t19_menu")]
+    ]
 
-🔥 <b>Экспертный</b>
-• Максимальная строгость
-• Проверка актуальности данных
-• Как на реальном экзамене"""
-    
-    kb_buttons = []
-    for level in StrictnessLevel:
-        emoji = "✅" if level == current_level else ""
-        kb_buttons.append([
-            InlineKeyboardButton(
-                f"{emoji} {level.value}",
-                callback_data=f"t19_set_strictness:{level.name}"
-            )
-        ])
-    
-    kb_buttons.append([InlineKeyboardButton("⬅️ Назад", callback_data="t19_menu")])
-    
     await query.edit_message_text(
         text,
         reply_markup=InlineKeyboardMarkup(kb_buttons),
@@ -2300,49 +2225,21 @@ async def settings_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
 @safe_handler()
 async def cmd_task19_settings(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Команда быстрого доступа к настройкам task19."""
-    # Безопасное получение текущего уровня
-    if evaluator and hasattr(evaluator, 'strictness'):
-        current_level = evaluator.strictness
-    else:
-        current_level = StrictnessLevel.STRICT if StrictnessLevel else None
-    
-    text = """⚙️ <b>Быстрые настройки задания 19</b>
+    text = """⚙️ <b>Настройки задания 19</b>
 
-"""
-    
-    if current_level:
-        text += f"Текущий уровень проверки: <b>{current_level.value}</b>\n\n"
-    else:
-        text += "Уровень проверки: <b>не установлен</b>\n\n"
-    
-    text += "Используйте кнопки ниже для изменения:"
-    
-    kb_buttons = []
-    
-    if StrictnessLevel:  # Проверяем, что enum импортирован
-        for level in StrictnessLevel:
-            emoji = "✅" if current_level and level == current_level else ""
-            kb_buttons.append([
-                InlineKeyboardButton(
-                    f"{emoji} {level.value}",
-                    callback_data=f"t19_set_strictness:{level.name}"
-                )
-            ])
-    else:
-        kb_buttons.append([
-            InlineKeyboardButton("⚠️ Настройки недоступны", callback_data="noop")
-        ])
-    
-    kb_buttons.append([
-        InlineKeyboardButton("🏠 Главное меню", callback_data="to_main_menu")
-    ])
-    
+<b>Проверка:</b> экспертный уровень (критерии ФИПИ)"""
+
+    kb_buttons = [
+        [InlineKeyboardButton("🔄 Сбросить прогресс", callback_data="t19_reset_progress")],
+        [InlineKeyboardButton("🏠 Главное меню", callback_data="to_main_menu")]
+    ]
+
     await update.message.reply_text(
         text,
         reply_markup=InlineKeyboardMarkup(kb_buttons),
         parse_mode=ParseMode.HTML
     )
-    
+
     return states.CHOOSING_MODE
 
 @safe_handler()
@@ -2524,33 +2421,6 @@ async def retry_topic(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return states.TASK19_WAITING
 
 
-@safe_handler()
-async def apply_strictness(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Применить выбранный уровень строгости."""
-    global evaluator
-    
-    query = update.callback_query
-    level_name = query.data.split(':')[1].upper()
-    
-    try:
-        if StrictnessLevel:
-            new_level = StrictnessLevel[level_name]
-            
-            # Пересоздаем evaluator с новым уровнем
-            evaluator = Task19AIEvaluator(strictness=new_level)
-            
-            await query.answer(f"✅ Установлен уровень: {new_level.value}")
-            
-            # Возвращаемся в меню настроек
-            return await strictness_menu(update, context)
-        else:
-            await query.answer("❌ Ошибка изменения настроек", show_alert=True)
-            return states.CHOOSING_MODE
-            
-    except Exception as e:
-        logger.error(f"Error setting strictness: {e}")
-        await query.answer("❌ Ошибка изменения настроек", show_alert=True)
-        return states.CHOOSING_MODE
 
 
 @safe_handler()

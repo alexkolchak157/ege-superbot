@@ -44,7 +44,7 @@ evaluator = None
 
 # Импорты внутренних модулей ПОСЛЕ определения переменных
 try:
-    from .evaluator import Task20AIEvaluator, StrictnessLevel, EvaluationResult, AI_EVALUATOR_AVAILABLE
+    from .evaluator import Task20AIEvaluator, EvaluationResult, AI_EVALUATOR_AVAILABLE
 except ImportError as e:
     logger.error(f"Failed to import evaluator: {e}")
     AI_EVALUATOR_AVAILABLE = False
@@ -234,15 +234,8 @@ async def init_task20_data(force_reload=False):
     
     if AI_EVALUATOR_AVAILABLE:
         try:
-            strictness_level = StrictnessLevel[os.getenv('TASK20_STRICTNESS', 'STANDARD').upper()]
-            logger.info(f"Using strictness level: {strictness_level.value}")
-        except KeyError:
-            strictness_level = StrictnessLevel.STANDARD
-            logger.info("Using default strictness level: STANDARD")
-        
-        try:
-            evaluator = Task20AIEvaluator(strictness=strictness_level)
-            logger.info(f"Task20 AI evaluator initialized successfully with {strictness_level.value} strictness")
+            evaluator = Task20AIEvaluator()
+            logger.info("Task20 AI evaluator initialized successfully")
         except Exception as e:
             logger.error(f"Failed to initialize AI evaluator: {e}", exc_info=True)
             evaluator = None
@@ -1730,61 +1723,18 @@ def _format_evaluation_result(result, topic: Dict, user_answer: str = None) -> s
 async def settings_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Настройки проверки."""
     query = update.callback_query
-    
-    current_level = evaluator.strictness if evaluator else StrictnessLevel.STANDARD
-    
-    # Получаем статистику для каждого уровня
-    user_id = update.effective_user.id
-    stats_by_level = context.bot_data.get(f'task20_stats_by_level_{user_id}', {})
-    
-    text = f"""⚙️ <b>Настройки проверки</b>
 
-<b>Текущий уровень:</b> {current_level.value}
+    text = """⚙️ <b>Настройки задания 20</b>
 
-<b>Описание уровней:</b>
+<b>Проверка:</b> экспертный уровень (критерии ФИПИ)
 
-🟢 <b>Мягкий</b>
-• Засчитывает суждения с небольшими недочётами
-• Подходит для начинающих
-• Средний балл пользователей: 2.3/3
+Используйте кнопки ниже для управления прогрессом."""
 
-🟡 <b>Стандартный</b> (рекомендуется)
-• Баланс между строгостью и справедливостью
-• Соответствует реальным критериям ЕГЭ
-• Средний балл пользователей: 1.8/3
+    kb_buttons = [
+        [InlineKeyboardButton("🔄 Сбросить прогресс", callback_data="t20_reset_progress")],
+        [InlineKeyboardButton("⬅️ Назад", callback_data="t20_menu")]
+    ]
 
-🔴 <b>Строгий</b>
-• Требует полного соответствия критериям
-• Как на реальном экзамене
-• Средний балл пользователей: 1.2/3
-
-🔥 <b>Экспертный</b>
-• Максимальная строгость
-• Для тех, кто хочет гарантированно высокий балл
-• Средний балл пользователей: 0.8/3"""
-    
-    kb_buttons = []
-    for level in StrictnessLevel:
-        emoji = "✅" if level == current_level else ""
-        # Показываем личную статистику для уровня
-        level_stats = stats_by_level.get(level.name, {})
-        attempts = level_stats.get('attempts', 0)
-        avg_score = level_stats.get('avg_score', 0)
-        
-        button_text = f"{emoji} {level.value}"
-        if attempts > 0:
-            button_text += f" (ваш балл: {avg_score:.1f})"
-        
-        kb_buttons.append([
-            InlineKeyboardButton(
-                button_text,
-                callback_data=f"t20_set_strictness:{level.name}"
-            )
-        ])
-    
-    kb_buttons.append([InlineKeyboardButton("🔄 Сбросить прогресс", callback_data="t20_reset_progress")])
-    kb_buttons.append([InlineKeyboardButton("⬅️ Назад", callback_data="t20_menu")])
-    
     await query.edit_message_text(
         text,
         reply_markup=InlineKeyboardMarkup(kb_buttons),
@@ -2486,74 +2436,6 @@ async def bank_search(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data['waiting_for_bank_search'] = True
     return states.SEARCHING
 
-@safe_handler()
-async def strictness_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Меню выбора уровня строгости."""
-    query = update.callback_query
-    
-    current_level = evaluator.strictness.name if evaluator else "STANDARD"
-    
-    text = (
-        "🎯 <b>Уровень строгости проверки</b>\n\n"
-        "Выберите, насколько строго проверять ваши ответы:\n\n"
-        "🟢 <b>Мягкий</b> - засчитываются частично правильные ответы\n"
-        "🟡 <b>Стандартный</b> - обычные критерии ЕГЭ\n"
-        "🔴 <b>Строгий</b> - требуется точное соответствие критериям"
-    )
-    
-    buttons = []
-    levels = [
-        ("LENIENT", "🟢 Мягкий"),
-        ("STANDARD", "🟡 Стандартный"),
-        ("STRICT", "🔴 Строгий")
-    ]
-    
-    for level_code, level_name in levels:
-        check = "✅ " if level_code == current_level else ""
-        buttons.append([InlineKeyboardButton(
-            f"{check}{level_name}",
-            callback_data=f"t20_strictness:{level_code}"
-        )])
-    
-    buttons.append([InlineKeyboardButton("⬅️ Назад", callback_data="t20_settings")])
-    
-    await query.edit_message_text(
-        text,
-        reply_markup=InlineKeyboardMarkup(buttons),
-        parse_mode=ParseMode.HTML
-    )
-    return states.CHOOSING_MODE
-
-@safe_handler()
-async def set_strictness(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Установка уровня строгости."""
-    global evaluator
-    
-    query = update.callback_query
-    level_str = query.data.split(":")[1].upper()
-    
-    try:
-        new_level = StrictnessLevel[level_str]
-        
-        # Пересоздаем evaluator с новым уровнем
-        if AI_EVALUATOR_AVAILABLE:
-            evaluator = Task20AIEvaluator(strictness=new_level)
-            logger.info(f"Task20 strictness changed to {new_level.value}")
-            
-            # Сохраняем статистику по уровню
-            await save_stats_by_level(context, query.from_user.id, 0)
-            
-            await query.answer(f"✅ Установлен уровень: {new_level.value}")
-        else:
-            await query.answer("⚠️ AI проверка недоступна", show_alert=True)
-            
-        # Возвращаемся в настройки
-        return await settings_mode(update, context)
-        
-    except Exception as e:
-        logger.error(f"Error setting strictness: {e}")
-        await query.answer("❌ Ошибка при изменении настроек", show_alert=True)
-        return states.CHOOSING_MODE
 
 
 @safe_handler()
@@ -2980,29 +2862,6 @@ async def choose_topic(update: Update, context: ContextTypes.DEFAULT_TYPE):
     state_validator.set_state(query.from_user.id, ANSWERING_T20)
     
     return ANSWERING_T20
-
-async def save_stats_by_level(context: ContextTypes.DEFAULT_TYPE, user_id: int, score: int):
-    """Сохранение статистики по уровням строгости."""
-    if not evaluator:
-        return
-    
-    current_level = evaluator.strictness.name
-    stats_key = f'task20_stats_by_level_{user_id}'
-    
-    if stats_key not in context.bot_data:
-        context.bot_data[stats_key] = {}
-    
-    if current_level not in context.bot_data[stats_key]:
-        context.bot_data[stats_key][current_level] = {
-            'attempts': 0,
-            'total_score': 0,
-            'avg_score': 0
-        }
-    
-    stats = context.bot_data[stats_key][current_level]
-    stats['attempts'] += 1
-    stats['total_score'] += score
-    stats['avg_score'] = stats['total_score'] / stats['attempts']
 
 @safe_handler()
 #@validate_state_transition({ANSWERING_T20})
