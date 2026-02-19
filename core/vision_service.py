@@ -190,7 +190,19 @@ class VisionService:
             photo_bytes = bytes(await file.download_as_bytearray())
 
             # === Путь 1: Claude Vision (приоритетный) ===
-            if self._has_claude:
+            # Если используется прокси и доступен Yandex — пропускаем Claude Vision
+            # (отправка тяжёлых base64-картинок через прокси слишком медленная)
+            use_claude_vision = self._has_claude
+            if use_claude_vision and self._has_yandex and (
+                self.config.anthropic_proxy_url or self.config.anthropic_http_proxy
+            ):
+                logger.info(
+                    "Skipping Claude Vision (proxy mode + Yandex available) — "
+                    "using Yandex Vision directly for faster OCR"
+                )
+                use_claude_vision = False
+
+            if use_claude_vision:
                 logger.info("Using Claude Vision API for handwriting recognition")
                 result = await self._recognize_with_claude(photo_bytes, task_context)
 

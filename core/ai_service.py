@@ -193,7 +193,12 @@ class ClaudeService:
                 if system_prompt:
                     kwargs["system"] = system_prompt
 
-                response = await self._client.messages.create(**kwargs)
+                # Используем streaming через прокси (CF Workers таймаутят на долгих запросах)
+                if self.config.proxy_url or self.config.http_proxy:
+                    async with self._client.messages.stream(**kwargs) as stream:
+                        response = await stream.get_final_message()
+                else:
+                    response = await self._client.messages.create(**kwargs)
 
                 text = response.content[0].text if response.content else ""
 
