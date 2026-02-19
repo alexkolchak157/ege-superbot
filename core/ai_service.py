@@ -71,6 +71,8 @@ class AIServiceConfig:
     timeout: int = 60
     # YandexGPT-specific
     folder_id: Optional[str] = None
+    # Прокси для Claude API (обход гео-блокировки)
+    proxy_url: Optional[str] = None
 
     @classmethod
     def from_env(cls) -> 'AIServiceConfig':
@@ -103,6 +105,7 @@ class AIServiceConfig:
                 retries=int(os.getenv('CLAUDE_RETRIES', '3')),
                 retry_delay=float(os.getenv('CLAUDE_RETRY_DELAY', '2')),
                 timeout=int(os.getenv('CLAUDE_TIMEOUT', '120')),
+                proxy_url=os.getenv('ANTHROPIC_PROXY_URL'),
             )
 
 
@@ -131,10 +134,14 @@ class ClaudeService:
                     f"Для использования Claude установите пакет: pip install anthropic "
                     f"(Python: {sys.executable}, ошибка: {e})"
                 )
-            self._client = anthropic.AsyncAnthropic(
-                api_key=self.config.api_key,
-                timeout=self.config.timeout,
-            )
+            kwargs = {
+                "api_key": self.config.api_key,
+                "timeout": self.config.timeout,
+            }
+            if self.config.proxy_url:
+                kwargs["base_url"] = self.config.proxy_url
+                logger.info(f"Claude API using proxy: {self.config.proxy_url}")
+            self._client = anthropic.AsyncAnthropic(**kwargs)
 
     async def __aenter__(self):
         return self
