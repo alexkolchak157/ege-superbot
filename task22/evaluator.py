@@ -68,7 +68,7 @@ class Task22AIEvaluator(BaseAIEvaluator if AI_EVALUATOR_AVAILABLE else object):
         if AI_EVALUATOR_AVAILABLE:
             try:
                 config = AIServiceConfig.from_env()
-                config.model = AIModel.PRO  # Используем PRO для более точной проверки
+                config.model = AIModel.LITE  # Sonnet достаточен для задания 22
                 config.temperature = 0.2  # Низкая температура для строгой проверки
                 self.config = config
                 logger.info("Task22 AI evaluator configured")

@@ -83,7 +83,7 @@ class Task21Evaluator(BaseAIEvaluator if AI_EVALUATOR_AVAILABLE else object):
         if AI_EVALUATOR_AVAILABLE:
             try:
                 config = AIServiceConfig.from_env()
-                config.model = AIModel.PRO
+                config.model = AIModel.LITE  # Sonnet достаточен для задания 21
                 config.temperature = 0.2
                 self.config = config
                 logger.info("Task21 AI evaluator configured")
