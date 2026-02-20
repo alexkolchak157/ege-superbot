@@ -24,6 +24,7 @@ from dataclasses import dataclass
 
 from core.image_preprocessor import preprocess_for_ocr, preprocess_for_ocr_enhanced
 from core import curl_client
+from core.ai_service import _get_provider, AIProvider
 
 logger = logging.getLogger(__name__)
 
@@ -118,14 +119,16 @@ class VisionService:
 
         if self.config is None:
             logger.warning("VisionService initialized without credentials - OCR disabled")
-        elif self.config.anthropic_api_key:
+        elif self._has_claude:
             key = self.config.anthropic_api_key
             logger.info(
                 f"VisionService initialized with Claude Vision API (primary), "
                 f"key: {key[:10]}...{key[-4:]} (len={len(key)})"
             )
+        elif self._has_yandex:
+            logger.info("VisionService initialized with Yandex Vision API")
         else:
-            logger.info("VisionService initialized with Yandex Vision API (fallback)")
+            logger.warning("VisionService: no valid OCR provider configured")
 
     @property
     def is_available(self) -> bool:
@@ -134,8 +137,12 @@ class VisionService:
 
     @property
     def _has_claude(self) -> bool:
-        """Проверка доступности Claude Vision"""
-        return self.config is not None and bool(self.config.anthropic_api_key)
+        """Проверка доступности Claude Vision (только если AI_PROVIDER=claude)"""
+        return (
+            self.config is not None
+            and bool(self.config.anthropic_api_key)
+            and _get_provider() == AIProvider.CLAUDE
+        )
 
     @property
     def _has_yandex(self) -> bool:
