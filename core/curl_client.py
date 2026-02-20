@@ -1,13 +1,16 @@
 """
-HTTP-клиент на базе curl_cffi для работы с Cloudflare-защищёнными эндпоинтами.
+HTTP-клиент для работы с Cloudflare Worker прокси через системный curl.
 
-Проблема: стандартные Python HTTP-библиотеки (aiohttp, httpx) блокируются
-Cloudflare на уровне TLS-фингерпринтинга (JA3/JA4). Cloudflare определяет
-автоматизированных клиентов по паттерну TLS-рукопожатия и блокирует их,
-возвращая challenge или просто сбрасывая соединение (таймаут без ответа).
+Проблема: Python HTTP-библиотеки (aiohttp, httpx, curl_cffi с impersonate)
+не могут корректно подключиться к CF Workers — получают таймаут с 0 байтами.
+При этом системный curl из командной строки работает нормально.
 
-Решение: curl_cffi использует libcurl, который создаёт TLS-фингерпринт,
-идентичный реальному браузеру. Cloudflare распознаёт его как легитимный трафик.
+Причины:
+- aiohttp/httpx: неподходящий TLS-фингерпринт (JA3/JA4)
+- curl_cffi + impersonate: HTTP/2 ALPN negotiation, несовместимый с CF Workers
+
+Решение: вызов системного curl через asyncio subprocess.
+Гарантированно работает, т.к. использует тот же бинарник что и из консоли.
 
 Используется для:
 - Claude Vision API через CF Worker прокси (vision_service.py)
@@ -16,23 +19,23 @@ Cloudflare на уровне TLS-фингерпринтинга (JA3/JA4). Cloud
 
 import json
 import logging
+import asyncio
+import shutil
 from typing import Dict, Any, Optional
 
 logger = logging.getLogger(__name__)
 
-try:
-    from curl_cffi.requests import AsyncSession
-    AVAILABLE = True
-except ImportError:
-    AsyncSession = None
-    AVAILABLE = False
-    logger.info(
-        "curl_cffi не установлен — CF Worker прокси может не работать. "
-        "Установите: pip install curl_cffi"
+# Проверяем наличие curl в системе
+CURL_PATH = shutil.which("curl")
+AVAILABLE = CURL_PATH is not None
+
+if not AVAILABLE:
+    logger.warning(
+        "curl не найден в системе — прокси через CF Worker работать не будет"
     )
 
-# Имперсонация Chrome 120 — современный и распространённый фингерпринт
-DEFAULT_IMPERSONATE = "chrome120"
+# Уникальный разделитель для извлечения HTTP status code из вывода curl
+_STATUS_SEP = "\n___HTTP_STATUS___"
 
 
 async def post_json(
@@ -43,7 +46,10 @@ async def post_json(
     proxy: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
-    POST-запрос с JSON-телом через curl_cffi.
+    POST JSON через системный curl (subprocess).
+
+    Тело запроса передаётся через stdin (--data-binary @-),
+    что позволяет отправлять большие payload'ы (base64-изображения).
 
     Args:
         url: URL запроса
@@ -56,53 +62,93 @@ async def post_json(
         dict с полями:
         - status (int): HTTP-код ответа
         - text (str): Тело ответа как текст
-        - data (dict|None): Парсенный JSON (None если не удалось распарсить)
+        - data (dict|None): Парсенный JSON (None если SSE или ошибка)
     """
     if not AVAILABLE:
-        raise ImportError(
-            "curl_cffi необходим для работы с CF Worker прокси. "
-            "Установите: pip install curl_cffi"
+        raise RuntimeError(
+            "curl не найден. Установите curl для работы с CF Worker прокси."
         )
 
-    kwargs = {
-        "url": url,
-        "headers": headers,
-        "json": payload,
-        "timeout": timeout,
-        "impersonate": DEFAULT_IMPERSONATE,
-    }
+    cmd = [
+        CURL_PATH,
+        "-s", "-S",                          # Silent mode, но показывать ошибки
+        "--connect-timeout", "30",            # Таймаут подключения
+        "--max-time", str(timeout),           # Общий таймаут
+        "-X", "POST",
+        "--data-binary", "@-",                # Тело из stdin
+        "-w", _STATUS_SEP + "%{http_code}",   # HTTP-код в конце вывода
+    ]
+
+    for key, value in headers.items():
+        cmd.extend(["-H", f"{key}: {value}"])
+
     if proxy:
-        kwargs["proxy"] = proxy
+        cmd.extend(["-x", proxy])
 
-    async with AsyncSession() as session:
-        response = await session.post(**kwargs)
+    cmd.append(url)
 
-        result = {
-            "status": response.status_code,
-            "text": response.text,
-        }
+    json_bytes = json.dumps(payload).encode("utf-8")
 
-        try:
-            result["data"] = response.json()
-        except (json.JSONDecodeError, ValueError):
-            result["data"] = None
+    logger.debug(
+        f"curl POST {url} (payload {len(json_bytes)} bytes, timeout {timeout}s)"
+    )
 
-        return result
+    proc = await asyncio.create_subprocess_exec(
+        *cmd,
+        stdin=asyncio.subprocess.PIPE,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+
+    try:
+        stdout, stderr = await asyncio.wait_for(
+            proc.communicate(input=json_bytes),
+            timeout=timeout + 10,  # Запас поверх curl --max-time
+        )
+    except asyncio.TimeoutError:
+        proc.kill()
+        await proc.wait()
+        raise RuntimeError(
+            f"curl subprocess timed out after {timeout + 10}s"
+        )
+
+    if proc.returncode != 0:
+        err = stderr.decode("utf-8", errors="replace").strip()
+        raise RuntimeError(f"curl error (exit {proc.returncode}): {err}")
+
+    output = stdout.decode("utf-8", errors="replace")
+
+    # Извлекаем HTTP status code из конца вывода (добавлен через -w)
+    parts = output.rsplit(_STATUS_SEP, 1)
+    body = parts[0]
+    try:
+        status = int(parts[1]) if len(parts) > 1 else 0
+    except ValueError:
+        status = 0
+
+    result = {"status": status, "text": body}
+
+    try:
+        result["data"] = json.loads(body)
+    except (json.JSONDecodeError, ValueError):
+        result["data"] = None
+
+    return result
 
 
 def parse_sse_response(text: str) -> Dict[str, Any]:
     """
-    Парсинг SSE-ответа Claude API из полного текста ответа.
+    Парсинг SSE-ответа Claude API из полного текста.
 
-    Когда curl_cffi получает streaming-ответ, он буферизует его целиком.
-    Эта функция извлекает данные из SSE-событий и собирает финальный ответ
-    в формате, совместимом с не-streaming ответом Claude API.
+    curl буферизует весь streaming-ответ и возвращает целиком.
+    Эта функция извлекает данные из SSE-событий и собирает
+    финальный ответ в формате Claude API.
 
     Args:
         text: Полный текст SSE-ответа
 
     Returns:
-        dict в формате Claude API response
+        dict в формате Claude API response (content, model, usage)
     """
     text_parts = []
     input_tokens = 0
