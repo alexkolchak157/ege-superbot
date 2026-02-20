@@ -23,6 +23,7 @@ from telegram import PhotoSize, Bot
 from dataclasses import dataclass
 
 from core.image_preprocessor import preprocess_for_ocr, preprocess_for_ocr_enhanced
+from core import curl_client
 
 logger = logging.getLogger(__name__)
 
@@ -369,85 +370,136 @@ class VisionService:
         http_proxy = self.config.anthropic_http_proxy
 
         # Через прокси используем streaming (не даём CF Worker таймаутнуть)
-        use_streaming = bool(
+        use_proxy = bool(
             self.config.anthropic_proxy_url or self.config.anthropic_http_proxy
         )
+        use_streaming = use_proxy
         if use_streaming:
             payload["stream"] = True
 
-        logger.info(f"Claude Vision API request to {api_url} (stream={use_streaming})")
+        # curl_cffi для CF Worker прокси (обход TLS-фингерпринтинга Cloudflare)
+        use_curl = use_proxy and curl_client.AVAILABLE
+
+        logger.info(
+            f"Claude Vision API request to {api_url} "
+            f"(stream={use_streaming}, curl={use_curl})"
+        )
 
         for attempt in range(self.config.retries):
             try:
-                timeout = aiohttp.ClientTimeout(
-                    total=self.config.claude_vision_timeout,
-                    sock_connect=30,  # TCP connect timeout отдельно
-                )
-                async with self._session.post(
-                    api_url,
-                    json=payload,
-                    headers=headers,
-                    timeout=timeout,
-                    proxy=http_proxy,
-                ) as response:
-
-                    if response.status != 200:
-                        error_text = await response.text()
+                if use_curl:
+                    # curl_cffi: TLS-фингерпринт как у браузера
+                    result = await curl_client.post_json(
+                        url=api_url,
+                        headers=headers,
+                        payload=payload,
+                        timeout=self.config.claude_vision_timeout,
+                        proxy=http_proxy,
+                    )
+                    status = result["status"]
+                    if status != 200:
+                        error_text = result["text"]
                         key = self.config.anthropic_api_key or ""
                         logger.error(
-                            f"Claude Vision API error: {response.status} - {error_text}. "
+                            f"Claude Vision API error: {status} - "
+                            f"{error_text[:500]}. "
                             f"Key prefix: {key[:10]}..., model: {CLAUDE_MODEL}"
                         )
-
-                        if response.status in (401, 403):
+                        if status in (401, 403):
                             return {
                                 'success': False,
-                                'error': f'Ошибка авторизации Claude Vision API ({response.status})',
+                                'error': f'Ошибка авторизации Claude Vision API ({status})',
                                 'text': '',
                                 'confidence': 0.0,
                             }
-
-                        # Для серверных ошибок — ретрай
-                        if response.status >= 500 or response.status == 429:
+                        if status >= 500 or status == 429:
                             if attempt < self.config.retries - 1:
                                 await asyncio.sleep(
                                     self.config.retry_delay * (attempt + 1)
                                 )
                                 continue
-
                         return {
                             'success': False,
-                            'error': f'Ошибка Claude Vision API: {response.status}',
+                            'error': f'Ошибка Claude Vision API: {status}',
                             'text': '',
                             'confidence': 0.0,
                         }
 
                     if use_streaming:
-                        response_data = await self._read_sse_stream(response)
+                        response_data = curl_client.parse_sse_response(
+                            result["text"]
+                        )
                     else:
-                        response_data = await response.json()
-                    text = self._extract_claude_text(response_data)
-
-                    if not text:
-                        return {
-                            'success': False,
-                            'error': 'Текст на изображении не обнаружен',
-                            'warning': 'Убедитесь, что фото чёткое и текст хорошо виден',
-                            'text': '',
-                            'confidence': 0.0,
-                        }
-
-                    logger.info(
-                        f"Claude Vision OCR successful: {len(text)} chars"
+                        response_data = result["data"]
+                else:
+                    # aiohttp: прямое подключение к API или фоллбек
+                    await self._ensure_session()
+                    timeout = aiohttp.ClientTimeout(
+                        total=self.config.claude_vision_timeout,
+                        sock_connect=30,
                     )
+                    async with self._session.post(
+                        api_url,
+                        json=payload,
+                        headers=headers,
+                        timeout=timeout,
+                        proxy=http_proxy,
+                    ) as response:
+                        if response.status != 200:
+                            error_text = await response.text()
+                            key = self.config.anthropic_api_key or ""
+                            logger.error(
+                                f"Claude Vision API error: {response.status} - "
+                                f"{error_text}. "
+                                f"Key prefix: {key[:10]}..., model: {CLAUDE_MODEL}"
+                            )
+                            if response.status in (401, 403):
+                                return {
+                                    'success': False,
+                                    'error': f'Ошибка авторизации Claude Vision API ({response.status})',
+                                    'text': '',
+                                    'confidence': 0.0,
+                                }
+                            if response.status >= 500 or response.status == 429:
+                                if attempt < self.config.retries - 1:
+                                    await asyncio.sleep(
+                                        self.config.retry_delay * (attempt + 1)
+                                    )
+                                    continue
+                            return {
+                                'success': False,
+                                'error': f'Ошибка Claude Vision API: {response.status}',
+                                'text': '',
+                                'confidence': 0.0,
+                            }
 
+                        if use_streaming:
+                            response_data = await self._read_sse_stream(response)
+                        else:
+                            response_data = await response.json()
+
+                text = self._extract_claude_text(response_data)
+
+                if not text:
                     return {
-                        'success': True,
-                        'text': text,
-                        'confidence': 0.95,
-                        'corrected': False,
-                        'error': None,
+                        'success': False,
+                        'error': 'Текст на изображении не обнаружен',
+                        'warning': 'Убедитесь, что фото чёткое и текст хорошо виден',
+                        'text': '',
+                        'confidence': 0.0,
                     }
+
+                logger.info(
+                    f"Claude Vision OCR successful: {len(text)} chars"
+                )
+
+                return {
+                    'success': True,
+                    'text': text,
+                    'confidence': 0.95,
+                    'corrected': False,
+                    'error': None,
+                }
 
             except asyncio.TimeoutError:
                 logger.warning(

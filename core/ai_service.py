@@ -18,6 +18,8 @@ from typing import Dict, Any, Optional, List, Union
 from dataclasses import dataclass
 from enum import Enum
 
+from core import curl_client
+
 logger = logging.getLogger(__name__)
 
 
@@ -161,6 +163,66 @@ class ClaudeService:
             await self._client.close()
             self._client = None
 
+    @property
+    def _use_curl(self) -> bool:
+        """Нужен ли curl_cffi для обхода TLS-фингерпринтинга CF"""
+        return (
+            bool(self.config.proxy_url or self.config.http_proxy)
+            and curl_client.AVAILABLE
+        )
+
+    async def _raw_completion_via_curl(
+        self,
+        model_id: str,
+        prompt: str,
+        system_prompt: Optional[str],
+        temperature: Optional[float],
+        max_tokens: int,
+    ) -> Dict[str, Any]:
+        """
+        Прямой HTTP-запрос к Claude API через curl_cffi (минуя SDK).
+
+        Используется когда запрос идёт через CF Worker прокси —
+        httpx из SDK блокируется TLS-фингерпринтингом Cloudflare.
+        """
+        api_url = self.config.proxy_url or "https://api.anthropic.com"
+        if '/v1/messages' not in api_url:
+            api_url = api_url.rstrip('/') + '/v1/messages'
+
+        headers = {
+            "x-api-key": self.config.api_key,
+            "anthropic-version": "2023-06-01",
+            "content-type": "application/json",
+        }
+
+        payload = {
+            "model": model_id,
+            "max_tokens": max_tokens,
+            "messages": [{"role": "user", "content": prompt}],
+            "stream": True,  # Streaming для CF Worker (не даём таймаутнуть)
+        }
+        if temperature is not None:
+            payload["temperature"] = temperature
+        if system_prompt:
+            payload["system"] = system_prompt
+
+        result = await curl_client.post_json(
+            url=api_url,
+            headers=headers,
+            payload=payload,
+            timeout=self.config.timeout,
+            proxy=self.config.http_proxy,
+        )
+
+        if result["status"] != 200:
+            error_text = result["text"][:500]
+            raise Exception(
+                f"Claude API error {result['status']}: {error_text}"
+            )
+
+        response_data = curl_client.parse_sse_response(result["text"])
+        return response_data
+
     async def get_completion(
         self,
         prompt: str,
@@ -175,45 +237,75 @@ class ClaudeService:
             Словарь с полями: success, text, usage, model_version
             (тот же формат, что и YandexGPTService)
         """
-        self._ensure_client()
-
         model_id = CLAUDE_MODELS.get(self.config.model, CLAUDE_MODELS[AIModel.PRO])
         temp = temperature if temperature is not None else self.config.temperature
         tokens = max_tokens or self.config.max_tokens
 
         for attempt in range(self.config.retries):
             try:
-                kwargs = {
-                    "model": model_id,
-                    "max_tokens": tokens,
-                    "messages": [{"role": "user", "content": prompt}],
-                }
-                if temp is not None:
-                    kwargs["temperature"] = temp
-                if system_prompt:
-                    kwargs["system"] = system_prompt
+                if self._use_curl:
+                    # curl_cffi: обход TLS-фингерпринтинга CF Worker
+                    response_data = await self._raw_completion_via_curl(
+                        model_id=model_id,
+                        prompt=prompt,
+                        system_prompt=system_prompt,
+                        temperature=temp,
+                        max_tokens=tokens,
+                    )
+                    text_content = ""
+                    for block in response_data.get("content", []):
+                        if block.get("type") == "text":
+                            text_content += block.get("text", "")
 
-                # Используем streaming через прокси (CF Workers таймаутят на долгих запросах)
-                if self.config.proxy_url or self.config.http_proxy:
-                    async with self._client.messages.stream(**kwargs) as stream:
-                        response = await stream.get_final_message()
+                    usage = response_data.get("usage", {})
+                    input_tokens = usage.get("input_tokens", 0)
+                    output_tokens = usage.get("output_tokens", 0)
+
+                    return {
+                        "success": True,
+                        "text": text_content,
+                        "usage": {
+                            "inputTextTokens": str(input_tokens),
+                            "completionTokens": str(output_tokens),
+                            "totalTokens": str(input_tokens + output_tokens),
+                        },
+                        "model_version": response_data.get("model", model_id),
+                    }
                 else:
-                    response = await self._client.messages.create(**kwargs)
+                    # Anthropic SDK: прямое подключение к API
+                    self._ensure_client()
 
-                text = response.content[0].text if response.content else ""
+                    kwargs = {
+                        "model": model_id,
+                        "max_tokens": tokens,
+                        "messages": [{"role": "user", "content": prompt}],
+                    }
+                    if temp is not None:
+                        kwargs["temperature"] = temp
+                    if system_prompt:
+                        kwargs["system"] = system_prompt
 
-                return {
-                    "success": True,
-                    "text": text,
-                    "usage": {
-                        "inputTextTokens": str(response.usage.input_tokens),
-                        "completionTokens": str(response.usage.output_tokens),
-                        "totalTokens": str(
-                            response.usage.input_tokens + response.usage.output_tokens
-                        ),
-                    },
-                    "model_version": response.model,
-                }
+                    # Streaming через прокси (CF Workers таймаутят на долгих)
+                    if self.config.proxy_url or self.config.http_proxy:
+                        async with self._client.messages.stream(**kwargs) as stream:
+                            response = await stream.get_final_message()
+                    else:
+                        response = await self._client.messages.create(**kwargs)
+
+                    text = response.content[0].text if response.content else ""
+
+                    return {
+                        "success": True,
+                        "text": text,
+                        "usage": {
+                            "inputTextTokens": str(response.usage.input_tokens),
+                            "completionTokens": str(response.usage.output_tokens),
+                            "totalTokens": str(
+                                response.usage.input_tokens + response.usage.output_tokens
+                            ),
+                        },
+                        "model_version": response.model,
+                    }
 
             except Exception as e:
                 logger.error(f"Ошибка при запросе к Claude API (попытка {attempt + 1}): {e}")
