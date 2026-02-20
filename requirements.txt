@@ -38,7 +38,6 @@ pandas>=2.0
 requests>=2.31
 aiohttp>=3.8
 anthropic>=0.40.0  # Claude API для AI-проверки и OCR
-curl_cffi>=0.7.0   # Обход TLS-фингерпринтинга CF для прокси
 pydantic>=2.0.0
 APScheduler>=3.10.0
 certifi>=2023.7.22  # Required by httpx/telegram
