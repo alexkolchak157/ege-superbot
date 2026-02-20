@@ -20,6 +20,9 @@ from enum import Enum
 
 logger = logging.getLogger(__name__)
 
+# Cache: can we reach api.anthropic.com directly (bypassing proxy)?
+_anthropic_direct_access: Optional[bool] = None
+
 
 # ==================== Общие типы ====================
 
@@ -119,35 +122,75 @@ class ClaudeService:
     def __init__(self, config: AIServiceConfig):
         self.config = config
         self._client = None
+        self._use_proxy = False
 
-    def _ensure_client(self):
-        """Ленивая инициализация клиента Anthropic"""
-        if self._client is None:
-            try:
-                import anthropic
-            except ImportError as e:
-                import sys
-                logger.error(
-                    f"anthropic import failed: {e}. "
-                    f"Python: {sys.executable} (v{sys.version.split()[0]}), "
-                    f"path: {sys.path[:3]}"
-                )
-                raise ImportError(
-                    f"Для использования Claude установите пакет: pip install anthropic "
-                    f"(Python: {sys.executable}, ошибка: {e})"
-                )
-            kwargs = {
-                "api_key": self.config.api_key,
-                "timeout": self.config.timeout,
-            }
-            if self.config.proxy_url:
-                kwargs["base_url"] = self.config.proxy_url
-                logger.info(f"Claude API using reverse proxy: {self.config.proxy_url}")
+    async def _ensure_client(self):
+        """Lazy client init with direct API access probe."""
+        if self._client is not None:
+            return
+
+        global _anthropic_direct_access
+
+        try:
+            import anthropic
+        except ImportError as e:
+            import sys
+            logger.error(
+                f"anthropic import failed: {e}. "
+                f"Python: {sys.executable} (v{sys.version.split()[0]}), "
+                f"path: {sys.path[:3]}"
+            )
+            raise ImportError(
+                f"Для использования Claude установите пакет: pip install anthropic "
+                f"(Python: {sys.executable}, ошибка: {e})"
+            )
+
+        kwargs = {
+            "api_key": self.config.api_key,
+            "timeout": self.config.timeout,
+        }
+
+        self._use_proxy = False
+        if self.config.proxy_url:
+            # Check if direct access is available (bypass proxy)
+            if _anthropic_direct_access is None:
+                try:
+                    import httpx
+                    async with httpx.AsyncClient(timeout=10) as test_client:
+                        resp = await test_client.post(
+                            "https://api.anthropic.com/v1/messages",
+                            json={},
+                            headers={
+                                "x-api-key": self.config.api_key,
+                                "anthropic-version": "2023-06-01",
+                                "content-type": "application/json",
+                            },
+                        )
+                    _anthropic_direct_access = True
+                    logger.info(
+                        f"api.anthropic.com directly reachable "
+                        f"(status={resp.status_code}), bypassing proxy"
+                    )
+                except Exception as e:
+                    _anthropic_direct_access = False
+                    logger.info(
+                        f"api.anthropic.com not directly reachable ({e}), "
+                        "using proxy"
+                    )
+
+            self._use_proxy = not _anthropic_direct_access
+
+        if self._use_proxy:
+            kwargs["base_url"] = self.config.proxy_url
+            logger.info(f"Claude API using reverse proxy: {self.config.proxy_url}")
             if self.config.http_proxy:
                 import httpx
                 kwargs["http_client"] = httpx.AsyncClient(proxy=self.config.http_proxy)
                 logger.info(f"Claude API using HTTP proxy: {self.config.http_proxy}")
-            self._client = anthropic.AsyncAnthropic(**kwargs)
+        elif self.config.proxy_url:
+            logger.info("Claude API: direct access available, proxy not needed")
+
+        self._client = anthropic.AsyncAnthropic(**kwargs)
 
     async def __aenter__(self):
         return self
@@ -175,7 +218,7 @@ class ClaudeService:
             Словарь с полями: success, text, usage, model_version
             (тот же формат, что и YandexGPTService)
         """
-        self._ensure_client()
+        await self._ensure_client()
 
         model_id = CLAUDE_MODELS.get(self.config.model, CLAUDE_MODELS[AIModel.PRO])
         temp = temperature if temperature is not None else self.config.temperature
@@ -193,8 +236,8 @@ class ClaudeService:
                 if system_prompt:
                     kwargs["system"] = system_prompt
 
-                # Используем streaming через прокси (CF Workers таймаутят на долгих запросах)
-                if self.config.proxy_url or self.config.http_proxy:
+                # Streaming only needed through proxy (prevents CF Worker timeout)
+                if self._use_proxy:
                     async with self._client.messages.stream(**kwargs) as stream:
                         response = await stream.get_final_message()
                 else:

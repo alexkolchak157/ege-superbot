@@ -26,6 +26,9 @@ from core.image_preprocessor import preprocess_for_ocr, preprocess_for_ocr_enhan
 
 logger = logging.getLogger(__name__)
 
+# Cache: can we reach api.anthropic.com directly (bypassing proxy)?
+_anthropic_direct_access: Optional[bool] = None
+
 # Порог уверенности для применения LLM-коррекции (Yandex Vision фоллбек)
 OCR_LLM_CORRECTION_THRESHOLD = 0.97
 # Порог уверенности для повторной попытки с усиленной обработкой
@@ -142,6 +145,35 @@ class VisionService:
         return (self.config is not None
                 and bool(self.config.api_key)
                 and bool(self.config.folder_id))
+
+    async def _check_direct_api_access(self) -> bool:
+        """Test if api.anthropic.com is directly reachable (bypasses proxy)."""
+        global _anthropic_direct_access
+        if _anthropic_direct_access is not None:
+            return _anthropic_direct_access
+
+        try:
+            timeout = aiohttp.ClientTimeout(total=10)
+            async with self._session.post(
+                CLAUDE_API_URL,
+                json={},  # Empty body → 400, but proves connectivity
+                headers={
+                    "x-api-key": self.config.anthropic_api_key or "",
+                    "anthropic-version": "2023-06-01",
+                    "content-type": "application/json",
+                },
+                timeout=timeout,
+            ) as response:
+                _anthropic_direct_access = True
+                logger.info(
+                    f"api.anthropic.com directly reachable (status={response.status}), "
+                    "bypassing proxy"
+                )
+        except Exception as e:
+            _anthropic_direct_access = False
+            logger.info(f"api.anthropic.com not directly reachable ({e}), will use proxy")
+
+        return _anthropic_direct_access
 
     async def _ensure_session(self):
         """Создает сессию если её нет"""
@@ -358,24 +390,27 @@ class VisionService:
             "content-type": "application/json",
         }
 
-        # Если настроен прокси — используем его как base URL
-        api_url = self.config.anthropic_proxy_url or CLAUDE_API_URL
-        if self.config.anthropic_proxy_url:
-            # Прокси-URL может быть как полным, так и только base URL
-            if '/v1/messages' not in api_url:
-                api_url = api_url.rstrip('/') + '/v1/messages'
+        # Determine API path: try direct access first, fall back to proxy
+        use_direct = await self._check_direct_api_access()
 
-        # HTTP-прокси для aiohttp
-        http_proxy = self.config.anthropic_http_proxy
+        if use_direct:
+            api_url = CLAUDE_API_URL
+            http_proxy = None
+            use_streaming = False
+        else:
+            api_url = self.config.anthropic_proxy_url or CLAUDE_API_URL
+            if self.config.anthropic_proxy_url:
+                if '/v1/messages' not in api_url:
+                    api_url = api_url.rstrip('/') + '/v1/messages'
+            http_proxy = self.config.anthropic_http_proxy
+            use_streaming = bool(
+                self.config.anthropic_proxy_url or self.config.anthropic_http_proxy
+            )
 
-        # Через прокси используем streaming (не даём CF Worker таймаутнуть)
-        use_streaming = bool(
-            self.config.anthropic_proxy_url or self.config.anthropic_http_proxy
-        )
         if use_streaming:
             payload["stream"] = True
 
-        logger.info(f"Claude Vision API request to {api_url} (stream={use_streaming})")
+        logger.info(f"Claude Vision API request to {api_url} (stream={use_streaming}, direct={use_direct})")
 
         for attempt in range(self.config.retries):
             try:
