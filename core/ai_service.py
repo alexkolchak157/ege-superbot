@@ -51,12 +51,12 @@ YANDEX_MODELS = {
 
 def _get_provider() -> AIProvider:
     """Определение текущего AI-провайдера из переменной окружения"""
-    provider_str = os.getenv('AI_PROVIDER', 'yandex').lower()
+    provider_str = os.getenv('AI_PROVIDER', 'claude').lower()
     try:
         return AIProvider(provider_str)
     except ValueError:
-        logger.warning(f"Неизвестный AI_PROVIDER={provider_str}, используем yandex")
-        return AIProvider.YANDEX
+        logger.warning(f"Неизвестный AI_PROVIDER={provider_str}, используем claude")
+        return AIProvider.CLAUDE
 
 
 # ==================== Провайдер-агностичная конфигурация ====================
