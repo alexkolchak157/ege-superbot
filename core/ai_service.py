@@ -118,10 +118,15 @@ class ClaudeService:
 
     def __init__(self, config: AIServiceConfig):
         self.config = config
-        self._client = None
+        self._client = None      # Anthropic SDK (прямое подключение)
+        self._session = None     # aiohttp (через прокси)
+
+    @property
+    def _use_proxy(self) -> bool:
+        return bool(self.config.proxy_url or self.config.http_proxy)
 
     def _ensure_client(self):
-        """Ленивая инициализация клиента Anthropic"""
+        """Ленивая инициализация клиента Anthropic SDK (для прямого подключения)"""
         if self._client is None:
             try:
                 import anthropic
@@ -136,18 +141,16 @@ class ClaudeService:
                     f"Для использования Claude установите пакет: pip install anthropic "
                     f"(Python: {sys.executable}, ошибка: {e})"
                 )
-            kwargs = {
-                "api_key": self.config.api_key,
-                "timeout": self.config.timeout,
-            }
-            if self.config.proxy_url:
-                kwargs["base_url"] = self.config.proxy_url
-                logger.info(f"Claude API using reverse proxy: {self.config.proxy_url}")
-            if self.config.http_proxy:
-                import httpx
-                kwargs["http_client"] = httpx.AsyncClient(proxy=self.config.http_proxy)
-                logger.info(f"Claude API using HTTP proxy: {self.config.http_proxy}")
-            self._client = anthropic.AsyncAnthropic(**kwargs)
+            self._client = anthropic.AsyncAnthropic(
+                api_key=self.config.api_key,
+                timeout=self.config.timeout,
+            )
+
+    async def _ensure_session(self):
+        """Ленивая инициализация aiohttp-сессии (для прокси)"""
+        if self._session is None or self._session.closed:
+            connector = aiohttp.TCPConnector(force_close=True)
+            self._session = aiohttp.ClientSession(connector=connector)
 
     async def __aenter__(self):
         return self
@@ -160,6 +163,135 @@ class ClaudeService:
         if self._client is not None:
             await self._client.close()
             self._client = None
+        if self._session is not None and not self._session.closed:
+            await self._session.close()
+            self._session = None
+
+    # ---- Прокси-путь: aiohttp + SSE streaming ----
+    # SDK (httpx) не работает через CF Worker — используем aiohttp напрямую
+
+    async def _proxy_completion(
+        self,
+        model_id: str,
+        prompt: str,
+        system_prompt: Optional[str],
+        temperature: Optional[float],
+        max_tokens: int,
+    ) -> Dict[str, Any]:
+        """
+        Запрос к Claude API через прокси (aiohttp + streaming).
+
+        SDK Anthropic использует httpx, который не работает через
+        CF Worker (таймаут). aiohttp работает — подтверждено тестом (2.4s).
+        """
+        await self._ensure_session()
+
+        api_url = self.config.proxy_url or "https://api.anthropic.com"
+        if '/v1/messages' not in api_url:
+            api_url = api_url.rstrip('/') + '/v1/messages'
+
+        headers = {
+            "x-api-key": self.config.api_key,
+            "anthropic-version": "2023-06-01",
+            "content-type": "application/json",
+        }
+
+        payload = {
+            "model": model_id,
+            "max_tokens": max_tokens,
+            "messages": [{"role": "user", "content": prompt}],
+            "stream": True,
+        }
+        if temperature is not None:
+            payload["temperature"] = temperature
+        if system_prompt:
+            payload["system"] = system_prompt
+
+        timeout = aiohttp.ClientTimeout(
+            total=self.config.timeout,
+            sock_connect=30,
+        )
+
+        async with self._session.post(
+            api_url,
+            json=payload,
+            headers=headers,
+            timeout=timeout,
+            proxy=self.config.http_proxy,
+        ) as response:
+            if response.status != 200:
+                error_text = await response.text()
+                raise Exception(
+                    f"Claude API error {response.status}: {error_text[:500]}"
+                )
+
+            response_data = await self._read_sse_stream(response)
+
+        text = ""
+        for block in response_data.get("content", []):
+            if block.get("type") == "text":
+                text += block.get("text", "")
+
+        usage = response_data.get("usage", {})
+        input_tokens = usage.get("input_tokens", 0)
+        output_tokens = usage.get("output_tokens", 0)
+
+        return {
+            "success": True,
+            "text": text,
+            "usage": {
+                "inputTextTokens": str(input_tokens),
+                "completionTokens": str(output_tokens),
+                "totalTokens": str(input_tokens + output_tokens),
+            },
+            "model_version": response_data.get("model", model_id),
+        }
+
+    @staticmethod
+    async def _read_sse_stream(response) -> Dict[str, Any]:
+        """Чтение SSE-потока от Claude API через aiohttp."""
+        text_parts = []
+        input_tokens = 0
+        output_tokens = 0
+        model = ""
+
+        async for line_bytes in response.content:
+            line = line_bytes.decode('utf-8', errors='replace').strip()
+            if not line.startswith('data: '):
+                continue
+            data_str = line[6:]
+            if data_str == '[DONE]':
+                break
+            try:
+                event = json.loads(data_str)
+            except json.JSONDecodeError:
+                continue
+
+            event_type = event.get('type', '')
+
+            if event_type == 'message_start':
+                msg = event.get('message', {})
+                model = msg.get('model', '')
+                usage = msg.get('usage', {})
+                input_tokens = usage.get('input_tokens', 0)
+            elif event_type == 'content_block_delta':
+                delta = event.get('delta', {})
+                if delta.get('type') == 'text_delta':
+                    text_parts.append(delta.get('text', ''))
+            elif event_type == 'message_delta':
+                usage = event.get('usage', {})
+                output_tokens = usage.get('output_tokens', 0)
+
+        return {
+            "content": [{"type": "text", "text": "".join(text_parts)}],
+            "model": model,
+            "usage": {
+                "input_tokens": input_tokens,
+                "output_tokens": output_tokens,
+            },
+        }
+
+    # ---- Основной метод ----
 
     async def get_completion(
         self,
@@ -175,45 +307,46 @@ class ClaudeService:
             Словарь с полями: success, text, usage, model_version
             (тот же формат, что и YandexGPTService)
         """
-        self._ensure_client()
-
         model_id = CLAUDE_MODELS.get(self.config.model, CLAUDE_MODELS[AIModel.PRO])
         temp = temperature if temperature is not None else self.config.temperature
         tokens = max_tokens or self.config.max_tokens
 
         for attempt in range(self.config.retries):
             try:
-                kwargs = {
-                    "model": model_id,
-                    "max_tokens": tokens,
-                    "messages": [{"role": "user", "content": prompt}],
-                }
-                if temp is not None:
-                    kwargs["temperature"] = temp
-                if system_prompt:
-                    kwargs["system"] = system_prompt
-
-                # Streaming через прокси (CF Workers таймаутят на долгих запросах)
-                if self.config.proxy_url or self.config.http_proxy:
-                    async with self._client.messages.stream(**kwargs) as stream:
-                        response = await stream.get_final_message()
+                if self._use_proxy:
+                    # aiohttp: через прокси (SDK httpx не работает с CF Worker)
+                    return await self._proxy_completion(
+                        model_id, prompt, system_prompt, temp, tokens,
+                    )
                 else:
+                    # Anthropic SDK: прямое подключение к API
+                    self._ensure_client()
+
+                    kwargs = {
+                        "model": model_id,
+                        "max_tokens": tokens,
+                        "messages": [{"role": "user", "content": prompt}],
+                    }
+                    if temp is not None:
+                        kwargs["temperature"] = temp
+                    if system_prompt:
+                        kwargs["system"] = system_prompt
+
                     response = await self._client.messages.create(**kwargs)
+                    text = response.content[0].text if response.content else ""
 
-                text = response.content[0].text if response.content else ""
-
-                return {
-                    "success": True,
-                    "text": text,
-                    "usage": {
-                        "inputTextTokens": str(response.usage.input_tokens),
-                        "completionTokens": str(response.usage.output_tokens),
-                        "totalTokens": str(
-                            response.usage.input_tokens + response.usage.output_tokens
-                        ),
-                    },
-                    "model_version": response.model,
-                }
+                    return {
+                        "success": True,
+                        "text": text,
+                        "usage": {
+                            "inputTextTokens": str(response.usage.input_tokens),
+                            "completionTokens": str(response.usage.output_tokens),
+                            "totalTokens": str(
+                                response.usage.input_tokens + response.usage.output_tokens
+                            ),
+                        },
+                        "model_version": response.model,
+                    }
 
             except Exception as e:
                 logger.error(f"Ошибка при запросе к Claude API (попытка {attempt + 1}): {e}")

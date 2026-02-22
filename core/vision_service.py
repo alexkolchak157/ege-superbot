@@ -139,23 +139,12 @@ class VisionService:
         """
         Проверка доступности Claude Vision.
 
-        Claude Vision отключается когда:
-        - AI_PROVIDER != claude
-        - Настроен прокси (CF Worker не тянет большие base64-payload'ы
-          с изображениями — таймаут subrequest'а). В этом случае
-          для OCR используется Yandex Vision, а Claude работает
-          только для текстовых evaluator'ов через ai_service.py.
+        При наличии прокси — Vision тоже идёт через него (aiohttp + SSE streaming).
+        CF Worker должен использовать streaming (proxy/cloudflare-worker.js).
         """
         if self.config is None or not self.config.anthropic_api_key:
             return False
         if _get_provider() != AIProvider.CLAUDE:
-            return False
-        # CF Worker прокси не справляется с тяжёлыми Vision-запросами
-        if self.config.anthropic_proxy_url or self.config.anthropic_http_proxy:
-            logger.debug(
-                "Claude Vision отключён: прокси не поддерживает "
-                "большие payload'ы (base64 images). Используем Yandex Vision."
-            )
             return False
         return True
 
