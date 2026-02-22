@@ -136,12 +136,17 @@ class VisionService:
 
     @property
     def _has_claude(self) -> bool:
-        """Проверка доступности Claude Vision (только если AI_PROVIDER=claude)"""
-        return (
-            self.config is not None
-            and bool(self.config.anthropic_api_key)
-            and _get_provider() == AIProvider.CLAUDE
-        )
+        """
+        Проверка доступности Claude Vision.
+
+        При наличии прокси — Vision тоже идёт через него (aiohttp + SSE streaming).
+        CF Worker должен использовать streaming (proxy/cloudflare-worker.js).
+        """
+        if self.config is None or not self.config.anthropic_api_key:
+            return False
+        if _get_provider() != AIProvider.CLAUDE:
+            return False
+        return True
 
     @property
     def _has_yandex(self) -> bool:
