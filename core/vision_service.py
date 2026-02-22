@@ -460,8 +460,11 @@ class VisionService:
                         'confidence': 0.0,
                     }
 
+                # Логируем начало текста для диагностики
+                preview = text[:200].replace('\n', ' ')
                 logger.info(
-                    f"Claude Vision OCR successful: {len(text)} chars"
+                    f"Claude Vision OCR successful: {len(text)} chars, "
+                    f"preview: {preview!r}"
                 )
 
                 return {
@@ -518,40 +521,82 @@ class VisionService:
 
     @staticmethod
     async def _read_sse_stream(response) -> Dict[str, Any]:
-        """Читает SSE-поток от Claude API и собирает финальный ответ."""
+        """
+        Читает SSE-поток от Claude API и собирает финальный ответ.
+
+        Важно: aiohttp response.content отдаёт произвольные байтовые чанки,
+        которые НЕ совпадают с границами строк SSE. Через nginx/прокси
+        чанки приходят с другим размером, и SSE-события могут быть разрезаны
+        посередине → JSON не парсится → текст теряется.
+
+        Решение: буферизуем данные и разбираем по строкам вручную.
+        """
         text_parts = []
         input_tokens = 0
         output_tokens = 0
         model = ""
+        buffer = ""
 
-        async for line_bytes in response.content:
-            line = line_bytes.decode('utf-8', errors='replace').strip()
-            if not line.startswith('data: '):
-                continue
-            data_str = line[6:]  # убираем "data: "
-            if data_str == '[DONE]':
-                break
-            try:
-                event = json.loads(data_str)
-            except json.JSONDecodeError:
-                continue
+        async for chunk in response.content:
+            buffer += chunk.decode('utf-8', errors='replace')
 
-            event_type = event.get('type', '')
+            # Разбираем все полные строки из буфера
+            while '\n' in buffer:
+                line, buffer = buffer.split('\n', 1)
+                line = line.strip()
 
-            if event_type == 'message_start':
-                msg = event.get('message', {})
-                model = msg.get('model', '')
-                usage = msg.get('usage', {})
-                input_tokens = usage.get('input_tokens', 0)
+                if not line.startswith('data: '):
+                    continue
 
-            elif event_type == 'content_block_delta':
-                delta = event.get('delta', {})
-                if delta.get('type') == 'text_delta':
-                    text_parts.append(delta.get('text', ''))
+                data_str = line[6:]  # убираем "data: "
+                if data_str == '[DONE]':
+                    break
 
-            elif event_type == 'message_delta':
-                usage = event.get('usage', {})
-                output_tokens = usage.get('output_tokens', 0)
+                try:
+                    event = json.loads(data_str)
+                except json.JSONDecodeError:
+                    logger.warning(f"SSE: failed to parse JSON ({len(data_str)} chars)")
+                    continue
+
+                event_type = event.get('type', '')
+
+                if event_type == 'message_start':
+                    msg = event.get('message', {})
+                    model = msg.get('model', '')
+                    usage = msg.get('usage', {})
+                    input_tokens = usage.get('input_tokens', 0)
+
+                elif event_type == 'content_block_delta':
+                    delta = event.get('delta', {})
+                    if delta.get('type') == 'text_delta':
+                        text_parts.append(delta.get('text', ''))
+
+                elif event_type == 'message_delta':
+                    usage = event.get('usage', {})
+                    output_tokens = usage.get('output_tokens', 0)
+
+        # Проверяем остаток буфера (последняя строка без \n)
+        remaining = buffer.strip()
+        if remaining.startswith('data: '):
+            data_str = remaining[6:]
+            if data_str != '[DONE]':
+                try:
+                    event = json.loads(data_str)
+                    event_type = event.get('type', '')
+                    if event_type == 'content_block_delta':
+                        delta = event.get('delta', {})
+                        if delta.get('type') == 'text_delta':
+                            text_parts.append(delta.get('text', ''))
+                    elif event_type == 'message_delta':
+                        usage = event.get('usage', {})
+                        output_tokens = usage.get('output_tokens', 0)
+                except json.JSONDecodeError:
+                    pass
+
+        logger.info(
+            f"SSE stream parsed: {len(text_parts)} text deltas, "
+            f"{input_tokens} input + {output_tokens} output tokens"
+        )
 
         # Собираем в формат, совместимый с _extract_claude_text
         return {
