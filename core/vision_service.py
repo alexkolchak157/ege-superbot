@@ -22,7 +22,7 @@ from typing import Dict, Any, Optional, List
 from telegram import PhotoSize, Bot
 from dataclasses import dataclass
 
-from core.image_preprocessor import preprocess_for_ocr, preprocess_for_ocr_enhanced
+from core.image_preprocessor import preprocess_for_ocr, preprocess_for_ocr_enhanced, compress_for_claude
 from core.ai_service import _get_provider, AIProvider
 
 logger = logging.getLogger(__name__)
@@ -306,13 +306,17 @@ class VisionService:
         """
         await self._ensure_session()
 
-        image_base64 = base64.b64encode(image_bytes).decode('utf-8')
+        # Сжимаем изображение перед отправкой: 5-10MB → 100-300KB
+        # Это критично для работы через прокси (CF Worker / nginx)
+        compressed = compress_for_claude(image_bytes)
+        image_base64 = base64.b64encode(compressed).decode('utf-8')
 
-        # Определяем MIME-тип по сигнатуре файла
+        # После compress_for_claude всегда JPEG, но проверяем на случай
+        # если Pillow недоступен и вернулся оригинал
         media_type = "image/jpeg"
-        if image_bytes[:8] == b'\x89PNG\r\n\x1a\n':
+        if compressed[:8] == b'\x89PNG\r\n\x1a\n':
             media_type = "image/png"
-        elif image_bytes[:4] == b'RIFF' and image_bytes[8:12] == b'WEBP':
+        elif compressed[:4] == b'RIFF' and compressed[8:12] == b'WEBP':
             media_type = "image/webp"
 
         # Формируем промпт с контекстом
@@ -389,7 +393,9 @@ class VisionService:
 
         logger.info(
             f"Claude Vision API request to {api_url} "
-            f"(stream={use_streaming})"
+            f"(stream={use_streaming}, "
+            f"image={len(image_bytes)}→{len(compressed)} bytes, "
+            f"base64={len(image_base64)} chars)"
         )
 
         for attempt in range(self.config.retries):

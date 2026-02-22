@@ -101,6 +101,70 @@ def preprocess_for_ocr(image_bytes: bytes) -> bytes:
         return image_bytes
 
 
+def compress_for_claude(image_bytes: bytes, max_dimension: int = 1568) -> bytes:
+    """
+    Оптимизация изображения для Claude Vision API.
+
+    Claude Vision работает отлично с изображениями до 1568px по длинной стороне.
+    Сжатие драматически уменьшает payload (5-10MB → 100-300KB), что критично
+    для передачи через CF Worker / прокси без таймаутов.
+
+    В отличие от preprocess_for_ocr, НЕ конвертирует в grayscale —
+    Claude использует цветовую информацию для лучшего распознавания.
+
+    Args:
+        image_bytes: Исходные байты изображения
+        max_dimension: Максимальный размер по длинной стороне (px)
+
+    Returns:
+        Сжатые байты изображения (JPEG)
+    """
+    if not PILLOW_AVAILABLE:
+        logger.debug("Pillow unavailable, returning original image")
+        return image_bytes
+
+    try:
+        img = Image.open(io.BytesIO(image_bytes))
+
+        # EXIF-ориентация (фото с телефона часто повёрнуты)
+        img = ImageOps.exif_transpose(img)
+
+        # RGB для JPEG (убирает альфа-канал если есть)
+        if img.mode in ('RGBA', 'P', 'LA'):
+            img = img.convert('RGB')
+        elif img.mode != 'RGB':
+            img = img.convert('RGB')
+
+        # Масштабирование по длинной стороне
+        width, height = img.size
+        max_side = max(width, height)
+        if max_side > max_dimension:
+            scale = max_dimension / max_side
+            new_size = (int(width * scale), int(height * scale))
+            img = img.resize(new_size, Image.Resampling.LANCZOS)
+            logger.debug(
+                f"Claude image resized: {width}x{height} -> "
+                f"{new_size[0]}x{new_size[1]}"
+            )
+
+        # JPEG quality 85 — хороший баланс качества и размера
+        output = io.BytesIO()
+        img.save(output, format='JPEG', quality=85, optimize=True)
+        result_bytes = output.getvalue()
+
+        logger.info(
+            f"Claude image compressed: {len(image_bytes)} -> {len(result_bytes)} bytes "
+            f"({len(image_bytes) / max(len(result_bytes), 1):.1f}x reduction), "
+            f"size: {img.size[0]}x{img.size[1]}"
+        )
+
+        return result_bytes
+
+    except Exception as e:
+        logger.error(f"Claude image compression failed: {e}", exc_info=True)
+        return image_bytes
+
+
 def preprocess_for_ocr_enhanced(image_bytes: bytes) -> bytes:
     """
     Усиленная предобработка для сложных случаев (низкая уверенность OCR).
