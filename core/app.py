@@ -241,6 +241,16 @@ async def post_init(application: Application) -> None:
     except Exception as e:
         logger.error(f"Error registering retention admin handlers: {e}")
 
+    # Регистрируем benchmark admin обработчики
+    try:
+        from core.benchmark_admin import register_benchmark_handlers
+        register_benchmark_handlers(application)
+        logger.info("Benchmark admin handlers registered")
+    except ImportError as e:
+        logger.error(f"Could not import benchmark_admin: {e}")
+    except Exception as e:
+        logger.error(f"Error registering benchmark admin handlers: {e}")
+
     # Регистрируем onboarding handler
     try:
         from core.onboarding import get_onboarding_handler, skip_onboarding_before_start
