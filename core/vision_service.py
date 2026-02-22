@@ -34,7 +34,7 @@ OCR_ENHANCED_RETRY_THRESHOLD = 0.55
 
 # Claude Vision API
 CLAUDE_API_URL = "https://api.anthropic.com/v1/messages"
-CLAUDE_MODEL = "claude-sonnet-4-5-20250929"
+CLAUDE_MODEL = "claude-sonnet-4-6"
 CLAUDE_MAX_TOKENS = 4096
 
 
@@ -347,6 +347,14 @@ class VisionService:
         payload = {
             "model": CLAUDE_MODEL,
             "max_tokens": CLAUDE_MAX_TOKENS,
+            "temperature": 0,
+            "system": (
+                "Ты — эксперт по распознаванию рукописного текста на русском языке. "
+                "Внимательно анализируй каждое слово и букву на изображении. "
+                "Если слово выглядит нечётко, используй контекст предложения "
+                "для выбора наиболее вероятного варианта. "
+                "Выдавай только реальные русские слова — не выдумывай несуществующих."
+            ),
             "messages": [
                 {
                     "role": "user",
