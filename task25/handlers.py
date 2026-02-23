@@ -7,7 +7,7 @@ import random
 from typing import Dict, List, Optional, Any, Tuple
 from datetime import datetime, date
 from core.document_processor import DocumentHandlerMixin
-from core.vision_service import process_photo_message
+from core.vision_service import process_photo_message, process_photo_by_file_id, get_vision_service
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.constants import ParseMode
 from telegram.ext import ContextTypes, ConversationHandler
@@ -3712,18 +3712,28 @@ async def handle_answer_document_task25(update: Update, context: ContextTypes.DE
 
 @safe_handler()
 async def handle_answer_photo_task25(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обработка развернутого ответа с фотографии для task25."""
+    """Обработка развернутого ответа с фотографии для task25.
+
+    Поддерживает как одиночные фото, так и альбомы (media group).
+    При получении альбома фотографии буферизуются и обрабатываются
+    вместе после небольшой задержки.
+    """
 
     topic = context.user_data.get('current_topic')
     if not topic:
         await update.message.reply_text("❌ Ошибка: тема не выбрана.")
         return states.CHOOSING_MODE
 
-    # Формируем контекст для улучшения OCR-коррекции
+    media_group_id = update.message.media_group_id
+
+    if media_group_id:
+        # Это часть альбома — буферизуем и обрабатываем позже
+        return await _buffer_media_group_photo(update, context, topic, media_group_id)
+
+    # Одиночное фото — обрабатываем как раньше
     topic_title = topic.get('title', '') if isinstance(topic, dict) else str(topic)
     ocr_context = f"ЕГЭ обществознание, задание 25 (развернутый ответ), тема: {topic_title}"
 
-    # Обрабатываем фото через OCR
     extracted_text = await process_photo_message(
         update,
         context.application.bot,
@@ -3738,13 +3748,371 @@ async def handle_answer_photo_task25(update: Update, context: ContextTypes.DEFAU
     current_part = context.user_data.get('current_part', 0)
 
     if current_part > 0:
-        # Если отвечаем по частям - сохраняем текст в context
         context.user_data['document_text'] = extracted_text
         return await handle_answer_parts(update, context)
     else:
-        # Если полный ответ - сохраняем текст в context
         context.user_data['document_text'] = extracted_text
         return await safe_handle_answer_task25(update, context)
+
+
+async def _buffer_media_group_photo(update: Update, context: ContextTypes.DEFAULT_TYPE,
+                                     topic: dict, media_group_id: str):
+    """Буферизация фото из альбома для последующей пакетной обработки."""
+    user_id = update.effective_user.id
+    chat_id = update.effective_chat.id
+
+    # Инициализируем буфер
+    if 'pending_media_group' not in context.user_data:
+        context.user_data['pending_media_group'] = {}
+
+    group_data = context.user_data['pending_media_group']
+
+    is_first = media_group_id not in group_data
+    if is_first:
+        group_data[media_group_id] = {
+            'photo_file_ids': [],
+            'topic': topic,
+            'current_part': context.user_data.get('current_part', 0),
+        }
+        # Показываем сообщение при первом фото в альбоме
+        msg = await update.message.reply_text("📸 Получаю фотографии из альбома...")
+        group_data[media_group_id]['status_msg_id'] = msg.message_id
+
+    # Сохраняем file_id самого большого фото (лучшее качество)
+    group_data[media_group_id]['photo_file_ids'].append(update.message.photo[-1].file_id)
+
+    # Перепланируем задачу обработки (сбрасываем таймер при каждом новом фото)
+    job_name = f"t25_media_group_{user_id}_{media_group_id}"
+
+    if context.job_queue:
+        current_jobs = context.job_queue.get_jobs_by_name(job_name)
+        for job in current_jobs:
+            job.schedule_removal()
+
+        context.job_queue.run_once(
+            _process_media_group_task25_job,
+            when=2.0,
+            name=job_name,
+            data={
+                'user_id': user_id,
+                'chat_id': chat_id,
+                'media_group_id': media_group_id,
+            }
+        )
+
+    # Остаёмся в текущем состоянии, чтобы принять оставшиеся фото из альбома
+    current_part = context.user_data.get('current_part', 0)
+    return ANSWERING_PARTS if current_part > 0 else states.ANSWERING
+
+
+async def _process_media_group_task25_job(context):
+    """Job callback: обработка всех фотографий из альбома после задержки."""
+    job_data = context.job.data
+    user_id = job_data['user_id']
+    chat_id = job_data['chat_id']
+    media_group_id = job_data['media_group_id']
+
+    user_data = context.application.user_data.get(user_id, {})
+    group_info = user_data.get('pending_media_group', {}).get(media_group_id)
+    if not group_info:
+        return
+
+    photo_file_ids = group_info['photo_file_ids']
+    topic = group_info['topic']
+    current_part = group_info.get('current_part', 0)
+    status_msg_id = group_info.get('status_msg_id')
+
+    # Очищаем буфер
+    user_data.get('pending_media_group', {}).pop(media_group_id, None)
+    if not user_data.get('pending_media_group'):
+        user_data.pop('pending_media_group', None)
+
+    # Удаляем статусное сообщение
+    if status_msg_id:
+        try:
+            await context.bot.delete_message(chat_id, status_msg_id)
+        except Exception:
+            pass
+
+    # Проверяем доступность OCR
+    vision_service = get_vision_service()
+    if not vision_service.is_available:
+        await context.bot.send_message(
+            chat_id,
+            "❌ Функция распознавания текста с фото недоступна.\n"
+            "Пожалуйста, введите ответ текстом или загрузите документ."
+        )
+        return
+
+    # Обрабатываем все фотографии
+    topic_title = topic.get('title', '') if isinstance(topic, dict) else str(topic)
+    ocr_context = f"ЕГЭ обществознание, задание 25 (развернутый ответ), тема: {topic_title}"
+
+    processing_msg = await context.bot.send_message(
+        chat_id,
+        f"📸 Распознаю текст с {len(photo_file_ids)} фотографий...\n"
+        "Это может занять немного больше времени."
+    )
+
+    all_texts = []
+    for i, file_id in enumerate(photo_file_ids, 1):
+        try:
+            text = await process_photo_by_file_id(file_id, context.bot, task_context=ocr_context)
+            if text:
+                all_texts.append(text)
+        except Exception as e:
+            logger.error(f"Error processing photo {i}/{len(photo_file_ids)} in media group: {e}")
+
+    # Удаляем сообщение о обработке
+    try:
+        await processing_msg.delete()
+    except Exception:
+        pass
+
+    if not all_texts:
+        await context.bot.send_message(
+            chat_id,
+            "❌ Не удалось распознать текст ни с одной фотографии.\n\n"
+            "Попробуйте:\n• Сделать фото при лучшем освещении\n"
+            "• Убедиться, что текст чёткий\n• Ввести ответ текстом"
+        )
+        return
+
+    # Объединяем текст со всех фотографий
+    if len(all_texts) == 1:
+        combined_text = all_texts[0]
+    else:
+        combined_text = "\n\n".join(all_texts)
+
+    # Сообщаем об успешном распознавании
+    preview = combined_text[:500] + "..." if len(combined_text) > 500 else combined_text
+    import html as html_module
+    preview_escaped = html_module.escape(preview)
+    await context.bot.send_message(
+        chat_id,
+        f"✅ Текст распознан с {len(all_texts)} фото!\n\n"
+        f"📝 <b>Предпросмотр:</b>\n"
+        f"<code>{preview_escaped}</code>\n\n"
+        f"🔍 Проверяю развернутый ответ...",
+        parse_mode='HTML'
+    )
+
+    # Сохраняем текст и запускаем оценку
+    if current_part > 0:
+        # Режим ответа по частям
+        user_data['document_text'] = combined_text
+        await _evaluate_media_group_parts(context, chat_id, user_id, user_data, topic, current_part, combined_text)
+    else:
+        # Полный ответ — запускаем полную оценку
+        user_data['document_text'] = combined_text
+        await _evaluate_media_group_answer(context, chat_id, user_id, user_data, topic, combined_text)
+
+
+async def _evaluate_media_group_parts(context, chat_id, user_id, user_data, topic, current_part, text):
+    """Обработка ответа по частям для альбома (аналог handle_answer_parts)."""
+    answers = user_data.get('part_answers', {})
+    answers[f'part{current_part}'] = text
+    user_data['part_answers'] = answers
+
+    if current_part < 3:
+        current_part += 1
+        user_data['current_part'] = current_part
+
+        parts = topic.get('parts', {})
+        part_text = parts.get(f'part{current_part}', '')
+        part_names = {2: "Ответ на вопрос", 3: "Примеры"}
+
+        msg_text = (
+            f"✅ Часть {current_part - 1} получена!\n\n"
+            f"<b>Часть {current_part}: {part_names.get(current_part, '')}</b>\n\n"
+            f"{part_text}\n\n"
+            f"💡 <i>Отправьте ваш ответ</i>"
+        )
+
+        await context.bot.send_message(chat_id, msg_text, parse_mode='HTML')
+
+        # Обновляем состояние ConversationHandler
+        _update_conversation_state(context, chat_id, user_id, ANSWERING_PARTS)
+    else:
+        # Все части собраны — объединяем и проверяем
+        full_answer = "\n\n".join([
+            f"Часть 1 (Обоснование):\n{answers.get('part1', '')}",
+            f"Часть 2 (Ответ):\n{answers.get('part2', '')}",
+            f"Часть 3 (Примеры):\n{answers.get('part3', '')}"
+        ])
+        user_data.pop('part_answers', None)
+        user_data.pop('current_part', None)
+        user_data['document_text'] = full_answer
+        await _evaluate_media_group_answer(context, chat_id, user_id, user_data, topic, full_answer)
+
+
+async def _evaluate_media_group_answer(context, chat_id, user_id, user_data, topic, user_answer):
+    """Полная оценка ответа из альбома (аналог safe_handle_answer_task25 для job)."""
+    bot_data = context.application.bot_data
+
+    # Проверяем минимальную длину
+    if len(user_answer) < 100:
+        await context.bot.send_message(
+            chat_id,
+            "❌ Ответ слишком короткий. Задание 25 требует развёрнутого ответа с обоснованием и примерами.",
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("❌ Отменить", callback_data="t25_menu")
+            ]])
+        )
+        _update_conversation_state(context, chat_id, user_id, states.ANSWERING)
+        return
+
+    # Проверка лимитов AI-проверок
+    freemium_manager = bot_data.get('freemium_manager')
+    is_premium = False
+
+    if freemium_manager:
+        can_use, remaining, limit_msg = await freemium_manager.check_ai_limit(user_id, 'task25')
+        if not can_use:
+            kb = InlineKeyboardMarkup([
+                [InlineKeyboardButton("🎁 Попробовать за 1₽", callback_data="subscribe_start")],
+                [InlineKeyboardButton("💎 Оформить подписку", callback_data="subscribe_start")],
+                [InlineKeyboardButton("🏠 Главное меню", callback_data="to_main_menu")]
+            ])
+            await context.bot.send_message(chat_id, limit_msg, reply_markup=kb, parse_mode=ParseMode.HTML)
+            _update_conversation_state(context, chat_id, user_id, states.ANSWERING)
+            return
+
+        limit_info = await freemium_manager.get_limit_info(user_id, 'task25')
+        is_premium = limit_info.get('is_premium', False)
+
+    # Обновляем дневной стрик
+    current_date = date.today().isoformat()
+    last_activity_date = user_data.get('last_activity_date')
+    if last_activity_date != current_date:
+        await db.update_daily_streak(user_id)
+        user_data['last_activity_date'] = current_date
+
+    # Показываем сообщение о проверке
+    thinking_msg = await context.bot.send_message(
+        chat_id, "🔍 Анализирую ваш ответ..."
+    )
+
+    try:
+        global evaluator
+        if evaluator is None and AI_EVALUATOR_AVAILABLE:
+            try:
+                strictness = StrictnessLevel.STANDARD
+                evaluator = Task25AIEvaluator(strictness=strictness)
+            except Exception as e:
+                logger.error(f"Failed to initialize evaluator: {e}")
+                evaluator = None
+
+        if evaluator and AI_EVALUATOR_AVAILABLE:
+            try:
+                result = await evaluator.evaluate(
+                    answer=user_answer,
+                    topic=topic,
+                    user_id=user_id
+                )
+
+                if hasattr(result, 'format_feedback'):
+                    detailed_feedback = result.format_feedback()
+                else:
+                    detailed_feedback = _format_evaluation_result(result, topic)
+
+                score = result.total_score
+
+                if is_premium:
+                    feedback_text = detailed_feedback
+                else:
+                    if freemium_manager:
+                        feedback_text = freemium_manager.simplify_feedback_for_freemium(
+                            detailed_feedback, score, 6
+                        )
+                    else:
+                        feedback_text = detailed_feedback
+
+            except Exception as e:
+                logger.error(f"Evaluation error in media group job: {e}")
+                feedback_text = _get_fallback_feedback(user_answer, topic)
+                score = _estimate_score(user_answer)
+        else:
+            feedback_text = _get_fallback_feedback(user_answer, topic)
+            score = _estimate_score(user_answer)
+
+        # Удаляем сообщение "Анализирую"
+        try:
+            await thinking_msg.delete()
+        except Exception:
+            pass
+
+        # Регистрируем использование AI-проверки
+        if freemium_manager:
+            await db.increment_ai_check_usage(user_id)
+            limit_info = await freemium_manager.get_limit_info(user_id, 'task25')
+            remaining_checks = limit_info.get('checks_remaining', 0)
+            if not limit_info.get('is_premium') and remaining_checks <= 3:
+                if remaining_checks > 0:
+                    feedback_text += f"\n\n📊 Осталось проверок сегодня: <b>{remaining_checks}</b>"
+                else:
+                    feedback_text += f"\n\n⏳ Бесплатные проверки на сегодня исчерпаны. Лимит обновится завтра."
+
+        # Сохраняем результат
+        result_data = {
+            'topic_title': topic.get('title', 'Неизвестная тема'),
+            'topic_id': topic.get('id'),
+            'block': topic.get('block', 'Общие темы'),
+            'score': score,
+            'max_score': 6,
+            'timestamp': datetime.now().isoformat()
+        }
+
+        if 'task25_results' not in user_data:
+            user_data['task25_results'] = []
+        user_data['task25_results'].append(result_data)
+
+        # Обновляем серию правильных ответов
+        if score >= 5:
+            user_data['correct_streak'] = user_data.get('correct_streak', 0) + 1
+        else:
+            user_data['correct_streak'] = 0
+
+        # Кнопки действий
+        kb = AdaptiveKeyboards.create_result_keyboard(
+            score=score, max_score=6, module_code="t25"
+        )
+
+        await context.bot.send_message(
+            chat_id, feedback_text, reply_markup=kb, parse_mode=ParseMode.HTML
+        )
+
+        # Обновляем состояние ConversationHandler на AWAITING_FEEDBACK
+        _update_conversation_state(context, chat_id, user_id, states.AWAITING_FEEDBACK)
+
+    except Exception as e:
+        logger.error(f"Error in media group evaluation: {e}")
+        try:
+            await thinking_msg.delete()
+        except Exception:
+            pass
+        await context.bot.send_message(
+            chat_id,
+            "❌ Произошла ошибка при проверке. Попробуйте ещё раз.",
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("🔄 Попробовать снова", callback_data="t25_retry"),
+                InlineKeyboardButton("📝 В меню", callback_data="t25_menu")
+            ]])
+        )
+        _update_conversation_state(context, chat_id, user_id, states.CHOOSING_MODE)
+
+
+def _update_conversation_state(context, chat_id, user_id, new_state):
+    """Обновляет состояние ConversationHandler для task25 из job callback."""
+    try:
+        for handler_group in context.application.handlers.values():
+            for handler in handler_group:
+                if isinstance(handler, ConversationHandler) and handler.name == "task25_conversation":
+                    key = (chat_id, user_id)
+                    handler._conversations[key] = new_state
+                    return
+    except Exception as e:
+        logger.error(f"Failed to update conversation state: {e}")
 
 
 @safe_handler()
