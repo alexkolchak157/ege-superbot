@@ -310,14 +310,18 @@ def format_question_for_display(task_module: str, question_data: Dict) -> str:
 
     elif task_module == 'task21':
         market = question_data.get('market_name', '')
-        text = f"<b>Задание 21 — Рынок {market}</b>\n\n"
-        text += f"{question_data.get('graph_description', '')}\n\n"
+        text = f"<b>📊 Задание 21 — Рынок {market}</b>\n\n"
+        text += f"{question_data.get('graph_description', '')}\n"
+        notation = question_data.get('graph_notation', '')
+        if notation:
+            text += f"{notation}\n"
+        text += "\n<b>Вопросы:</b>\n\n"
         q1 = question_data.get('question_1', {})
         q2 = question_data.get('question_2', {})
         q3 = question_data.get('question_3', {})
-        text += f"1. {q1.get('text', '')}\n"
-        text += f"2. {q2.get('text', '')}\n"
-        text += f"3. {q3.get('text', '')}"
+        text += f"<b>1.</b> {q1.get('text', '')}\n\n"
+        text += f"<b>2.</b> {q2.get('text', '')}\n\n"
+        text += f"<b>3.</b> {q3.get('text', '')}"
         return text
 
     elif task_module == 'task22':
