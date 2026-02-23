@@ -3,7 +3,9 @@
 """
 
 import logging
+import os
 from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton
+from telegram.constants import ParseMode
 from telegram.ext import ContextTypes, ConversationHandler
 
 from ..states import StudentStates
@@ -741,7 +743,50 @@ async def show_homework_question(update: Update, context: ContextTypes.DEFAULT_T
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
 
-    await query.message.edit_text(text, reply_markup=reply_markup, parse_mode='HTML')
+    # Для task21 отправляем график вместе с вопросом
+    image_sent = False
+    if task_module == 'task21' and question_data and question_data.get('image_url'):
+        project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        image_path = os.path.join(project_root, question_data['image_url'])
+
+        if os.path.exists(image_path):
+            try:
+                chat_id = update.effective_chat.id
+                # Удаляем предыдущее сообщение (меню)
+                try:
+                    await query.message.delete()
+                except Exception:
+                    pass
+
+                MAX_CAPTION_LENGTH = 1024
+                if len(text) <= MAX_CAPTION_LENGTH:
+                    with open(image_path, 'rb') as photo:
+                        await context.bot.send_photo(
+                            chat_id=chat_id,
+                            photo=photo,
+                            caption=text,
+                            parse_mode=ParseMode.HTML,
+                            reply_markup=reply_markup
+                        )
+                else:
+                    with open(image_path, 'rb') as photo:
+                        await context.bot.send_photo(
+                            chat_id=chat_id,
+                            photo=photo,
+                            caption="📊 График к заданию 21"
+                        )
+                    await context.bot.send_message(
+                        chat_id=chat_id,
+                        text=text,
+                        parse_mode=ParseMode.HTML,
+                        reply_markup=reply_markup
+                    )
+                image_sent = True
+            except Exception as e:
+                logger.error(f"Error sending task21 graph image in homework: {e}")
+
+    if not image_sent:
+        await query.message.edit_text(text, reply_markup=reply_markup, parse_mode='HTML')
 
     # Переводим в состояние ожидания ответа
     from ..states import StudentStates

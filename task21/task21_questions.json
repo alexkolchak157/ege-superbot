@@ -8,7 +8,7 @@
       "image_url": "data/images/task21_003.png",
       "market_name": "мужских костюмов",
       "graph_description": "На графике изображено изменение ситуации на рынке мужских костюмов. Спрос переместился из положения D в положение D1 при неизменном предложении S.",
-      "graph_notation": "(На графике P – цена {'товара' if 'услуг' not in task['market'] else 'услуг'}; Q – {'количество товара' if 'услуг' not in task['market'] else 'объём услуги'}.)",
+      "graph_notation": "(На графике P – цена товара; Q – количество товара.)",
       "curve_shifted": "demand",
       "shift_direction": "right",
       "question_1": {
@@ -78,7 +78,7 @@
       "image_url": "data/images/task21_004.png",
       "market_name": "услуг автосервисов",
       "graph_description": "На графике изображено изменение ситуации на рынке услуг автосервисов. Спрос переместился из положения D в положение D1 при неизменном предложении S.",
-      "graph_notation": "(На графике P – цена {'товара' if 'услуг' not in task['market'] else 'услуг'}; Q – {'количество товара' if 'услуг' not in task['market'] else 'объём услуги'}.)",
+      "graph_notation": "(На графике P – цена услуг; Q – объём услуги.)",
       "curve_shifted": "demand",
       "shift_direction": "right",
       "question_1": {
@@ -148,7 +148,7 @@
       "image_url": "data/images/task21_005.png",
       "market_name": "садового инвентаря",
       "graph_description": "На графике изображено изменение ситуации на рынке садового инвентаря. Кривая предложения переместилась из положения S в положение S1 при неизменном спросе D.",
-      "graph_notation": "(На графике P – цена {'товара' if 'услуг' not in task['market'] else 'услуг'}; Q – {'количество товара' if 'услуг' not in task['market'] else 'объём услуги'}.)",
+      "graph_notation": "(На графике P – цена товара; Q – количество товара.)",
       "curve_shifted": "supply",
       "shift_direction": "right",
       "question_1": {

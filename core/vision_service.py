@@ -1056,3 +1056,46 @@ async def process_photo_message(
             f"Пожалуйста, попробуйте еще раз или введите {task_name} текстом."
         )
         return None
+
+
+async def process_photo_by_file_id(
+    file_id: str,
+    bot: Bot,
+    task_context: Optional[str] = None
+) -> Optional[str]:
+    """
+    Обработка фотографии по file_id (без update объекта).
+    Используется для обработки альбомов (media group).
+
+    Args:
+        file_id: Telegram file_id фотографии
+        bot: Bot объект
+        task_context: Предметный контекст для улучшения OCR-коррекции
+
+    Returns:
+        Распознанный текст или None при ошибке
+    """
+    vision_service = get_vision_service()
+
+    if not vision_service.is_available:
+        return None
+
+    try:
+        file = await bot.get_file(file_id)
+        photo_bytes = bytes(await file.download_as_bytearray())
+
+        if vision_service._has_claude:
+            result = await vision_service._recognize_with_claude(photo_bytes, task_context)
+            if result['success']:
+                return result['text']
+            if not vision_service._has_yandex:
+                return None
+
+        result = await vision_service._process_with_yandex(photo_bytes, task_context)
+        if result['success']:
+            return result['text']
+        return None
+
+    except Exception as e:
+        logger.error(f"Error in process_photo_by_file_id: {e}", exc_info=True)
+        return None
