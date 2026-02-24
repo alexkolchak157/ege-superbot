@@ -445,18 +445,18 @@ async def handle_webhook(request: web.Request) -> web.Response:
                     # Получаем информацию о платеже для алерта
                     async with aiosqlite.connect(config.DATABASE_PATH) as db:
                         cursor = await db.execute(
-                            "SELECT user_id, plan_id, amount FROM payments WHERE order_id = ?",
+                            "SELECT user_id, plan_id, amount_kopecks FROM payments WHERE order_id = ?",
                             (order_id,)
                         )
                         payment_info = await cursor.fetchone()
                         if payment_info:
-                            user_id, plan_id, amount = payment_info
+                            user_id, plan_id, amount_kopecks = payment_info
                             await notify_admin_payment_activation_failed(
                                 bot=bot,
                                 order_id=order_id,
                                 user_id=user_id,
                                 plan_id=plan_id,
-                                amount=amount // 100 if amount else 0,  # Конвертируем из копеек
+                                amount=amount_kopecks // 100 if amount_kopecks else 0,  # Конвертируем из копеек
                                 error="Subscription activation failed"
                             )
 

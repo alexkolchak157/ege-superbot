@@ -1,6 +1,7 @@
 # payment/middleware.py - ПОЛНАЯ версия с оптимизациями
 """Middleware для проверки подписок и лимитов использования с поддержкой модулей."""
 import logging
+import time
 from typing import Optional, Dict, Set, Tuple
 from datetime import datetime, timezone
 from functools import lru_cache
@@ -250,13 +251,17 @@ class SubscriptionMiddleware:
             logger.warning("SubscriptionManager not found in bot_data")
             return True
 
-        # Проверяем доступ к модулю (с кэшем)
+        # Проверяем доступ к модулю (с кэшем + TTL)
         cache_key = (user_id, module_code)
-        if cache_key in self._access_cache:
+        cache_timestamp = self._cache_timestamps.get(cache_key, 0)
+        cache_expired = (time.time() - cache_timestamp) > self._cache_ttl
+
+        if cache_key in self._access_cache and not cache_expired:
             has_access = self._access_cache[cache_key]
         else:
             has_access = await subscription_manager.check_module_access(user_id, module_code)
             self._access_cache[cache_key] = has_access
+            self._cache_timestamps[cache_key] = time.time()
 
         if not has_access:
             logger.info(f"Access denied for user {user_id} to module {module_code}")
