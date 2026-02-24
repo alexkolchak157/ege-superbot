@@ -882,10 +882,22 @@ class SubscriptionManager:
                             plan_id TEXT NOT NULL,
                             expires_at TIMESTAMP NOT NULL,
                             is_active BOOLEAN DEFAULT 1,
+                            is_trial BOOLEAN DEFAULT 0,
                             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                             UNIQUE(user_id, module_code)
                         )
                     """)
+
+                    # МИГРАЦИЯ: Добавляем is_trial если колонки нет в существующей таблице
+                    try:
+                        cursor = await conn.execute("PRAGMA table_info(module_subscriptions)")
+                        ms_columns = await cursor.fetchall()
+                        ms_column_names = [col[1] for col in ms_columns]
+                        if 'is_trial' not in ms_column_names:
+                            await conn.execute("ALTER TABLE module_subscriptions ADD COLUMN is_trial BOOLEAN DEFAULT 0")
+                            logger.info("Added is_trial column to module_subscriptions")
+                    except Exception as migration_error:
+                        logger.warning(f"Migration warning for module_subscriptions.is_trial: {migration_error}")
                     
                     # Индексы для module_subscriptions
                     await conn.execute("""
@@ -997,6 +1009,35 @@ class SubscriptionManager:
 
                     logger.info("Standard subscription tables created")
                 
+                # Таблица для логирования webhook запросов (нужна для дедупликации)
+                await conn.execute("""
+                    CREATE TABLE IF NOT EXISTS webhook_logs (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        order_id TEXT NOT NULL,
+                        status TEXT NOT NULL,
+                        payment_id TEXT,
+                        data TEXT,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        UNIQUE(order_id, status)
+                    )
+                """)
+                await conn.execute("""
+                    CREATE INDEX IF NOT EXISTS idx_webhook_logs_order
+                    ON webhook_logs(order_id, status)
+                """)
+
+                # Таблица для защиты от повторной отправки уведомлений
+                await conn.execute("""
+                    CREATE TABLE IF NOT EXISTS notification_history (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        user_id INTEGER NOT NULL,
+                        order_id TEXT NOT NULL,
+                        notification_type TEXT NOT NULL,
+                        sent_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        UNIQUE(user_id, order_id, notification_type)
+                    )
+                """)
+
                 await conn.commit()
                 logger.info("All tables initialized successfully")
                 
