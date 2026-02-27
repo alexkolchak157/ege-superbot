@@ -150,6 +150,19 @@ async def _evaluate_task20(question_data: Dict, user_answer: str, user_id: int) 
 
 async def _evaluate_task21(question_data: Dict, user_answer: str, user_id: int) -> Tuple[bool, str]:
     """Проверка ответа для task21 (графики спроса и предложения)"""
+    # Если нет структурированных данных (быстрая проверка без загруженных ответов),
+    # используем свободную AI-проверку по условию задания.
+    # Структурированные данные — это наличие полей question_1/question_2/question_3
+    # с реальным содержимым (acceptable_keywords, correct_answer и т.д.)
+    has_structured_data = (
+        question_data.get("question_1") or
+        question_data.get("question_2") or
+        question_data.get("question_3")
+    )
+
+    if not has_structured_data:
+        return await _evaluate_task21_freeform(question_data, user_answer, user_id)
+
     try:
         from task21.evaluator import Task21Evaluator
         from core.types import EvaluationResult
@@ -183,6 +196,18 @@ async def _evaluate_task21(question_data: Dict, user_answer: str, user_id: int) 
 
 async def _evaluate_task22(question_data: Dict, user_answer: str, user_id: int) -> Tuple[bool, str]:
     """Проверка ответа для task22 (анализ ситуаций)"""
+    # Если нет структурированных данных (быстрая проверка без загруженных ответов),
+    # используем свободную AI-проверку по условию задания.
+    # Структурированные данные — это наличие непустых questions И correct_answers.
+    # Одно лишь описание (description) без вопросов/ответов не является достаточным.
+    has_structured_data = (
+        question_data.get("questions") and
+        question_data.get("correct_answers")
+    )
+
+    if not has_structured_data:
+        return await _evaluate_task22_freeform(question_data, user_answer, user_id)
+
     try:
         from task22.evaluator import Task22AIEvaluator
         from core.types import EvaluationResult
@@ -521,3 +546,234 @@ async def _evaluate_custom_question(
     except Exception as e:
         logger.error(f"Error evaluating custom question: {e}", exc_info=True)
         return False, f"❌ Ошибка при проверке кастомного вопроса: {str(e)}"
+
+
+# ============================================
+# Свободная AI-проверка (без структурированных данных)
+# ============================================
+
+async def _evaluate_task21_freeform(question_data: Dict, user_answer: str, user_id: int) -> Tuple[bool, str]:
+    """
+    AI-проверка задания 21 по свободному условию (без предзагруженных ответов).
+
+    Используется когда учитель ввёл условие задания вручную и нет
+    структурированных данных вопросов (question_1, question_2, question_3).
+    """
+    try:
+        from core.ai_service import create_ai_service, AIServiceConfig, AIModel
+
+        config = AIServiceConfig.from_env()
+        config.model = AIModel.LITE
+        config.temperature = 0.2
+
+        task_text = question_data.get('task_text', '')
+
+        system_prompt = (
+            "Ты - опытный эксперт ЕГЭ по обществознанию, специализирующийся на проверке "
+            "задания 21 (анализ графиков спроса и предложения).\n\n"
+            "ЗАДАНИЕ 21 предполагает анализ графического изображения, иллюстрирующего "
+            "изменения спроса/предложения на конкретном рынке, и ответ на три вопроса.\n\n"
+            "Максимальный балл: 3 (по 1 баллу за каждый правильный ответ на вопрос).\n\n"
+            "КРИТЕРИИ:\n"
+            "- Вопрос 1: Как изменилась равновесная цена? (ответ должен быть однозначным)\n"
+            "- Вопрос 2: Фактор + объяснение его влияния применительно к конкретному рынку "
+            "+ характер изменения\n"
+            "- Вопрос 3: Прогноз изменения двух переменных\n\n"
+            "Проверяй строго, но справедливо. Учитывай допустимые формулировки."
+        )
+
+        prompt = (
+            f"Проверь ответ ученика на задание 21 ЕГЭ по обществознанию.\n\n"
+            f"УСЛОВИЕ ЗАДАНИЯ:\n{task_text}\n\n"
+            f"ОТВЕТ УЧЕНИКА:\n{user_answer}\n\n"
+            f"Проверь ответ и оцени по критериям задания 21 (максимум 3 балла).\n"
+            f"Определи, на какие из трёх вопросов ученик ответил правильно.\n\n"
+            f"Ответь в формате JSON:\n"
+            f"```json\n"
+            f"{{\n"
+            f'    "score": "число от 0 до 3",\n'
+            f'    "max_score": 3,\n'
+            f'    "answers_evaluation": [\n'
+            f'        {{\n'
+            f'            "question_number": 1,\n'
+            f'            "is_correct": true,\n'
+            f'            "comment": "комментарий к ответу на вопрос 1"\n'
+            f"        }},\n"
+            f'        {{\n'
+            f'            "question_number": 2,\n'
+            f'            "is_correct": false,\n'
+            f'            "comment": "комментарий к ответу на вопрос 2"\n'
+            f"        }},\n"
+            f'        {{\n'
+            f'            "question_number": 3,\n'
+            f'            "is_correct": true,\n'
+            f'            "comment": "комментарий к ответу на вопрос 3"\n'
+            f"        }}\n"
+            f"    ],\n"
+            f'    "feedback": "общая обратная связь (2-3 предложения)",\n'
+            f'    "suggestions": ["рекомендация 1", "рекомендация 2"]\n'
+            f"}}\n"
+            f"```\n\n"
+            f"ВАЖНО: Верни ТОЛЬКО валидный JSON."
+        )
+
+        async with create_ai_service(config) as service:
+            result = await service.get_json_completion(
+                prompt=prompt,
+                system_prompt=system_prompt,
+                temperature=config.temperature
+            )
+
+            if result:
+                score = int(result.get("score", 0))
+                max_score = int(result.get("max_score", 3))
+                feedback_text = result.get("feedback", "")
+                suggestions = result.get("suggestions", [])
+                answers_eval = result.get("answers_evaluation", [])
+
+                is_correct = score >= (max_score / 2)
+
+                feedback = f"📊 <b>Результат проверки:</b>\n\n"
+                feedback += f"Баллы: {score}/{max_score}\n\n"
+
+                if answers_eval:
+                    feedback += "<b>Проверка ответов:</b>\n"
+                    for item in answers_eval:
+                        q_num = item.get("question_number", "?")
+                        q_ok = item.get("is_correct", False)
+                        q_comment = item.get("comment", "")
+                        icon = "✅" if q_ok else "❌"
+                        feedback += f"\n{icon} <b>Вопрос {q_num}:</b> {q_comment}\n"
+
+                feedback += f"\n<b>Обратная связь:</b>\n{feedback_text}"
+
+                if suggestions:
+                    feedback += f"\n\n💡 <b>Рекомендации:</b>\n"
+                    feedback += "\n".join(f"• {s}" for s in suggestions)
+
+                return is_correct, feedback
+
+        return True, "✅ Ответ принят (AI проверка не вернула результат)"
+
+    except ImportError as e:
+        logger.warning(f"AI service not available for task21 freeform: {e}")
+        return True, "✅ Ответ принят (AI сервис недоступен)"
+    except Exception as e:
+        logger.error(f"Error in task21 freeform evaluation: {e}", exc_info=True)
+        return False, f"❌ Ошибка при проверке: {str(e)}"
+
+
+async def _evaluate_task22_freeform(question_data: Dict, user_answer: str, user_id: int) -> Tuple[bool, str]:
+    """
+    AI-проверка задания 22 по свободному условию (без предзагруженных ответов).
+
+    Используется когда учитель ввёл условие задания вручную и нет
+    структурированных данных (questions, correct_answers и т.д.).
+    """
+    try:
+        from core.ai_service import create_ai_service, AIServiceConfig, AIModel
+
+        config = AIServiceConfig.from_env()
+        config.model = AIModel.LITE
+        config.temperature = 0.2
+
+        task_text = question_data.get('task_text', '') or question_data.get('description', '')
+
+        system_prompt = (
+            "Ты - опытный эксперт ЕГЭ по обществознанию, специализирующийся на проверке "
+            "задания 22 (задание-задача).\n\n"
+            "ЗАДАНИЕ 22 содержит условие (описание конкретной ситуации) и четыре вопроса.\n"
+            "Максимальный балл: 4 (по 1 баллу за каждый правильный ответ).\n\n"
+            "КРИТЕРИИ ОЦЕНИВАНИЯ:\n"
+            "- 4 балла: правильно даны ответы на четыре вопроса\n"
+            "- 3 балла: правильно даны ответы на любые три вопроса\n"
+            "- 2 балла: правильно даны ответы на любые два вопроса\n"
+            "- 1 балл: правильно дан ответ на любой один вопрос\n"
+            "- 0 баллов: ответ неправильный или рассуждения общего характера\n\n"
+            "ВАЖНЫЕ МОМЕНТЫ:\n"
+            "- Полный правильный ответ предполагает указание определённого количества позиций\n"
+            "- Если вопрос предполагает родовое понятие, а следующий — виды, "
+            "правильный ответ на первый необходим для засчитывания второго\n"
+            "- Не засчитывай ответы с фактическими ошибками\n"
+            "- Не засчитывай общие рассуждения без конкретного ответа\n"
+            "- Учитывай допустимые формулировки (ответ не обязан быть дословным)"
+        )
+
+        prompt = (
+            f"Проверь ответ ученика на задание 22 ЕГЭ по обществознанию.\n\n"
+            f"УСЛОВИЕ ЗАДАНИЯ:\n{task_text}\n\n"
+            f"ОТВЕТ УЧЕНИКА:\n{user_answer}\n\n"
+            f"Проверь ответ и оцени по критериям задания 22 (максимум 4 балла).\n"
+            f"Определи, на какие из четырёх вопросов ученик ответил правильно.\n\n"
+            f"Ответь в формате JSON:\n"
+            f"```json\n"
+            f"{{\n"
+            f'    "score": "число от 0 до 4",\n'
+            f'    "max_score": 4,\n'
+            f'    "correct_answers_count": "количество правильных ответов",\n'
+            f'    "answers_evaluation": [\n'
+            f'        {{\n'
+            f'            "question_number": 1,\n'
+            f'            "is_correct": true,\n'
+            f'            "comment": "комментарий к ответу на вопрос 1"\n'
+            f"        }}\n"
+            f"    ],\n"
+            f'    "feedback": "общий комментарий (2-3 предложения)",\n'
+            f'    "suggestions": ["рекомендация 1", "рекомендация 2"],\n'
+            f'    "factual_errors": []\n'
+            f"}}\n"
+            f"```\n\n"
+            f"ВАЖНО: Верни ТОЛЬКО валидный JSON."
+        )
+
+        async with create_ai_service(config) as service:
+            result = await service.get_json_completion(
+                prompt=prompt,
+                system_prompt=system_prompt,
+                temperature=config.temperature
+            )
+
+            if result:
+                score = int(result.get("score", 0))
+                max_score = int(result.get("max_score", 4))
+                correct_count = int(result.get("correct_answers_count", 0))
+                feedback_text = result.get("feedback", "")
+                suggestions = result.get("suggestions", [])
+                answers_eval = result.get("answers_evaluation", [])
+                factual_errors = result.get("factual_errors", [])
+
+                is_correct = score >= (max_score / 2)
+
+                feedback = f"📊 <b>Результат проверки:</b>\n\n"
+                feedback += f"Баллы: {score}/{max_score}\n\n"
+
+                if answers_eval:
+                    feedback += f"<b>Результат:</b> {correct_count} из 4 ответов правильны.\n\n"
+                    feedback += "<b>Проверка ответов:</b>\n"
+                    for item in answers_eval:
+                        q_num = item.get("question_number", "?")
+                        q_ok = item.get("is_correct", False)
+                        q_comment = item.get("comment", "")
+                        icon = "✅" if q_ok else "❌"
+                        feedback += f"{icon} <b>Вопрос {q_num}:</b> {q_comment}\n"
+
+                feedback += f"\n<b>Обратная связь:</b>\n{feedback_text}"
+
+                if factual_errors:
+                    feedback += f"\n\n⚠️ <b>Фактические ошибки:</b>\n"
+                    feedback += "\n".join(f"• {e}" for e in factual_errors)
+
+                if suggestions:
+                    feedback += f"\n\n💡 <b>Рекомендации:</b>\n"
+                    feedback += "\n".join(f"• {s}" for s in suggestions)
+
+                return is_correct, feedback
+
+        return True, "✅ Ответ принят (AI проверка не вернула результат)"
+
+    except ImportError as e:
+        logger.warning(f"AI service not available for task22 freeform: {e}")
+        return True, "✅ Ответ принят (AI сервис недоступен)"
+    except Exception as e:
+        logger.error(f"Error in task22 freeform evaluation: {e}", exc_info=True)
+        return False, f"❌ Ошибка при проверке: {str(e)}"
