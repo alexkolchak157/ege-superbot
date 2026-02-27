@@ -161,7 +161,8 @@ async def _evaluate_task21(question_data: Dict, user_answer: str, user_id: int) 
     )
 
     if not has_structured_data:
-        return await _evaluate_task21_freeform(question_data, user_answer, user_id)
+        return await _evaluate_task21_freeform(question_data, user_answer, user_id,
+                                               condition_image=question_data.get("condition_image"))
 
     try:
         from task21.evaluator import Task21Evaluator
@@ -206,7 +207,8 @@ async def _evaluate_task22(question_data: Dict, user_answer: str, user_id: int) 
     )
 
     if not has_structured_data:
-        return await _evaluate_task22_freeform(question_data, user_answer, user_id)
+        return await _evaluate_task22_freeform(question_data, user_answer, user_id,
+                                               condition_image=question_data.get("condition_image"))
 
     try:
         from task22.evaluator import Task22AIEvaluator
@@ -552,12 +554,21 @@ async def _evaluate_custom_question(
 # Свободная AI-проверка (без структурированных данных)
 # ============================================
 
-async def _evaluate_task21_freeform(question_data: Dict, user_answer: str, user_id: int) -> Tuple[bool, str]:
+async def _evaluate_task21_freeform(
+    question_data: Dict,
+    user_answer: str,
+    user_id: int,
+    condition_image: Optional[Dict] = None
+) -> Tuple[bool, str]:
     """
     AI-проверка задания 21 по свободному условию (без предзагруженных ответов).
 
     Используется когда учитель ввёл условие задания вручную и нет
     структурированных данных вопросов (question_1, question_2, question_3).
+
+    Args:
+        condition_image: Опциональное изображение условия (график) в формате
+                        {'base64': str, 'media_type': str}
     """
     try:
         from core.ai_service import create_ai_service, AIServiceConfig, AIModel
@@ -568,12 +579,16 @@ async def _evaluate_task21_freeform(question_data: Dict, user_answer: str, user_
 
         task_text = question_data.get('task_text', '')
 
+        has_image = condition_image is not None
         system_prompt = (
             "Ты - опытный эксперт ЕГЭ по обществознанию, специализирующийся на проверке "
             "задания 21 (анализ графиков спроса и предложения).\n\n"
             "ЗАДАНИЕ 21 предполагает анализ графического изображения, иллюстрирующего "
             "изменения спроса/предложения на конкретном рынке, и ответ на три вопроса.\n\n"
-            "Максимальный балл: 3 (по 1 баллу за каждый правильный ответ на вопрос).\n\n"
+            + ("К условию задания прикреплено изображение графика. Внимательно проанализируй его "
+               "для определения правильных ответов на вопросы (направление сдвига кривых, "
+               "изменение равновесной цены и количества).\n\n" if has_image else "")
+            + "Максимальный балл: 3 (по 1 баллу за каждый правильный ответ на вопрос).\n\n"
             "КРИТЕРИИ:\n"
             "- Вопрос 1: Как изменилась равновесная цена? (ответ должен быть однозначным)\n"
             "- Вопрос 2: Фактор + объяснение его влияния применительно к конкретному рынку "
@@ -617,11 +632,15 @@ async def _evaluate_task21_freeform(question_data: Dict, user_answer: str, user_
             f"ВАЖНО: Верни ТОЛЬКО валидный JSON."
         )
 
+        # Подготавливаем изображения для multimodal вызова
+        images = [condition_image] if condition_image else None
+
         async with create_ai_service(config) as service:
             result = await service.get_json_completion(
                 prompt=prompt,
                 system_prompt=system_prompt,
-                temperature=config.temperature
+                temperature=config.temperature,
+                images=images
             )
 
             if result:
@@ -663,12 +682,21 @@ async def _evaluate_task21_freeform(question_data: Dict, user_answer: str, user_
         return False, f"❌ Ошибка при проверке: {str(e)}"
 
 
-async def _evaluate_task22_freeform(question_data: Dict, user_answer: str, user_id: int) -> Tuple[bool, str]:
+async def _evaluate_task22_freeform(
+    question_data: Dict,
+    user_answer: str,
+    user_id: int,
+    condition_image: Optional[Dict] = None
+) -> Tuple[bool, str]:
     """
     AI-проверка задания 22 по свободному условию (без предзагруженных ответов).
 
     Используется когда учитель ввёл условие задания вручную и нет
     структурированных данных (questions, correct_answers и т.д.).
+
+    Args:
+        condition_image: Опциональное изображение условия в формате
+                        {'base64': str, 'media_type': str}
     """
     try:
         from core.ai_service import create_ai_service, AIServiceConfig, AIModel
@@ -726,11 +754,15 @@ async def _evaluate_task22_freeform(question_data: Dict, user_answer: str, user_
             f"ВАЖНО: Верни ТОЛЬКО валидный JSON."
         )
 
+        # Подготавливаем изображения для multimodal вызова
+        images = [condition_image] if condition_image else None
+
         async with create_ai_service(config) as service:
             result = await service.get_json_completion(
                 prompt=prompt,
                 system_prompt=system_prompt,
-                temperature=config.temperature
+                temperature=config.temperature,
+                images=images
             )
 
             if result:

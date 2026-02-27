@@ -146,14 +146,26 @@ async def select_task_type(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         QuickCheckTaskType.CUSTOM: "📝 Произвольное задание"
     }
 
-    text = (
-        f"✏️ <b>{task_names[task_type]}</b>\n\n"
-        "Введите условие задания текстом.\n\n"
-        "Например:\n"
-        "<i>«Дан файл с числами. Найдите количество пар чисел, "
-        "сумма которых делится на 7»</i>\n\n"
-        "💡 Можно скопировать текст задания откуда угодно."
-    )
+    # Для задания 21 подсказываем про фото графика
+    if task_type == QuickCheckTaskType.TASK21:
+        text = (
+            f"✏️ <b>{task_names[task_type]}</b>\n\n"
+            "Отправьте условие задания:\n\n"
+            "📷 <b>Фото графика</b> — отправьте изображение графика "
+            "спроса/предложения (можно с подписью-условием)\n"
+            "📝 <b>Текст</b> — введите условие текстом\n\n"
+            "💡 Для объективной оценки рекомендуется прикрепить "
+            "фото графика из условия задания."
+        )
+    else:
+        text = (
+            f"✏️ <b>{task_names[task_type]}</b>\n\n"
+            "Введите условие задания текстом.\n\n"
+            "Например:\n"
+            "<i>«Дан файл с числами. Найдите количество пар чисел, "
+            "сумма которых делится на 7»</i>\n\n"
+            "💡 Можно скопировать текст задания откуда угодно."
+        )
 
     keyboard = [[InlineKeyboardButton("◀️ Отмена", callback_data="quick_check_menu")]]
     reply_markup = InlineKeyboardMarkup(keyboard)
@@ -164,7 +176,7 @@ async def select_task_type(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 
 
 async def process_task_condition(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Обработка введенного условия задания"""
+    """Обработка введенного условия задания (текст)"""
     user_id = update.effective_user.id
     condition = update.message.text.strip()
 
@@ -228,6 +240,98 @@ async def process_task_condition(update: Update, context: ContextTypes.DEFAULT_T
 
         await update.message.reply_text(text, reply_markup=reply_markup, parse_mode='HTML')
 
+        return TeacherStates.QUICK_CHECK_ENTER_ANSWERS_BULK
+
+
+async def process_task_condition_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Обработка фото условия задания (например, график для задания 21).
+
+    Сохраняет изображение в base64 для передачи в AI evaluator вместе с текстом условия.
+    Подпись к фото (caption) используется как текстовое условие.
+    """
+    import base64
+    from core.image_preprocessor import compress_for_claude
+
+    if not update.message.photo:
+        await update.message.reply_text(
+            "❌ Фото не найдено. Отправьте изображение или введите условие текстом."
+        )
+        return TeacherStates.QUICK_CHECK_ENTER_CONDITION
+
+    # Скачиваем фото (самый большой вариант)
+    photo = update.message.photo[-1]
+    try:
+        file = await photo.get_file()
+        file_bytes = await file.download_as_bytearray()
+    except Exception as e:
+        logger.error(f"Failed to download condition photo: {e}")
+        await update.message.reply_text(
+            "❌ Не удалось загрузить фото. Попробуйте ещё раз."
+        )
+        return TeacherStates.QUICK_CHECK_ENTER_CONDITION
+
+    # Сжимаем и кодируем в base64
+    try:
+        compressed = compress_for_claude(bytes(file_bytes))
+    except Exception:
+        compressed = bytes(file_bytes)
+
+    image_base64 = base64.b64encode(compressed).decode('utf-8')
+
+    # Определяем media_type
+    media_type = "image/jpeg"
+    if compressed[:8] == b'\x89PNG\r\n\x1a\n':
+        media_type = "image/png"
+    elif compressed[:4] == b'RIFF' and compressed[8:12] == b'WEBP':
+        media_type = "image/webp"
+
+    # Сохраняем изображение условия в контексте
+    context.user_data['qc_condition_image'] = {
+        'base64': image_base64,
+        'media_type': media_type,
+    }
+
+    # Текст условия из подписи к фото (caption), если есть
+    caption = (update.message.caption or '').strip()
+    if caption:
+        context.user_data['qc_condition'] = caption
+    else:
+        context.user_data['qc_condition'] = '(условие задания на изображении)'
+
+    task_type = context.user_data.get('qc_task_type')
+    mode = context.user_data.get('qc_mode', 'single')
+
+    await update.message.reply_text(
+        "✅ Изображение условия сохранено!\n"
+        + (f"📝 Подпись: <i>{caption[:100]}</i>\n\n" if caption else "\n")
+        + "AI будет анализировать график при проверке ответов.",
+        parse_mode='HTML'
+    )
+
+    if mode == 'single':
+        text = (
+            "Теперь введите <b>ответ ученика</b> на это задание.\n\n"
+            "💡 Можно вставить ответ текстом или отправить <b>фото рукописного ответа</b>."
+        )
+        keyboard = [[InlineKeyboardButton("◀️ Отмена", callback_data="quick_check_menu")]]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        await update.message.reply_text(text, reply_markup=reply_markup, parse_mode='HTML')
+        return TeacherStates.QUICK_CHECK_ENTER_ANSWER
+    else:
+        context.user_data['qc_bulk_answers'] = []
+        text = (
+            "Теперь отправляйте <b>ответы учеников</b>:\n\n"
+            "📝 <b>Текст</b> — каждая строка = ответ одного ученика\n"
+            "📷 <b>Фото</b> — фото рукописного ответа\n"
+            "📄 <b>Файл</b> — TXT/PDF/DOCX с ответами\n\n"
+            "Когда все ответы добавлены, нажмите <b>«Начать проверку»</b>."
+        )
+        keyboard = [
+            [InlineKeyboardButton("🚀 Начать проверку", callback_data="qc_run_bulk_check")],
+            [InlineKeyboardButton("◀️ Отмена", callback_data="quick_check_menu")]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        await update.message.reply_text(text, reply_markup=reply_markup, parse_mode='HTML')
         return TeacherStates.QUICK_CHECK_ENTER_ANSWERS_BULK
 
 
@@ -318,6 +422,11 @@ async def _run_single_check(update: Update, context: ContextTypes.DEFAULT_TYPE, 
             'task_text': condition
         }
 
+        # Прикрепляем изображение условия (например, график для task21)
+        condition_image = context.user_data.get('qc_condition_image')
+        if condition_image:
+            question_data['condition_image'] = condition_image
+
         is_correct, ai_feedback = await evaluate_homework_answer(
             task_module=task_type.value,
             question_data=question_data,
@@ -363,6 +472,7 @@ async def _run_single_check(update: Update, context: ContextTypes.DEFAULT_TYPE, 
         context.user_data.pop('qc_condition', None)
         context.user_data.pop('qc_mode', None)
         context.user_data.pop('_ocr_answer', None)
+        context.user_data.pop('qc_condition_image', None)
 
         return TeacherStates.QUICK_CHECK_MENU
 
@@ -457,11 +567,21 @@ async def select_bulk_task_type(update: Update, context: ContextTypes.DEFAULT_TY
         QuickCheckTaskType.CUSTOM: "📝 Произвольное"
     }
 
-    text = (
-        f"✏️ <b>{task_names[task_type]}</b>\n\n"
-        "Введите условие задания текстом.\n\n"
-        "Это условие будет общим для всех ответов."
-    )
+    if task_type == QuickCheckTaskType.TASK21:
+        text = (
+            f"✏️ <b>{task_names[task_type]}</b>\n\n"
+            "Отправьте условие задания (общее для всех ответов):\n\n"
+            "📷 <b>Фото графика</b> — изображение графика спроса/предложения "
+            "(можно с подписью-условием)\n"
+            "📝 <b>Текст</b> — условие текстом\n\n"
+            "💡 Для объективной оценки рекомендуется прикрепить фото графика."
+        )
+    else:
+        text = (
+            f"✏️ <b>{task_names[task_type]}</b>\n\n"
+            "Введите условие задания текстом.\n\n"
+            "Это условие будет общим для всех ответов."
+        )
 
     keyboard = [[InlineKeyboardButton("◀️ Отмена", callback_data="quick_check_menu")]]
     reply_markup = InlineKeyboardMarkup(keyboard)
@@ -758,6 +878,11 @@ async def run_bulk_check(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 'task_text': condition
             }
 
+            # Прикрепляем изображение условия (например, график для task21)
+            condition_image = context.user_data.get('qc_condition_image')
+            if condition_image:
+                question_data['condition_image'] = condition_image
+
             is_correct, ai_feedback = await evaluate_homework_answer(
                 task_module=task_type.value,
                 question_data=question_data,
@@ -871,6 +996,7 @@ async def run_bulk_check(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         context.user_data.pop('qc_condition', None)
         context.user_data.pop('qc_mode', None)
         context.user_data.pop('qc_bulk_answers', None)
+        context.user_data.pop('qc_condition_image', None)
 
         return TeacherStates.QUICK_CHECK_MENU
 
