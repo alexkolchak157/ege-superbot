@@ -177,6 +177,7 @@ class ClaudeService:
         system_prompt: Optional[str],
         temperature: Optional[float],
         max_tokens: int,
+        images: Optional[list] = None,
     ) -> Dict[str, Any]:
         """
         Запрос к Claude API через прокси (aiohttp + streaming).
@@ -196,10 +197,26 @@ class ClaudeService:
             "content-type": "application/json",
         }
 
+        # Формируем content: мультимодальный (с изображениями) или текстовый
+        if images:
+            content = []
+            for img in images:
+                content.append({
+                    "type": "image",
+                    "source": {
+                        "type": "base64",
+                        "media_type": img.get("media_type", "image/jpeg"),
+                        "data": img["base64"],
+                    }
+                })
+            content.append({"type": "text", "text": prompt})
+        else:
+            content = prompt
+
         payload = {
             "model": model_id,
             "max_tokens": max_tokens,
-            "messages": [{"role": "user", "content": prompt}],
+            "messages": [{"role": "user", "content": content}],
             "stream": True,
         }
         if temperature is not None:
@@ -298,10 +315,19 @@ class ClaudeService:
         prompt: str,
         system_prompt: Optional[str] = None,
         temperature: Optional[float] = None,
-        max_tokens: Optional[int] = None
+        max_tokens: Optional[int] = None,
+        images: Optional[list] = None
     ) -> Dict[str, Any]:
         """
-        Получение ответа от Claude API
+        Получение ответа от Claude API.
+
+        Args:
+            prompt: Текстовый промпт
+            system_prompt: Системный промпт
+            temperature: Температура генерации
+            max_tokens: Максимум токенов
+            images: Список изображений [{'base64': str, 'media_type': str}]
+                    для мультимодальных запросов (например, фото графика)
 
         Returns:
             Словарь с полями: success, text, usage, model_version
@@ -317,15 +343,32 @@ class ClaudeService:
                     # aiohttp: через прокси (SDK httpx не работает с CF Worker)
                     return await self._proxy_completion(
                         model_id, prompt, system_prompt, temp, tokens,
+                        images=images,
                     )
                 else:
                     # Anthropic SDK: прямое подключение к API
                     self._ensure_client()
 
+                    # Формируем content: мультимодальный или текстовый
+                    if images:
+                        content = []
+                        for img in images:
+                            content.append({
+                                "type": "image",
+                                "source": {
+                                    "type": "base64",
+                                    "media_type": img.get("media_type", "image/jpeg"),
+                                    "data": img["base64"],
+                                }
+                            })
+                        content.append({"type": "text", "text": prompt})
+                    else:
+                        content = prompt
+
                     kwargs = {
                         "model": model_id,
                         "max_tokens": tokens,
-                        "messages": [{"role": "user", "content": prompt}],
+                        "messages": [{"role": "user", "content": content}],
                     }
                     if temp is not None:
                         kwargs["temperature"] = temp
@@ -362,11 +405,16 @@ class ClaudeService:
         prompt: str,
         system_prompt: Optional[str] = None,
         temperature: Optional[float] = None,
-        retry_on_error: bool = True
+        retry_on_error: bool = True,
+        images: Optional[list] = None
     ) -> Optional[Dict[str, Any]]:
         """
         Получение ответа в формате JSON.
         Claude значительно стабильнее генерирует JSON, чем YandexGPT.
+
+        Args:
+            images: Список изображений [{'base64': str, 'media_type': str}]
+                    для мультимодальных запросов
         """
         json_instruction = (
             "\n\nОтветь ТОЛЬКО валидным JSON без дополнительного текста, "
@@ -377,6 +425,7 @@ class ClaudeService:
             prompt + json_instruction,
             system_prompt=system_prompt,
             temperature=temperature if temperature is not None else 0.1,
+            images=images,
         )
 
         if not result["success"]:
@@ -398,6 +447,7 @@ class ClaudeService:
                 prompt + strict_instruction,
                 system_prompt=system_prompt,
                 temperature=0.05,
+                images=images,
             )
             if retry_result["success"]:
                 return self._parse_json_response(retry_result["text"])

@@ -417,6 +417,8 @@ class TeacherModePlugin(BotPlugin):
                 TeacherStates.QUICK_CHECK_ENTER_CONDITION: [
                     # Ввод условия задания (текст)
                     MessageHandler(filters.TEXT & ~filters.COMMAND, quick_check_handlers.process_task_condition),
+                    # Ввод условия задания (фото, например график для задания 21)
+                    MessageHandler(filters.PHOTO, quick_check_handlers.process_task_condition_photo),
                     CallbackQueryHandler(quick_check_handlers.quick_check_menu, pattern="^quick_check_menu$"),
                 ],
                 TeacherStates.QUICK_CHECK_ENTER_ANSWER: [
