@@ -205,19 +205,25 @@ async def process_task_condition(update: Update, context: ContextTypes.DEFAULT_T
         return TeacherStates.QUICK_CHECK_ENTER_ANSWER
 
     else:
-        # Массовая проверка - запрашиваем ответы построчно
+        # Массовая проверка - запрашиваем ответы
+        # Инициализируем список собранных ответов
+        context.user_data['qc_bulk_answers'] = []
+
         text = (
             "✅ Условие сохранено!\n\n"
-            "Теперь введите <b>ответы учеников</b> построчно.\n\n"
-            "Каждая строка = ответ одного ученика.\n\n"
-            "<b>Пример:</b>\n"
-            "<code>145\n"
-            "152\n"
-            "148</code>\n\n"
-            "Максимум 50 ответов за раз."
+            "Теперь отправляйте <b>ответы учеников</b>. Доступные способы:\n\n"
+            "📝 <b>Текст</b> — каждая строка = ответ одного ученика\n"
+            "📷 <b>Фото</b> — фото рукописного ответа (одно фото = один ответ)\n"
+            "📄 <b>Файл</b> — TXT/PDF/DOCX с ответами (каждый абзац = ответ)\n\n"
+            "Можно отправлять несколько сообщений подряд.\n"
+            "Когда все ответы добавлены, нажмите <b>«Начать проверку»</b>.\n\n"
+            "Максимум 50 ответов."
         )
 
-        keyboard = [[InlineKeyboardButton("◀️ Отмена", callback_data="quick_check_menu")]]
+        keyboard = [
+            [InlineKeyboardButton("🚀 Начать проверку", callback_data="qc_run_bulk_check")],
+            [InlineKeyboardButton("◀️ Отмена", callback_data="quick_check_menu")]
+        ]
         reply_markup = InlineKeyboardMarkup(keyboard)
 
         await update.message.reply_text(text, reply_markup=reply_markup, parse_mode='HTML')
@@ -466,35 +472,231 @@ async def select_bulk_task_type(update: Update, context: ContextTypes.DEFAULT_TY
 
 
 async def process_bulk_answers(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Обработка массового ввода ответов"""
-    user_id = update.effective_user.id
+    """Обработка текстового ввода ответов в массовой проверке (добавление в коллекцию)"""
     answers_text = update.message.text.strip()
 
     # Разбиваем на строки
-    answers = [line.strip() for line in answers_text.split('\n') if line.strip()]
+    new_answers = [line.strip() for line in answers_text.split('\n') if line.strip()]
 
-    if len(answers) == 0:
+    if len(new_answers) == 0:
         await update.message.reply_text(
             "❌ Не найдено ни одного ответа.\n\n"
-            "Введите ответы построчно или /cancel для отмены."
+            "Введите ответы построчно, отправьте фото или /cancel для отмены."
         )
         return TeacherStates.QUICK_CHECK_ENTER_ANSWERS_BULK
 
-    if len(answers) > 50:
+    # Получаем текущий список ответов
+    collected = context.user_data.get('qc_bulk_answers', [])
+
+    if len(collected) + len(new_answers) > 50:
         await update.message.reply_text(
-            f"❌ Слишком много ответов ({len(answers)}).\n\n"
-            "Максимум 50 ответов за раз. Попробуйте разбить на несколько запросов."
+            f"❌ Слишком много ответов (уже {len(collected)} + {len(new_answers)} новых = {len(collected) + len(new_answers)}).\n\n"
+            "Максимум 50 ответов за раз. Нажмите «Начать проверку» или сократите список."
         )
         return TeacherStates.QUICK_CHECK_ENTER_ANSWERS_BULK
+
+    # Добавляем новые ответы
+    collected.extend(new_answers)
+    context.user_data['qc_bulk_answers'] = collected
+
+    return await _show_bulk_collection_status(update, context, collected)
+
+
+async def process_bulk_answer_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Обработка фото рукописного ответа в массовой проверке"""
+    from core.vision_service import process_photo_message
+
+    # Формируем контекст для улучшения OCR
+    task_type = context.user_data.get('qc_task_type', '')
+    condition = context.user_data.get('qc_condition', '')
+    ocr_context = f"ЕГЭ обществознание, {task_type}, условие задания: {condition}" if condition else None
+
+    # Распознаём текст с фотографии
+    extracted_text = await process_photo_message(
+        update,
+        context.application.bot,
+        task_name="ответ ученика",
+        task_context=ocr_context
+    )
+
+    if not extracted_text:
+        await update.message.reply_text(
+            "❌ Не удалось распознать текст с фото.\n\n"
+            "Попробуйте отправить фото ещё раз или введите ответ текстом."
+        )
+        return TeacherStates.QUICK_CHECK_ENTER_ANSWERS_BULK
+
+    # Добавляем распознанный ответ в коллекцию
+    collected = context.user_data.get('qc_bulk_answers', [])
+
+    if len(collected) >= 50:
+        await update.message.reply_text(
+            "❌ Достигнут лимит (50 ответов). Нажмите «Начать проверку»."
+        )
+        return TeacherStates.QUICK_CHECK_ENTER_ANSWERS_BULK
+
+    collected.append(extracted_text)
+    context.user_data['qc_bulk_answers'] = collected
+
+    return await _show_bulk_collection_status(update, context, collected, last_ocr=extracted_text)
+
+
+async def process_bulk_answer_document(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Обработка документа (TXT/PDF/DOCX) с ответами в массовой проверке"""
+    from core.document_processor import DocumentProcessor
+
+    if not update.message or not update.message.document:
+        await update.message.reply_text("❌ Документ не найден.")
+        return TeacherStates.QUICK_CHECK_ENTER_ANSWERS_BULK
+
+    document = update.message.document
+
+    processing_msg = await update.message.reply_text("📄 Обрабатываю документ...")
+
+    success, text, error = await DocumentProcessor.process_document(document, context)
+
+    try:
+        await processing_msg.delete()
+    except Exception:
+        pass
+
+    if not success:
+        await update.message.reply_text(
+            f"❌ Ошибка обработки документа:\n{error}\n\n"
+            "Поддерживаемые форматы: TXT, PDF, DOCX.\n"
+            "Попробуйте другой файл или отправьте ответы текстом."
+        )
+        return TeacherStates.QUICK_CHECK_ENTER_ANSWERS_BULK
+
+    # Разбиваем текст документа на отдельные ответы (по абзацам / строкам)
+    new_answers = [line.strip() for line in text.split('\n') if line.strip()]
+
+    if not new_answers:
+        await update.message.reply_text(
+            "❌ Не удалось извлечь ответы из документа.\n"
+            "Убедитесь, что каждый ответ на отдельной строке."
+        )
+        return TeacherStates.QUICK_CHECK_ENTER_ANSWERS_BULK
+
+    collected = context.user_data.get('qc_bulk_answers', [])
+
+    if len(collected) + len(new_answers) > 50:
+        # Берём столько, сколько помещается
+        available = 50 - len(collected)
+        new_answers = new_answers[:available]
+        await update.message.reply_text(
+            f"⚠️ Из документа добавлено только {available} ответов (достигнут лимит 50)."
+        )
+
+    collected.extend(new_answers)
+    context.user_data['qc_bulk_answers'] = collected
+
+    return await _show_bulk_collection_status(
+        update, context, collected,
+        extra_info=f"📄 Из документа добавлено: {len(new_answers)} ответов"
+    )
+
+
+async def _show_bulk_collection_status(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    collected: list,
+    last_ocr: str = None,
+    extra_info: str = None
+) -> int:
+    """Показывает текущий статус сбора ответов в массовой проверке"""
+    text = f"✅ <b>Ответов собрано: {len(collected)}</b>\n\n"
+
+    if extra_info:
+        text += f"{extra_info}\n\n"
+
+    if last_ocr:
+        preview = last_ocr[:100] + ("..." if len(last_ocr) > 100 else "")
+        text += f"📷 Распознано с фото:\n<code>{preview}</code>\n\n"
+
+    # Показываем последние 5 собранных ответов
+    if collected:
+        text += "<b>Последние ответы:</b>\n"
+        start = max(0, len(collected) - 5)
+        for i, answer in enumerate(collected[start:], start + 1):
+            preview = answer[:40] + ("..." if len(answer) > 40 else "")
+            text += f"  {i}. <code>{preview}</code>\n"
+
+    text += (
+        "\n📝 Отправьте ещё ответы (текст / фото / файл)\n"
+        "или нажмите <b>«Начать проверку»</b>."
+    )
+
+    keyboard = [
+        [InlineKeyboardButton(f"🚀 Начать проверку ({len(collected)})", callback_data="qc_run_bulk_check")],
+        [InlineKeyboardButton("🗑 Очистить список", callback_data="qc_clear_bulk_answers")],
+        [InlineKeyboardButton("◀️ Отмена", callback_data="quick_check_menu")]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
+    await update.message.reply_text(text, reply_markup=reply_markup, parse_mode='HTML')
+    return TeacherStates.QUICK_CHECK_ENTER_ANSWERS_BULK
+
+
+async def clear_bulk_answers(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Очистка собранных ответов массовой проверки"""
+    query = update.callback_query
+    await query.answer()
+
+    context.user_data['qc_bulk_answers'] = []
+
+    text = (
+        "🗑 <b>Список ответов очищен.</b>\n\n"
+        "Отправьте ответы учеников:\n"
+        "📝 Текст (каждая строка = один ответ)\n"
+        "📷 Фото рукописного ответа\n"
+        "📄 Файл (TXT/PDF/DOCX)\n\n"
+        "Когда все ответы добавлены, нажмите <b>«Начать проверку»</b>."
+    )
+
+    keyboard = [
+        [InlineKeyboardButton("🚀 Начать проверку", callback_data="qc_run_bulk_check")],
+        [InlineKeyboardButton("◀️ Отмена", callback_data="quick_check_menu")]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
+    await query.message.edit_text(text, reply_markup=reply_markup, parse_mode='HTML')
+    return TeacherStates.QUICK_CHECK_ENTER_ANSWERS_BULK
+
+
+async def run_bulk_check(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Запуск массовой проверки собранных ответов"""
+    query = update.callback_query
+    await query.answer()
+
+    user_id = update.effective_user.id
+
+    # Получаем собранные ответы
+    answers = context.user_data.get('qc_bulk_answers', [])
+
+    if not answers:
+        await query.message.edit_text(
+            "❌ Нет собранных ответов для проверки.\n\n"
+            "Сначала отправьте ответы учеников (текст, фото или файл).",
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("◀️ Назад", callback_data="quick_check_menu")
+            ]]),
+            parse_mode='HTML'
+        )
+        return TeacherStates.QUICK_CHECK_MENU
 
     # Проверяем квоту
     quota = await quick_check_service.get_or_create_quota(user_id)
     if not quota or quota.remaining_checks < len(answers):
-        await update.message.reply_text(
-            f"❌ Недостаточно квоты\n\n"
+        await query.message.edit_text(
+            f"❌ <b>Недостаточно квоты</b>\n\n"
             f"Нужно: {len(answers)} проверок\n"
             f"Доступно: {quota.remaining_checks if quota else 0}\n\n"
-            "Сократите количество ответов или обновите подписку."
+            "Сократите количество ответов или обновите подписку.",
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("◀️ Назад", callback_data="quick_check_menu")
+            ]]),
+            parse_mode='HTML'
         )
         return TeacherStates.QUICK_CHECK_ENTER_ANSWERS_BULK
 
@@ -502,10 +704,11 @@ async def process_bulk_answers(update: Update, context: ContextTypes.DEFAULT_TYP
     task_type = context.user_data.get('qc_task_type')
     condition = context.user_data.get('qc_condition')
 
-    checking_msg = await update.message.reply_text(
+    await query.message.edit_text(
         f"⏳ Проверяю {len(answers)} ответов...\n\n"
         "Это может занять некоторое время."
     )
+    checking_msg = query.message
 
     try:
         from teacher_mode.services.ai_homework_evaluator import evaluate_homework_answer
@@ -553,9 +756,12 @@ async def process_bulk_answers(update: Update, context: ContextTypes.DEFAULT_TYP
 
             # Обновляем прогресс
             if (i + 1) % 5 == 0:
-                await checking_msg.edit_text(
-                    f"⏳ Проверено {i + 1}/{len(answers)}..."
-                )
+                try:
+                    await checking_msg.edit_text(
+                        f"⏳ Проверено {i + 1}/{len(answers)}..."
+                    )
+                except Exception:
+                    pass
 
         # Формируем результат
         accuracy = (correct_count / len(results) * 100) if results else 0
@@ -593,6 +799,7 @@ async def process_bulk_answers(update: Update, context: ContextTypes.DEFAULT_TYP
         context.user_data.pop('qc_task_type', None)
         context.user_data.pop('qc_condition', None)
         context.user_data.pop('qc_mode', None)
+        context.user_data.pop('qc_bulk_answers', None)
 
         return TeacherStates.QUICK_CHECK_MENU
 

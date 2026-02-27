@@ -426,8 +426,14 @@ class TeacherModePlugin(BotPlugin):
                     CallbackQueryHandler(quick_check_handlers.quick_check_menu, pattern="^quick_check_menu$"),
                 ],
                 TeacherStates.QUICK_CHECK_ENTER_ANSWERS_BULK: [
-                    # Ввод ответов построчно (массовая проверка)
+                    # Ввод ответов (массовая проверка) — текст, фото или документ
                     MessageHandler(filters.TEXT & ~filters.COMMAND, quick_check_handlers.process_bulk_answers),
+                    MessageHandler(filters.PHOTO, quick_check_handlers.process_bulk_answer_photo),
+                    MessageHandler(filters.Document.ALL, quick_check_handlers.process_bulk_answer_document),
+                    # Запуск проверки собранных ответов
+                    CallbackQueryHandler(quick_check_handlers.run_bulk_check, pattern="^qc_run_bulk_check$"),
+                    # Очистка списка
+                    CallbackQueryHandler(quick_check_handlers.clear_bulk_answers, pattern="^qc_clear_bulk_answers$"),
                     CallbackQueryHandler(quick_check_handlers.quick_check_menu, pattern="^quick_check_menu$"),
                 ],
             },
