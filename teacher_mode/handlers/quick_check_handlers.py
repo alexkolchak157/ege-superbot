@@ -476,9 +476,9 @@ async def process_bulk_answers(update: Update, context: ContextTypes.DEFAULT_TYP
     answers_text = update.message.text.strip()
 
     # Разбиваем на строки
-    new_answers = [line.strip() for line in answers_text.split('\n') if line.strip()]
+    new_lines = [line.strip() for line in answers_text.split('\n') if line.strip()]
 
-    if len(new_answers) == 0:
+    if len(new_lines) == 0:
         await update.message.reply_text(
             "❌ Не найдено ни одного ответа.\n\n"
             "Введите ответы построчно, отправьте фото или /cancel для отмены."
@@ -488,15 +488,16 @@ async def process_bulk_answers(update: Update, context: ContextTypes.DEFAULT_TYP
     # Получаем текущий список ответов
     collected = context.user_data.get('qc_bulk_answers', [])
 
-    if len(collected) + len(new_answers) > 50:
+    if len(collected) + len(new_lines) > 50:
         await update.message.reply_text(
-            f"❌ Слишком много ответов (уже {len(collected)} + {len(new_answers)} новых = {len(collected) + len(new_answers)}).\n\n"
+            f"❌ Слишком много ответов (уже {len(collected)} + {len(new_lines)} новых = {len(collected) + len(new_lines)}).\n\n"
             "Максимум 50 ответов за раз. Нажмите «Начать проверку» или сократите список."
         )
         return TeacherStates.QUICK_CHECK_ENTER_ANSWERS_BULK
 
-    # Добавляем новые ответы
-    collected.extend(new_answers)
+    # Добавляем новые ответы как dict-записи
+    for line in new_lines:
+        collected.append({'text': line, 'photo_file_id': None, 'source': 'text'})
     context.user_data['qc_bulk_answers'] = collected
 
     return await _show_bulk_collection_status(update, context, collected)
@@ -505,6 +506,9 @@ async def process_bulk_answers(update: Update, context: ContextTypes.DEFAULT_TYP
 async def process_bulk_answer_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Обработка фото рукописного ответа в массовой проверке"""
     from core.vision_service import process_photo_message
+
+    # Сохраняем file_id самого крупного варианта фото
+    photo_file_id = update.message.photo[-1].file_id if update.message.photo else None
 
     # Формируем контекст для улучшения OCR
     task_type = context.user_data.get('qc_task_type', '')
@@ -526,7 +530,7 @@ async def process_bulk_answer_photo(update: Update, context: ContextTypes.DEFAUL
         )
         return TeacherStates.QUICK_CHECK_ENTER_ANSWERS_BULK
 
-    # Добавляем распознанный ответ в коллекцию
+    # Добавляем распознанный ответ в коллекцию вместе с file_id фото
     collected = context.user_data.get('qc_bulk_answers', [])
 
     if len(collected) >= 50:
@@ -535,7 +539,11 @@ async def process_bulk_answer_photo(update: Update, context: ContextTypes.DEFAUL
         )
         return TeacherStates.QUICK_CHECK_ENTER_ANSWERS_BULK
 
-    collected.append(extracted_text)
+    collected.append({
+        'text': extracted_text,
+        'photo_file_id': photo_file_id,
+        'source': 'photo'
+    })
     context.user_data['qc_bulk_answers'] = collected
 
     return await _show_bulk_collection_status(update, context, collected, last_ocr=extracted_text)
@@ -588,7 +596,8 @@ async def process_bulk_answer_document(update: Update, context: ContextTypes.DEF
             f"⚠️ Из документа добавлено только {available} ответов (достигнут лимит 50)."
         )
 
-    collected.extend(new_answers)
+    for ans in new_answers:
+        collected.append({'text': ans, 'photo_file_id': None, 'source': 'document'})
     context.user_data['qc_bulk_answers'] = collected
 
     return await _show_bulk_collection_status(
@@ -616,11 +625,15 @@ async def _show_bulk_collection_status(
 
     # Показываем последние 5 собранных ответов
     if collected:
+        source_icons = {'text': '📝', 'photo': '📷', 'document': '📄'}
         text += "<b>Последние ответы:</b>\n"
         start = max(0, len(collected) - 5)
-        for i, answer in enumerate(collected[start:], start + 1):
-            preview = answer[:40] + ("..." if len(answer) > 40 else "")
-            text += f"  {i}. <code>{preview}</code>\n"
+        for i, entry in enumerate(collected[start:], start + 1):
+            answer_text = entry['text'] if isinstance(entry, dict) else entry
+            source = entry.get('source', 'text') if isinstance(entry, dict) else 'text'
+            icon = source_icons.get(source, '📝')
+            preview = answer_text[:40] + ("..." if len(answer_text) > 40 else "")
+            text += f"  {i}. {icon} <code>{preview}</code>\n"
 
     text += (
         "\n📝 Отправьте ещё ответы (текст / фото / файл)\n"
@@ -665,16 +678,23 @@ async def clear_bulk_answers(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
 
 async def run_bulk_check(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Запуск массовой проверки собранных ответов"""
+    """Запуск массовой проверки собранных ответов.
+
+    Для каждой работы отправляет отдельное сообщение с полным AI-фидбэком.
+    Если ответ был загружен с фото — прикрепляет фото к сообщению с обратной связью.
+    В конце отправляет итоговую сводку.
+    """
     query = update.callback_query
     await query.answer()
 
     user_id = update.effective_user.id
+    chat_id = update.effective_chat.id
+    bot = context.application.bot
 
-    # Получаем собранные ответы
-    answers = context.user_data.get('qc_bulk_answers', [])
+    # Получаем собранные ответы (список dict: {text, photo_file_id, source})
+    entries = context.user_data.get('qc_bulk_answers', [])
 
-    if not answers:
+    if not entries:
         await query.message.edit_text(
             "❌ Нет собранных ответов для проверки.\n\n"
             "Сначала отправьте ответы учеников (текст, фото или файл).",
@@ -687,10 +707,10 @@ async def run_bulk_check(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
     # Проверяем квоту
     quota = await quick_check_service.get_or_create_quota(user_id)
-    if not quota or quota.remaining_checks < len(answers):
+    if not quota or quota.remaining_checks < len(entries):
         await query.message.edit_text(
             f"❌ <b>Недостаточно квоты</b>\n\n"
-            f"Нужно: {len(answers)} проверок\n"
+            f"Нужно: {len(entries)} проверок\n"
             f"Доступно: {quota.remaining_checks if quota else 0}\n\n"
             "Сократите количество ответов или обновите подписку.",
             reply_markup=InlineKeyboardMarkup([[
@@ -705,24 +725,34 @@ async def run_bulk_check(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     condition = context.user_data.get('qc_condition')
 
     await query.message.edit_text(
-        f"⏳ Проверяю {len(answers)} ответов...\n\n"
-        "Это может занять некоторое время."
+        f"⏳ Проверяю {len(entries)} ответов...\n\n"
+        "Результаты будут отправлены отдельным сообщением по каждой работе."
     )
     checking_msg = query.message
 
     try:
+        import html as html_module
         from teacher_mode.services.ai_homework_evaluator import evaluate_homework_answer
 
-        results = []
         correct_count = 0
+        checked_count = 0
 
-        for i, answer in enumerate(answers):
+        for i, entry in enumerate(entries):
+            answer_text = entry['text'] if isinstance(entry, dict) else entry
+            photo_file_id = entry.get('photo_file_id') if isinstance(entry, dict) else None
+            source = entry.get('source', 'text') if isinstance(entry, dict) else 'text'
+
             # Списываем квоту
             success, _ = await quick_check_service.check_and_use_quota(user_id, count=1)
             if not success:
+                await bot.send_message(
+                    chat_id=chat_id,
+                    text="⚠️ Квота исчерпана, оставшиеся работы не проверены.",
+                    parse_mode='HTML'
+                )
                 break
 
-            # Проверяем ответ
+            # Проверяем ответ через AI
             question_data = {
                 'title': f'{task_type.value} - массовая проверка',
                 'task_text': condition
@@ -731,7 +761,7 @@ async def run_bulk_check(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             is_correct, ai_feedback = await evaluate_homework_answer(
                 task_module=task_type.value,
                 question_data=question_data,
-                user_answer=answer,
+                user_answer=answer_text,
                 user_id=user_id
             )
 
@@ -740,60 +770,101 @@ async def run_bulk_check(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 teacher_id=user_id,
                 task_type=task_type,
                 task_condition=condition,
-                student_answer=answer,
+                student_answer=answer_text,
                 ai_feedback=ai_feedback,
                 is_correct=is_correct
             )
 
-            results.append({
-                'answer': answer,
-                'is_correct': is_correct,
-                'feedback': ai_feedback
-            })
-
+            checked_count += 1
             if is_correct:
                 correct_count += 1
 
-            # Обновляем прогресс
-            if (i + 1) % 5 == 0:
+            # Формируем полный фидбэк для этой работы (как в одиночной проверке)
+            answer_escaped = html_module.escape(answer_text[:300])
+            feedback_text = (
+                f"<b>🔍 Работа {i + 1}/{len(entries)}</b>\n\n"
+                f"<b>Тип задания:</b> {task_type.value}\n\n"
+                f"<b>Ответ ученика:</b>\n<code>{answer_escaped}</code>"
+                f"{'...' if len(answer_text) > 300 else ''}\n\n"
+                f"{ai_feedback}"
+            )
+
+            # Отправляем фидбэк: с фото если есть, иначе текстом
+            try:
+                if photo_file_id:
+                    # Если фидбэк помещается в caption (лимит 1024 символа) — шлём как caption
+                    if len(feedback_text) <= 1024:
+                        await bot.send_photo(
+                            chat_id=chat_id,
+                            photo=photo_file_id,
+                            caption=feedback_text,
+                            parse_mode='HTML'
+                        )
+                    else:
+                        # Фото со коротким caption + полный фидбэк reply-сообщением
+                        photo_msg = await bot.send_photo(
+                            chat_id=chat_id,
+                            photo=photo_file_id,
+                            caption=f"<b>🔍 Работа {i + 1}/{len(entries)}</b> — ответ ученика",
+                            parse_mode='HTML'
+                        )
+                        await bot.send_message(
+                            chat_id=chat_id,
+                            text=feedback_text,
+                            reply_to_message_id=photo_msg.message_id,
+                            parse_mode='HTML'
+                        )
+                else:
+                    await bot.send_message(
+                        chat_id=chat_id,
+                        text=feedback_text,
+                        parse_mode='HTML'
+                    )
+            except Exception as e:
+                logger.error(f"Error sending feedback for work {i + 1}: {e}")
+                # Фолбэк: отправляем без форматирования
                 try:
-                    await checking_msg.edit_text(
-                        f"⏳ Проверено {i + 1}/{len(answers)}..."
+                    await bot.send_message(
+                        chat_id=chat_id,
+                        text=f"Работа {i + 1}/{len(entries)}\n\n{ai_feedback}"
                     )
                 except Exception:
                     pass
 
-        # Формируем результат
-        accuracy = (correct_count / len(results) * 100) if results else 0
+            # Обновляем прогресс в исходном сообщении
+            if (i + 1) % 3 == 0 and (i + 1) < len(entries):
+                try:
+                    await checking_msg.edit_text(
+                        f"⏳ Проверено {i + 1}/{len(entries)}..."
+                    )
+                except Exception:
+                    pass
 
-        text = (
-            f"✅ <b>Массовая проверка завершена!</b>\n\n"
-            f"📊 Проверено: {len(results)} ответов\n"
+        # Итоговая сводка
+        accuracy = (correct_count / checked_count * 100) if checked_count else 0
+
+        summary = (
+            f"📊 <b>Массовая проверка завершена!</b>\n\n"
+            f"Проверено: {checked_count} из {len(entries)} работ\n"
             f"✅ Правильных: {correct_count}\n"
-            f"❌ Неправильных: {len(results) - correct_count}\n"
+            f"❌ Неправильных: {checked_count - correct_count}\n"
             f"📈 Точность: {accuracy:.1f}%\n\n"
-            f"<b>Детализация:</b>\n\n"
+            f"Подробный фидбэк по каждой работе отправлен выше ⬆️"
         )
-
-        # Показываем первые 10 результатов
-        for i, result in enumerate(results[:10]):
-            emoji = "✅" if result['is_correct'] else "❌"
-            answer_preview = result['answer'][:30]
-            text += f"{i+1}. {emoji} <code>{answer_preview}</code>\n"
-
-        if len(results) > 10:
-            text += f"\n... и еще {len(results) - 10} результатов\n"
-
-        text += f"\n💡 Все результаты сохранены в истории."
 
         keyboard = [
             [InlineKeyboardButton("📜 Посмотреть историю", callback_data="qc_history")],
-            [InlineKeyboardButton("📚 Еще массовая", callback_data="qc_check_bulk")],
+            [InlineKeyboardButton("📚 Ещё массовая", callback_data="qc_check_bulk")],
             [InlineKeyboardButton("◀️ В меню", callback_data="quick_check_menu")]
         ]
 
         reply_markup = InlineKeyboardMarkup(keyboard)
-        await checking_msg.edit_text(text, reply_markup=reply_markup, parse_mode='HTML')
+        await bot.send_message(
+            chat_id=chat_id,
+            text=summary,
+            reply_markup=reply_markup,
+            parse_mode='HTML'
+        )
 
         # Очищаем контекст
         context.user_data.pop('qc_task_type', None)
@@ -806,9 +877,12 @@ async def run_bulk_check(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     except Exception as e:
         logger.error(f"Error in bulk check: {e}")
 
-        await checking_msg.edit_text(
-            "❌ Ошибка при массовой проверке.\n\n"
-            "Частично проверенные ответы сохранены.",
+        await bot.send_message(
+            chat_id=chat_id,
+            text=(
+                "❌ Ошибка при массовой проверке.\n\n"
+                "Частично проверенные ответы сохранены."
+            ),
             reply_markup=InlineKeyboardMarkup([[
                 InlineKeyboardButton("◀️ В меню", callback_data="quick_check_menu")
             ]]),
