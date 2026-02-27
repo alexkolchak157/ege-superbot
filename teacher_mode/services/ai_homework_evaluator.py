@@ -331,40 +331,29 @@ async def _evaluate_task25(question_data: Dict, user_answer: str, user_id: int) 
     """Проверка ответа для task25 (эссе)"""
     try:
         from task25.evaluator import Task25AIEvaluator
-        from core.types import EvaluationResult
 
         # Создаем evaluator
         evaluator = Task25AIEvaluator()
 
         # Вызываем проверку
-        result: EvaluationResult = await evaluator.evaluate(
+        result = await evaluator.evaluate(
             answer=user_answer,
             topic=question_data,  # Передаем весь question_data как topic
             user_id=user_id
         )
 
-        # Формируем обратную связь
         is_correct = result.total_score >= (result.max_score / 2)
 
-        feedback = f"📊 <b>Результат проверки:</b>\n\n"
-        feedback += f"Баллы: {result.total_score}/{result.max_score}\n\n"
-
-        # Добавляем детали по критериям
-        if result.criteria_scores:
-            feedback += "<b>По критериям:</b>\n"
-            for criterion, score in result.criteria_scores.items():
-                feedback += f"• {criterion}: {score}\n"
-            feedback += "\n"
-
-        feedback += f"<b>Обратная связь:</b>\n{result.feedback}"
-
-        if result.warnings:
-            feedback += f"\n\n⚠️ <b>Предупреждения:</b>\n"
-            feedback += "\n".join(f"• {w}" for w in result.warnings)
-
-        if result.suggestions:
-            feedback += f"\n\n💡 <b>Рекомендации:</b>\n"
-            feedback += "\n".join(f"• {s}" for s in result.suggestions)
+        # Используем встроенное форматирование Task25EvaluationResult,
+        # которое выводит детальные комментарии по каждому критерию (К1, К2, К3),
+        # разбор элементов К2 и примеров К3, рекомендации и фактические ошибки
+        if hasattr(result, 'format_feedback'):
+            feedback = result.format_feedback()
+        else:
+            # Фолбэк для базового EvaluationResult без format_feedback
+            feedback = f"📊 <b>Результат проверки:</b>\n\n"
+            feedback += f"Баллы: {result.total_score}/{result.max_score}\n\n"
+            feedback += f"<b>Обратная связь:</b>\n{result.feedback}"
 
         return is_correct, feedback
 
