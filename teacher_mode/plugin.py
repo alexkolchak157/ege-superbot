@@ -476,13 +476,21 @@ class TeacherModePlugin(BotPlugin):
                 TeacherStates.VARIANT_CHECK_ENTER_KEYS: [
                     # Ввод ключей (текстом)
                     MessageHandler(filters.TEXT & ~filters.COMMAND, variant_check_handlers.process_keys_input),
+                    # Ввод ключей (файлом)
+                    MessageHandler(filters.Document.ALL, variant_check_handlers.process_keys_document),
+                    # Ввод ключей (фото)
+                    MessageHandler(filters.PHOTO, variant_check_handlers.process_keys_photo),
                     # Навигация
                     CallbackQueryHandler(variant_check_handlers.variant_check_menu, pattern="^vc_menu$"),
                     CallbackQueryHandler(teacher_handlers.teacher_menu, pattern="^teacher_menu$"),
                 ],
                 TeacherStates.VARIANT_CHECK_ENTER_ANSWER: [
-                    # Ввод ответа ученика
+                    # Ввод ответа ученика (текст)
                     MessageHandler(filters.TEXT & ~filters.COMMAND, variant_check_handlers.process_student_answer),
+                    # Ввод ответа ученика (файл)
+                    MessageHandler(filters.Document.ALL, variant_check_handlers.process_answer_document),
+                    # Ввод ответа ученика (фото)
+                    MessageHandler(filters.PHOTO, variant_check_handlers.process_answer_photo),
                     # Пропустить задание
                     CallbackQueryHandler(variant_check_handlers.skip_task, pattern="^vc_skip_task$"),
                     # Завершить ввод и проверить
@@ -512,8 +520,10 @@ class TeacherModePlugin(BotPlugin):
                     CallbackQueryHandler(teacher_handlers.teacher_menu, pattern="^teacher_menu$"),
                 ],
                 TeacherStates.VARIANT_CHECK_BATCH_NEXT: [
-                    # Ввод ответов следующего ученика
+                    # Ввод ответов следующего ученика (текст, файл, фото)
                     MessageHandler(filters.TEXT & ~filters.COMMAND, variant_check_handlers.process_student_answer),
+                    MessageHandler(filters.Document.ALL, variant_check_handlers.process_answer_document),
+                    MessageHandler(filters.PHOTO, variant_check_handlers.process_answer_photo),
                     CallbackQueryHandler(variant_check_handlers.skip_task, pattern="^vc_skip_task$"),
                     CallbackQueryHandler(variant_check_handlers.finish_input_callback, pattern="^vc_finish_input$"),
                     CallbackQueryHandler(variant_check_handlers.variant_check_menu, pattern="^vc_menu$"),

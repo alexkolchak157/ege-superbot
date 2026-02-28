@@ -445,22 +445,17 @@ async def _start_entering_keys(update: Update, context: ContextTypes.DEFAULT_TYP
 
     lines = ["📝 <b>Ввод ключей (правильных ответов)</b>\n"]
 
-    if part1_tasks and part2_tasks:
-        lines.append(
-            "Для части 1 введите ответы одним сообщением.\n"
-            "Для части 2 введите условие и критерии для каждого задания.\n"
-        )
-    elif part1_tasks:
-        lines.append("Введите ответы на тестовую часть одним сообщением.\n")
-    elif part2_tasks:
-        lines.append("Введите условия и критерии для каждого задания.\n")
+    lines.append(
+        "Ключи можно ввести <b>текстом</b>, загрузить "
+        "<b>файлом</b> (TXT/PDF/DOCX) или отправить <b>фото</b>.\n"
+    )
 
     # Формат ввода
-    lines.append("<b>Формат ввода:</b>\n")
+    lines.append("<b>Формат ввода (текст или файл):</b>\n")
 
     if part1_tasks:
         lines.append(
-            "🔹 <b>Часть 1</b> — все ответы одним сообщением:\n"
+            "🔹 <b>Часть 1</b> — все ответы списком:\n"
             "<code>1: 24\n"
             "2: 135\n"
             "3: социализация\n"
@@ -470,18 +465,25 @@ async def _start_entering_keys(update: Update, context: ContextTypes.DEFAULT_TYP
     if part2_tasks:
         lines.append(
             "🔹 <b>Часть 2</b> — для каждого задания:\n"
-            "<code>Задание N:\n"
+            "<code>17:\n"
             "[условие задания]\n"
             "---\n"
             "[правильный ответ / критерии]\n"
+            "===\n"
+            "18:\n"
+            "[условие]\n"
+            "---\n"
+            "[ответ]\n"
             "===</code>\n"
         )
 
+    lines.append(
+        "📄 <b>Файл</b> — загрузите TXT/PDF/DOCX в таком же формате\n"
+        "📷 <b>Фото</b> — отправьте фото с ключами (OCR)\n"
+    )
+
     if part1_tasks:
-        lines.append(
-            "Начните с ответов <b>части 1</b>.\n"
-            "Введите ответы в формате выше:"
-        )
+        lines.append("Начните с ответов <b>части 1</b>:")
     else:
         lines.append(
             f"Введите данные для <b>задания {part2_tasks[0]}</b> "
@@ -499,79 +501,215 @@ async def _start_entering_keys(update: Update, context: ContextTypes.DEFAULT_TYP
 
 
 async def process_keys_input(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Обработка ввода ключей от учителя."""
+    """Обработка ввода ключей от учителя (текстовое сообщение)."""
     text = update.message.text.strip()
+    return await _process_keys_from_text(update, context, text, source="текста")
+
+
+async def process_keys_document(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Обработка файла (TXT/PDF/DOCX) с ключами."""
+    from core.document_processor import DocumentProcessor
+
+    if not update.message or not update.message.document:
+        await update.message.reply_text("❌ Документ не найден.")
+        return TeacherStates.VARIANT_CHECK_ENTER_KEYS
+
+    document = update.message.document
+    processing_msg = await update.message.reply_text("📄 Обрабатываю файл с ключами...")
+
+    success, text, error = await DocumentProcessor.process_document(document, context)
+
+    try:
+        await processing_msg.delete()
+    except Exception:
+        pass
+
+    if not success:
+        await update.message.reply_text(
+            f"❌ Ошибка обработки файла:\n{error}\n\n"
+            "Поддерживаемые форматы: TXT, PDF, DOCX.",
+            parse_mode='HTML'
+        )
+        return TeacherStates.VARIANT_CHECK_ENTER_KEYS
+
+    # Парсим содержимое файла как ключи
+    return await _process_keys_from_text(update, context, text, source="файла")
+
+
+async def process_keys_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Обработка фото с ключами (OCR)."""
+    from core.vision_service import process_photo_message
+
+    extracted_text = await process_photo_message(
+        update,
+        context.application.bot,
+        task_name="ключи к заданиям",
+        task_context="ЕГЭ обществознание, ключи (правильные ответы) к варианту"
+    )
+
+    if not extracted_text:
+        await update.message.reply_text(
+            "❌ Не удалось распознать текст с фото.\n\n"
+            "Попробуйте ещё раз или введите ключи текстом / загрузите файл."
+        )
+        return TeacherStates.VARIANT_CHECK_ENTER_KEYS
+
+    return await _process_keys_from_text(update, context, extracted_text, source="фото")
+
+
+async def _process_keys_from_text(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    text: str,
+    source: str = "текста"
+) -> int:
+    """Общая логика парсинга ключей из текста (из файла, фото или сообщения)."""
     selected = context.user_data.get('vc_selected_tasks', [])
     keys = context.user_data.get('vc_keys', {})
 
     part1_tasks = [t for t in selected if t <= 16]
     part2_tasks = [t for t in selected if t >= 17]
 
-    # Если ещё не введены ключи части 1 и есть задания части 1
+    # Пытаемся распарсить как комплексный файл со всеми ключами сразу
+    parsed_all = _parse_bulk_keys(text, selected)
+    if parsed_all and len(parsed_all) > 1:
+        keys.update(parsed_all)
+        context.user_data['vc_keys'] = keys
+
+        # Считаем сколько ключей для каждой части
+        p1_count = sum(1 for k in parsed_all if k <= 16)
+        p2_count = sum(1 for k in parsed_all if k >= 17)
+        parts_info = []
+        if p1_count:
+            parts_info.append(f"часть 1: {p1_count}")
+        if p2_count:
+            parts_info.append(f"часть 2: {p2_count}")
+
+        await update.message.reply_text(
+            f"✅ Из {source} загружено <b>{len(parsed_all)}</b> ключей "
+            f"({', '.join(parts_info)}).",
+            parse_mode='HTML'
+        )
+        return await _keys_complete(update, context)
+
+    # Если комплексный парсинг не дал результатов, пробуем как для текущего шага
     part1_keys_entered = any(t in keys for t in range(1, 17))
 
     if part1_tasks and not part1_keys_entered:
-        # Парсим ответы части 1
         parsed = _parse_part1_keys(text, part1_tasks)
-        if not parsed:
-            await update.message.reply_text(
-                "❌ Не удалось распознать ответы.\n\n"
-                "Используйте формат:\n"
-                "<code>1: 24\n2: 135\n3: текст</code>",
-                parse_mode='HTML'
-            )
-            return TeacherStates.VARIANT_CHECK_ENTER_KEYS
+        if parsed:
+            keys.update(parsed)
+            context.user_data['vc_keys'] = keys
 
-        keys.update(parsed)
-        context.user_data['vc_keys'] = keys
-
-        if part2_tasks:
-            # Переходим к вводу ключей части 2
-            context.user_data['vc_entering_keys_idx'] = 0
-            task_num = part2_tasks[0]
-            await update.message.reply_text(
-                f"✅ Ответы части 1 сохранены ({len(parsed)} заданий).\n\n"
-                f"Теперь введите данные для <b>задания {task_num}</b> "
-                f"({TASK_NAMES.get(task_num, '')}):\n\n"
-                "Формат:\n"
-                "<code>[условие задания]\n---\n[правильный ответ / критерии]</code>",
-                parse_mode='HTML'
-            )
-            return TeacherStates.VARIANT_CHECK_ENTER_KEYS
+            if part2_tasks:
+                context.user_data['vc_entering_keys_idx'] = 0
+                task_num = part2_tasks[0]
+                await update.message.reply_text(
+                    f"✅ Из {source} загружены ответы части 1 ({len(parsed)} заданий).\n\n"
+                    f"Теперь введите данные для <b>задания {task_num}</b> "
+                    f"({TASK_NAMES.get(task_num, '')}):",
+                    parse_mode='HTML'
+                )
+                return TeacherStates.VARIANT_CHECK_ENTER_KEYS
+            else:
+                return await _keys_complete(update, context)
         else:
-            # Все ключи введены
-            return await _keys_complete(update, context)
+            # Не удалось распознать ответы части 1
+            await update.message.reply_text(
+                f"❌ Не удалось распознать ответы из {source}.\n\n"
+                "Используйте формат:\n"
+                "<code>1: 24\n2: 135\n3: текст</code>\n\n"
+                "Или загрузите файл / фото с ключами.",
+                parse_mode='HTML'
+            )
+            return TeacherStates.VARIANT_CHECK_ENTER_KEYS
 
-    # Ввод ключей части 2
+    # Для части 2: парсим как условие + ключ для текущего задания
     if part2_tasks:
         idx = context.user_data.get('vc_entering_keys_idx', 0)
         if idx < len(part2_tasks):
             task_num = part2_tasks[idx]
-
-            # Парсим условие и ключ
             parsed = _parse_part2_key(text, task_num)
             keys[task_num] = parsed
             context.user_data['vc_keys'] = keys
 
-            # Следующее задание
             idx += 1
             context.user_data['vc_entering_keys_idx'] = idx
 
             if idx < len(part2_tasks):
                 next_task = part2_tasks[idx]
                 await update.message.reply_text(
-                    f"✅ Ключ для задания {task_num} сохранён.\n\n"
+                    f"✅ Ключ для задания {task_num} загружен из {source}.\n\n"
                     f"Введите данные для <b>задания {next_task}</b> "
-                    f"({TASK_NAMES.get(next_task, '')}):\n\n"
-                    "Формат:\n"
-                    "<code>[условие задания]\n---\n[правильный ответ / критерии]</code>",
+                    f"({TASK_NAMES.get(next_task, '')}):",
                     parse_mode='HTML'
                 )
                 return TeacherStates.VARIANT_CHECK_ENTER_KEYS
             else:
                 return await _keys_complete(update, context)
 
-    return await _keys_complete(update, context)
+    await update.message.reply_text(
+        f"❌ Не удалось распознать ключи из {source}.\n\n"
+        "Проверьте формат и попробуйте ещё раз.",
+        parse_mode='HTML'
+    )
+    return TeacherStates.VARIANT_CHECK_ENTER_KEYS
+
+
+def _parse_bulk_keys(text: str, selected: List[int]) -> Optional[Dict[int, Dict]]:
+    """
+    Парсит комплексный файл с ключами ко всем заданиям сразу.
+
+    Поддерживаемые форматы:
+    - Часть 1: "1: ответ" на каждой строке
+    - Часть 2: блоки разделённые === с номером задания
+    """
+    keys = {}
+
+    # Сначала пробуем разделить по блокам ===
+    blocks = re.split(r'\n\s*===\s*\n', text)
+
+    for block in blocks:
+        block = block.strip()
+        if not block:
+            continue
+
+        # Ищем номер задания в начале блока
+        # Формат: "17:" или "Задание 17:" или просто "17"
+        header_match = re.match(
+            r'^(?:Задание\s*)?(\d+)\s*[:\.\)]\s*(.*)',
+            block, re.DOTALL
+        )
+
+        if header_match:
+            num = int(header_match.group(1))
+            content = header_match.group(2).strip()
+
+            if num in selected:
+                if num <= 16:
+                    # Часть 1: короткий ответ
+                    # content может быть просто ответом
+                    answer = content.split('\n')[0].strip()
+                    if answer:
+                        keys[num] = {'type': 'exact', 'answer': answer}
+                else:
+                    # Часть 2: условие + ключ
+                    keys[num] = _parse_part2_key(content, num)
+        else:
+            # Блок без номера — пробуем как набор коротких ответов
+            lines = block.strip().split('\n')
+            for line in lines:
+                line = line.strip()
+                if not line:
+                    continue
+                match = re.match(r'^(\d+)\s*[:\-\)\.]\s*(.+)$', line)
+                if match:
+                    num = int(match.group(1))
+                    answer = match.group(2).strip()
+                    if num in selected and 1 <= num <= 16:
+                        keys[num] = {'type': 'exact', 'answer': answer}
+
+    return keys if len(keys) > 1 else None
 
 
 def _parse_part1_keys(text: str, expected_tasks: List[int]) -> Optional[Dict[int, Dict]]:
@@ -718,8 +856,9 @@ async def _prompt_for_student_answers(
 
         lines.append("📝 <b>Введите ответы ученика</b>\n")
         lines.append(
-            "Вы можете ввести все ответы <b>одним сообщением</b> "
-            "или <b>по одному заданию</b>.\n"
+            "Вы можете ввести все ответы <b>одним сообщением</b>, "
+            "<b>по одному заданию</b>, загрузить <b>файлом</b> (TXT/PDF/DOCX) "
+            "или отправить <b>фото</b>.\n"
         )
 
         lines.append("<b>Формат для всех ответов сразу:</b>\n")
@@ -817,6 +956,109 @@ async def process_student_answer(update: Update, context: ContextTypes.DEFAULT_T
             return await _prompt_for_student_answers(update, context, is_query=False)
 
     return await _run_evaluation(update, context)
+
+
+async def process_answer_document(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Обработка файла (TXT/PDF/DOCX) с ответами ученика."""
+    from core.document_processor import DocumentProcessor
+
+    if not update.message or not update.message.document:
+        await update.message.reply_text("❌ Документ не найден.")
+        return TeacherStates.VARIANT_CHECK_ENTER_ANSWER
+
+    document = update.message.document
+    processing_msg = await update.message.reply_text("📄 Обрабатываю файл с ответами...")
+
+    success, text, error = await DocumentProcessor.process_document(document, context)
+
+    try:
+        await processing_msg.delete()
+    except Exception:
+        pass
+
+    if not success:
+        await update.message.reply_text(
+            f"❌ Ошибка обработки файла:\n{error}\n\n"
+            "Поддерживаемые форматы: TXT, PDF, DOCX.",
+            parse_mode='HTML'
+        )
+        return TeacherStates.VARIANT_CHECK_ENTER_ANSWER
+
+    return await _process_answers_from_text(update, context, text, source="файла")
+
+
+async def process_answer_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Обработка фото с ответами ученика (OCR)."""
+    from core.vision_service import process_photo_message
+
+    extracted_text = await process_photo_message(
+        update,
+        context.application.bot,
+        task_name="ответы ученика",
+        task_context="ЕГЭ обществознание, ответы ученика на задания варианта"
+    )
+
+    if not extracted_text:
+        await update.message.reply_text(
+            "❌ Не удалось распознать текст с фото.\n\n"
+            "Попробуйте ещё раз или введите ответы текстом / загрузите файл."
+        )
+        return TeacherStates.VARIANT_CHECK_ENTER_ANSWER
+
+    return await _process_answers_from_text(update, context, extracted_text, source="фото")
+
+
+async def _process_answers_from_text(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    text: str,
+    source: str = "текста"
+) -> int:
+    """Общая логика парсинга ответов ученика из текста (файл, фото или сообщение)."""
+    selected = context.user_data.get('vc_selected_tasks', [])
+    idx = context.user_data.get('vc_current_task_idx', 0)
+    answers = context.user_data.get('vc_student_answers', {})
+
+    # Пытаемся распознать формат "все ответы сразу"
+    if _looks_like_bulk_answers(text, selected):
+        parsed = _parse_bulk_answers(text, selected)
+        if parsed and len(parsed) > 1:
+            answers.update(parsed)
+            context.user_data['vc_student_answers'] = answers
+
+            await update.message.reply_text(
+                f"✅ Из {source} загружено ответов: <b>{len(parsed)}</b>\n\n"
+                "Запускаю проверку...",
+                parse_mode='HTML'
+            )
+            return await _run_evaluation(update, context)
+
+    # Одиночный ответ на текущее задание
+    if idx < len(selected):
+        task_num = selected[idx]
+        answers[task_num] = text
+        context.user_data['vc_student_answers'] = answers
+
+        idx += 1
+        context.user_data['vc_current_task_idx'] = idx
+
+        if idx >= len(selected):
+            await update.message.reply_text(
+                f"✅ Все ответы собраны ({len(answers)} заданий).\n\n"
+                "Запускаю проверку...",
+                parse_mode='HTML'
+            )
+            return await _run_evaluation(update, context)
+        else:
+            return await _prompt_for_student_answers(update, context, is_query=False)
+
+    # Не удалось распознать
+    await update.message.reply_text(
+        f"❌ Не удалось распознать ответы из {source}.\n\n"
+        "Проверьте формат и попробуйте ещё раз.",
+        parse_mode='HTML'
+    )
+    return TeacherStates.VARIANT_CHECK_ENTER_ANSWER
 
 
 async def skip_task(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
