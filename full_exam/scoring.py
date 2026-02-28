@@ -7,7 +7,9 @@
     - Остальные (2,4,5,6,7,8,10,11,13,14,15,16) = 2 балла
     - Максимум: 4×1 + 12×2 = 28 баллов
 
-  Часть 2 (задания 19-25):
+  Часть 2 (задания 17-25):
+    - Задание 17 = 2 балла
+    - Задание 18 = 2 балла
     - Задание 19 = 3 балла
     - Задание 20 = 3 балла
     - Задание 21 = 3 балла
@@ -15,9 +17,9 @@
     - Задание 23 = 3 балла
     - Задание 24 = 4 балла
     - Задание 25 = 6 балла
-    - Максимум: 26 баллов
+    - Максимум: 30 баллов
 
-  Итого: 54 первичных балла
+  Итого: 58 первичных баллов
 """
 
 import logging
@@ -30,6 +32,8 @@ ONE_POINT_TASKS = {1, 3, 9, 12}
 
 # Максимальные баллы за задания второй части
 PART2_MAX_SCORES: Dict[int, int] = {
+    17: 2,
+    18: 2,
     19: 3,
     20: 3,
     21: 3,
@@ -40,23 +44,24 @@ PART2_MAX_SCORES: Dict[int, int] = {
 }
 
 MAX_PART1_SCORE = 28
-MAX_PART2_SCORE = 26
-MAX_TOTAL_SCORE = MAX_PART1_SCORE + MAX_PART2_SCORE  # 54
+MAX_PART2_SCORE = 30
+MAX_TOTAL_SCORE = MAX_PART1_SCORE + MAX_PART2_SCORE  # 58
 
 # Шкала перевода первичных баллов во вторичные (2025)
-# Источник: шкала ФИПИ для ЕГЭ по обществознанию
+# Источник: шкала ФИПИ для ЕГЭ по обществознанию (58 первичных баллов)
 PRIMARY_TO_SECONDARY: Dict[int, int] = {
     0: 0, 1: 2, 2: 4, 3: 6, 4: 8, 5: 10,
     6: 12, 7: 14, 8: 16, 9: 18, 10: 20,
     11: 22, 12: 24, 13: 26, 14: 28, 15: 30,
     16: 32, 17: 34, 18: 36, 19: 38, 20: 40,
-    21: 42, 22: 44, 23: 45, 24: 46, 25: 47,
-    26: 48, 27: 49, 28: 50, 29: 51, 30: 52,
-    31: 53, 32: 54, 33: 55, 34: 56, 35: 57,
-    36: 59, 37: 61, 38: 63, 39: 65, 40: 67,
-    41: 69, 42: 71, 43: 73, 44: 75, 45: 77,
-    46: 79, 47: 81, 48: 83, 49: 85, 50: 87,
-    51: 89, 52: 91, 53: 95, 54: 100,
+    21: 42, 22: 43, 23: 44, 24: 45, 25: 46,
+    26: 47, 27: 48, 28: 49, 29: 50, 30: 51,
+    31: 52, 32: 53, 33: 54, 34: 55, 35: 56,
+    36: 57, 37: 58, 38: 59, 39: 60, 40: 61,
+    41: 62, 42: 64, 43: 66, 44: 68, 45: 70,
+    46: 72, 47: 74, 48: 76, 49: 78, 50: 80,
+    51: 82, 52: 84, 53: 86, 54: 88, 55: 91,
+    56: 94, 57: 97, 58: 100,
 }
 
 # Пороговый балл для сдачи (минимальный вторичный)
@@ -93,7 +98,7 @@ def calculate_part2_score(scores: Dict[int, int]) -> Tuple[int, int]:
     Подсчёт баллов второй части.
 
     Args:
-        scores: {task_number: набранные_баллы} для заданий 19-25
+        scores: {task_number: набранные_баллы} для заданий 17-25
 
     Returns:
         (набранные баллы, максимум)
@@ -119,13 +124,13 @@ def get_grade_description(secondary: int) -> Tuple[str, str]:
         (emoji, текст описания)
     """
     if secondary >= 80:
-        return "🏆", "Отличный результат! Вы отлично подготовлены к экзамену!"
+        return "\U0001f3c6", "Отличный результат! Вы отлично подготовлены к экзамену!"
     elif secondary >= 60:
-        return "👍", "Хороший результат! Продолжайте в том же духе."
+        return "\U0001f44d", "Хороший результат! Продолжайте в том же духе."
     elif secondary >= MIN_PASSING_SECONDARY:
-        return "📚", "Неплохо, но есть над чем поработать."
+        return "\U0001f4da", "Неплохо, но есть над чем поработать."
     else:
-        return "💪", "Требуется дополнительная подготовка. Не сдавайтесь!"
+        return "\U0001f4aa", "Требуется дополнительная подготовка. Не сдавайтесь!"
 
 
 def format_results_summary(
@@ -150,17 +155,18 @@ def format_results_summary(
         max_s = get_max_score_for_task(num)
         if num in part1_answers:
             earned = max_s if part1_answers[num] else 0
-            icon = "✅" if part1_answers[num] else "❌"
+            icon = "\u2705" if part1_answers[num] else "\u274c"
         else:
             earned = 0
-            icon = "⏭️"
-        part1_details.append(f"  №{num}: {icon} {earned}/{max_s}")
+            icon = "\u23ed\ufe0f"
+        part1_details.append(f"  \u2116{num}: {icon} {earned}/{max_s}")
     lines.append("\n".join(part1_details))
 
     lines.append(f"\n<b>Часть 2 (развёрнутая):</b> {p2_score}/{p2_max}")
 
     # Детализация по заданиям части 2
     task_names = {
+        17: "Анализ текста", 18: "Понятие из текста",
         19: "Примеры", 20: "Суждения", 21: "Графики",
         22: "Анализ ситуаций", 23: "Конституция",
         24: "Сложный план", 25: "Обоснование",
@@ -169,8 +175,8 @@ def format_results_summary(
         max_s = PART2_MAX_SCORES[num]
         earned = part2_scores.get(num, 0)
         name = task_names.get(num, f"Задание {num}")
-        bar = "█" * earned + "░" * (max_s - earned)
-        lines.append(f"  №{num} ({name}): {bar} {earned}/{max_s}")
+        bar = "\u2588" * earned + "\u2591" * (max_s - earned)
+        lines.append(f"  \u2116{num} ({name}): {bar} {earned}/{max_s}")
 
     lines.append("")
     lines.append(
@@ -181,10 +187,10 @@ def format_results_summary(
 
     passed = secondary >= MIN_PASSING_SECONDARY
     if passed:
-        lines.append(f"\n✅ Порог сдачи ({MIN_PASSING_SECONDARY} баллов) пройден")
+        lines.append(f"\n\u2705 Порог сдачи ({MIN_PASSING_SECONDARY} баллов) пройден")
     else:
         lines.append(
-            f"\n⚠️ Порог сдачи ({MIN_PASSING_SECONDARY} баллов) не пройден "
+            f"\n\u26a0\ufe0f Порог сдачи ({MIN_PASSING_SECONDARY} баллов) не пройден "
             f"(не хватает {MIN_PASSING_SECONDARY - secondary} б.)"
         )
 

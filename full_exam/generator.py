@@ -1,15 +1,16 @@
 """
 Генератор полного варианта ЕГЭ по обществознанию.
 
-Создаёт вариант из 23 заданий:
+Создаёт вариант из 25 заданий:
   - Часть 1 (тестовая): задания 1-16
-  - Часть 2 (развёрнутая): задания 19-25
+  - Часть 2 (развёрнутая): задания 17-25
 
 Правила подбора заданий второй части:
   1. Темы не должны дублироваться
   2. Желательно использовать разные блоки для разных заданий
-  3. Задания 24 и 25 должны быть тематически связаны (один подтопик)
-  4. Задания 21 и 23 не имеют блоков — выбираются случайно
+  3. Задания 17 и 18 основаны на общем тексте
+  4. Задания 24 и 25 должны быть тематически связаны (один подтопик)
+  5. Задания 21 и 23 не имеют блоков — выбираются случайно
 """
 
 import json
@@ -36,7 +37,7 @@ ALL_BLOCKS = [
 @dataclass
 class ExamTask:
     """Одно задание в варианте."""
-    exam_number: int          # Номер задания ЕГЭ (1-16, 19-25)
+    exam_number: int          # Номер задания ЕГЭ (1-16, 17-25)
     source_module: str        # Модуль-источник: test_part, task19, ...
     task_data: Dict[str, Any] # Полные данные задания
     block: Optional[str] = None
@@ -62,7 +63,7 @@ class ExamVariant:
 
     @property
     def part2_tasks(self) -> Dict[int, ExamTask]:
-        return {n: t for n, t in self.tasks.items() if 19 <= n <= 25}
+        return {n: t for n, t in self.tasks.items() if 17 <= n <= 25}
 
     @property
     def total_tasks(self) -> int:
@@ -131,6 +132,14 @@ def _load_test_part_questions() -> List[Dict[str, Any]]:
                     if isinstance(topic_questions, list):
                         all_q.extend(topic_questions)
         return all_q
+    return []
+
+
+def _load_text_passages_17_18() -> List[Dict[str, Any]]:
+    """Загрузка текстовых отрывков для заданий 17 и 18."""
+    data = _load_json("data/text_passages_17_18.json")
+    if isinstance(data, dict):
+        return data.get("passages", [])
     return []
 
 
@@ -322,7 +331,7 @@ def generate_variant(variant_id: Optional[str] = None) -> ExamVariant:
     # === Часть 1: тестовые задания 1-16 ===
     _generate_part1(variant)
 
-    # === Часть 2: развёрнутые задания 19-25 ===
+    # === Часть 2: развёрнутые задания 17-25 ===
     _generate_part2(variant)
 
     variant.metadata["total_generated"] = variant.total_tasks
@@ -367,15 +376,17 @@ def _generate_part1(variant: ExamVariant):
 
 def _generate_part2(variant: ExamVariant):
     """
-    Генерация второй части (задания 19-25).
+    Генерация второй части (задания 17-25).
 
     Алгоритм:
     1. Загружаем все данные
-    2. Выбираем связанную пару 24+25
-    3. Распределяем оставшиеся блоки для 19, 20, 22
-    4. Задания 21 и 23 — случайно (без блоков)
+    2. Выбираем текстовый отрывок для заданий 17 и 18 (общий текст)
+    3. Выбираем связанную пару 24+25
+    4. Распределяем оставшиеся блоки для 19, 20, 22
+    5. Задания 21 и 23 — случайно (без блоков)
     """
     # Загрузка данных
+    passages_17_18 = _load_text_passages_17_18()
     topics_19 = _load_task19_topics()
     topics_20 = _load_task20_topics()
     questions_21 = _load_task21_questions()
@@ -386,6 +397,48 @@ def _generate_part2(variant: ExamVariant):
 
     used_titles: Set[str] = set()
     used_blocks: Set[str] = set()
+
+    # ── Шаг 0: Задания 17 + 18 (общий текст) ──
+    if passages_17_18:
+        passage = random.choice(passages_17_18)
+        passage_block = passage.get("block")
+
+        # Задание 17
+        if "task17" in passage:
+            t17_data = {
+                "text": passage["text"],
+                "source": passage.get("source", ""),
+                "passage_id": passage.get("id"),
+                **passage["task17"],
+            }
+            variant.set_task(17, ExamTask(
+                exam_number=17,
+                source_module="task17",
+                task_data=t17_data,
+                block=passage_block,
+                title=f"Текст: {passage.get('source', '')}",
+            ))
+
+        # Задание 18
+        if "task18" in passage:
+            t18_data = {
+                "text": passage["text"],
+                "source": passage.get("source", ""),
+                "passage_id": passage.get("id"),
+                **passage["task18"],
+            }
+            variant.set_task(18, ExamTask(
+                exam_number=18,
+                source_module="task18",
+                task_data=t18_data,
+                block=passage_block,
+                title=f"Понятие: {passage['task18'].get('concept', '')}",
+            ))
+
+        if passage_block:
+            used_blocks.add(passage_block)
+    else:
+        logger.warning("Нет текстовых отрывков для заданий 17-18")
 
     # ── Шаг 1: Связанная пара 24 + 25 ──
     pair = _find_linked_pair_24_25(plans_24, blocks_24, topics_25)
@@ -614,6 +667,45 @@ def replace_task_in_variant(
                 title=chosen.get("topic"),
             ))
             return True
+
+    # Замена заданий 17 и 18 (общий текст — заменяем оба)
+    if exam_number in (17, 18):
+        passages = _load_text_passages_17_18()
+        old_passage_id = old_task.task_data.get("passage_id")
+        candidates = [p for p in passages if p.get("id") != old_passage_id]
+        if candidates:
+            passage = random.choice(candidates)
+            passage_block = passage.get("block")
+            if "task17" in passage:
+                t17_data = {
+                    "text": passage["text"],
+                    "source": passage.get("source", ""),
+                    "passage_id": passage.get("id"),
+                    **passage["task17"],
+                }
+                variant.set_task(17, ExamTask(
+                    exam_number=17,
+                    source_module="task17",
+                    task_data=t17_data,
+                    block=passage_block,
+                    title=f"Текст: {passage.get('source', '')}",
+                ))
+            if "task18" in passage:
+                t18_data = {
+                    "text": passage["text"],
+                    "source": passage.get("source", ""),
+                    "passage_id": passage.get("id"),
+                    **passage["task18"],
+                }
+                variant.set_task(18, ExamTask(
+                    exam_number=18,
+                    source_module="task18",
+                    task_data=t18_data,
+                    block=passage_block,
+                    title=f"Понятие: {passage['task18'].get('concept', '')}",
+                ))
+            return True
+        return False
 
     # Для заданий второй части
     loaders = {

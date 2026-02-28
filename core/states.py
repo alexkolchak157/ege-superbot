@@ -35,6 +35,12 @@ SEARCHING = 2002
 VIEWING_EXAMPLE = 2003
 CONFIRMING_RESET = 2004
 
+# Состояния для task17
+ANSWERING_T17 = 1701
+
+# Состояния для task18
+ANSWERING_T18 = 1801
+
 # Состояния для task21
 ANSWERING_T21 = 2101
 
