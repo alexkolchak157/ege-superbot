@@ -68,6 +68,16 @@ class TeacherStates(IntEnum):
     QUICK_CHECK_TEMPLATES = 97  # Управление шаблонами
     QUICK_CHECK_SAVE_TEMPLATE = 98  # Сохранение шаблона
 
+    # Проверка варианта (Variant Check)
+    VARIANT_CHECK_MENU = 200  # Меню проверки варианта
+    VARIANT_CHECK_SOURCE = 201  # Выбор источника (внешний/из бота)
+    VARIANT_CHECK_SELECT_TASKS = 202  # Выбор заданий для проверки
+    VARIANT_CHECK_ENTER_KEYS = 203  # Ввод ключей/критериев (для внешнего варианта)
+    VARIANT_CHECK_ENTER_ANSWER = 204  # Ввод ответа ученика на текущее задание
+    VARIANT_CHECK_CONFIRM = 205  # Подтверждение перед проверкой
+    VARIANT_CHECK_RESULTS = 206  # Просмотр результатов
+    VARIANT_CHECK_BATCH_NEXT = 207  # Пакетный режим: ввод следующего ученика
+
 
 class StudentStates(IntEnum):
     """Состояния для учеников (связь с учителем)"""

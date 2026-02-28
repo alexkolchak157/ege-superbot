@@ -149,6 +149,8 @@ class PromoCode:
 
 class QuickCheckTaskType(str, Enum):
     """Типы заданий для быстрой проверки"""
+    TASK17 = "task17"
+    TASK18 = "task18"
     TASK19 = "task19"
     TASK20 = "task20"
     TASK21 = "task21"

@@ -6,7 +6,7 @@ import logging
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, filters, ConversationHandler
 
 from core.plugin_base import BotPlugin
-from .handlers import teacher_handlers, student_handlers, analytics_handlers, quick_check_handlers
+from .handlers import teacher_handlers, student_handlers, analytics_handlers, quick_check_handlers, variant_check_handlers
 from .states import TeacherStates, StudentStates
 
 logger = logging.getLogger(__name__)
@@ -23,6 +23,9 @@ class TeacherModePlugin(BotPlugin):
         """Инициализация плагина"""
         # Автоматически применяем миграции Quick Check если нужно
         await self._ensure_quick_check_tables()
+        # Создаём таблицы для проверки вариантов
+        from .services import variant_check_service
+        await variant_check_service.ensure_tables()
         logger.info("Teacher mode plugin initialized")
 
     async def _ensure_quick_check_tables(self):
@@ -123,6 +126,9 @@ class TeacherModePlugin(BotPlugin):
                     CallbackQueryHandler(quick_check_handlers.start_bulk_check, pattern="^qc_check_bulk$"),
                     CallbackQueryHandler(quick_check_handlers.show_history, pattern="^qc_history$"),
                     CallbackQueryHandler(quick_check_handlers.show_stats, pattern="^qc_stats$"),
+
+                    # Проверка варианта
+                    CallbackQueryHandler(variant_check_handlers.variant_check_menu, pattern="^vc_menu$"),
 
                     # Подарки и промокоды
                     CallbackQueryHandler(teacher_handlers.show_gift_subscription_menu, pattern="^teacher_gift_menu$"),
@@ -402,6 +408,7 @@ class TeacherModePlugin(BotPlugin):
                     CallbackQueryHandler(quick_check_handlers.quick_check_menu, pattern="^quick_check_menu$"),
                     CallbackQueryHandler(quick_check_handlers.start_single_check, pattern="^qc_check_single$"),
                     CallbackQueryHandler(quick_check_handlers.start_bulk_check, pattern="^qc_check_bulk$"),
+                    CallbackQueryHandler(variant_check_handlers.variant_check_menu, pattern="^vc_menu$"),
                     CallbackQueryHandler(quick_check_handlers.show_history, pattern="^qc_history$"),
                     CallbackQueryHandler(quick_check_handlers.show_stats, pattern="^qc_stats$"),
                     CallbackQueryHandler(teacher_handlers.teacher_menu, pattern="^teacher_menu$"),
@@ -437,6 +444,80 @@ class TeacherModePlugin(BotPlugin):
                     # Очистка списка
                     CallbackQueryHandler(quick_check_handlers.clear_bulk_answers, pattern="^qc_clear_bulk_answers$"),
                     CallbackQueryHandler(quick_check_handlers.quick_check_menu, pattern="^quick_check_menu$"),
+                ],
+                # ============================================
+                # Variant Check States (Проверка варианта)
+                # ============================================
+                TeacherStates.VARIANT_CHECK_SOURCE: [
+                    # Выбор источника варианта
+                    CallbackQueryHandler(variant_check_handlers.select_source, pattern="^vc_source_"),
+                    CallbackQueryHandler(variant_check_handlers.enter_variant_id, pattern="^vc_enter_variant_id$"),
+                    # Ввод ID варианта из бота (текстовый ввод)
+                    MessageHandler(filters.TEXT & ~filters.COMMAND, variant_check_handlers.process_variant_id_input),
+                    # Навигация
+                    CallbackQueryHandler(variant_check_handlers.variant_check_menu, pattern="^vc_menu$"),
+                    CallbackQueryHandler(quick_check_handlers.quick_check_menu, pattern="^quick_check_menu$"),
+                    CallbackQueryHandler(teacher_handlers.teacher_menu, pattern="^teacher_menu$"),
+                ],
+                TeacherStates.VARIANT_CHECK_SELECT_TASKS: [
+                    # Выбор набора заданий
+                    CallbackQueryHandler(variant_check_handlers.select_tasks_preset, pattern="^vc_tasks_"),
+                    # Переключение заданий в кастомном режиме
+                    CallbackQueryHandler(variant_check_handlers.toggle_task, pattern="^vc_toggle_"),
+                    # Выбор группы заданий
+                    CallbackQueryHandler(variant_check_handlers.select_group, pattern="^vc_select_"),
+                    # Подтверждение выбора
+                    CallbackQueryHandler(variant_check_handlers.confirm_tasks, pattern="^vc_confirm_tasks$"),
+                    # Навигация
+                    CallbackQueryHandler(variant_check_handlers.variant_check_menu, pattern="^vc_menu$"),
+                    CallbackQueryHandler(quick_check_handlers.quick_check_menu, pattern="^quick_check_menu$"),
+                    CallbackQueryHandler(teacher_handlers.teacher_menu, pattern="^teacher_menu$"),
+                ],
+                TeacherStates.VARIANT_CHECK_ENTER_KEYS: [
+                    # Ввод ключей (текстом)
+                    MessageHandler(filters.TEXT & ~filters.COMMAND, variant_check_handlers.process_keys_input),
+                    # Навигация
+                    CallbackQueryHandler(variant_check_handlers.variant_check_menu, pattern="^vc_menu$"),
+                    CallbackQueryHandler(teacher_handlers.teacher_menu, pattern="^teacher_menu$"),
+                ],
+                TeacherStates.VARIANT_CHECK_ENTER_ANSWER: [
+                    # Ввод ответа ученика
+                    MessageHandler(filters.TEXT & ~filters.COMMAND, variant_check_handlers.process_student_answer),
+                    # Пропустить задание
+                    CallbackQueryHandler(variant_check_handlers.skip_task, pattern="^vc_skip_task$"),
+                    # Завершить ввод и проверить
+                    CallbackQueryHandler(variant_check_handlers.finish_input_callback, pattern="^vc_finish_input$"),
+                    # Навигация
+                    CallbackQueryHandler(variant_check_handlers.variant_check_menu, pattern="^vc_menu$"),
+                    CallbackQueryHandler(teacher_handlers.teacher_menu, pattern="^teacher_menu$"),
+                ],
+                TeacherStates.VARIANT_CHECK_CONFIRM: [
+                    # Выбор режима (один/несколько учеников)
+                    CallbackQueryHandler(variant_check_handlers.select_mode, pattern="^vc_mode_"),
+                    # Навигация
+                    CallbackQueryHandler(variant_check_handlers.variant_check_menu, pattern="^vc_menu$"),
+                    CallbackQueryHandler(teacher_handlers.teacher_menu, pattern="^teacher_menu$"),
+                ],
+                TeacherStates.VARIANT_CHECK_RESULTS: [
+                    # Подробные результаты
+                    CallbackQueryHandler(variant_check_handlers.show_detailed_results, pattern="^vc_detailed_results$"),
+                    CallbackQueryHandler(variant_check_handlers.back_to_results, pattern="^vc_back_to_results$"),
+                    # Пакетный режим: следующий ученик
+                    CallbackQueryHandler(variant_check_handlers.next_student, pattern="^vc_next_student$"),
+                    # Сводка по классу
+                    CallbackQueryHandler(variant_check_handlers.show_batch_summary, pattern="^vc_batch_summary$"),
+                    # Новая проверка
+                    CallbackQueryHandler(variant_check_handlers.variant_check_menu, pattern="^vc_menu$"),
+                    CallbackQueryHandler(quick_check_handlers.quick_check_menu, pattern="^quick_check_menu$"),
+                    CallbackQueryHandler(teacher_handlers.teacher_menu, pattern="^teacher_menu$"),
+                ],
+                TeacherStates.VARIANT_CHECK_BATCH_NEXT: [
+                    # Ввод ответов следующего ученика
+                    MessageHandler(filters.TEXT & ~filters.COMMAND, variant_check_handlers.process_student_answer),
+                    CallbackQueryHandler(variant_check_handlers.skip_task, pattern="^vc_skip_task$"),
+                    CallbackQueryHandler(variant_check_handlers.finish_input_callback, pattern="^vc_finish_input$"),
+                    CallbackQueryHandler(variant_check_handlers.variant_check_menu, pattern="^vc_menu$"),
+                    CallbackQueryHandler(teacher_handlers.teacher_menu, pattern="^teacher_menu$"),
                 ],
             },
             fallbacks=[

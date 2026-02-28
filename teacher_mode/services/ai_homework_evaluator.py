@@ -37,6 +37,10 @@ async def evaluate_homework_answer(
 
         if task_module == 'test_part':
             return await _evaluate_test_part(question_data, user_answer, user_id)
+        elif task_module == 'task17':
+            return await _evaluate_task17(question_data, user_answer, user_id)
+        elif task_module == 'task18':
+            return await _evaluate_task18(question_data, user_answer, user_id)
         elif task_module == 'task19':
             return await _evaluate_task19(question_data, user_answer, user_id)
         elif task_module == 'task20':
@@ -58,6 +62,80 @@ async def evaluate_homework_answer(
     except Exception as e:
         logger.error(f"Error evaluating answer for {task_module}: {e}", exc_info=True)
         return False, f"❌ Ошибка при проверке ответа: {str(e)}"
+
+
+async def _evaluate_task17(question_data: Dict, user_answer: str, user_id: int) -> Tuple[bool, str]:
+    """Проверка ответа для task17 (анализ текста: поиск информации)"""
+    try:
+        from task17.evaluator import Task17AIEvaluator
+        from core.types import EvaluationResult
+
+        evaluator = Task17AIEvaluator()
+
+        result: EvaluationResult = await evaluator.evaluate(
+            answer=user_answer,
+            task_data=question_data
+        )
+
+        is_correct = result.total_score >= (result.max_score / 2)
+
+        feedback = f"📊 <b>Результат проверки:</b>\n\n"
+        feedback += f"Баллы: {result.total_score}/{result.max_score}\n\n"
+        feedback += f"<b>Обратная связь:</b>\n{result.feedback}"
+
+        if result.warnings:
+            feedback += f"\n\n⚠️ <b>Предупреждения:</b>\n"
+            feedback += "\n".join(f"• {w}" for w in result.warnings)
+
+        if result.suggestions:
+            feedback += f"\n\n💡 <b>Рекомендации:</b>\n"
+            feedback += "\n".join(f"• {s}" for s in result.suggestions)
+
+        return is_correct, feedback
+
+    except ImportError as e:
+        logger.warning(f"Task17 evaluator not available: {e}")
+        return True, "✅ Ответ принят (AI проверка недоступна)"
+    except Exception as e:
+        logger.error(f"Error in task17 evaluation: {e}", exc_info=True)
+        return False, f"❌ Ошибка при проверке: {str(e)}"
+
+
+async def _evaluate_task18(question_data: Dict, user_answer: str, user_id: int) -> Tuple[bool, str]:
+    """Проверка ответа для task18 (объяснение понятия из текста)"""
+    try:
+        from task18.evaluator import Task18AIEvaluator
+        from core.types import EvaluationResult
+
+        evaluator = Task18AIEvaluator()
+
+        result: EvaluationResult = await evaluator.evaluate(
+            answer=user_answer,
+            task_data=question_data
+        )
+
+        is_correct = result.total_score >= (result.max_score / 2)
+
+        feedback = f"📊 <b>Результат проверки:</b>\n\n"
+        feedback += f"Баллы: {result.total_score}/{result.max_score}\n\n"
+        feedback += f"<b>Обратная связь:</b>\n{result.feedback}"
+
+        if result.warnings:
+            feedback += f"\n\n⚠️ <b>Предупреждения:</b>\n"
+            feedback += "\n".join(f"• {w}" for w in result.warnings)
+
+        if result.suggestions:
+            feedback += f"\n\n💡 <b>Рекомендации:</b>\n"
+            feedback += "\n".join(f"• {s}" for s in result.suggestions)
+
+        return is_correct, feedback
+
+    except ImportError as e:
+        logger.warning(f"Task18 evaluator not available: {e}")
+        return True, "✅ Ответ принят (AI проверка недоступна)"
+    except Exception as e:
+        logger.error(f"Error in task18 evaluation: {e}", exc_info=True)
+        return False, f"❌ Ошибка при проверке: {str(e)}"
 
 
 async def _evaluate_task19(question_data: Dict, user_answer: str, user_id: int) -> Tuple[bool, str]:

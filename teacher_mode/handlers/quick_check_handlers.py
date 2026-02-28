@@ -63,6 +63,7 @@ async def quick_check_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     keyboard = [
         [InlineKeyboardButton("✅ Проверить одну работу", callback_data="qc_check_single")],
         [InlineKeyboardButton("📚 Массовая проверка", callback_data="qc_check_bulk")],
+        [InlineKeyboardButton("📋 Проверка варианта", callback_data="vc_menu")],
         [InlineKeyboardButton("📜 История проверок", callback_data="qc_history")],
         [InlineKeyboardButton("📊 Статистика", callback_data="qc_stats")],
         [InlineKeyboardButton("◀️ В меню учителя", callback_data="teacher_menu")]
@@ -105,6 +106,8 @@ async def start_single_check(update: Update, context: ContextTypes.DEFAULT_TYPE)
     )
 
     keyboard = [
+        [InlineKeyboardButton("📖 Задание 17", callback_data="qc_type_task17")],
+        [InlineKeyboardButton("📝 Задание 18", callback_data="qc_type_task18")],
         [InlineKeyboardButton("💡 Задание 19", callback_data="qc_type_task19")],
         [InlineKeyboardButton("⚙️ Задание 20", callback_data="qc_type_task20")],
         [InlineKeyboardButton("📊 Задание 21", callback_data="qc_type_task21")],
@@ -136,6 +139,8 @@ async def select_task_type(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     context.user_data['qc_mode'] = 'single'  # одиночная проверка
 
     task_names = {
+        QuickCheckTaskType.TASK17: "📖 Задание 17 (Анализ текста)",
+        QuickCheckTaskType.TASK18: "📝 Задание 18 (Понятие из текста)",
         QuickCheckTaskType.TASK19: "💡 Задание 19 (Примеры)",
         QuickCheckTaskType.TASK20: "⚙️ Задание 20 (Слова)",
         QuickCheckTaskType.TASK21: "📊 Задание 21 (Графики)",
@@ -528,6 +533,8 @@ async def start_bulk_check(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     )
 
     keyboard = [
+        [InlineKeyboardButton("📖 Задание 17", callback_data="qc_bulk_task17")],
+        [InlineKeyboardButton("📝 Задание 18", callback_data="qc_bulk_task18")],
         [InlineKeyboardButton("💡 Задание 19", callback_data="qc_bulk_task19")],
         [InlineKeyboardButton("⚙️ Задание 20", callback_data="qc_bulk_task20")],
         [InlineKeyboardButton("📊 Задание 21", callback_data="qc_bulk_task21")],
