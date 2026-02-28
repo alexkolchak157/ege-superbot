@@ -22,6 +22,8 @@ Score = int
 class TaskType(Enum):
     """Типы заданий ЕГЭ."""
     TEST_PART = "test_part"
+    TASK17 = "task17"
+    TASK18 = "task18"
     TASK19 = "task19"
     TASK20 = "task20"
     TASK24 = "task24"
@@ -193,6 +195,8 @@ MAX_REPLY_BUTTONS = 300
 
 # Лимиты для заданий
 TASK_LIMITS = {
+    TaskType.TASK17: {"elements": 3, "min_words": 30},
+    TaskType.TASK18: {"elements": 3, "min_words": 30},
     TaskType.TASK19: {"examples": 3, "min_words": 50},
     TaskType.TASK20: {"judgments": 3, "min_words": 60},
     TaskType.TASK24: {"points": 10, "sub_points": 3},

@@ -27,6 +27,16 @@ class OptimalSettings:
         """Возвращает оптимальные настройки для типа задания"""
 
         settings_map = {
+            TaskType.TASK17: cls(
+                temperature=0.15,
+                max_tokens=1500,
+                model="lite"
+            ),
+            TaskType.TASK18: cls(
+                temperature=0.2,
+                max_tokens=1500,
+                model="lite"
+            ),
             TaskType.TASK19: cls(
                 temperature=0.2,
                 max_tokens=2000,

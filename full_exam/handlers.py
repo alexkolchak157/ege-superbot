@@ -4,7 +4,7 @@
 FSM-состояния (из core.states):
   FULL_EXAM_OVERVIEW     — обзор варианта с навигацией
   FULL_EXAM_TEST_PART    — ответ на задание тестовой части (1-16)
-  FULL_EXAM_PART2_ANSWER — ответ на задание второй части (19-25)
+  FULL_EXAM_PART2_ANSWER — ответ на задание второй части (17-25)
   FULL_EXAM_RESULTS      — итоговые результаты
   FULL_EXAM_TASK_REVIEW  — просмотр конкретного задания
 """
@@ -40,9 +40,11 @@ from .scoring import (
 
 logger = logging.getLogger(__name__)
 
-ALL_TASK_NUMS = list(range(1, 17)) + list(range(19, 26))
+ALL_TASK_NUMS = list(range(1, 17)) + list(range(17, 26))
 
 TASK_NAMES = {
+    17: "Анализ текста",
+    18: "Понятие из текста",
     19: "Примеры и иллюстрации",
     20: "Суждения",
     21: "Графики спроса и предложения",
@@ -250,7 +252,7 @@ async def _show_overview(message, context: ContextTypes.DEFAULT_TYPE, edit: bool
     done = len(answered)
 
     part1_done = len([n for n in range(1, 17) if n in answered])
-    part2_done = len([n for n in range(19, 26) if n in answered])
+    part2_done = len([n for n in range(17, 26) if n in answered])
 
     text = (
         f"📝 <b>Вариант {variant.variant_id}</b>\n\n"
@@ -539,7 +541,7 @@ async def check_part2_answer(update: Update, context: ContextTypes.DEFAULT_TYPE)
     user_answer = update.message.text.strip()
     exam_num = context.user_data.get("fe_current_task")
 
-    if exam_num is None or not (19 <= exam_num <= 25):
+    if exam_num is None or not (17 <= exam_num <= 25):
         return await _show_overview(update.message, context, edit=False)
 
     variant = _get_variant(context)
@@ -599,7 +601,11 @@ async def _evaluate_part2(
     data = task.task_data
 
     try:
-        if exam_num == 19:
+        if exam_num == 17:
+            return await _eval_task17(data, user_answer)
+        elif exam_num == 18:
+            return await _eval_task18(data, user_answer)
+        elif exam_num == 19:
             return await _eval_task19(data, user_answer)
         elif exam_num == 20:
             return await _eval_task20(data, user_answer)
@@ -619,6 +625,22 @@ async def _evaluate_part2(
         logger.error(f"Ошибка оценки задания {exam_num}: {e}", exc_info=True)
 
     return 0, "⚠️ Оценка временно недоступна."
+
+
+async def _eval_task17(data: dict, answer: str) -> tuple:
+    """Оценка задания 17 через модуль task17."""
+    from task17.evaluator import Task17AIEvaluator
+    evaluator = Task17AIEvaluator()
+    result = await evaluator.evaluate(answer, data)
+    return result.total_score, result.feedback
+
+
+async def _eval_task18(data: dict, answer: str) -> tuple:
+    """Оценка задания 18 через модуль task18."""
+    from task18.evaluator import Task18AIEvaluator
+    evaluator = Task18AIEvaluator()
+    result = await evaluator.evaluate(answer, data)
+    return result.total_score, result.feedback
 
 
 async def _eval_task19(data: dict, answer: str) -> tuple:
@@ -827,7 +849,7 @@ async def finish_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
             part1_answers[num] = scores.get(num, 0) > 0
 
     part2_scores = {}
-    for num in range(19, 26):
+    for num in range(17, 26):
         part2_scores[num] = scores.get(num, 0)
 
     # Формируем результат
@@ -866,7 +888,7 @@ async def _save_exam_results(user_id: int, context: ContextTypes.DEFAULT_TYPE):
     # Считаем итоговые баллы
     part1_answers = {n: (scores.get(n, 0) > 0) for n in range(1, 17) if n in answered}
     p1_score, _ = calculate_part1_score(part1_answers)
-    part2_scores = {n: scores.get(n, 0) for n in range(19, 26)}
+    part2_scores = {n: scores.get(n, 0) for n in range(17, 26)}
     p2_score, _ = calculate_part2_score(part2_scores)
     total_primary = p1_score + p2_score
     secondary = primary_to_secondary(total_primary)
@@ -1052,7 +1074,7 @@ async def _show_teacher_preview(message, context, variant: ExamVariant, edit: bo
             text += f"  №{num}: {topic}\n"
 
     text += "\n<b>Часть 2 (развёрнутая):</b>\n"
-    for num in range(19, 26):
+    for num in range(17, 26):
         task = variant.get_task(num)
         if task:
             name = TASK_NAMES.get(num, "")

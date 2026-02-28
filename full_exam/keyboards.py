@@ -46,7 +46,7 @@ def get_overview_keyboard(
     """
     Клавиатура обзора варианта.
 
-    Показывает все задания 1-16 и 19-25 с индикаторами статуса.
+    Показывает все задания 1-16 и 17-25 с индикаторами статуса.
     """
     answered = answered or set()
     current_scores = current_scores or {}
@@ -97,7 +97,7 @@ def get_overview_keyboard(
 def get_task_nav_keyboard(current_num: int, total_tasks_list=None) -> InlineKeyboardMarkup:
     """Клавиатура навигации при ответе на конкретное задание."""
     all_nums = sorted(total_tasks_list) if total_tasks_list else (
-        list(range(1, 17)) + list(range(19, 26))
+        list(range(1, 17)) + list(range(17, 26))
     )
     idx = all_nums.index(current_num) if current_num in all_nums else -1
 
@@ -119,7 +119,7 @@ def get_task_nav_keyboard(current_num: int, total_tasks_list=None) -> InlineKeyb
 
 def get_after_answer_keyboard(current_num: int) -> InlineKeyboardMarkup:
     """Клавиатура после ответа на задание."""
-    all_nums = list(range(1, 17)) + list(range(19, 26))
+    all_nums = list(range(1, 17)) + list(range(17, 26))
     idx = all_nums.index(current_num) if current_num in all_nums else -1
 
     buttons = []
