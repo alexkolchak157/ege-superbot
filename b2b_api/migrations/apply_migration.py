@@ -13,7 +13,58 @@ from b2b_api.middleware.api_key_auth import generate_api_key
 
 logger = logging.getLogger(__name__)
 
-MIGRATION_FILE = os.path.join(os.path.dirname(__file__), 'b2b_tables.sql')
+MIGRATION_DIR = os.path.dirname(__file__)
+MIGRATION_FILE = os.path.join(MIGRATION_DIR, 'b2b_tables.sql')
+MIGRATION_002_FILE = os.path.join(MIGRATION_DIR, '002_add_idempotency_and_variant_checks.sql')
+
+
+async def apply_incremental_migrations():
+    """Применяет инкрементальные миграции (002+)."""
+    migrations = [
+        ("002_idempotency_variant_checks", MIGRATION_002_FILE),
+    ]
+
+    try:
+        async with aiosqlite.connect(DATABASE_FILE) as db:
+            # Создаём таблицу миграций если нет
+            await db.execute("""
+                CREATE TABLE IF NOT EXISTS _migrations (
+                    name TEXT PRIMARY KEY,
+                    applied_at TEXT NOT NULL
+                )
+            """)
+            await db.commit()
+
+            for name, filepath in migrations:
+                # Проверяем, применена ли миграция
+                cursor = await db.execute(
+                    "SELECT 1 FROM _migrations WHERE name = ?", (name,)
+                )
+                if await cursor.fetchone():
+                    logger.debug(f"Migration {name} already applied, skipping")
+                    continue
+
+                if not os.path.exists(filepath):
+                    logger.warning(f"Migration file not found: {filepath}")
+                    continue
+
+                # Применяем миграцию
+                with open(filepath, 'r', encoding='utf-8') as f:
+                    sql_script = f.read()
+
+                try:
+                    await db.executescript(sql_script)
+                    await db.execute(
+                        "INSERT INTO _migrations (name, applied_at) VALUES (?, ?)",
+                        (name, datetime.now(timezone.utc).isoformat())
+                    )
+                    await db.commit()
+                    logger.info(f"Applied migration: {name}")
+                except Exception as e:
+                    logger.error(f"Error applying migration {name}: {e}", exc_info=True)
+
+    except Exception as e:
+        logger.error(f"Error in incremental migrations: {e}", exc_info=True)
 
 
 async def apply_b2b_migration():
@@ -105,6 +156,11 @@ async def apply_b2b_migration():
                 logger.info(f"  Client ID: {demo_client_id}")
                 logger.info(f"  API Key: {demo_key}")
                 logger.info("  (Save this key! It won't be shown again)")
+
+            logger.info("B2B base migration completed successfully!")
+
+            # Применяем инкрементальные миграции
+            await apply_incremental_migrations()
 
             logger.info("B2B API migration completed successfully!")
             return True

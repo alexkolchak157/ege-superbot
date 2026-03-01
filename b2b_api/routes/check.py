@@ -36,10 +36,16 @@ router = APIRouter(prefix="/check", tags=["check"])
 # Импортируем evaluators динамически
 def get_evaluator(task_number: int, strictness: str = "standard"):
     """Возвращает evaluator для задания."""
-    evaluators = {}
-
     try:
-        if task_number == 19:
+        if task_number == 17:
+            from task17.evaluator import Task17AIEvaluator
+            return Task17AIEvaluator()
+
+        elif task_number == 18:
+            from task18.evaluator import Task18AIEvaluator
+            return Task18AIEvaluator()
+
+        elif task_number == 19:
             from task19.evaluator import Task19AIEvaluator
             return Task19AIEvaluator()
 
@@ -78,6 +84,32 @@ def get_evaluator(task_number: int, strictness: str = "standard"):
         )
 
 
+async def find_existing_check_by_idempotency_key(
+    client_id: str, idempotency_key: str
+) -> Optional[dict]:
+    """
+    Ищет существующую проверку по idempotency_key.
+
+    Returns:
+        dict с check_id и status если найдена, None если нет.
+    """
+    try:
+        async with aiosqlite.connect(DATABASE_FILE) as db:
+            db.row_factory = aiosqlite.Row
+            cursor = await db.execute("""
+                SELECT check_id, status, created_at, external_id
+                FROM b2b_checks
+                WHERE client_id = ? AND idempotency_key = ?
+                LIMIT 1
+            """, (client_id, idempotency_key))
+            row = await cursor.fetchone()
+            if row:
+                return dict(row)
+    except Exception as e:
+        logger.error(f"Error looking up idempotency key: {e}")
+    return None
+
+
 async def process_check(check_id: str, request: CheckRequest, client_id: str):
     """
     Фоновая обработка проверки.
@@ -113,7 +145,7 @@ async def process_check(check_id: str, request: CheckRequest, client_id: str):
                 "criteria_id": k,
                 "criteria_name": k,
                 "score": v,
-                "max_score": result.max_score  # Упрощаем, в реальности нужно по критериям
+                "max_score": result.max_score
             }
             for k, v in result.criteria_scores.items()
         ] if hasattr(result, 'criteria_scores') and result.criteria_scores else [])
@@ -158,8 +190,6 @@ async def process_check(check_id: str, request: CheckRequest, client_id: str):
 
         logger.info(f"Check {check_id} completed: score={result.total_score}/{result.max_score}, time={processing_time_ms}ms")
 
-        # TODO: Отправить webhook если указан callback_url
-
     except Exception as e:
         logger.error(f"Error processing check {check_id}: {e}", exc_info=True)
 
@@ -182,7 +212,7 @@ async def process_check(check_id: str, request: CheckRequest, client_id: str):
     description="""
 Отправляет ответ ученика на проверку.
 
-**Поддерживаемые задания:** 19-25
+**Поддерживаемые задания:** 17-25
 
 **Уровни строгости:**
 - `lenient` - мягкий, засчитывает ответы с небольшими недочётами
@@ -194,8 +224,12 @@ async def process_check(check_id: str, request: CheckRequest, client_id: str):
 Проверка выполняется асинхронно. После создания запроса используйте
 GET /api/v1/check/{id} для получения результата.
 
+**Идемпотентность:**
+Укажите `idempotency_key` в теле запроса. При повторном запросе с тем же ключом
+вернётся результат первоначальной проверки без создания дубликата.
+
 **Webhook (опционально):**
-Укажите `callback_url` для получения уведомления о завершении проверки.
+Укажите `callback_url` (только HTTPS) для получения уведомления о завершении проверки.
     """
 )
 async def create_check(
@@ -208,6 +242,24 @@ async def create_check(
     """
     client_data = rate_info['client_data']
     client_id = client_data['client_id']
+
+    # Проверяем idempotency key
+    if request.idempotency_key:
+        existing = await find_existing_check_by_idempotency_key(
+            client_id, request.idempotency_key
+        )
+        if existing:
+            logger.info(
+                f"Idempotent request: returning existing check {existing['check_id']} "
+                f"for key {request.idempotency_key}"
+            )
+            return CheckResponse(
+                check_id=existing['check_id'],
+                status=CheckStatus(existing['status']),
+                created_at=datetime.fromisoformat(existing['created_at']),
+                estimated_time_seconds=None,
+                external_id=existing.get('external_id')
+            )
 
     # Генерируем ID проверки
     check_id = f"chk_{secrets.token_hex(12)}"
@@ -227,9 +279,10 @@ async def create_check(
                     strictness,
                     external_id,
                     callback_url,
+                    idempotency_key,
                     metadata,
                     created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 check_id,
                 client_id,
@@ -241,6 +294,7 @@ async def create_check(
                 request.strictness,
                 request.external_id,
                 request.callback_url,
+                request.idempotency_key,
                 json.dumps(request.metadata) if request.metadata else None,
                 datetime.now(timezone.utc).isoformat()
             ))
@@ -255,7 +309,7 @@ async def create_check(
             check_id=check_id,
             status=CheckStatus.PENDING,
             created_at=datetime.now(timezone.utc),
-            estimated_time_seconds=30,  # Оценка времени
+            estimated_time_seconds=30,
             external_id=request.external_id
         )
 
@@ -372,7 +426,7 @@ async def list_checks(
     page: int = Query(1, ge=1, description="Номер страницы"),
     per_page: int = Query(20, ge=1, le=100, description="Элементов на странице"),
     status: Optional[str] = Query(None, description="Фильтр по статусу"),
-    task_number: Optional[int] = Query(None, ge=19, le=25, description="Фильтр по номеру задания")
+    task_number: Optional[int] = Query(None, ge=17, le=25, description="Фильтр по номеру задания")
 ) -> CheckListResponse:
     """
     Получает список проверок клиента.

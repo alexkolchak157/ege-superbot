@@ -9,13 +9,15 @@ from enum import Enum
 
 class TaskType(str, Enum):
     """Тип задания"""
+    TASK_17 = "task17"  # Анализ текста: поиск информации
+    TASK_18 = "task18"  # Объяснение понятия из текста
     TASK_19 = "task19"  # Примеры социальных объектов
     TASK_20 = "task20"  # Работа с текстом
-    TASK_21 = "task21"  # Составление плана
-    TASK_22 = "task22"  # Составление плана (развернутый)
-    TASK_23 = "task23"  # Задание-задача
-    TASK_24 = "task24"  # Рассуждения
-    TASK_25 = "task25"  # Мини-сочинение
+    TASK_21 = "task21"  # Графики спроса и предложения
+    TASK_22 = "task22"  # Анализ ситуаций
+    TASK_23 = "task23"  # Конституция РФ
+    TASK_24 = "task24"  # Сложный план
+    TASK_25 = "task25"  # Обоснование с примерами
 
 
 class DifficultyLevel(str, Enum):
@@ -37,7 +39,7 @@ class ThematicBlock(str, Enum):
 class B2BQuestion(BaseModel):
     """Задание из банка"""
     id: str = Field(..., description="Уникальный ID задания")
-    task_number: int = Field(..., ge=19, le=25, description="Номер задания ЕГЭ")
+    task_number: int = Field(..., ge=17, le=25, description="Номер задания ЕГЭ")
     task_type: TaskType = Field(..., description="Тип задания")
 
     # Содержание
@@ -84,7 +86,7 @@ class B2BQuestion(BaseModel):
 
 class QuestionsFilterParams(BaseModel):
     """Параметры фильтрации заданий"""
-    task_number: Optional[int] = Field(None, ge=19, le=25, description="Номер задания")
+    task_number: Optional[int] = Field(None, ge=17, le=25, description="Номер задания")
     task_type: Optional[TaskType] = Field(None, description="Тип задания")
     block: Optional[str] = Field(None, description="Тематический блок")
     topic: Optional[str] = Field(None, description="Тема (поиск по подстроке)")
