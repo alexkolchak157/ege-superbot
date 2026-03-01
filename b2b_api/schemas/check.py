@@ -2,10 +2,12 @@
 Pydantic schemas для проверки ответов B2B API.
 """
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from typing import List, Optional, Dict, Any
 from enum import Enum
 from datetime import datetime
+
+from b2b_api.utils.url_validator import validate_callback_url
 
 
 class CheckStatus(str, Enum):
@@ -40,9 +42,9 @@ class CheckRequest(BaseModel):
     """Запрос на проверку ответа"""
     task_number: int = Field(
         ...,
-        ge=19,
+        ge=17,
         le=25,
-        description="Номер задания ЕГЭ (19-25)"
+        description="Номер задания ЕГЭ (17-25)"
     )
     task_text: str = Field(
         ...,
@@ -67,17 +69,55 @@ class CheckRequest(BaseModel):
     )
     callback_url: Optional[str] = Field(
         None,
-        description="URL для webhook уведомления о завершении проверки"
+        max_length=2048,
+        description="URL для webhook уведомления о завершении проверки (только HTTPS)"
     )
     external_id: Optional[str] = Field(
         None,
         max_length=100,
         description="Внешний ID для связи с системой клиента"
     )
-    metadata: Optional[Dict[str, Any]] = Field(
+    idempotency_key: Optional[str] = Field(
         None,
-        description="Дополнительные метаданные клиента"
+        max_length=128,
+        description="Ключ идемпотентности для предотвращения дублей"
     )
+    metadata: Optional[Dict[str, str]] = Field(
+        None,
+        description="Дополнительные метаданные клиента (ключ-значение, строки)"
+    )
+
+    @field_validator("callback_url")
+    @classmethod
+    def validate_callback(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return v
+        error = validate_callback_url(v)
+        if error:
+            raise ValueError(error)
+        return v
+
+    @field_validator("strictness")
+    @classmethod
+    def validate_strictness(cls, v: Optional[str]) -> Optional[str]:
+        allowed = {"lenient", "standard", "strict", "expert"}
+        if v is not None and v not in allowed:
+            raise ValueError(f"strictness must be one of: {', '.join(sorted(allowed))}")
+        return v
+
+    @field_validator("metadata")
+    @classmethod
+    def validate_metadata(cls, v: Optional[Dict[str, str]]) -> Optional[Dict[str, str]]:
+        if v is None:
+            return v
+        if len(v) > 20:
+            raise ValueError("metadata must not contain more than 20 keys")
+        for key, val in v.items():
+            if len(key) > 64:
+                raise ValueError(f"metadata key '{key[:20]}...' exceeds 64 characters")
+            if len(str(val)) > 256:
+                raise ValueError(f"metadata value for '{key}' exceeds 256 characters")
+        return v
 
     class Config:
         json_schema_extra = {

@@ -14,34 +14,6 @@ from ..utils.datetime_utils import utc_now
 logger = logging.getLogger(__name__)
 
 
-async def ensure_tables():
-    """Создаёт таблицу variant_checks если её нет."""
-    try:
-        async with aiosqlite.connect(DATABASE_FILE) as db:
-            await db.execute("""
-                CREATE TABLE IF NOT EXISTS variant_checks (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    teacher_id INTEGER NOT NULL,
-                    variant_source TEXT NOT NULL,
-                    variant_id TEXT,
-                    tasks_checked TEXT NOT NULL,
-                    student_name TEXT,
-                    results_json TEXT NOT NULL,
-                    total_score INTEGER,
-                    max_score INTEGER,
-                    created_at TEXT NOT NULL
-                )
-            """)
-            await db.execute("""
-                CREATE INDEX IF NOT EXISTS idx_variant_checks_teacher
-                ON variant_checks(teacher_id, created_at DESC)
-            """)
-            await db.commit()
-            logger.debug("variant_checks table ensured")
-    except Exception as e:
-        logger.error(f"Error ensuring variant_checks table: {e}", exc_info=True)
-
-
 async def save_variant_check(
     teacher_id: int,
     variant_source: str,
@@ -59,8 +31,6 @@ async def save_variant_check(
         ID записи или None при ошибке.
     """
     try:
-        await ensure_tables()
-
         # Конвертируем ключи results в строки для JSON
         results_for_json = {str(k): v for k, v in results.items()}
 
@@ -96,8 +66,6 @@ async def get_variant_check_history(
 ) -> List[Dict[str, Any]]:
     """Получает историю проверок вариантов."""
     try:
-        await ensure_tables()
-
         async with aiosqlite.connect(DATABASE_FILE) as db:
             db.row_factory = aiosqlite.Row
             cursor = await db.execute("""
