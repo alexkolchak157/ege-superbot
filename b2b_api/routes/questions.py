@@ -69,6 +69,48 @@ def load_questions() -> List[dict]:
         except Exception as e:
             logger.error(f"Error loading questions.json: {e}")
 
+    # Загружаем текстовые отрывки для task17/task18
+    passages_file = os.path.join(DATA_DIR, 'text_passages_17_18.json')
+    if os.path.exists(passages_file):
+        try:
+            with open(passages_file, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+                for passage in data.get('passages', []):
+                    passage_id = passage.get('id', len(questions))
+                    block = passage.get('block', 'Разное')
+                    source = passage.get('source', '')
+                    text_content = passage.get('text', '')
+
+                    # Task 17
+                    if 'task17' in passage:
+                        t17 = passage['task17']
+                        questions.append({
+                            'id': f"task17_{passage_id}",
+                            'task_number': 17,
+                            'task_type': 'task17',
+                            'text': f"{t17.get('question', '')}\n\nТекст: {text_content[:200]}...",
+                            'topic': source,
+                            'block': block,
+                            'difficulty': 'П',
+                            'max_score': 2,
+                        })
+
+                    # Task 18
+                    if 'task18' in passage:
+                        t18 = passage['task18']
+                        questions.append({
+                            'id': f"task18_{passage_id}",
+                            'task_number': 18,
+                            'task_type': 'task18',
+                            'text': f"{t18.get('question', '')}\n\nТекст: {text_content[:200]}...",
+                            'topic': t18.get('concept', source),
+                            'block': block,
+                            'difficulty': 'П',
+                            'max_score': 2,
+                        })
+        except Exception as e:
+            logger.error(f"Error loading text_passages_17_18.json: {e}")
+
     # Загружаем вопросы для task23
     task23_file = os.path.join(DATA_DIR, 'task23_questions.json')
     if os.path.exists(task23_file):
@@ -119,6 +161,8 @@ def load_questions() -> List[dict]:
 def get_max_score(task_number: int) -> int:
     """Возвращает максимальный балл для задания."""
     scores = {
+        17: 2,
+        18: 2,
         19: 3,
         20: 2,
         21: 3,
@@ -133,6 +177,12 @@ def get_max_score(task_number: int) -> int:
 def get_criteria(task_number: int) -> List[dict]:
     """Возвращает критерии оценивания для задания."""
     criteria_map = {
+        17: [
+            {"id": "К1", "name": "Поиск информации в тексте", "max_score": 2, "description": "2 балла за 3 правильных ответа, 1 балл за 2 правильных ответа"}
+        ],
+        18: [
+            {"id": "К1", "name": "Объяснение понятия", "max_score": 2, "description": "2 балла за оба элемента (признаки понятия + связь с явлением), 1 балл за один элемент"}
+        ],
         19: [
             {"id": "К1", "name": "Корректность примеров", "max_score": 3, "description": "По 1 баллу за каждый корректный конкретный пример"}
         ],
@@ -172,7 +222,7 @@ def get_criteria(task_number: int) -> List[dict]:
 Возвращает список заданий из банка с поддержкой фильтрации и пагинации.
 
 **Фильтры:**
-- `task_number` - номер задания (19-25)
+- `task_number` - номер задания (17-25)
 - `block` - тематический блок (Экономика, Политика и т.д.)
 - `topic` - поиск по теме
 - `difficulty` - уровень сложности (Б, П, В)
@@ -186,7 +236,7 @@ async def list_questions(
     client_data: dict = Depends(verify_api_key),
     page: int = Query(1, ge=1, description="Номер страницы"),
     per_page: int = Query(20, ge=1, le=100, description="Заданий на странице"),
-    task_number: Optional[int] = Query(None, ge=19, le=25, description="Номер задания"),
+    task_number: Optional[int] = Query(None, ge=17, le=25, description="Номер задания"),
     block: Optional[str] = Query(None, description="Тематический блок"),
     topic: Optional[str] = Query(None, description="Поиск по теме"),
     difficulty: Optional[str] = Query(None, description="Уровень сложности"),

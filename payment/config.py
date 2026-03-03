@@ -43,11 +43,11 @@ SUBSCRIPTION_MODE = 'modular'  # Режим работы
 FREE_MODULES = ['test_part', 'personal_cabinet', 'teacher_mode']  # Модули ВСЕГДА бесплатны
 
 # Модули с freemium доступом (3 бесплатных AI-проверки в неделю)
-FREEMIUM_MODULES = ['task19', 'task20', 'task21', 'task22', 'task23', 'task24', 'task25']
+FREEMIUM_MODULES = ['task17', 'task18', 'task19', 'task20', 'task21', 'task22', 'task23', 'task24', 'task25']
 
 # ВСЕ платные модули (используется для планов подписки и проверок доступа)
 # ВАЖНО: При добавлении новых модулей добавляйте их ТОЛЬКО сюда!
-ALL_PAID_MODULES = ['test_part', 'task19', 'task20', 'task21', 'task22', 'task23', 'task24', 'task25', 'full_exam']
+ALL_PAID_MODULES = ['test_part', 'task17', 'task18', 'task19', 'task20', 'task21', 'task22', 'task23', 'task24', 'task25', 'full_exam']
 
 # ==================== CONFIG VALIDATION ====================
 
@@ -151,7 +151,7 @@ MODULE_PLANS = {
         ],
         'price_rub': 1,
         'duration_days': 7,
-        'modules': ['test_part', 'task19', 'task20', 'task21', 'task22', 'task23', 'task24', 'task25', 'full_exam'],
+        'modules': ['test_part', 'task17', 'task18', 'task19', 'task20', 'task21', 'task22', 'task23', 'task24', 'task25', 'full_exam'],
         'type': 'trial',
         'features': [
             '✅ Все задания второй части',
@@ -167,10 +167,11 @@ MODULE_PLANS = {
         'description': 'Полный доступ ко всем заданиям',
         'price_rub': 249,
         'duration_days': 30,
-        'modules': ['test_part', 'task19', 'task20', 'task21', 'task22', 'task23', 'task24', 'task25', 'full_exam'],
+        'modules': ['test_part', 'task17', 'task18', 'task19', 'task20', 'task21', 'task22', 'task23', 'task24', 'task25', 'full_exam'],
         'type': 'package',
         'features': [
             '✅ Все задания второй части с проверкой ИИ',
+            '✅ Задания 17-18 — Анализ текста и понятий',
             '✅ Задание 19 — Примеры и иллюстрации',
             '✅ Задание 20 — Работа с текстом',
             '✅ Задание 22 — Анализ ситуаций',
@@ -179,6 +180,7 @@ MODULE_PLANS = {
             '💡 Максимальные баллы на ЕГЭ!'
         ],
         'detailed_description': [
+            '• Задания 17-18: Анализируй тексты и объясняй понятия',
             '• Задание 19: Научись подбирать идеальные примеры к любой теории',
             '• Задание 20: Пиши аргументы, которые оценят на максимум',
             '• Задание 22: Анализируй ситуации и отвечай на вопросы как профи',
@@ -198,7 +200,7 @@ MODULE_PLANS = {
         'description': 'Попробуйте режим учителя с одним учеником',
         'price_rub': 0,
         'duration_days': 36500,  # ~100 лет - фактически бессрочно
-        'modules': ['test_part', 'task19', 'task20', 'task21', 'task22', 'task23', 'task24', 'task25', 'full_exam'],
+        'modules': ['test_part', 'task17', 'task18', 'task19', 'task20', 'task21', 'task22', 'task23', 'task24', 'task25', 'full_exam'],
         'type': 'teacher',
         'max_students': 1,
         'features': [
@@ -223,7 +225,7 @@ MODULE_PLANS = {
         'description': 'Специальная цена для учеников от учителя',
         'price_rub': 149,
         'duration_days': 30,
-        'modules': ['test_part', 'task19', 'task20', 'task21', 'task22', 'task23', 'task24', 'task25', 'full_exam'],
+        'modules': ['test_part', 'task17', 'task18', 'task19', 'task20', 'task21', 'task22', 'task23', 'task24', 'task25', 'full_exam'],
         'type': 'student',
         'features': [
             '✅ Все задания с проверкой ИИ',
@@ -247,7 +249,7 @@ MODULE_PLANS = {
         'description': 'Протестируйте все функции за 1 рубль',
         'price_rub': 1,
         'duration_days': 7,
-        'modules': ['test_part', 'task19', 'task20', 'task21', 'task22', 'task23', 'task24', 'task25', 'full_exam'],
+        'modules': ['test_part', 'task17', 'task18', 'task19', 'task20', 'task21', 'task22', 'task23', 'task24', 'task25', 'full_exam'],
         'type': 'teacher',
         'max_students': 3,
         'features': [
@@ -274,7 +276,7 @@ MODULE_PLANS = {
         'description': 'Для репетиторов до 10 учеников',
         'price_rub': 249,
         'duration_days': 30,
-        'modules': ['test_part', 'task19', 'task20', 'task21', 'task22', 'task23', 'task24', 'task25', 'full_exam'],
+        'modules': ['test_part', 'task17', 'task18', 'task19', 'task20', 'task21', 'task22', 'task23', 'task24', 'task25', 'full_exam'],
         'type': 'teacher',
         'max_students': 10,
         'features': [
@@ -301,7 +303,7 @@ MODULE_PLANS = {
         'description': 'Для опытных репетиторов до 20 учеников',
         'price_rub': 449,
         'duration_days': 30,
-        'modules': ['test_part', 'task19', 'task20', 'task21', 'task22', 'task23', 'task24', 'task25', 'full_exam'],
+        'modules': ['test_part', 'task17', 'task18', 'task19', 'task20', 'task21', 'task22', 'task23', 'task24', 'task25', 'full_exam'],
         'type': 'teacher',
         'max_students': 20,
         'features': [
@@ -330,7 +332,7 @@ MODULE_PLANS = {
         'description': 'Безлимитный тариф для школ и курсов',
         'price_rub': 699,
         'duration_days': 30,
-        'modules': ['test_part', 'task19', 'task20', 'task21', 'task22', 'task23', 'task24', 'task25', 'full_exam'],
+        'modules': ['test_part', 'task17', 'task18', 'task19', 'task20', 'task21', 'task22', 'task23', 'task24', 'task25', 'full_exam'],
         'type': 'teacher',
         'max_students': -1,  # Безлимит
         'features': [
@@ -370,7 +372,7 @@ MODULE_PLANS = {
         ],
         'price_rub': 1,
         'duration_days': 7,
-        'modules': ['test_part', 'task19', 'task20', 'task21', 'task22', 'task23', 'task24', 'task25', 'full_exam'],
+        'modules': ['test_part', 'task17', 'task18', 'task19', 'task20', 'task21', 'task22', 'task23', 'task24', 'task25', 'full_exam'],
         'type': 'trial',
         'is_test': True,
         'features': [
@@ -387,7 +389,7 @@ MODULE_PLANS = {
         'description': 'Полный доступ ко всем заданиям',
         'price_rub': 1,
         'duration_days': 30,
-        'modules': ['test_part', 'task19', 'task20', 'task21', 'task22', 'task23', 'task24', 'task25', 'full_exam'],
+        'modules': ['test_part', 'task17', 'task18', 'task19', 'task20', 'task21', 'task22', 'task23', 'task24', 'task25', 'full_exam'],
         'type': 'package',
         'is_test': True,
         'features': [
@@ -416,7 +418,7 @@ MODULE_PLANS = {
         'description': 'Специальная цена для учеников от учителя',
         'price_rub': 1,
         'duration_days': 30,
-        'modules': ['test_part', 'task19', 'task20', 'task21', 'task22', 'task23', 'task24', 'task25', 'full_exam'],
+        'modules': ['test_part', 'task17', 'task18', 'task19', 'task20', 'task21', 'task22', 'task23', 'task24', 'task25', 'full_exam'],
         'type': 'student',
         'is_test': True,
         'features': [
@@ -441,7 +443,7 @@ MODULE_PLANS = {
         'description': 'Протестируйте все функции за 1 рубль',
         'price_rub': 1,
         'duration_days': 7,
-        'modules': ['test_part', 'task19', 'task20', 'task21', 'task22', 'task23', 'task24', 'task25', 'full_exam'],
+        'modules': ['test_part', 'task17', 'task18', 'task19', 'task20', 'task21', 'task22', 'task23', 'task24', 'task25', 'full_exam'],
         'type': 'teacher',
         'max_students': 3,
         'is_test': True,
@@ -469,7 +471,7 @@ MODULE_PLANS = {
         'description': 'Для репетиторов до 10 учеников',
         'price_rub': 1,
         'duration_days': 30,
-        'modules': ['test_part', 'task19', 'task20', 'task21', 'task22', 'task23', 'task24', 'task25', 'full_exam'],
+        'modules': ['test_part', 'task17', 'task18', 'task19', 'task20', 'task21', 'task22', 'task23', 'task24', 'task25', 'full_exam'],
         'type': 'teacher',
         'max_students': 10,
         'is_test': True,
@@ -497,7 +499,7 @@ MODULE_PLANS = {
         'description': 'Для опытных репетиторов до 20 учеников',
         'price_rub': 1,
         'duration_days': 30,
-        'modules': ['test_part', 'task19', 'task20', 'task21', 'task22', 'task23', 'task24', 'task25', 'full_exam'],
+        'modules': ['test_part', 'task17', 'task18', 'task19', 'task20', 'task21', 'task22', 'task23', 'task24', 'task25', 'full_exam'],
         'type': 'teacher',
         'max_students': 20,
         'is_test': True,
@@ -527,7 +529,7 @@ MODULE_PLANS = {
         'description': 'Безлимитный тариф для школ и курсов',
         'price_rub': 1,
         'duration_days': 30,
-        'modules': ['test_part', 'task19', 'task20', 'task21', 'task22', 'task23', 'task24', 'task25', 'full_exam'],
+        'modules': ['test_part', 'task17', 'task18', 'task19', 'task20', 'task21', 'task22', 'task23', 'task24', 'task25', 'full_exam'],
         'type': 'teacher',
         'max_students': -1,  # Безлимит
         'is_test': True,
@@ -602,6 +604,32 @@ MODULE_DESCRIPTIONS = {
             'Подробные объяснения'
         ],
         'is_free': True
+    },
+    'task17': {
+        'emoji': '📖',
+        'short_name': 'Задание 17',
+        'full_name': 'Задание 17 — Анализ текста',
+        'description': 'Находи информацию в тексте и отвечай на вопросы как эксперт',
+        'features': [
+            'Анализируй обществоведческие тексты',
+            'ИИ проверит точность ответов',
+            'Учись выделять главное из текста',
+            'Получай до 2 баллов на ЕГЭ'
+        ],
+        'is_free': False
+    },
+    'task18': {
+        'emoji': '📝',
+        'short_name': 'Задание 18',
+        'full_name': 'Задание 18 — Понятие из текста',
+        'description': 'Объясняй понятия из текста и выделяй их признаки',
+        'features': [
+            'Работай с понятиями из текста',
+            'ИИ оценит полноту ответа',
+            'Учись формулировать определения',
+            'Получай до 2 баллов на ЕГЭ'
+        ],
+        'is_free': False
     },
     'task19': {
         'emoji': '🎯',
@@ -698,10 +726,10 @@ MODULE_DESCRIPTIONS = {
         'emoji': '📋',
         'short_name': 'Полный вариант',
         'full_name': 'Полный вариант ЕГЭ',
-        'description': 'Пройди полный вариант ЕГЭ из 23 заданий с проверкой ИИ',
+        'description': 'Пройди полный вариант ЕГЭ из 25 заданий с проверкой ИИ',
         'features': [
             '16 заданий тестовой части',
-            '7 заданий с развёрнутым ответом (19-25)',
+            '9 заданий с развёрнутым ответом (17-25)',
             'ИИ-проверка второй части',
             'Подсчёт первичных и вторичных баллов',
             'Свободная навигация между заданиями'

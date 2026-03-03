@@ -18,8 +18,8 @@ async def evaluate_homework_answer(
     Проверяет ответ ученика через AI evaluator соответствующего модуля.
 
     Args:
-        task_module: Название модуля ('task19', 'task20', 'task21', 'task22', 'task23',
-                     'task24', 'task25', 'test_part', 'custom')
+        task_module: Название модуля ('task17', 'task18', 'task19', 'task20', 'task21',
+                     'task22', 'task23', 'task24', 'task25', 'test_part', 'custom')
         question_data: Данные вопроса из question_loader или custom_questions
         user_answer: Ответ ученика
         user_id: ID ученика
@@ -531,7 +531,25 @@ async def _evaluate_custom_question(
                 )
                 return True, feedback
 
-        # Для заданий 19-25 используем соответствующие AI evaluators
+        # Для заданий 17-25 используем соответствующие AI evaluators
+        elif custom_type == 'task17':
+            eval_question_data = {
+                'text': question_text,
+                'question': question_text,
+            }
+            if correct_answer:
+                eval_question_data['correct_answers'] = [correct_answer]
+            return await _evaluate_task17(eval_question_data, user_answer, user_id)
+
+        elif custom_type == 'task18':
+            eval_question_data = {
+                'text': question_text,
+                'question': question_text,
+            }
+            if correct_answer:
+                eval_question_data['elements'] = [correct_answer]
+            return await _evaluate_task18(eval_question_data, user_answer, user_id)
+
         elif custom_type == 'task19':
             # Формируем question_data для evaluator
             eval_question_data = {

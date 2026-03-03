@@ -37,6 +37,10 @@ def load_topics_for_module(task_module: str) -> Dict:
         if task_module == 'test_part':
             return _load_test_part_topics(base_dir)
 
+        # Специальная обработка для task17/task18 (общие текстовые отрывки)
+        if task_module in ('task17', 'task18'):
+            return _load_task17_18_topics(base_dir, task_module)
+
         # Специальная обработка для task21
         if task_module == 'task21':
             return _load_task21_topics(base_dir)
@@ -226,6 +230,81 @@ def _load_test_part_topics(base_dir: str) -> Dict:
         logger.error(f"Error loading test_part topics: {e}")
         import traceback
         traceback.print_exc()
+        return {'blocks': {}, 'topics_by_id': {}, 'total_count': 0}
+
+
+def _load_task17_18_topics(base_dir: str, task_module: str) -> Dict:
+    """
+    Загружает текстовые отрывки для task17/task18 из text_passages_17_18.json.
+
+    Args:
+        base_dir: Базовая директория проекта
+        task_module: 'task17' или 'task18'
+
+    Returns:
+        Словарь в формате, совместимом с load_topics_for_module
+    """
+    try:
+        passages_file = os.path.join(base_dir, 'data', 'text_passages_17_18.json')
+
+        if not os.path.exists(passages_file):
+            logger.info(f"Passages file not found for {task_module}: {passages_file}")
+            return {'blocks': {}, 'topics_by_id': {}, 'total_count': 0}
+
+        with open(passages_file, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+
+        passages = data.get('passages', [])
+        blocks = {}
+        topics_by_id = {}
+
+        # Определяем ключ задания ('task17' или 'task18')
+        task_key = task_module
+
+        for passage in passages:
+            passage_id = passage.get('id')
+            if not passage_id or task_key not in passage:
+                continue
+
+            block_name = passage.get('block', 'Без категории')
+            source = passage.get('source', f'Текст {passage_id}')
+            task_data = passage[task_key]
+
+            if task_module == 'task17':
+                title = f"Текст: {source}"
+            else:
+                concept = task_data.get('concept', source)
+                title = f"Понятие: {concept}"
+
+            topic_obj = {
+                'id': passage_id,
+                'title': title,
+                'block': block_name,
+                'text': passage.get('text', ''),
+                'source': source,
+                'passage_id': passage_id,
+                **task_data,
+            }
+
+            topics_by_id[passage_id] = topic_obj
+
+            if block_name not in blocks:
+                blocks[block_name] = []
+            blocks[block_name].append({
+                'id': passage_id,
+                'title': title
+            })
+
+        logger.info(f"Loaded {task_module} topics: {len(topics_by_id)} passages")
+
+        return {
+            'blocks': blocks,
+            'topics_by_id': topics_by_id,
+            'total_count': len(topics_by_id)
+        }
+
+    except Exception as e:
+        logger.error(f"Error loading {task_module} topics: {e}")
         return {'blocks': {}, 'topics_by_id': {}, 'total_count': 0}
 
 
@@ -560,6 +639,11 @@ def module_supports_topics(task_module: str) -> bool:
     if task_module == 'test_part':
         questions_file = os.path.join(base_dir, 'data', 'questions.json')
         return os.path.exists(questions_file)
+
+    # Специальная проверка для task17/task18 (общий файл)
+    if task_module in ('task17', 'task18'):
+        passages_file = os.path.join(base_dir, 'data', 'text_passages_17_18.json')
+        return os.path.exists(passages_file)
 
     # Специальная проверка для task21
     if task_module == 'task21':
