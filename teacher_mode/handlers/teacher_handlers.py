@@ -461,6 +461,8 @@ async def create_assignment_start(update: Update, context: ContextTypes.DEFAULT_
     keyboard = [
         [InlineKeyboardButton("🎯 Полный вариант ЕГЭ", callback_data="assign_task_full_exam")],
         [InlineKeyboardButton("📝 Тестовая часть (1-16)", callback_data="assign_task_test_part")],
+        [InlineKeyboardButton("📖 Задание 17", callback_data="assign_task_task17")],
+        [InlineKeyboardButton("📝 Задание 18", callback_data="assign_task_task18")],
         [InlineKeyboardButton("💡 Задание 19", callback_data="assign_task_task19")],
         [InlineKeyboardButton("⚙️ Задание 20", callback_data="assign_task_task20")],
         [InlineKeyboardButton("📊 Задание 21", callback_data="assign_task_task21")],
@@ -595,9 +597,11 @@ async def create_full_exam_variant(update: Update, context: ContextTypes.DEFAULT
 
         full_exam_questions.extend(test_part_questions)
 
-        # 2. Генерируем задания 19, 20, 24, 25 (по 1 заданию каждое)
-        advanced_modules = ['task19', 'task20', 'task21', 'task22', 'task23', 'task24', 'task25']
+        # 2. Генерируем задания 17-25 (по 1 заданию каждое)
+        advanced_modules = ['task17', 'task18', 'task19', 'task20', 'task21', 'task22', 'task23', 'task24', 'task25']
         module_names = {
+            'task17': '📖 Задание 17',
+            'task18': '📝 Задание 18',
             'task19': '💡 Задание 19',
             'task20': '⚙️ Задание 20',
             'task21': '📊 Задание 21',
@@ -634,6 +638,8 @@ async def create_full_exam_variant(update: Update, context: ContextTypes.DEFAULT
             f"✅ Всего заданий: {len(full_exam_questions)}\n\n"
             "<b>Состав варианта:</b>\n"
             f"📝 Тестовая часть (1-16): {len(test_part_questions)} заданий\n"
+            f"📖 Задание 17: 1 задание\n"
+            f"📝 Задание 18: 1 задание\n"
             f"💡 Задание 19: 1 задание\n"
             f"⚙️ Задание 20: 1 задание\n"
             f"📊 Задание 21: 1 задание\n"
@@ -3821,6 +3827,8 @@ async def show_mixed_modules_selection(update: Update, context: ContextTypes.DEF
     # Показываем какие модули выбраны
     module_names = {
         'test_part': '📝 Тестовая часть (1-16)',
+        'task17': '📖 Задание 17',
+        'task18': '📝 Задание 18',
         'task19': '💡 Задание 19',
         'task20': '⚙️ Задание 20',
         'task21': '📊 Задание 21',
@@ -3887,6 +3895,8 @@ async def proceed_with_mixed_selection(update: Update, context: ContextTypes.DEF
 
     module_names = {
         'test_part': '📝 Тестовая часть (1-16)',
+        'task17': '📖 Задание 17',
+        'task18': '📝 Задание 18',
         'task19': '💡 Задание 19',
         'task20': '⚙️ Задание 20',
         'task21': '📊 Задание 21',

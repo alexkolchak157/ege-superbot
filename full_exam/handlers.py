@@ -183,7 +183,7 @@ async def entry_from_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "📝 <b>Полный вариант ЕГЭ</b>\n\n"
             "Пройдите полный вариант экзамена:\n"
             "• 16 заданий тестовой части\n"
-            "• 7 заданий с развёрнутым ответом (19-25)\n"
+            "• 9 заданий с развёрнутым ответом (17-25)\n"
             "• Проверка ИИ для второй части\n"
             "• Подробная аналитика результатов\n\n"
             "Вы можете переключаться между заданиями "
@@ -391,7 +391,17 @@ async def _show_part2_task(message, context, exam_num: int, task: ExamTask, edit
     text += "\n" + "━" * 30 + "\n\n"
 
     # Формируем текст задания в зависимости от типа
-    if exam_num == 19:
+    if exam_num in (17, 18):
+        # Задания 17 и 18 основаны на общем тексте
+        passage_text = data.get("text", "")
+        source = data.get("source", "")
+        question = data.get("question", "")
+        if source:
+            text += f"<b>Источник:</b> {source}\n\n"
+        text += f"{passage_text}\n\n"
+        if question:
+            text += f"<b>Вопрос:</b>\n{question}"
+    elif exam_num == 19:
         text += data.get("task_text", "")
     elif exam_num == 20:
         text += data.get("task_text", "")
