@@ -10,7 +10,7 @@ from telegram.ext import (
 )
 from core.plugin_base import BotPlugin
 from core import states
-from core.states import ANSWERING_T18
+from core.states import ANSWERING_T18, AWAITING_T17_TEXT
 from . import handlers
 
 logger = logging.getLogger(__name__)
@@ -51,6 +51,13 @@ class Task18Plugin(BotPlugin):
                     CallbackQueryHandler(handlers.back_to_main_menu, pattern="^to_main_menu$"),
                     CallbackQueryHandler(handlers.return_to_menu, pattern="^t18_menu$"),
                     CallbackQueryHandler(handlers.handle_result_action, pattern="^t18_(new)$"),
+                ],
+                AWAITING_T17_TEXT: [
+                    MessageHandler(
+                        filters.TEXT & ~filters.COMMAND, handlers.handle_task17_text
+                    ),
+                    CallbackQueryHandler(handlers.skip_task17_text, pattern="^t18_skip_t17$"),
+                    CallbackQueryHandler(handlers.return_to_menu, pattern="^t18_menu$"),
                 ],
                 ANSWERING_T18: [
                     MessageHandler(

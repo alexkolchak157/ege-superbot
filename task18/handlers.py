@@ -15,7 +15,7 @@ from core import db, states
 from core.error_handler import safe_handler
 from core.menu_handlers import handle_to_main_menu
 from core.plugin_loader import build_main_menu
-from core.states import ANSWERING_T18
+from core.states import ANSWERING_T18, AWAITING_T17_TEXT
 from core.streak_manager import get_streak_manager
 from core.ui_helpers import (
     get_motivational_message,
@@ -152,14 +152,17 @@ async def practice_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return states.CHOOSING_MODE
 
     task18_data = passage.get("task18", {})
+    task17_data = passage.get("task17", {})
 
     # Сохраняем в контекст
     context.user_data["current_t18_passage"] = passage
     context.user_data["t18_start_time"] = datetime.now()
+    # Очищаем предыдущий ответ на задание 17
+    context.user_data.pop("t18_task17_answer", None)
 
     text_fragment = passage["text"]
     question = task18_data.get("question", "")
-    concept = task18_data.get("concept", "")
+    task17_question = task17_data.get("question", "")
     source = passage.get("source", "")
 
     msg = f"""<b>📝 Задание 18</b>
@@ -170,7 +173,106 @@ async def practice_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 {text_fragment}
 
-<b>Вопрос:</b>
+<b>Вопрос (задание 18):</b>
+{question}
+
+<b>Вопрос задания 17 (для справки):</b>
+<i>{task17_question}</i>
+
+📌 <b>Шаг 1 из 2:</b> Сначала напишите ваш ответ на <b>задание 17</b> \
+(текст, на который вы опираетесь при выполнении второй части задания 18).
+
+💡 <i>Это нужно для корректной проверки элемента 2 (объяснение связи с текстом).</i>"""
+
+    keyboard = [
+        [InlineKeyboardButton("⏭ Пропустить задание 17", callback_data="t18_skip_t17")],
+        [InlineKeyboardButton("◀️ Назад в меню", callback_data="t18_menu")],
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
+    await query.message.edit_text(msg, reply_markup=reply_markup, parse_mode=ParseMode.HTML)
+    return AWAITING_T17_TEXT
+
+
+def _get_random_passage() -> Optional[Dict[str, Any]]:
+    """Выбрать случайный текстовый отрывок, у которого есть task18."""
+    passages = passages_data.get("passages", [])
+    valid = [p for p in passages if "task18" in p]
+    if not valid:
+        return None
+    return random.choice(valid)
+
+
+# ====================================================================
+# Обработка ответа на задание 17 (шаг 1)
+# ====================================================================
+
+@safe_handler()
+async def handle_task17_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработка ответа ученика на задание 17 (шаг 1 для задания 18)."""
+    task17_answer = update.message.text.strip()
+
+    passage = context.user_data.get("current_t18_passage")
+    if not passage:
+        await update.message.reply_text(
+            "❌ Ошибка: задание не найдено. Начните заново.",
+            reply_markup=InlineKeyboardMarkup(
+                [[InlineKeyboardButton("🏠 Главное меню", callback_data="to_main_menu")]]
+            ),
+        )
+        return states.CHOOSING_MODE
+
+    # Сохраняем ответ на задание 17
+    context.user_data["t18_task17_answer"] = task17_answer
+
+    task18_data = passage.get("task18", {})
+    question = task18_data.get("question", "")
+
+    msg = f"""<b>📝 Задание 18 — Шаг 2 из 2</b>
+
+✅ Ваш ответ на задание 17 сохранён.
+
+<b>Теперь напишите ответ на задание 18:</b>
+{question}
+
+💡 <i>Опирайтесь на обществоведческие знания. Отправьте ответ одним сообщением.</i>"""
+
+    keyboard = [
+        [InlineKeyboardButton("◀️ Назад в меню", callback_data="t18_menu")]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
+    await update.message.reply_text(msg, reply_markup=reply_markup, parse_mode=ParseMode.HTML)
+    return ANSWERING_T18
+
+
+@safe_handler()
+async def skip_task17_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Пропуск ввода ответа на задание 17."""
+    query = update.callback_query
+
+    passage = context.user_data.get("current_t18_passage")
+    if not passage:
+        await query.message.edit_text(
+            "❌ Ошибка: задание не найдено. Начните заново.",
+            reply_markup=InlineKeyboardMarkup(
+                [[InlineKeyboardButton("🏠 Главное меню", callback_data="to_main_menu")]]
+            ),
+        )
+        return states.CHOOSING_MODE
+
+    # Пропускаем задание 17
+    context.user_data["t18_task17_answer"] = ""
+
+    task18_data = passage.get("task18", {})
+    question = task18_data.get("question", "")
+
+    msg = f"""<b>📝 Задание 18</b>
+
+⚠️ Ответ на задание 17 пропущен. Проверка элемента 2 \
+(связь с текстом) может быть менее точной.
+
+<b>Напишите ответ на задание 18:</b>
 {question}
 
 💡 <i>Опирайтесь на обществоведческие знания. Отправьте ответ одним сообщением.</i>"""
@@ -184,17 +286,8 @@ async def practice_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return ANSWERING_T18
 
 
-def _get_random_passage() -> Optional[Dict[str, Any]]:
-    """Выбрать случайный текстовый отрывок, у которого есть task18."""
-    passages = passages_data.get("passages", [])
-    valid = [p for p in passages if "task18" in p]
-    if not valid:
-        return None
-    return random.choice(valid)
-
-
 # ====================================================================
-# Обработка ответа
+# Обработка ответа на задание 18 (шаг 2)
 # ====================================================================
 
 @safe_handler()
@@ -214,6 +307,7 @@ async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return states.CHOOSING_MODE
 
     task18 = passage.get("task18", {})
+    task17_answer = context.user_data.get("t18_task17_answer", "")
 
     # Данные для evaluator
     eval_data = {
@@ -222,6 +316,7 @@ async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "concept": task18.get("concept", ""),
         "correct_answer": task18.get("correct_answer", {}),
         "scoring_notes": task18.get("scoring_notes", ""),
+        "task17_answer": task17_answer,
     }
 
     # Анимация проверки
