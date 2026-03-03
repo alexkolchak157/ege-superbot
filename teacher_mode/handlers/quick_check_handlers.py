@@ -564,6 +564,8 @@ async def select_bulk_task_type(update: Update, context: ContextTypes.DEFAULT_TY
     context.user_data['qc_mode'] = 'bulk'
 
     task_names = {
+        QuickCheckTaskType.TASK17: "📖 Задание 17",
+        QuickCheckTaskType.TASK18: "📝 Задание 18",
         QuickCheckTaskType.TASK19: "💡 Задание 19",
         QuickCheckTaskType.TASK20: "⚙️ Задание 20",
         QuickCheckTaskType.TASK21: "📊 Задание 21",
