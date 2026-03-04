@@ -40,6 +40,7 @@ ANSWERING_T17 = 1701
 
 # Состояния для task18
 ANSWERING_T18 = 1801
+AWAITING_T17_TEXT = 1802  # Ожидание текста ответа на задание 17
 
 # Состояния для task21
 ANSWERING_T21 = 2101
