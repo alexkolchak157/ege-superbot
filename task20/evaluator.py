@@ -75,7 +75,7 @@ class Task20AIEvaluator(BaseAIEvaluator if AI_EVALUATOR_AVAILABLE else object):
         if AI_EVALUATOR_AVAILABLE:
             try:
                 config = AIServiceConfig.from_env()
-                config.model = AIModel.PRO
+                config.model = AIModel.LITE
                 config.temperature = 0.2
                 self.config = config
                 logger.info("Task20 AI evaluator configured")
