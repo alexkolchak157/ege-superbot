@@ -413,12 +413,13 @@ async def select_group(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
 async def confirm_tasks(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Подтверждение выбранных заданий."""
     query = update.callback_query
-    await query.answer()
 
     selected = context.user_data.get('vc_selected_tasks', [])
     if not selected:
         await query.answer("Выберите хотя бы одно задание", show_alert=True)
         return TeacherStates.VARIANT_CHECK_SELECT_TASKS
+
+    await query.answer()
 
     source = context.user_data.get('vc_source', 'external')
 
@@ -533,8 +534,9 @@ async def process_keys_document(update: Update, context: ContextTypes.DEFAULT_TY
         pass
 
     if not success:
+        import html as html_module
         await update.message.reply_text(
-            f"❌ Ошибка обработки файла:\n{error}\n\n"
+            f"❌ Ошибка обработки файла:\n{html_module.escape(str(error))}\n\n"
             "Поддерживаемые форматы: TXT, PDF, DOCX.",
             parse_mode='HTML'
         )
@@ -1094,8 +1096,9 @@ async def process_answer_document(update: Update, context: ContextTypes.DEFAULT_
         pass
 
     if not success:
+        import html as html_module
         await update.message.reply_text(
-            f"❌ Ошибка обработки файла:\n{error}\n\n"
+            f"❌ Ошибка обработки файла:\n{html_module.escape(str(error))}\n\n"
             "Поддерживаемые форматы: TXT, PDF, DOCX.",
             parse_mode='HTML'
         )
