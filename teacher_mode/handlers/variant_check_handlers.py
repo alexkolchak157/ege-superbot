@@ -446,49 +446,57 @@ async def _start_entering_keys(update: Update, context: ContextTypes.DEFAULT_TYP
     lines = ["📝 <b>Ввод ключей (правильных ответов)</b>\n"]
 
     lines.append(
-        "Ключи можно ввести <b>текстом</b>, загрузить "
-        "<b>файлом</b> (TXT/PDF/DOCX) или отправить <b>фото</b>.\n"
+        "Отправьте <b>один файл</b> (TXT/PDF/DOCX), <b>текст</b> "
+        "или <b>фото</b> с ключами ко всем заданиям сразу.\n"
     )
 
     # Формат ввода
-    lines.append("<b>Формат ввода (текст или файл):</b>\n")
+    lines.append("<b>Формат:</b>\n")
 
-    if part1_tasks:
+    if part1_tasks and part2_tasks:
         lines.append(
-            "🔹 <b>Часть 1</b> — все ответы списком:\n"
+            "<code>1: 24\n"
+            "2: 135\n"
+            "...\n"
+            "17:\n"
+            "[условие задания]\n"
+            "---\n"
+            "[ответ / критерии]\n"
+            "18:\n"
+            "[условие]\n"
+            "---\n"
+            "[ответ]</code>\n"
+        )
+    elif part1_tasks:
+        lines.append(
             "<code>1: 24\n"
             "2: 135\n"
             "3: социализация\n"
             "...</code>\n"
         )
-
-    if part2_tasks:
+    elif part2_tasks:
         lines.append(
-            "🔹 <b>Часть 2</b> — для каждого задания:\n"
             "<code>17:\n"
             "[условие задания]\n"
             "---\n"
-            "[правильный ответ / критерии]\n"
-            "===\n"
+            "[ответ / критерии]\n"
             "18:\n"
             "[условие]\n"
             "---\n"
-            "[ответ]\n"
-            "===</code>\n"
+            "[ответ]</code>\n"
         )
 
     lines.append(
-        "📄 <b>Файл</b> — загрузите TXT/PDF/DOCX в таком же формате\n"
-        "📷 <b>Фото</b> — отправьте фото с ключами (OCR)\n"
+        "Номер задания в начале строки — граница блока.\n"
+        "Для части 2: <code>---</code> отделяет условие от ответа.\n"
     )
 
-    if part1_tasks:
-        lines.append("Начните с ответов <b>части 1</b>:")
-    else:
-        lines.append(
-            f"Введите данные для <b>задания {part2_tasks[0]}</b> "
-            f"({TASK_NAMES.get(part2_tasks[0], '')}):"
-        )
+    lines.append(
+        "📄 <b>Файл</b> — TXT, PDF или DOCX\n"
+        "📷 <b>Фото</b> — распознаем текст (OCR)\n"
+    )
+
+    lines.append("Отправьте ключи одним сообщением или файлом:")
 
     keyboard = [[InlineKeyboardButton("◀️ Отмена", callback_data="vc_menu")]]
 
@@ -572,7 +580,7 @@ async def _process_keys_from_text(
 
     # Пытаемся распарсить как комплексный файл со всеми ключами сразу
     parsed_all = _parse_bulk_keys(text, selected)
-    if parsed_all and len(parsed_all) > 1:
+    if parsed_all:
         keys.update(parsed_all)
         context.user_data['vc_keys'] = keys
 
@@ -584,6 +592,24 @@ async def _process_keys_from_text(
             parts_info.append(f"часть 1: {p1_count}")
         if p2_count:
             parts_info.append(f"часть 2: {p2_count}")
+
+        # Проверяем, загружены ли ключи для всех выбранных заданий
+        missing = [t for t in selected if t not in keys]
+
+        if missing:
+            missing_str = ", ".join(str(t) for t in sorted(missing))
+            await update.message.reply_text(
+                f"✅ Из {source} загружено <b>{len(parsed_all)}</b> ключей "
+                f"({', '.join(parts_info)}).\n\n"
+                f"⚠️ Не найдены ключи для заданий: <b>{missing_str}</b>\n"
+                "Отправьте недостающие ключи или продолжите с имеющимися.",
+                parse_mode='HTML'
+            )
+            # Обновляем индекс для пошагового ввода оставшихся заданий ч.2
+            missing_p2 = [t for t in part2_tasks if t not in keys]
+            if missing_p2:
+                context.user_data['vc_entering_keys_idx'] = part2_tasks.index(missing_p2[0])
+            return await _keys_complete(update, context)
 
         await update.message.reply_text(
             f"✅ Из {source} загружено <b>{len(parsed_all)}</b> ключей "
@@ -661,21 +687,56 @@ def _parse_bulk_keys(text: str, selected: List[int]) -> Optional[Dict[int, Dict]
     Парсит комплексный файл с ключами ко всем заданиям сразу.
 
     Поддерживаемые форматы:
-    - Часть 1: "1: ответ" на каждой строке
-    - Часть 2: блоки разделённые === с номером задания
+
+    Формат 1 (с разделителями ===):
+        17:
+        [условие]
+        ---
+        [ответ]
+        ===
+        18:
+        ...
+
+    Формат 2 (простой — номера заданий как границы блоков):
+        1: 24
+        2: 135
+        ...
+        17:
+        [условие]
+        ---
+        [ответ]
+        18:
+        [условие]
+        ---
+        [ответ]
+
+    Для части 1: "N: ответ" на одной строке.
+    Для части 2: номер задания, затем многострочный блок до следующего номера.
+    Разделитель --- между условием и ответом/критериями (опционально).
     """
     keys = {}
 
-    # Сначала пробуем разделить по блокам ===
-    blocks = re.split(r'\n\s*===\s*\n', text)
+    # Стратегия 1: если есть разделители ===, разбиваем по ним
+    if re.search(r'\n\s*===\s*\n', text) or text.strip().endswith('==='):
+        keys = _parse_bulk_keys_delimited(text, selected)
+
+    # Стратегия 2: разбиваем по номерам заданий как границам блоков
+    if not keys:
+        keys = _parse_bulk_keys_by_task_numbers(text, selected)
+
+    return keys if keys else None
+
+
+def _parse_bulk_keys_delimited(text: str, selected: List[int]) -> Dict[int, Dict]:
+    """Парсит ключи, разделённые === между блоками (старый формат)."""
+    keys = {}
+    blocks = re.split(r'\n\s*===\s*(?:\n|$)', text)
 
     for block in blocks:
         block = block.strip()
         if not block:
             continue
 
-        # Ищем номер задания в начале блока
-        # Формат: "17:" или "Задание 17:" или просто "17"
         header_match = re.match(
             r'^(?:Задание\s*)?(\d+)\s*[:\.\)]\s*(.*)',
             block, re.DOTALL
@@ -687,18 +748,14 @@ def _parse_bulk_keys(text: str, selected: List[int]) -> Optional[Dict[int, Dict]
 
             if num in selected:
                 if num <= 16:
-                    # Часть 1: короткий ответ
-                    # content может быть просто ответом
                     answer = content.split('\n')[0].strip()
                     if answer:
                         keys[num] = {'type': 'exact', 'answer': answer}
                 else:
-                    # Часть 2: условие + ключ
                     keys[num] = _parse_part2_key(content, num)
         else:
             # Блок без номера — пробуем как набор коротких ответов
-            lines = block.strip().split('\n')
-            for line in lines:
+            for line in block.strip().split('\n'):
                 line = line.strip()
                 if not line:
                     continue
@@ -709,7 +766,67 @@ def _parse_bulk_keys(text: str, selected: List[int]) -> Optional[Dict[int, Dict]
                     if num in selected and 1 <= num <= 16:
                         keys[num] = {'type': 'exact', 'answer': answer}
 
-    return keys if len(keys) > 1 else None
+    return keys
+
+
+def _parse_bulk_keys_by_task_numbers(text: str, selected: List[int]) -> Dict[int, Dict]:
+    """
+    Парсит ключи, используя номера заданий как границы блоков.
+
+    Ищет строки вида "N:", "N.", "N)", "Задание N:" и разбивает текст
+    на блоки по этим границам. Для части 1 берёт ответ из той же строки,
+    для части 2 — весь многострочный блок до следующего номера.
+    """
+    keys = {}
+    lines = text.strip().split('\n')
+
+    # Паттерн для заголовка задания в начале строки
+    task_header_re = re.compile(
+        r'^(?:Задание\s*)?(\d{1,2})\s*[:\.\)]\s*(.*?)$'
+    )
+
+    # Собираем позиции всех заголовков заданий
+    task_positions: List[Tuple[int, int, str]] = []  # (line_idx, task_num, inline_content)
+    for i, line in enumerate(lines):
+        m = task_header_re.match(line.strip())
+        if m:
+            num = int(m.group(1))
+            if 1 <= num <= 25:
+                task_positions.append((i, num, m.group(2).strip()))
+
+    if not task_positions:
+        return keys
+
+    # Для каждого найденного задания извлекаем содержимое блока
+    for pos_idx, (line_idx, num, inline_content) in enumerate(task_positions):
+        if num not in selected:
+            continue
+
+        # Конец блока — начало следующего задания или конец текста
+        if pos_idx + 1 < len(task_positions):
+            end_idx = task_positions[pos_idx + 1][0]
+        else:
+            end_idx = len(lines)
+
+        if num <= 16:
+            # Часть 1: ответ — на той же строке
+            answer = inline_content
+            if answer:
+                keys[num] = {'type': 'exact', 'answer': answer}
+        else:
+            # Часть 2: многострочный блок (условие + критерии)
+            # Собираем содержимое: inline_content + строки до следующего задания
+            block_lines = []
+            if inline_content:
+                block_lines.append(inline_content)
+            for j in range(line_idx + 1, end_idx):
+                block_lines.append(lines[j])
+            block_text = '\n'.join(block_lines).strip()
+
+            if block_text:
+                keys[num] = _parse_part2_key(block_text, num)
+
+    return keys
 
 
 def _parse_part1_keys(text: str, expected_tasks: List[int]) -> Optional[Dict[int, Dict]]:
