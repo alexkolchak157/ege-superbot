@@ -77,6 +77,10 @@ class TeacherStates(IntEnum):
     VARIANT_CHECK_CONFIRM = 205  # Подтверждение перед проверкой
     VARIANT_CHECK_RESULTS = 206  # Просмотр результатов
     VARIANT_CHECK_BATCH_NEXT = 207  # Пакетный режим: ввод следующего ученика
+    VARIANT_CHECK_ENTER_SOURCE_TEXT = 208  # Ввод текста-источника (для задания 18)
+
+    # Быстрая проверка: ввод текста-источника (для задания 18)
+    QUICK_CHECK_ENTER_SOURCE_TEXT = 99
 
 
 class StudentStates(IntEnum):

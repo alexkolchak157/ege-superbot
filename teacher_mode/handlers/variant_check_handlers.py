@@ -618,6 +618,11 @@ async def _process_keys_from_text(
             f"({', '.join(parts_info)}).",
             parse_mode='HTML'
         )
+
+        # Если задание 18 загружено, предлагаем добавить текст-источник
+        if 18 in parsed_all:
+            return await _ask_source_text_for_task18(update, context)
+
         return await _keys_complete(update, context)
 
     # Если комплексный парсинг не дал результатов, пробуем как для текущего шага
@@ -663,6 +668,10 @@ async def _process_keys_from_text(
 
             idx += 1
             context.user_data['vc_entering_keys_idx'] = idx
+
+            # Для задания 18: предлагаем загрузить текст-источник
+            if task_num == 18:
+                return await _ask_source_text_for_task18(update, context)
 
             if idx < len(part2_tasks):
                 next_task = part2_tasks[idx]
@@ -883,6 +892,114 @@ def _parse_part2_key(text: str, task_num: int) -> Dict:
     }
 
 
+async def _ask_source_text_for_task18(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+) -> int:
+    """Предлагает загрузить текст-источник для задания 18."""
+    keyboard = [
+        [InlineKeyboardButton("⏭ Пропустить", callback_data="vc_skip_source_text")],
+        [InlineKeyboardButton("◀️ Отмена", callback_data="vc_menu")],
+    ]
+
+    text = (
+        "✅ Ключ для задания 18 загружен.\n\n"
+        "📄 <b>Текст-источник (из задания 17)</b>\n\n"
+        "Для полной проверки задания 18 (Элемент 2 — объяснение связи с текстом) "
+        "рекомендуется загрузить текст, на который опирается задание.\n\n"
+        "Отправьте текст-источник или нажмите <b>«Пропустить»</b>, "
+        "чтобы проверить только признаки понятия (Элемент 1)."
+    )
+
+    await update.message.reply_text(
+        text,
+        reply_markup=InlineKeyboardMarkup(keyboard),
+        parse_mode='HTML'
+    )
+    return TeacherStates.VARIANT_CHECK_ENTER_SOURCE_TEXT
+
+
+async def process_source_text_input(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+) -> int:
+    """Обработка текста-источника для задания 18."""
+    source_text = update.message.text.strip()
+
+    if len(source_text) < 20:
+        await update.message.reply_text(
+            "❌ Текст слишком короткий. Минимум 20 символов.\n\n"
+            "Отправьте текст-источник или нажмите «Пропустить».",
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("⏭ Пропустить", callback_data="vc_skip_source_text"),
+            ]]),
+            parse_mode='HTML'
+        )
+        return TeacherStates.VARIANT_CHECK_ENTER_SOURCE_TEXT
+
+    # Сохраняем текст-источник в task_data задания 18
+    keys = context.user_data.get('vc_keys', {})
+    if 18 in keys:
+        keys[18]['task_data']['source_text'] = source_text
+        keys[18]['task_data']['text'] = source_text
+        context.user_data['vc_keys'] = keys
+
+    return await _continue_after_source_text(update, context, loaded=True)
+
+
+async def skip_source_text(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+) -> int:
+    """Пропуск загрузки текста-источника для задания 18."""
+    query = update.callback_query
+    await query.answer()
+
+    return await _continue_after_source_text(update, context, loaded=False)
+
+
+async def _continue_after_source_text(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    loaded: bool
+) -> int:
+    """Продолжает ввод ключей после шага загрузки текста-источника."""
+    selected = context.user_data.get('vc_selected_tasks', [])
+    part2_tasks = [t for t in selected if t >= 17]
+    idx = context.user_data.get('vc_entering_keys_idx', 0)
+
+    status = "✅ Текст-источник загружен." if loaded else "⏭ Текст-источник пропущен (будет проверен только Элемент 1)."
+
+    if idx < len(part2_tasks):
+        next_task = part2_tasks[idx]
+        text = (
+            f"{status}\n\n"
+            f"Введите данные для <b>задания {next_task}</b> "
+            f"({TASK_NAMES.get(next_task, '')}):"
+        )
+
+        # Определяем, откуда отправить (callback_query или message)
+        if update.callback_query:
+            await update.callback_query.message.edit_text(
+                text, parse_mode='HTML'
+            )
+        else:
+            await update.message.reply_text(text, parse_mode='HTML')
+
+        return TeacherStates.VARIANT_CHECK_ENTER_KEYS
+    else:
+        if update.callback_query:
+            # Нужно создать "виртуальный" update для _keys_complete
+            await update.callback_query.message.edit_text(
+                f"{status}\n\nВсе ключи загружены!",
+                parse_mode='HTML'
+            )
+        else:
+            await update.message.reply_text(status, parse_mode='HTML')
+
+        return await _keys_complete(update, context)
+
+
 async def _keys_complete(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Все ключи введены, переходим к выбору режима проверки."""
     keys = context.user_data.get('vc_keys', {})
@@ -901,9 +1018,14 @@ async def _keys_complete(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         [InlineKeyboardButton("◀️ Отмена", callback_data="vc_menu")]
     ]
 
-    await update.message.reply_text(
-        text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='HTML'
-    )
+    if update.message:
+        await update.message.reply_text(
+            text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='HTML'
+        )
+    elif update.callback_query:
+        await update.callback_query.message.reply_text(
+            text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='HTML'
+        )
     return TeacherStates.VARIANT_CHECK_CONFIRM
 
 
