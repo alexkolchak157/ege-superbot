@@ -879,13 +879,22 @@ def _parse_part2_key(text: str, task_num: int) -> Dict:
 
     module = TASK_MODULES.get(task_num, f'task{task_num}')
 
+    task_data = {
+        'task_text': condition,
+        'title': TASK_NAMES.get(task_num, f'Задание {task_num}'),
+        'correct_answer_criteria': answer_key,
+    }
+
+    # Для задания 18: извлекаем ключевое понятие из условия
+    if task_num == 18:
+        from task18.evaluator import extract_concept_from_text
+        concept = extract_concept_from_text(condition)
+        if concept:
+            task_data['concept'] = concept
+
     return {
         'type': 'ai',
-        'task_data': {
-            'task_text': condition,
-            'title': TASK_NAMES.get(task_num, f'Задание {task_num}'),
-            'correct_answer_criteria': answer_key,
-        },
+        'task_data': task_data,
         'module': module,
         'condition_text': condition,
         'answer_key_text': answer_key,
