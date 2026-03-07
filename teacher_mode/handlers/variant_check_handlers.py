@@ -740,7 +740,7 @@ def _parse_bulk_keys_delimited(text: str, selected: List[int]) -> Dict[int, Dict
             continue
 
         header_match = re.match(
-            r'^(?:Задание\s*)?(\d+)\s*[:\.\)]\s*(.*)',
+            r'^(?:Задание\s*(?:№\s*)?|№\s*)?(\d+)\s*[:\.\)]\s*(.*)',
             block, re.DOTALL
         )
 
@@ -775,56 +775,74 @@ def _parse_bulk_keys_by_task_numbers(text: str, selected: List[int]) -> Dict[int
     """
     Парсит ключи, используя номера заданий как границы блоков.
 
-    Ищет строки вида "N:", "N.", "N)", "Задание N:" и разбивает текст
-    на блоки по этим границам. Для части 1 берёт ответ из той же строки,
-    для части 2 — весь многострочный блок до следующего номера.
+    Ищет паттерны вида "N:", "N.", "Задание N", "№N" и разбивает текст
+    на блоки по этим границам. Работает как с многострочным, так и
+    с однострочным текстом (после _clean_text из PDF).
     """
     keys = {}
-    lines = text.strip().split('\n')
 
-    # Паттерн для заголовка задания в начале строки
-    task_header_re = re.compile(
-        r'^(?:Задание\s*)?(\d{1,2})\s*[:\.\)]\s*(.*?)$'
+    # Паттерн заголовка задания (используется для split по всему тексту)
+    # Поддерживает: "17:", "17.", "17)", "Задание 17:", "Задание 17.",
+    # "Задание 17" (без разделителя), "Задание №17", "№17", "№ 17"
+    task_header_pattern = (
+        r'(?:^|\n)\s*'
+        r'(?:Задание\s*(?:№\s*)?|№\s*)?'
+        r'(\d{1,2})'
+        r'\s*[:\.\)]\s*'
     )
 
-    # Собираем позиции всех заголовков заданий
-    task_positions: List[Tuple[int, int, str]] = []  # (line_idx, task_num, inline_content)
-    for i, line in enumerate(lines):
-        m = task_header_re.match(line.strip())
-        if m:
-            num = int(m.group(1))
-            if 1 <= num <= 25:
-                task_positions.append((i, num, m.group(2).strip()))
+    # Также поддерживаем "Задание 17" без разделителя (но только если после числа
+    # идёт перенос строки или конец строки, чтобы не ловить числа внутри текста)
+    task_header_pattern_no_sep = (
+        r'(?:^|\n)\s*'
+        r'(?:Задание\s*(?:№\s*)?|№\s*)'
+        r'(\d{1,2})'
+        r'\s*(?=[:\.\)\n]|\s*$|\s+[А-Яа-яA-Za-z(])'
+    )
+
+    # Собираем все позиции заголовков
+    task_positions: List[Tuple[int, int, str]] = []  # (char_pos, task_num, content_start_pos)
+
+    for m in re.finditer(task_header_pattern, text):
+        num = int(m.group(1))
+        if 1 <= num <= 25:
+            task_positions.append((m.start(), num, m.end()))
+
+    # Дополнительно ищем "Задание N" без разделителя
+    for m in re.finditer(task_header_pattern_no_sep, text):
+        num = int(m.group(1))
+        if 1 <= num <= 25:
+            # Проверяем, что эта позиция ещё не найдена
+            already_found = any(abs(pos - m.start()) < 5 for pos, _, _ in task_positions)
+            if not already_found:
+                task_positions.append((m.start(), num, m.end()))
+
+    # Сортируем по позиции в тексте
+    task_positions.sort(key=lambda x: x[0])
 
     if not task_positions:
         return keys
 
     # Для каждого найденного задания извлекаем содержимое блока
-    for pos_idx, (line_idx, num, inline_content) in enumerate(task_positions):
+    for pos_idx, (char_pos, num, content_start) in enumerate(task_positions):
         if num not in selected:
             continue
 
         # Конец блока — начало следующего задания или конец текста
         if pos_idx + 1 < len(task_positions):
-            end_idx = task_positions[pos_idx + 1][0]
+            content_end = task_positions[pos_idx + 1][0]
         else:
-            end_idx = len(lines)
+            content_end = len(text)
+
+        block_text = text[content_start:content_end].strip()
 
         if num <= 16:
-            # Часть 1: ответ — на той же строке
-            answer = inline_content
+            # Часть 1: берём первую строку / текст до переноса
+            answer = block_text.split('\n')[0].strip()
             if answer:
                 keys[num] = {'type': 'exact', 'answer': answer}
         else:
             # Часть 2: многострочный блок (условие + критерии)
-            # Собираем содержимое: inline_content + строки до следующего задания
-            block_lines = []
-            if inline_content:
-                block_lines.append(inline_content)
-            for j in range(line_idx + 1, end_idx):
-                block_lines.append(lines[j])
-            block_text = '\n'.join(block_lines).strip()
-
             if block_text:
                 keys[num] = _parse_part2_key(block_text, num)
 
