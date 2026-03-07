@@ -1414,13 +1414,33 @@ async def _check_part2_answer(
 ) -> Dict:
     """Проверка ответа части 2 через AI."""
     module = key.get('module', TASK_MODULES.get(task_num, f'task{task_num}'))
-    task_data = key.get('task_data', {})
+    task_data = dict(key.get('task_data', {}))  # копия, чтобы не мутировать оригинал
     max_score = PART2_MAX_SCORES.get(task_num, 0)
 
-    # Для внешнего варианта: добавляем критерии в task_data
+    # Для внешнего варианта: дополняем task_data данными из ключа
+    # чтобы evaluator получил полный контекст
     criteria = task_data.get('correct_answer_criteria', '')
     if criteria and 'criteria' not in task_data:
         task_data['criteria'] = criteria
+
+    # Для task17/task18: если condition_text и answer_key_text переданы из ключа,
+    # убедимся что evaluator получит их в нужных полях
+    condition_text = key.get('condition_text', '')
+    answer_key_text = key.get('answer_key_text', '')
+
+    if condition_text:
+        if 'text' not in task_data or not task_data['text']:
+            task_data['text'] = condition_text
+        if 'question' not in task_data or not task_data['question']:
+            task_data['question'] = condition_text
+        if 'task_text' not in task_data or not task_data['task_text']:
+            task_data['task_text'] = condition_text
+
+    if answer_key_text:
+        if 'correct_answer_criteria' not in task_data or not task_data['correct_answer_criteria']:
+            task_data['correct_answer_criteria'] = answer_key_text
+        if 'scoring_notes' not in task_data or not task_data['scoring_notes']:
+            task_data['scoring_notes'] = answer_key_text
 
     is_correct, feedback = await evaluate_homework_answer(
         task_module=module,
