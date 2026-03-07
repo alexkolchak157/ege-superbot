@@ -542,9 +542,11 @@ async def _evaluate_custom_question(
             return await _evaluate_task17(eval_question_data, user_answer, user_id)
 
         elif custom_type == 'task18':
+            from task18.evaluator import extract_concept_from_text
             eval_question_data = {
                 'text': question_text,
                 'question': question_text,
+                'concept': extract_concept_from_text(question_text),
             }
             if correct_answer:
                 eval_question_data['elements'] = [correct_answer]

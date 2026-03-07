@@ -63,8 +63,29 @@ def _load_katalog() -> Dict[str, Any]:
     return _katalog_data
 
 
+def extract_concept_from_text(text: str) -> str:
+    """Извлечь ключевое понятие из текста задания 18."""
+    import re
+    # Типичные паттерны: «понятие», "понятие", 'понятие'
+    patterns = [
+        r'понятие\s*[«"„]([^»""]+)[»"""]',
+        r'понятие\s*\'([^\']+)\'',
+        r'термин\s*[«"„]([^»""]+)[»"""]',
+        r'объясните\s+(?:смысл\s+)?(?:понятия\s+)?[«"„]([^»""]+)[»"""]',
+        r'что\s+(?:такое|означает)\s+[«"„]([^»""]+)[»"""]',
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, text, re.IGNORECASE)
+        if match:
+            return match.group(1).strip()
+    return ""
+
+
 def find_catalog_signs(concept: str) -> List[str]:
     """Найти признаки понятия в каталоге по ключевому слову."""
+    if not concept or not concept.strip():
+        return []
+
     katalog = _load_katalog()
     concept_lower = concept.lower().strip()
 
@@ -246,6 +267,12 @@ class Task18AIEvaluator:
         question = task_data.get("question", "")
         concept = task_data.get("concept", "")
         correct_answer = task_data.get("correct_answer", {})
+
+        # Автоизвлечение понятия из текста задания, если не указано явно
+        if not concept:
+            concept = extract_concept_from_text(question) or extract_concept_from_text(
+                task_data.get("task_text", "")
+            )
         required_count = correct_answer.get("required_count", 3)
         elements = correct_answer.get("elements", [])
         scoring_notes = task_data.get("scoring_notes", "")
