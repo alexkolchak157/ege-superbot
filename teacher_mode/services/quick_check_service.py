@@ -74,7 +74,7 @@ async def get_or_create_quota(teacher_id: int) -> Optional[QuickCheckQuota]:
             now = utc_now()
             period_end = now + timedelta(days=30)
 
-            await db.execute("""
+            insert_cursor = await db.execute("""
                 INSERT INTO quick_check_quotas (
                     teacher_id, monthly_limit, used_this_month,
                     current_period_start, current_period_end,
@@ -89,7 +89,7 @@ async def get_or_create_quota(teacher_id: int) -> Optional[QuickCheckQuota]:
 
             # Возвращаем созданную квоту
             return QuickCheckQuota(
-                id=cursor.lastrowid,
+                id=insert_cursor.lastrowid,
                 teacher_id=teacher_id,
                 monthly_limit=monthly_limit,
                 used_this_month=0,
@@ -119,6 +119,9 @@ async def check_and_use_quota(teacher_id: int, count: int = 1) -> Tuple[bool, Op
     """
     Проверяет квоту и уменьшает ее при возможности.
 
+    Вся работа выполняется внутри одного соединения и одной
+    EXCLUSIVE-транзакции, чтобы избежать deadlock.
+
     Args:
         teacher_id: ID учителя
         count: Количество проверок для списания
@@ -128,21 +131,60 @@ async def check_and_use_quota(teacher_id: int, count: int = 1) -> Tuple[bool, Op
     """
     try:
         async with aiosqlite.connect(DATABASE_FILE) as db:
-            # Начинаем транзакцию для атомарности
+            db.row_factory = aiosqlite.Row
             await db.execute("BEGIN EXCLUSIVE")
 
             try:
-                quota = await get_or_create_quota(teacher_id)
-                if not quota:
-                    await db.rollback()
-                    return False, None
+                # Читаем квоту внутри того же соединения (без отдельного connect)
+                cursor = await db.execute(
+                    "SELECT * FROM quick_check_quotas WHERE teacher_id = ?",
+                    (teacher_id,)
+                )
+                row = await cursor.fetchone()
+
+                if not row:
+                    # Квоты нет — создаём внутри той же транзакции
+                    from .teacher_service import get_teacher_profile
+                    teacher = await get_teacher_profile(teacher_id)
+
+                    if not teacher:
+                        await db.rollback()
+                        return False, None
+
+                    monthly_limit = _get_monthly_limit_by_tier(teacher.subscription_tier)
+                    now = utc_now()
+                    period_end = now + timedelta(days=30)
+
+                    insert_cursor = await db.execute("""
+                        INSERT INTO quick_check_quotas (
+                            teacher_id, monthly_limit, used_this_month,
+                            current_period_start, current_period_end,
+                            bonus_checks, updated_at
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """, (
+                        teacher_id, monthly_limit, 0,
+                        now.isoformat(), period_end.isoformat(),
+                        0, now.isoformat()
+                    ))
+
+                    quota = QuickCheckQuota(
+                        id=insert_cursor.lastrowid,
+                        teacher_id=teacher_id,
+                        monthly_limit=monthly_limit,
+                        used_this_month=0,
+                        current_period_start=now,
+                        current_period_end=period_end,
+                        bonus_checks=0,
+                        last_reset_at=None,
+                        updated_at=now
+                    )
+                else:
+                    quota = _row_to_quota(row)
 
                 # Проверяем, не истек ли период
                 now = utc_now()
                 if now > quota.current_period_end:
-                    # Период истек - сбрасываем счетчик
                     await _reset_quota_period(db, teacher_id, quota)
-                    # Обновляем объект квоты
                     quota.used_this_month = 0
                     quota.current_period_start = now
                     quota.current_period_end = now + timedelta(days=30)
@@ -175,6 +217,28 @@ async def check_and_use_quota(teacher_id: int, count: int = 1) -> Tuple[bool, Op
     except Exception as e:
         logger.error(f"Error checking/using quota for teacher {teacher_id}: {e}")
         return False, None
+
+
+async def refund_quota(teacher_id: int, count: int = 1) -> bool:
+    """
+    Возвращает квоту (уменьшает used_this_month).
+
+    Используется при ошибке AI-проверки для корректного возврата
+    вместо добавления бонусных проверок.
+    """
+    try:
+        async with aiosqlite.connect(DATABASE_FILE) as db:
+            await db.execute("""
+                UPDATE quick_check_quotas
+                SET used_this_month = MAX(0, used_this_month - ?),
+                    updated_at = ?
+                WHERE teacher_id = ?
+            """, (count, utc_now().isoformat(), teacher_id))
+            await db.commit()
+            return True
+    except Exception as e:
+        logger.error(f"Error refunding quota for teacher {teacher_id}: {e}")
+        return False
 
 
 async def _reset_quota_period(db: aiosqlite.Connection, teacher_id: int, old_quota: QuickCheckQuota):

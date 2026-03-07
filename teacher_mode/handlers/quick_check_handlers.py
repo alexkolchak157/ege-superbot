@@ -582,7 +582,7 @@ async def _run_single_check(update: Update, context: ContextTypes.DEFAULT_TYPE, 
             f"<b>Условие:</b>\n{condition_escaped}{'...' if len(condition) > 200 else ''}\n\n"
             f"<b>Ответ ученика:</b>\n<code>{answer_escaped}</code>\n\n"
             f"{ai_feedback}\n\n"
-            f"💡 Осталось проверок: {quota.remaining_checks - 1}"
+            f"💡 Осталось проверок: {quota.remaining_checks}"
         )
 
         keyboard = [
@@ -617,8 +617,8 @@ async def _run_single_check(update: Update, context: ContextTypes.DEFAULT_TYPE, 
             parse_mode='HTML'
         )
 
-        # Возвращаем квоту
-        await quick_check_service.add_bonus_checks(user_id, 1)
+        # Возвращаем квоту (уменьшаем used_this_month, а не добавляем бонус)
+        await quick_check_service.refund_quota(user_id, 1)
 
         return TeacherStates.QUICK_CHECK_MENU
 
@@ -1185,7 +1185,7 @@ async def show_history(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
         text = "📜 <b>История проверок (последние 10)</b>\n\n"
 
         for i, check in enumerate(checks):
-            emoji = "✅" if check.is_correct else "❌"
+            emoji = "✅" if check.is_correct is True else ("❌" if check.is_correct is False else "⚠️")
             condition_preview = check.task_condition[:40]
             answer_preview = check.student_answer[:30]
             date = check.created_at.strftime("%d.%m %H:%M")
