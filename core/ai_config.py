@@ -40,12 +40,12 @@ class OptimalSettings:
             TaskType.TASK19: cls(
                 temperature=0.2,
                 max_tokens=2000,
-                model="pro"
+                model="lite"
             ),
             TaskType.TASK20: cls(
                 temperature=0.3,
                 max_tokens=2000,
-                model="pro"
+                model="lite"
             ),
             TaskType.TASK25: cls(
                 temperature=0.2,
@@ -122,9 +122,9 @@ class CostCalculator:
             "pro": {"input": 2.0, "output": 4.0},
         },
         AIProvider.CLAUDE: {
-            # Claude Sonnet 4.5: $3.00/$15.00 per 1M tokens ≈ ~0.27/1.35 руб за 1000
+            # Claude Sonnet 4.6: $3.00/$15.00 per 1M tokens ≈ ~0.27/1.35 руб за 1000
             "lite": {"input": 0.27, "output": 1.35},
-            # Claude Opus 4: $15.00/$75.00 per 1M tokens ≈ ~1.35/6.75 руб за 1000
+            # Claude Opus 4.6: $15.00/$75.00 per 1M tokens ≈ ~1.35/6.75 руб за 1000
             "pro": {"input": 1.35, "output": 6.75},
         },
     }
