@@ -124,8 +124,8 @@ class CostCalculator:
         AIProvider.CLAUDE: {
             # Claude Sonnet 4.6: $3.00/$15.00 per 1M tokens ≈ ~0.27/1.35 руб за 1000
             "lite": {"input": 0.27, "output": 1.35},
-            # Claude Opus 4.6: $15.00/$75.00 per 1M tokens ≈ ~1.35/6.75 руб за 1000
-            "pro": {"input": 1.35, "output": 6.75},
+            # Claude Opus 4.6: $5.00/$25.00 per 1M tokens ≈ ~0.45/2.25 руб за 1000
+            "pro": {"input": 0.45, "output": 2.25},
         },
     }
 

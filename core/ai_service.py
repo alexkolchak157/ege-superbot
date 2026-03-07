@@ -37,8 +37,8 @@ class AIModel(Enum):
 
 # Маппинг на конкретные model ID
 CLAUDE_MODELS = {
-    AIModel.LITE: "claude-sonnet-4-6-20250514",
-    AIModel.PRO: "claude-opus-4-6-20250626",
+    AIModel.LITE: "claude-sonnet-4-6",
+    AIModel.PRO: "claude-opus-4-6",
 }
 
 YANDEX_MODELS = {

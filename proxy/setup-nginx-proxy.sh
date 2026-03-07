@@ -93,7 +93,7 @@ echo "Тестирую подключение к Claude API..."
 RESULT=$(curl -s -o /dev/null -w "%{http_code}" \
   -X POST "http://127.0.0.1:$PORT/v1/messages" \
   -H "content-type: application/json" \
-  -d '{"model":"claude-sonnet-4-6-20250514","max_tokens":1,"messages":[{"role":"user","content":"hi"}]}' \
+  -d '{"model":"claude-sonnet-4-6","max_tokens":1,"messages":[{"role":"user","content":"hi"}]}' \
   2>/dev/null || echo "000")
 
 if [ "$RESULT" = "401" ]; then
