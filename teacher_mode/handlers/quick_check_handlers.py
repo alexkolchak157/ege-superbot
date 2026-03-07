@@ -204,10 +204,83 @@ async def process_task_condition(update: Update, context: ContextTypes.DEFAULT_T
     context.user_data['qc_condition'] = condition
 
     task_type = context.user_data.get('qc_task_type')
+
+    # Для задания 18: предлагаем загрузить текст-источник
+    if task_type == QuickCheckTaskType.TASK18:
+        return await _ask_qc_source_text(update, context)
+
+    return await _proceed_to_answer_input(update, context)
+
+
+async def _ask_qc_source_text(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+) -> int:
+    """Предлагает загрузить текст-источник для задания 18 (быстрая проверка)."""
+    keyboard = [
+        [InlineKeyboardButton("⏭ Пропустить", callback_data="qc_skip_source_text")],
+        [InlineKeyboardButton("◀️ Отмена", callback_data="quick_check_menu")],
+    ]
+
+    text = (
+        "✅ Условие сохранено!\n\n"
+        "📄 <b>Текст-источник (из задания 17)</b>\n\n"
+        "Для полной проверки задания 18 (Элемент 2 — объяснение связи с текстом) "
+        "рекомендуется загрузить текст, на который опирается задание.\n\n"
+        "Отправьте текст-источник или нажмите <b>«Пропустить»</b>, "
+        "чтобы проверить только признаки понятия (Элемент 1)."
+    )
+
+    await update.message.reply_text(
+        text,
+        reply_markup=InlineKeyboardMarkup(keyboard),
+        parse_mode='HTML'
+    )
+    return TeacherStates.QUICK_CHECK_ENTER_SOURCE_TEXT
+
+
+async def process_qc_source_text(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+) -> int:
+    """Обработка текста-источника для задания 18 (быстрая проверка)."""
+    source_text = update.message.text.strip()
+
+    if len(source_text) < 20:
+        await update.message.reply_text(
+            "❌ Текст слишком короткий. Минимум 20 символов.\n\n"
+            "Отправьте текст-источник или нажмите «Пропустить».",
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("⏭ Пропустить", callback_data="qc_skip_source_text"),
+            ]]),
+            parse_mode='HTML'
+        )
+        return TeacherStates.QUICK_CHECK_ENTER_SOURCE_TEXT
+
+    context.user_data['qc_source_text'] = source_text
+    return await _proceed_to_answer_input(update, context)
+
+
+async def skip_qc_source_text(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+) -> int:
+    """Пропуск загрузки текста-источника для задания 18 (быстрая проверка)."""
+    query = update.callback_query
+    await query.answer()
+
+    # Переходим к вводу ответа
+    return await _proceed_to_answer_input_from_callback(update, context)
+
+
+async def _proceed_to_answer_input(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+) -> int:
+    """Переход к вводу ответа ученика (из текстового сообщения)."""
     mode = context.user_data.get('qc_mode', 'single')
 
     if mode == 'single':
-        # Одиночная проверка - запрашиваем ответ ученика
         text = (
             "✅ Условие сохранено!\n\n"
             "Теперь введите <b>ответ ученика</b> на это задание.\n\n"
@@ -222,8 +295,6 @@ async def process_task_condition(update: Update, context: ContextTypes.DEFAULT_T
         return TeacherStates.QUICK_CHECK_ENTER_ANSWER
 
     else:
-        # Массовая проверка - запрашиваем ответы
-        # Инициализируем список собранных ответов
         context.user_data['qc_bulk_answers'] = []
 
         text = (
@@ -244,6 +315,51 @@ async def process_task_condition(update: Update, context: ContextTypes.DEFAULT_T
         reply_markup = InlineKeyboardMarkup(keyboard)
 
         await update.message.reply_text(text, reply_markup=reply_markup, parse_mode='HTML')
+
+        return TeacherStates.QUICK_CHECK_ENTER_ANSWERS_BULK
+
+
+async def _proceed_to_answer_input_from_callback(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+) -> int:
+    """Переход к вводу ответа ученика (из callback query)."""
+    mode = context.user_data.get('qc_mode', 'single')
+    query = update.callback_query
+
+    if mode == 'single':
+        text = (
+            "Теперь введите <b>ответ ученика</b> на это задание.\n\n"
+            "💡 Можно вставить ответ текстом или отправить <b>фото рукописного ответа</b>."
+        )
+
+        keyboard = [[InlineKeyboardButton("◀️ Отмена", callback_data="quick_check_menu")]]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+
+        await query.message.edit_text(text, reply_markup=reply_markup, parse_mode='HTML')
+
+        return TeacherStates.QUICK_CHECK_ENTER_ANSWER
+
+    else:
+        context.user_data['qc_bulk_answers'] = []
+
+        text = (
+            "Теперь отправляйте <b>ответы учеников</b>. Доступные способы:\n\n"
+            "📝 <b>Текст</b> — каждая строка = ответ одного ученика\n"
+            "📷 <b>Фото</b> — фото рукописного ответа (одно фото = один ответ)\n"
+            "📄 <b>Файл</b> — TXT/PDF/DOCX с ответами (каждый абзац = ответ)\n\n"
+            "Можно отправлять несколько сообщений подряд.\n"
+            "Когда все ответы добавлены, нажмите <b>«Начать проверку»</b>.\n\n"
+            "Максимум 50 ответов."
+        )
+
+        keyboard = [
+            [InlineKeyboardButton("🚀 Начать проверку", callback_data="qc_run_bulk_check")],
+            [InlineKeyboardButton("◀️ Отмена", callback_data="quick_check_menu")]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+
+        await query.message.edit_text(text, reply_markup=reply_markup, parse_mode='HTML')
 
         return TeacherStates.QUICK_CHECK_ENTER_ANSWERS_BULK
 
@@ -432,6 +548,12 @@ async def _run_single_check(update: Update, context: ContextTypes.DEFAULT_TYPE, 
         if condition_image:
             question_data['condition_image'] = condition_image
 
+        # Для задания 18: добавляем текст-источник, если он был загружен
+        qc_source_text = context.user_data.get('qc_source_text')
+        if qc_source_text:
+            question_data['source_text'] = qc_source_text
+            question_data['text'] = qc_source_text
+
         is_correct, ai_feedback = await evaluate_homework_answer(
             task_module=task_type.value,
             question_data=question_data,
@@ -478,6 +600,7 @@ async def _run_single_check(update: Update, context: ContextTypes.DEFAULT_TYPE, 
         context.user_data.pop('qc_mode', None)
         context.user_data.pop('_ocr_answer', None)
         context.user_data.pop('qc_condition_image', None)
+        context.user_data.pop('qc_source_text', None)
 
         return TeacherStates.QUICK_CHECK_MENU
 
@@ -892,6 +1015,12 @@ async def run_bulk_check(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             if condition_image:
                 question_data['condition_image'] = condition_image
 
+            # Для задания 18: добавляем текст-источник
+            qc_source_text = context.user_data.get('qc_source_text')
+            if qc_source_text:
+                question_data['source_text'] = qc_source_text
+                question_data['text'] = qc_source_text
+
             is_correct, ai_feedback = await evaluate_homework_answer(
                 task_module=task_type.value,
                 question_data=question_data,
@@ -1006,6 +1135,7 @@ async def run_bulk_check(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         context.user_data.pop('qc_mode', None)
         context.user_data.pop('qc_bulk_answers', None)
         context.user_data.pop('qc_condition_image', None)
+        context.user_data.pop('qc_source_text', None)
 
         return TeacherStates.QUICK_CHECK_MENU
 

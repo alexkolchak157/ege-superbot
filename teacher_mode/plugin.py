@@ -428,6 +428,13 @@ class TeacherModePlugin(BotPlugin):
                     MessageHandler(filters.PHOTO, quick_check_handlers.process_task_condition_photo),
                     CallbackQueryHandler(quick_check_handlers.quick_check_menu, pattern="^quick_check_menu$"),
                 ],
+                TeacherStates.QUICK_CHECK_ENTER_SOURCE_TEXT: [
+                    # Ввод текста-источника для задания 18
+                    MessageHandler(filters.TEXT & ~filters.COMMAND, quick_check_handlers.process_qc_source_text),
+                    # Пропуск текста-источника
+                    CallbackQueryHandler(quick_check_handlers.skip_qc_source_text, pattern="^qc_skip_source_text$"),
+                    CallbackQueryHandler(quick_check_handlers.quick_check_menu, pattern="^quick_check_menu$"),
+                ],
                 TeacherStates.QUICK_CHECK_ENTER_ANSWER: [
                     # Ввод ответа ученика (одиночная проверка) — текст или фото
                     MessageHandler(filters.TEXT & ~filters.COMMAND, quick_check_handlers.process_single_answer),
@@ -480,6 +487,15 @@ class TeacherModePlugin(BotPlugin):
                     MessageHandler(filters.Document.ALL, variant_check_handlers.process_keys_document),
                     # Ввод ключей (фото)
                     MessageHandler(filters.PHOTO, variant_check_handlers.process_keys_photo),
+                    # Навигация
+                    CallbackQueryHandler(variant_check_handlers.variant_check_menu, pattern="^vc_menu$"),
+                    CallbackQueryHandler(teacher_handlers.teacher_menu, pattern="^teacher_menu$"),
+                ],
+                TeacherStates.VARIANT_CHECK_ENTER_SOURCE_TEXT: [
+                    # Ввод текста-источника для задания 18 (текстом)
+                    MessageHandler(filters.TEXT & ~filters.COMMAND, variant_check_handlers.process_source_text_input),
+                    # Пропуск текста-источника
+                    CallbackQueryHandler(variant_check_handlers.skip_source_text, pattern="^vc_skip_source_text$"),
                     # Навигация
                     CallbackQueryHandler(variant_check_handlers.variant_check_menu, pattern="^vc_menu$"),
                     CallbackQueryHandler(teacher_handlers.teacher_menu, pattern="^teacher_menu$"),
