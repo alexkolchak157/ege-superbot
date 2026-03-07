@@ -787,6 +787,10 @@ def _parse_bulk_keys_by_task_numbers(text: str, selected: List[int]) -> Dict[int
     Ищет строки вида "N:", "N.", "N)", "Задание N:" и разбивает текст
     на блоки по этим границам. Для части 1 берёт ответ из той же строки,
     для части 2 — весь многострочный блок до следующего номера.
+
+    Умеет отличать заголовки заданий от пронумерованных пунктов внутри
+    критериев оценивания (например, "1) основные признаки..." не будет
+    ошибочно принято за задание 1).
     """
     keys = {}
     lines = text.strip().split('\n')
@@ -796,17 +800,81 @@ def _parse_bulk_keys_by_task_numbers(text: str, selected: List[int]) -> Dict[int
         r'^(?:Задание\s*)?(\d{1,2})\s*[:\.\)]\s*(.*?)$'
     )
 
+    # Контекстные паттерны для строк, которые НЕ являются заголовками заданий:
+    # - Строки с баллами: "2" или "3" (просто число — значение балла в таблице)
+    # - Нумерованные пункты внутри критериев: "1) основные признаки..."
+    # - Строки со словами-маркерами критериев оценивания
+    criteria_item_re = re.compile(
+        r'^(\d{1,2})\s*\)\s+\S',  # "1) текст..." — пункт внутри критериев
+    )
+    score_line_re = re.compile(
+        r'^\d{1,2}\s*$',  # Просто число на строке (балл в таблице)
+    )
+    criteria_context_words = [
+        'правильно приведен', 'правильно приведён',
+        'сформулирован', 'результатом', 'могут быть',
+        'максимальный балл', 'балла', 'баллов',
+        'указания по оцениванию', 'засчитывается',
+        'иные ситуации', 'рассуждения общего характера',
+    ]
+
+    def _is_likely_task_header(line_stripped: str, num: int, line_idx: int) -> bool:
+        """Проверяет, является ли строка заголовком задания, а не пунктом критерия."""
+        # Если это "Задание N" — точно заголовок
+        if re.match(r'^Задание\s+\d', line_stripped, re.IGNORECASE):
+            return True
+
+        # Строка с одним числом (балл в таблице критериев) — не заголовок
+        if score_line_re.match(line_stripped):
+            return False
+
+        # "N) текст..." где текст начинается с маленькой буквы или
+        # является продолжением критерия — скорее пункт критерия
+        m_crit = criteria_item_re.match(line_stripped)
+        if m_crit:
+            # Проверяем контекст: если рядом есть слова-маркеры критериев,
+            # это пункт внутри критерия, а не задание
+            context_start = max(0, line_idx - 5)
+            context_end = min(len(lines), line_idx + 3)
+            context_text = ' '.join(lines[context_start:context_end]).lower()
+            for marker in criteria_context_words:
+                if marker in context_text:
+                    return False
+
+        # Числа 1-16 после ")" часто встречаются как пункты в критериях ч.2
+        # Принимаем как заголовок только если номер есть в selected
+        # или это двузначное число >= 17 (маловероятно в критериях)
+        if num not in selected:
+            return False
+
+        return True
+
     # Собираем позиции всех заголовков заданий
     task_positions: List[Tuple[int, int, str]] = []  # (line_idx, task_num, inline_content)
     for i, line in enumerate(lines):
         m = task_header_re.match(line.strip())
         if m:
             num = int(m.group(1))
-            if 1 <= num <= 25:
+            if 1 <= num <= 25 and _is_likely_task_header(line.strip(), num, i):
                 task_positions.append((i, num, m.group(2).strip()))
 
     if not task_positions:
         return keys
+
+    # Проверяем, что номера заданий идут в возрастающем порядке
+    # (помогает отсеять ложные срабатывания)
+    filtered_positions = []
+    prev_num = 0
+    for pos in task_positions:
+        num = pos[1]
+        if num > prev_num:
+            filtered_positions.append(pos)
+            prev_num = num
+        elif num in selected:
+            # Если номер не в порядке, но в selected — всё равно берём
+            filtered_positions.append(pos)
+            prev_num = num
+    task_positions = filtered_positions
 
     # Для каждого найденного задания извлекаем содержимое блока
     for pos_idx, (line_idx, num, inline_content) in enumerate(task_positions):
@@ -865,17 +933,45 @@ def _parse_part1_keys(text: str, expected_tasks: List[int]) -> Optional[Dict[int
 
 
 def _parse_part2_key(text: str, task_num: int) -> Dict:
-    """Парсит условие и ключ для задания части 2."""
-    # Пытаемся разделить на условие и ключ по разделителю ---
-    parts = re.split(r'\n\s*---\s*\n', text, maxsplit=1)
+    """Парсит условие и ключ для задания части 2.
 
+    Поддерживает форматы:
+    1. С разделителем --- между условием и ключом
+    2. ФИПИ-формат: условие задания + таблица "Содержание верного ответа
+       и указания по оцениванию" + баллы + "Максимальный балл"
+    3. Без разделителя — весь текст как условие + ключ
+    """
+    condition = ""
+    answer_key = ""
+
+    # Стратегия 1: разделитель ---
+    parts = re.split(r'\n\s*---\s*\n', text, maxsplit=1)
     if len(parts) == 2:
         condition = parts[0].strip()
         answer_key = parts[1].strip()
     else:
-        # Если нет разделителя, весь текст — условие + ключ
-        condition = text.strip()
-        answer_key = ""
+        # Стратегия 2: ФИПИ-формат — ищем маркер начала критериев
+        fipi_markers = [
+            r'Содержание\s+верного\s+ответа',
+            r'Указания\s+по\s+оцениванию',
+            r'В\s+правильном\s+ответе\s+(?:должны\s+быть|могут\s+быть)',
+        ]
+        fipi_split_pos = None
+        for marker in fipi_markers:
+            m = re.search(marker, text, re.IGNORECASE)
+            if m:
+                fipi_split_pos = m.start()
+                break
+
+        if fipi_split_pos is not None and fipi_split_pos > 10:
+            condition = text[:fipi_split_pos].strip()
+            answer_key = text[fipi_split_pos:].strip()
+            # Убираем шапку таблицы и столбец "Баллы" из критериев
+            answer_key = _clean_fipi_criteria(answer_key)
+        else:
+            # Стратегия 3: весь текст — условие + ключ
+            condition = text.strip()
+            answer_key = ""
 
     module = TASK_MODULES.get(task_num, f'task{task_num}')
 
@@ -890,6 +986,34 @@ def _parse_part2_key(text: str, task_num: int) -> Dict:
         'condition_text': condition,
         'answer_key_text': answer_key,
     }
+
+
+def _clean_fipi_criteria(text: str) -> str:
+    """Очищает критерии оценивания ФИПИ от шапки таблицы и мусора.
+
+    Убирает заголовки столбцов, колонки с баллами, копирайт и т.п.
+    """
+    # Убираем заголовок таблицы "Содержание верного ответа ... Баллы"
+    text = re.sub(
+        r'Содержание\s+верного\s+ответа\s+и\s+указания\s+по\s+оцениванию\s*'
+        r'(?:\(допускаются[^)]*\))?\s*Баллы?\s*',
+        '', text, flags=re.IGNORECASE
+    )
+    # Убираем строки "Максимальный балл N"
+    text = re.sub(
+        r'Максимальный\s+балл\s+\d+',
+        '', text, flags=re.IGNORECASE
+    )
+    # Убираем копирайт ФИПИ
+    text = re.sub(
+        r'©\s*\d{4}\s*ФГ?БНУ.*?(?:не\s+допускается|$)',
+        '', text, flags=re.IGNORECASE
+    )
+    # Убираем одиночные числа-баллы на отдельных строках (остатки столбца "Баллы")
+    text = re.sub(r'(?m)^\s*\d\s*$', '', text)
+    # Убираем множественные пустые строки
+    text = re.sub(r'\n{3,}', '\n\n', text)
+    return text.strip()
 
 
 async def _ask_source_text_for_task18(
