@@ -139,11 +139,40 @@ class Task17AIEvaluator:
         answer: str,
         task_data: Dict[str, Any],
     ) -> str:
+        # Поддержка нескольких форматов данных:
+        # 1) Из text_passages_17_18.json: text, question, correct_answers
+        # 2) Из variant_check (внешний вариант): task_text, correct_answer_criteria
+        # 3) Из homework: task_text, criteria
         text = task_data.get("text", "")
         question = task_data.get("question", "")
         correct_answers = task_data.get("correct_answers", [])
         required_count = task_data.get("required_count", 3)
         scoring_notes = task_data.get("scoring_notes", "")
+
+        # Fallback: если стандартные поля пусты, берём из альтернативных
+        task_text = task_data.get("task_text", "")
+        criteria_text = (
+            task_data.get("correct_answer_criteria", "")
+            or task_data.get("criteria", "")
+        )
+
+        if not text and not question and task_text:
+            question = task_text
+
+        if not text and task_text:
+            text = task_text
+
+        if not correct_answers and criteria_text:
+            correct_answers = [
+                line.strip().lstrip("–—-•·0123456789.) ")
+                for line in criteria_text.split("\n")
+                if line.strip() and len(line.strip()) > 5
+            ]
+            if not correct_answers:
+                correct_answers = [criteria_text]
+
+        if not scoring_notes and criteria_text:
+            scoring_notes = criteria_text
 
         correct_block = "\n".join(
             f"  {i}. {a}" for i, a in enumerate(correct_answers, 1)
