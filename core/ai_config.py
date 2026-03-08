@@ -26,30 +26,48 @@ class OptimalSettings:
     def for_task(cls, task_type: TaskType) -> 'OptimalSettings':
         """Возвращает оптимальные настройки для типа задания"""
 
+        # Температуры снижены для борьбы с галлюцинацией контекста
+        # и систематическим завышением оценок (по результатам benchmark).
+        # Task18 переведён на pro — галлюцинации при подмене понятий.
         settings_map = {
             TaskType.TASK17: cls(
-                temperature=0.15,
+                temperature=0.1,
                 max_tokens=1500,
                 model="lite"
             ),
             TaskType.TASK18: cls(
-                temperature=0.2,
-                max_tokens=1500,
-                model="lite"
+                temperature=0.1,
+                max_tokens=2000,
+                model="pro"  # pro: критичен для избежания галлюцинации контекста
             ),
             TaskType.TASK19: cls(
-                temperature=0.2,
-                max_tokens=2000,
+                temperature=0.15,
+                max_tokens=2500,
                 model="lite"
             ),
             TaskType.TASK20: cls(
-                temperature=0.3,
+                temperature=0.15,
                 max_tokens=2000,
                 model="lite"
             ),
+            TaskType.TASK21: cls(
+                temperature=0.1,
+                max_tokens=2000,
+                model="lite"
+            ),
+            TaskType.TASK22: cls(
+                temperature=0.1,
+                max_tokens=2000,
+                model="lite"
+            ),
+            TaskType.TASK23: cls(
+                temperature=0.1,
+                max_tokens=2000,
+                model="pro"  # pro: конституционные нормы требуют точности
+            ),
             TaskType.TASK25: cls(
-                temperature=0.2,
-                max_tokens=3000,
+                temperature=0.1,
+                max_tokens=3500,
                 model="pro"
             ),
             TaskType.TASK24: cls(
@@ -59,7 +77,7 @@ class OptimalSettings:
             )
         }
 
-        return settings_map.get(task_type, cls(0.3, 2000, "pro"))
+        return settings_map.get(task_type, cls(0.15, 2000, "pro"))
 
 
 class PromptOptimizer:

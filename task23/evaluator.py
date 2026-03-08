@@ -16,6 +16,13 @@ from core.types import TaskRequirements, EvaluationResult
 
 logger = logging.getLogger(__name__)
 
+# Импорт калибровочных few-shot примеров
+try:
+    from core.fewshot_calibration import get_full_calibration_prompt
+except ImportError:
+    def get_full_calibration_prompt(task_number: int) -> str:
+        return ""
+
 # Безопасный импорт AI сервисов
 try:
     from core.ai_evaluator import BaseAIEvaluator
@@ -145,7 +152,10 @@ class Task23Evaluator(BaseAIEvaluator if AI_EVALUATOR_AVAILABLE else object):
 - Будь строг к форме (требуй распространённые предложения)
 - Проверяй опору именно на Конституцию РФ
 - Учитывай наличие дополнительных позиций с ошибками при выставлении балла
-- Давай конкретные комментарии к каждому подтверждению"""
+- Давай конкретные комментарии к каждому подтверждению
+
+""" + get_full_calibration_prompt(23) + """
+"""
 
     async def evaluate(
         self,

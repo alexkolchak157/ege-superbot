@@ -15,6 +15,13 @@ from core.types import (
 
 logger = logging.getLogger(__name__)
 
+# Импорт калибровочных few-shot примеров
+try:
+    from core.fewshot_calibration import get_full_calibration_prompt
+except ImportError:
+    def get_full_calibration_prompt(task_number: int) -> str:
+        return ""
+
 # Безопасный импорт
 try:
     from core.ai_evaluator import BaseAIEvaluator
@@ -341,6 +348,8 @@ class Task19AIEvaluator(BaseAIEvaluator if AI_EVALUATOR_AVAILABLE else object):
 ═══════════════════════════════════════════════════════════
 
 ВАЖНО: Будь максимально строг в оценке КОНКРЕТНОСТИ. Общие рассуждения о тенденциях, статистике, "многих людях" - это НЕ примеры!
+
+""" + get_full_calibration_prompt(19) + """
 
 ПРИНЦИП ТОЛКОВАНИЯ В ПОЛЬЗУ УЧЕНИКА:
 В спорных и пограничных случаях, когда ответ можно трактовать и как верный,

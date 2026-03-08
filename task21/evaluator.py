@@ -15,6 +15,13 @@ from core.types import TaskRequirements, EvaluationResult
 
 logger = logging.getLogger(__name__)
 
+# Импорт калибровочных few-shot примеров
+try:
+    from core.fewshot_calibration import get_full_calibration_prompt
+except ImportError:
+    def get_full_calibration_prompt(task_number: int) -> str:
+        return ""
+
 # Безопасный импорт AI сервисов
 try:
     from core.ai_evaluator import BaseAIEvaluator
@@ -119,7 +126,10 @@ class Task21Evaluator(BaseAIEvaluator if AI_EVALUATOR_AVAILABLE else object):
 При проверке:
 - Будь строг к наличию всех элементов (фактор + объяснение + характер изменения)
 - Проверяй применимость к конкретному рынку
-- Учитывай допустимые синонимы (увеличилось = выросло = возросло)"""
+- Учитывай допустимые синонимы (увеличилось = выросло = возросло)
+
+""" + get_full_calibration_prompt(21) + """
+"""
 
     async def evaluate(
         self,

@@ -29,6 +29,13 @@ from core.types import TaskRequirements, EvaluationResult
 
 logger = logging.getLogger(__name__)
 
+# Импорт калибровочных few-shot примеров
+try:
+    from core.fewshot_calibration import get_full_calibration_prompt
+except ImportError:
+    def get_full_calibration_prompt(task_number: int) -> str:
+        return ""
+
 try:
     from core.ai_service import create_ai_service, AIServiceConfig, AIModel
     AI_AVAILABLE = True
@@ -305,6 +312,8 @@ class Task18AIEvaluator:
   можно выделить признаки).
 - Ставить балл за элемент 2, если приведён большой объём текста
   с общими рассуждениями, но без конкретной причинно-следственной связи.
+
+""" + get_full_calibration_prompt(18) + """
 - Ставить балл за элемент 2, если объяснение не связано с текстом.
 
 Отвечай ВСЕГДА в формате JSON."""
