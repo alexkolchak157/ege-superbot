@@ -2,6 +2,13 @@ import logging
 import json
 from typing import Dict, Any, List, Optional, Tuple
 from core.ai_service import get_ai_service
+
+# Импорт калибровочных few-shot примеров
+try:
+    from core.fewshot_calibration import get_full_calibration_prompt
+    _TASK24_CALIBRATION = get_full_calibration_prompt(24)
+except ImportError:
+    _TASK24_CALIBRATION = ""
 from core.hint_manager import HintManager
 from core.config import DATABASE_FILE
 
@@ -216,11 +223,12 @@ III. Обязательный: а) б) в) ← ошибки
 
         etalon_text = self._format_etalon_points(etalon_points)
 
-        # ИЗМЕНЕНО: Более строгий system_prompt с примерами + подсказки
+        # ИЗМЕНЕНО: Более строгий system_prompt с примерами + подсказки + калибровка
         system_prompt = f"""Ты - строгий эксперт ЕГЭ по обществознанию, проверяющий задание 24.
 Твоя задача - оценить соответствие плана ученика теме и требованиям ЕГЭ 2025.
 
 {self.ANCHOR_EXAMPLES}
+{_TASK24_CALIBRATION}
 {hints_text}
 
 КРИТИЧЕСКИ ВАЖНО:

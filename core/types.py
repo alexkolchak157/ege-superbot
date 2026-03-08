@@ -26,6 +26,9 @@ class TaskType(Enum):
     TASK18 = "task18"
     TASK19 = "task19"
     TASK20 = "task20"
+    TASK21 = "task21"
+    TASK22 = "task22"
+    TASK23 = "task23"
     TASK24 = "task24"
     TASK25 = "task25"
 

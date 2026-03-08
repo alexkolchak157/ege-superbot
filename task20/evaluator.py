@@ -14,6 +14,13 @@ from core.types import (
 
 logger = logging.getLogger(__name__)
 
+# Импорт калибровочных few-shot примеров
+try:
+    from core.fewshot_calibration import get_full_calibration_prompt
+except ImportError:
+    def get_full_calibration_prompt(task_number: int) -> str:
+        return ""
+
 # Безопасный импорт
 try:
     from core.ai_evaluator import (
@@ -168,6 +175,8 @@ class Task20AIEvaluator(BaseAIEvaluator if AI_EVALUATOR_AVAILABLE else object):
 Если ученик приводит классификацию, теорию или концепцию, которая тебе незнакома —
 НЕ отвергай её автоматически. Она может существовать в учебниках ФПУ или научной литературе.
 Снижай балл ТОЛЬКО если УВЕРЕН, что информация фактически ошибочна.
+
+""" + get_full_calibration_prompt(20) + """
 
 ВАЖНО: Будь строг в оценке, но справедлив. Учитывай российский контекст.
 

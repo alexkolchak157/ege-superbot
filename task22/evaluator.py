@@ -10,6 +10,13 @@ from core.types import (
 
 logger = logging.getLogger(__name__)
 
+# Импорт калибровочных few-shot примеров
+try:
+    from core.fewshot_calibration import get_full_calibration_prompt
+except ImportError:
+    def get_full_calibration_prompt(task_number: int) -> str:
+        return ""
+
 # Безопасный импорт
 try:
     from core.ai_evaluator import BaseAIEvaluator
@@ -114,7 +121,10 @@ class Task22AIEvaluator(BaseAIEvaluator if AI_EVALUATOR_AVAILABLE else object):
 - Будь строг, но справедлив
 - Давай конкретные комментарии к каждому ответу
 - Для каждого неправильного ответа объясни, почему он не засчитан
-- Предложи, как можно улучшить ответ"""
+- Предложи, как можно улучшить ответ
+
+""" + get_full_calibration_prompt(22) + """
+"""
 
     async def evaluate(
         self,

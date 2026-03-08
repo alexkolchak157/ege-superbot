@@ -64,7 +64,7 @@ class AIServiceConfig:
     """Конфигурация AI-сервиса (работает для любого провайдера)"""
     api_key: str
     model: AIModel = AIModel.PRO
-    temperature: float = 0.3
+    temperature: float = 0.15  # Снижено для уменьшения галлюцинаций
     max_tokens: int = 2000
     retries: int = 3
     retry_delay: float = 2.0
