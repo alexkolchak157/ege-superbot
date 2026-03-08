@@ -23,9 +23,6 @@ class TeacherModePlugin(BotPlugin):
         """Инициализация плагина"""
         # Автоматически применяем миграции Quick Check если нужно
         await self._ensure_quick_check_tables()
-        # Создаём таблицы для проверки вариантов
-        from .services import variant_check_service
-        await variant_check_service.ensure_tables()
         logger.info("Teacher mode plugin initialized")
 
     async def _ensure_quick_check_tables(self):
